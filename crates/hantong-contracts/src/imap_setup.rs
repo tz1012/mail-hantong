@@ -24,6 +24,7 @@ pub enum ImapSetupTls {
 pub enum ImapSetupCommand {
     Request(ImapSetupInput),
     Status([u8; 32]),
+    Resume([u8; 32]),
 }
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ImapSetupState {

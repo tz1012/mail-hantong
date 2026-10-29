@@ -10,7 +10,7 @@ use serde_json::{Value, json};
 pub fn parse(request: &RpcRequest) -> Result<ImapSetupCommand, ErrorCode> {
     let status = match request.method.as_str() {
         "setup.imap.request" => false,
-        "setup.imap.status" => true,
+        "setup.imap.status" | "setup.imap.resume" => true,
         "setup.imap.complete" | "setup.imap.approve" | "setup.imap.execute" => {
             return Err(ErrorCode::HumanStepRequired);
         }
@@ -37,7 +37,11 @@ pub fn parse(request: &RpcRequest) -> Result<ImapSetupCommand, ErrorCode> {
         return if id == [0; 32] {
             Err(ErrorCode::InvalidInput)
         } else {
-            Ok(ImapSetupCommand::Status(id))
+            Ok(if request.method == "setup.imap.resume" {
+                ImapSetupCommand::Resume(id)
+            } else {
+                ImapSetupCommand::Status(id)
+            })
         };
     }
     let name = opt_string(params, "display_name")?;
@@ -200,6 +204,36 @@ mod tests {
                 Err(ErrorCode::InvalidInput)
             );
         }
+    }
+
+    #[test]
+    fn setup01_resume_accepts_only_parent_identity_without_authority() {
+        let p = json!({"protocol_version":1,"request_id":wire_hex::encode(&[2;32])});
+        assert_eq!(
+            parse(&q("setup.imap.resume", p.clone())),
+            Ok(ImapSetupCommand::Resume([2; 32]))
+        );
+        for key in [
+            "account_id",
+            "password",
+            "approved",
+            "expected_version",
+            "payload_hash",
+        ] {
+            let mut invalid = p.clone();
+            invalid[key] = json!("untrusted");
+            assert_eq!(
+                parse(&q("setup.imap.resume", invalid)),
+                Err(ErrorCode::InvalidInput)
+            );
+        }
+        assert_eq!(
+            parse(&q(
+                "setup.imap.resume",
+                json!({"protocol_version":1,"request_id":wire_hex::encode(&[0;32])})
+            )),
+            Err(ErrorCode::InvalidInput)
+        );
     }
 
     #[test]

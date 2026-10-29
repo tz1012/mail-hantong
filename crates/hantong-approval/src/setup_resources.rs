@@ -2,6 +2,9 @@ use hantong_domain::config::Language;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SetupTextKey {
+    Action,
+    CreateNewAccount,
+    ResumeExistingAccount,
     Title,
     Introduction,
     Password,
@@ -25,10 +28,22 @@ pub enum SetupTextKey {
     Expired,
     Unavailable,
     VerificationRequired,
+    ResumeTitle,
+    ResumeIntroduction,
+    ResumeVerifyConnect,
+    ResumeDeny,
+    ResumeFooter,
+    ResumeReviewing,
+    ResumeExpired,
+    ResumeUnavailable,
+    ResumeVerificationRequired,
 }
 impl SetupTextKey {
     pub const ALL: &'static [Self] = &[
         Self::Title,
+        Self::Action,
+        Self::CreateNewAccount,
+        Self::ResumeExistingAccount,
         Self::Introduction,
         Self::Password,
         Self::VerifyConnect,
@@ -51,9 +66,21 @@ impl SetupTextKey {
         Self::Expired,
         Self::Unavailable,
         Self::VerificationRequired,
+        Self::ResumeTitle,
+        Self::ResumeIntroduction,
+        Self::ResumeVerifyConnect,
+        Self::ResumeDeny,
+        Self::ResumeFooter,
+        Self::ResumeReviewing,
+        Self::ResumeExpired,
+        Self::ResumeUnavailable,
+        Self::ResumeVerificationRequired,
     ];
     pub const fn as_str(self) -> &'static str {
         match self {
+            Self::Action => "action",
+            Self::CreateNewAccount => "create_new_account",
+            Self::ResumeExistingAccount => "resume_existing_account",
             Self::Title => "title",
             Self::Introduction => "introduction",
             Self::Password => "password",
@@ -77,6 +104,15 @@ impl SetupTextKey {
             Self::Expired => "expired",
             Self::Unavailable => "unavailable",
             Self::VerificationRequired => "verification_required",
+            Self::ResumeTitle => "resume_title",
+            Self::ResumeIntroduction => "resume_introduction",
+            Self::ResumeVerifyConnect => "resume_verify_connect",
+            Self::ResumeDeny => "resume_deny",
+            Self::ResumeFooter => "resume_footer",
+            Self::ResumeReviewing => "resume_reviewing",
+            Self::ResumeExpired => "resume_expired",
+            Self::ResumeUnavailable => "resume_unavailable",
+            Self::ResumeVerificationRequired => "resume_verification_required",
         }
     }
 }

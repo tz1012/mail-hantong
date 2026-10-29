@@ -19,12 +19,16 @@ pub fn request(id: &str, command: ImapSetupCommand) -> Result<Vec<u8>, ErrorCode
         return Err(ErrorCode::InvalidInput);
     }
     let (method, params) = match command {
-        ImapSetupCommand::Status(request_id) => {
+        ImapSetupCommand::Status(request_id) | ImapSetupCommand::Resume(request_id) => {
             if request_id == [0; 32] {
                 return Err(ErrorCode::InvalidInput);
             }
             (
-                "setup.imap.status",
+                if matches!(command, ImapSetupCommand::Resume(_)) {
+                    "setup.imap.resume"
+                } else {
+                    "setup.imap.status"
+                },
                 json!({"protocol_version":1,"request_id":wire_hex::encode(&request_id)}),
             )
         }
@@ -276,6 +280,24 @@ mod tests {
     }
     fn status() -> ImapSetupCommand {
         ImapSetupCommand::Status([1; 32])
+    }
+
+    #[test]
+    fn setup01_resume_transports_only_parent_id_and_accepts_new_child_receipt() {
+        let command = ImapSetupCommand::Resume([2; 32]);
+        let bytes = request("x", command.clone()).unwrap();
+        let value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(value["method"], "setup.imap.resume");
+        assert_eq!(
+            value["params"],
+            json!({"protocol_version":1,"request_id":wire_hex::encode(&[2;32])})
+        );
+        let receipt = parse_response(&response(result()), "x", command).unwrap();
+        assert_eq!(receipt.request_id(), &[1; 32]);
+        assert_eq!(
+            request("x", ImapSetupCommand::Resume([0; 32])),
+            Err(ErrorCode::InvalidInput)
+        );
     }
 
     #[test]

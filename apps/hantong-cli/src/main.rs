@@ -386,7 +386,7 @@ fn parse_setup_command(
         return Some(Err(ErrorCode::InvalidInput));
     }
     match command.get(2).map(String::as_str) {
-        Some("status") => {
+        Some("status" | "resume") => {
             if command.len() != 4 || !options.is_empty() {
                 return Some(Err(ErrorCode::InvalidInput));
             }
@@ -394,7 +394,11 @@ fn parse_setup_command(
                 Ok(id) if id != [0; 32] => id,
                 _ => return Some(Err(ErrorCode::InvalidInput)),
             };
-            Some(Ok(Some(ImapSetupCommand::Status(id))))
+            Some(Ok(Some(if command[2] == "resume" {
+                ImapSetupCommand::Resume(id)
+            } else {
+                ImapSetupCommand::Status(id)
+            })))
         }
         Some("request") => {
             if command.len() != 3 {
@@ -434,7 +438,7 @@ fn parse_setup_command(
             Some(input.map(ImapSetupCommand::Request).map(Some))
         }
         Some("complete" | "approve" | "execute") => Some(Ok(None)),
-        Some("resume" | "reset") => Some(Err(ErrorCode::InvalidInput)),
+        Some("reset") => Some(Err(ErrorCode::InvalidInput)),
         _ => Some(Err(ErrorCode::InvalidInput)),
     }
 }
@@ -823,7 +827,9 @@ mod tests {
                         assert_eq!(input.port(), 993);
                         assert_eq!(input.login_name(), "user@example.test");
                     }
-                    ImapSetupCommand::Status(_) => panic!("unexpected status"),
+                    ImapSetupCommand::Status(_) | ImapSetupCommand::Resume(_) => {
+                        panic!("unexpected status or resume")
+                    }
                 }
                 Ok(receipt)
             },
@@ -910,6 +916,59 @@ mod tests {
             );
             assert_eq!(calls.get(), 0);
             assert_eq!(code, expected);
+        }
+    }
+
+    #[test]
+    fn setup01_cli_resume_uses_parent_id_and_requires_no_terminal_secret() {
+        use hantong_contracts::imap_setup::{ImapSetupNextAction, ImapSetupState};
+        let parent = hantong_contracts::wire_hex::encode(&[3; 32]);
+        for lang in ["en", "ko"] {
+            let calls = std::cell::Cell::new(0);
+            let code = run_with_boundaries_and_setup(
+                [
+                    "--lang",
+                    lang,
+                    "--json",
+                    "--no-input",
+                    "setup",
+                    "imap",
+                    "resume",
+                    &parent,
+                ]
+                .map(String::from),
+                |_| panic!("registration"),
+                || panic!("verify"),
+                |_| panic!("accounts"),
+                |command| {
+                    assert!(matches!(command,ImapSetupCommand::Resume(id) if id==[3;32]));
+                    calls.set(calls.get() + 1);
+                    Ok(ImapSetupReceipt::new(
+                        [4; 32],
+                        10,
+                        ImapSetupState::Pending,
+                        ImapSetupNextAction::HelperRequired,
+                    )
+                    .unwrap())
+                },
+            );
+            assert_eq!(code, 0);
+            assert_eq!(calls.get(), 1);
+        }
+        for args in [
+            vec!["setup", "imap", "resume", "bad"],
+            vec!["setup", "imap", "resume", &parent, "--host", "new.example"],
+            vec!["setup", "imap", "resume", &parent, "--approved"],
+            vec!["setup", "imap", "resume", &parent, "--include-capabilities"],
+        ] {
+            let code = run_with_boundaries_and_setup(
+                args.into_iter().map(String::from),
+                |_| panic!("registration"),
+                || panic!("verify"),
+                |_| panic!("accounts"),
+                |_| panic!("invalid resume invoked"),
+            );
+            assert_eq!(code, ErrorCode::InvalidInput.exit_code());
         }
     }
 

@@ -1,5 +1,5 @@
 usage=Usage: hantong [--lang en|ko] [--json] [--no-input] <command>
-commands=Commands: core status, clients register, clients status <request_id>, clients verify, setup imap request, setup imap status <request_id>, accounts list, send execute, approvals get
+commands=Commands: core status, clients register, clients status <request_id>, clients verify, setup imap request, setup imap status <request_id>, setup imap resume <request_id>, accounts list, send execute, approvals get
 core_status=Core status: transport is available; mail is not ready; client is not authenticated.
 core_unavailable=The core is unavailable.
 capability_unsupported=This capability is not supported on this operating system.
@@ -32,7 +32,7 @@ setup_action_helper_required=Open the mail-hantong confirmation window.
 setup_action_wait=Wait for the setup worker.
 setup_action_client_registration_required=Register the client before using this account.
 setup_action_profile_scope_review_required=Review the existing client registration status and account scope.
-setup_action_resume_required=Resume through the helper; this CLI does not resume it.
+setup_action_resume_required=Run hantong setup imap resume <request_id>, then verify again in the helper.
 setup_action_new_request_required=Create a new setup request.
 account_number=Account
 provider=Provider

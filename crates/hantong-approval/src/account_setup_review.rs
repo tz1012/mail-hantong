@@ -9,8 +9,15 @@ use std::fmt;
 
 const MAX_LIFETIME_MS: i64 = 300_000;
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum AccountSetupAction {
+    NewAccount,
+    ResumeExisting,
+}
+
 #[derive(Clone, Eq, PartialEq)]
 pub struct AccountSetupReview {
+    action: AccountSetupAction,
     draft: NewImapAccountDraft,
     endpoint: ImapEndpointConfig,
     request_id: [u8; 32],
@@ -36,6 +43,48 @@ impl AccountSetupReview {
         created_at_utc_ms: i64,
         expires_at_utc_ms: i64,
     ) -> Result<Self, hantong_contracts::ErrorCode> {
+        Self::new_with_action(
+            AccountSetupAction::NewAccount,
+            draft,
+            endpoint,
+            request_id,
+            payload_hash,
+            credential_nonce,
+            created_at_utc_ms,
+            expires_at_utc_ms,
+        )
+    }
+    pub fn resume(
+        draft: NewImapAccountDraft,
+        endpoint: ImapEndpointConfig,
+        request_id: [u8; 32],
+        payload_hash: [u8; 32],
+        credential_nonce: [u8; 32],
+        created_at_utc_ms: i64,
+        expires_at_utc_ms: i64,
+    ) -> Result<Self, hantong_contracts::ErrorCode> {
+        Self::new_with_action(
+            AccountSetupAction::ResumeExisting,
+            draft,
+            endpoint,
+            request_id,
+            payload_hash,
+            credential_nonce,
+            created_at_utc_ms,
+            expires_at_utc_ms,
+        )
+    }
+    #[allow(clippy::too_many_arguments)]
+    fn new_with_action(
+        action: AccountSetupAction,
+        draft: NewImapAccountDraft,
+        endpoint: ImapEndpointConfig,
+        request_id: [u8; 32],
+        payload_hash: [u8; 32],
+        credential_nonce: [u8; 32],
+        created_at_utc_ms: i64,
+        expires_at_utc_ms: i64,
+    ) -> Result<Self, hantong_contracts::ErrorCode> {
         draft
             .validate()
             .map_err(|_| hantong_contracts::ErrorCode::InvalidInput)?;
@@ -52,6 +101,7 @@ impl AccountSetupReview {
             return Err(hantong_contracts::ErrorCode::InvalidInput);
         }
         Ok(Self {
+            action,
             draft,
             endpoint,
             request_id,
@@ -60,6 +110,9 @@ impl AccountSetupReview {
             created_at_utc_ms,
             expires_at_utc_ms,
         })
+    }
+    pub const fn is_resume(&self) -> bool {
+        matches!(self.action, AccountSetupAction::ResumeExisting)
     }
     pub fn draft(&self) -> &NewImapAccountDraft {
         &self.draft
@@ -118,8 +171,15 @@ pub fn setup_summary(review: &AccountSetupReview, language: Language) -> String 
         TlsMode::ImplicitTls => setup_text(language, SetupTextKey::ImplicitTls),
         TlsMode::StarttlsRequired => setup_text(language, SetupTextKey::Starttls),
     };
+    let action = if review.is_resume() {
+        setup_text(language, SetupTextKey::ResumeExistingAccount)
+    } else {
+        setup_text(language, SetupTextKey::CreateNewAccount)
+    };
     format!(
-        "{}: \"{}\"\r\n{}: \"{}\"\r\n{}: \"{}\"\r\n{}: {}\r\n{}: {}\r\n{}: \"{}\"\r\n{}: {}",
+        "{}: {}\r\n{}: \"{}\"\r\n{}: \"{}\"\r\n{}: \"{}\"\r\n{}: {}\r\n{}: {}\r\n{}: \"{}\"\r\n{}: {}",
+        setup_text(language, SetupTextKey::Action),
+        action,
         setup_text(language, SetupTextKey::DisplayName),
         display,
         setup_text(language, SetupTextKey::Color),
@@ -180,6 +240,29 @@ mod tests {
         let s = setup_summary(&r, Language::En);
         assert!(s.contains("A\\\"\\\\\\u{202E}"));
         assert!(!s.contains("payload_hash") && !s.contains("nonce"));
+    }
+
+    #[test]
+    fn inst05_resume_review_is_distinct_and_localized() {
+        let r = review(None);
+        let resumed = AccountSetupReview::resume(
+            r.draft.clone(),
+            r.endpoint.clone(),
+            [1; 32],
+            [2; 32],
+            [3; 32],
+            1,
+            300001,
+        )
+        .unwrap();
+        assert!(!r.is_resume());
+        assert!(resumed.is_resume());
+        assert_ne!(r, resumed);
+        assert!(setup_summary(&r, Language::En).contains("Create new account"));
+        assert!(
+            setup_summary(&resumed, Language::En).contains("Reconnect and review existing account")
+        );
+        assert!(setup_summary(&resumed, Language::Ko).contains("기존 계정 재연결 및 검토"));
     }
     #[test]
     fn inst05_rejects_all_zero_bindings_and_invalid_times_or_endpoint() {

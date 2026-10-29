@@ -55,7 +55,7 @@ where
         }
         let command = crate::imap_setup_wire::parse(request)?;
         let expected_id = match &command {
-            ImapSetupCommand::Request(_) => None,
+            ImapSetupCommand::Request(_) | ImapSetupCommand::Resume(_) => None,
             ImapSetupCommand::Status(id) => Some(*id),
         };
         let SetupReceipt::Imap(receipt) = callback(SetupCommand::Imap(command))? else {
@@ -220,4 +220,42 @@ mod tests {
         assert!(!failed.to_string().contains("imap.example"));
         assert!(!failed.to_string().contains("synthetic"));
     }
+}
+#[test]
+fn setup01_resume_dispatch_allows_child_id_but_not_wrong_receipt_family() {
+    let request = RpcRequest {
+        id: "resume".into(),
+        method: "setup.imap.resume".into(),
+        params: json!({"protocol_version":1,"request_id":hantong_contracts::wire_hex::encode(&[1;32])}),
+    };
+    let calls = std::cell::Cell::new(0);
+    let reply = response(&request, 200, &mut |command| {
+        assert!(matches!(command,SetupCommand::Imap(ImapSetupCommand::Resume(id)) if id==[1;32]));
+        calls.set(calls.get() + 1);
+        Ok(SetupReceipt::Imap(
+            ImapSetupReceipt::new(
+                [2; 32],
+                1000,
+                hantong_contracts::imap_setup::ImapSetupState::Pending,
+                hantong_contracts::imap_setup::ImapSetupNextAction::HelperRequired,
+            )
+            .unwrap(),
+        ))
+    });
+    assert_eq!(calls.get(), 1);
+    assert_eq!(
+        reply["result"]["request_id"],
+        hantong_contracts::wire_hex::encode(&[2; 32])
+    );
+    let reply = response(&request, 200, &mut |_| {
+        Ok(SetupReceipt::Registration(
+            RegistrationReceipt::new(
+                [1; 32],
+                1000,
+                hantong_contracts::registration::RegistrationProgress::Pending,
+            )
+            .unwrap(),
+        ))
+    });
+    assert_eq!(reply["error"]["code"], "INTERNAL_ERROR");
 }

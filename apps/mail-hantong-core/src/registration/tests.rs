@@ -547,6 +547,62 @@ fn setup01_registration_and_imap_share_one_gate_and_status_never_schedules() {
     assert_eq!(store.list_imap_setup_requests().unwrap().len(), 1);
     assert!(store.list_registrable_account_ids().unwrap().is_empty());
     drop(handle);
+    let resume = || SetupCommand::Imap(ImapSetupCommand::Resume(id));
+    let (handle, mut worker) = coordinator(&store, key.0.as_ref().unwrap(), &secrets);
+    let SetupReceipt::Imap(child) = handle.setup_command(resume()).unwrap() else {
+        panic!("wrong family");
+    };
+    assert_ne!(child.request_id(), &id);
+    assert_eq!(
+        worker.receiver.try_recv().unwrap(),
+        Job::Imap(*child.request_id())
+    );
+    assert!(
+        matches!(handle.setup_command(resume()).unwrap(),SetupReceipt::Imap(value) if value==child)
+    );
+    assert!(worker.receiver.try_recv().is_err());
+    assert_eq!(store.list_imap_setup_requests().unwrap().len(), 2);
+    drop(worker);
+    drop(handle);
+    let (handle, mut worker) = coordinator(&store, key.0.as_ref().unwrap(), &secrets);
+    let SetupReceipt::Imap(grandchild) = handle.setup_command(resume()).unwrap() else {
+        panic!("wrong family");
+    };
+    assert_ne!(grandchild.request_id(), child.request_id());
+    assert_eq!(
+        worker.receiver.try_recv().unwrap(),
+        Job::Imap(*grandchild.request_id())
+    );
+    assert_eq!(store.list_imap_setup_requests().unwrap().len(), 3);
+    assert!(store.list_registrable_account_ids().unwrap().is_empty());
+    drop(worker);
+    drop(handle);
+    let pending = store
+        .load_imap_setup_request(*grandchild.request_id())
+        .unwrap()
+        .unwrap();
+    let staged = store.stage_imap_setup_request(&pending).unwrap();
+    let started = store.begin_imap_credential_store(&staged).unwrap();
+    let returned = store
+        .finish_imap_credential_store(&started, Ok(()))
+        .unwrap();
+    let probing = store.begin_initial_imap_probe(&returned).unwrap();
+    store
+        .finish_imap_setup_probe(
+            &probing,
+            &hantong_store::account_provisioning::InitialImapProbeOutcome::Ready(vec![]),
+        )
+        .unwrap();
+    let (handle, mut worker) = coordinator(&store, key.0.as_ref().unwrap(), &secrets);
+    let SetupReceipt::Imap(completed) = handle.setup_command(resume()).unwrap() else {
+        panic!("wrong family");
+    };
+    assert_eq!(completed.request_id(), grandchild.request_id());
+    assert_eq!(completed.state(), ImapSetupState::Ready);
+    assert!(worker.receiver.try_recv().is_err());
+    assert_eq!(store.list_imap_setup_requests().unwrap().len(), 3);
+    drop(worker);
+    drop(handle);
     let (handle, mut worker) = coordinator(&store, key.0.as_ref().unwrap(), &secrets);
     enqueue(
         &handle.state.scheduled,
@@ -562,5 +618,9 @@ fn setup01_registration_and_imap_share_one_gate_and_status_never_schedules() {
         worker.receiver.try_recv().unwrap(),
         Job::Registration([9; 32])
     );
-    assert_eq!(store.list_imap_setup_requests().unwrap().len(), 1);
+    assert_eq!(store.list_imap_setup_requests().unwrap().len(), 3);
+    assert!(matches!(
+        handle.setup_command(resume()),
+        Err(ErrorCode::RateLimited)
+    ));
 }

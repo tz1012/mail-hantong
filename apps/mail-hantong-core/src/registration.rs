@@ -65,6 +65,38 @@ pub(crate) fn coordinator<'a>(
 impl RegistrationHandle<'_> {
     pub(crate) fn setup_command(&self, command: SetupCommand) -> Result<SetupReceipt, ErrorCode> {
         match command {
+            SetupCommand::Imap(ImapSetupCommand::Resume(id)) => {
+                if matches!(self.state.scheduled.get(), Some(Job::Registration(_))) {
+                    return Err(ErrorCode::RateLimited);
+                }
+                let parent = self.state.store.resolve_imap_setup_leaf(id)?;
+                let leaf_id = *parent.intent().request_id();
+                if let Some(Job::Imap(active_id)) = self.state.scheduled.get() {
+                    if active_id != leaf_id {
+                        return Err(ErrorCode::RateLimited);
+                    }
+                    return crate::setup_imap::status(self.state.store, leaf_id, true)
+                        .map(SetupReceipt::Imap);
+                }
+                if parent.events().last().is_some_and(|event| {
+                    matches!(
+                        event.event(),
+                        hantong_store::imap_setup::ImapSetupEvent::ProbeFinished(
+                            hantong_store::account_provisioning::InitialImapProbeOutcome::Ready(_)
+                        )
+                    )
+                }) {
+                    return crate::setup_imap::status(self.state.store, leaf_id, false)
+                        .map(SetupReceipt::Imap);
+                }
+                if self.sender.is_closed() {
+                    return Err(ErrorCode::InternalError);
+                }
+                let child = crate::setup_imap::prepare_resume(self.state.store, &parent)?;
+                let child_id = *child.intent().request_id();
+                enqueue(&self.state.scheduled, &self.sender, Job::Imap(child_id))?;
+                crate::setup_imap::status(self.state.store, child_id, true).map(SetupReceipt::Imap)
+            }
             SetupCommand::Registration(c) => self.command(c).map(SetupReceipt::Registration),
             SetupCommand::Imap(ImapSetupCommand::Status(id)) => crate::setup_imap::status(
                 self.state.store,

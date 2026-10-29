@@ -109,7 +109,7 @@ impl Effects for Fake<'_> {
     }
     fn stage(&self, r: &ImapSetupRequest) -> Result<ImapSetupRequest, ErrorCode> {
         self.hit("stage")?;
-        self.returned("stage", self.store.stage_imap_setup_request(r)?)
+        self.returned("stage", stage(self.store, r)?)
     }
     fn begin_credential(&self, r: &ImapSetupRequest) -> Result<ImapSetupRequest, ErrorCode> {
         self.hit("begin_credential")?;
@@ -436,4 +436,76 @@ fn setup01_probe_errors_and_secret_errors_have_stable_categories() {
     ] {
         assert_eq!(secret_error(error), code);
     }
+}
+
+#[test]
+fn setup01_resume_effects_use_fresh_binding_and_existing_account_stage() {
+    let f = Fixture::new();
+    let original = f.pending();
+    let mut effects = Fake::new(&f.store);
+    effects.outcome = InitialImapProbeOutcome::AuthRequired;
+    run(finish_verified(&effects, &original, ())).unwrap();
+    let leaf = f
+        .store
+        .resolve_imap_setup_leaf(*original.intent().request_id())
+        .unwrap();
+    let child = prepare_resume(&f.store, &leaf).unwrap();
+    assert_eq!(
+        child.intent().resume_binding().unwrap().existing_versions(),
+        Some((2, 1))
+    );
+    assert_eq!(
+        child.intent().draft().account_id(),
+        original.intent().draft().account_id()
+    );
+    let review = review_snapshot(&child, [9; 32]).unwrap();
+    assert!(review.is_resume());
+    assert_eq!(review.payload_hash(), child.intent().review_payload_hash());
+    assert_ne!(
+        review.payload_hash(),
+        child.intent().mutation().payload_hash()
+    );
+    let effects = Fake::new(&f.store);
+    run(finish_verified(&effects, &child, ())).unwrap();
+    let state = f
+        .store
+        .load_imap_provisioning_state(original.intent().draft().account_id())
+        .unwrap();
+    assert_eq!(state.account_version, 4);
+    assert_eq!(state.observation.unwrap().observation_version, 2);
+    let parent = f
+        .store
+        .load_imap_setup_request(*original.intent().request_id())
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        progress(&parent, true, false).unwrap().state(),
+        ImapSetupState::Interrupted
+    );
+    assert_eq!(
+        run(finish_verified(&effects, &original, ())),
+        Err(ErrorCode::Conflict)
+    );
+    assert_eq!(effects.probes.get(), 1);
+}
+
+#[test]
+fn setup01_pre_stage_resume_retains_new_account_action_and_fresh_hash() {
+    let f = Fixture::new();
+    let parent = f.pending();
+    let child = prepare_resume(&f.store, &parent).unwrap();
+    assert!(!review_snapshot(&child, [9; 32]).unwrap().is_resume());
+    assert_ne!(child.intent().request_id(), parent.intent().request_id());
+    assert_ne!(
+        child.intent().review_payload_hash(),
+        parent.intent().review_payload_hash()
+    );
+    assert!(f.store.list_registrable_account_ids().unwrap().is_empty());
+    let effects = Fake::new(&f.store);
+    run(finish_verified(&effects, &child, ())).unwrap();
+    let state = f
+        .store
+        .load_imap_provisioning_state(parent.intent().draft().account_id())
+        .unwrap();
+    assert_eq!(state.account_version, 2);
 }

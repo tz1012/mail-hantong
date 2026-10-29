@@ -46,7 +46,7 @@ python -X utf8 scripts/check_requirements.py
 
 등록 연결 개발 명령은 Windows 11에서 `cargo run -p hantong-cli -- clients register`, `cargo run -p hantong-cli -- clients status <request_id>`, `cargo run -p hantong-cli -- clients verify`입니다. 먼저 코어를 실행해야 합니다. 등록 요청은 코어 소유 창을 열며 사용자의 Windows Hello 확인 후 기본 읽기 전용 프로필을 발행합니다. CLI는 승인하지 않습니다. `verify`는 기존 프로필과 서버 신원만 확인합니다. 현재 등록 권한은 요청 당시 존재하는 계정 snapshot의 accounts.list로 제한되고, 계정이 없으면 권한도 0개입니다. 계정 설정·전체 GUI와 실제 Hello·사람 보안 검토가 남아 있습니다. 개발 자동 시험은 실제 사용자 등록이나 계정 로그인을 실행하지 않습니다.
 
-등록된 계정 조회는 `cargo run -p hantong-cli -- accounts list --json` 또는 `cargo run -p hantong-cli -- --lang ko accounts list`로 실행합니다. `--include-capabilities`를 추가하면 저장된 기능 식별자도 반환합니다. 상호 인증·현재 계정 범위·등록별 호출 한도·감사를 거친 로컬 계정 표시 자료이며, 지금 외부 메일 서버에 접속했다는 뜻은 아닙니다. 빈 권한은 SCOPE_DENIED이고 계정을 자동 추가하지 않습니다. 아래 신규 IMAP 설정은 단일 연결 시도까지 제공하며 전체 설정 마법사·재개·기존 프로필 범위 갱신은 개발 중입니다. 발송 명령은 계속 차단됩니다.
+등록된 계정 조회는 `cargo run -p hantong-cli -- accounts list --json` 또는 `cargo run -p hantong-cli -- --lang ko accounts list`로 실행합니다. `--include-capabilities`를 추가하면 저장된 기능 식별자도 반환합니다. 상호 인증·현재 계정 범위·등록별 호출 한도·감사를 거친 로컬 계정 표시 자료이며, 지금 외부 메일 서버에 접속했다는 뜻은 아닙니다. 빈 권한은 SCOPE_DENIED이고 계정을 자동 추가하지 않습니다. 아래 신규 IMAP 설정은 단일 연결 시도까지 제공하며 전체 설정 마법사·기존 프로필 범위 갱신은 개발 중입니다. 발송 명령은 계속 차단됩니다.
 
 
 신규 IMAP 연결 개발 명령은 다음과 같습니다. 코어를 먼저 실행하고 실제 서버 정보로 바꿉니다. 요청은 세션 ID를 반환하고 코어의 영/한 설정 확인 창을 엽니다. 비밀번호는 그 보호 입력 창에서만 입력하며 Windows Hello 확인 뒤 저장과 1회 TLS/AUTH 진단을 실행합니다. 이 기능은 메일 수신·발송을 수행하지 않습니다.
@@ -54,6 +54,7 @@ python -X utf8 scripts/check_requirements.py
 ```powershell
 cargo run -p hantong-cli -- setup imap request --host imap.example.com --port 993 --tls implicit_tls --login user@example.com --name Personal
 cargo run -p hantong-cli -- setup imap status <request_id> --json
+cargo run -p hantong-cli -- setup imap resume <request_id> --json
 ```
 
-`starttls_required`도 선택할 수 있습니다. `--lang ko`는 CLI 출력 언어를 바꾸고 확인 창은 저장된 GUI 언어·테마를 따릅니다. `--no-input`은 터미널 질문을 없애며 사람 확인 창을 생략하지 않습니다. `ready`는 해당 연결 진단 결과이며 CLI 권한을 자동 부여하지 않습니다. 기존 등록이 없으면 별도로 `clients register`를 실행하고, 이미 등록이 있으면 상태·계정 범위 재검토가 필요합니다. 현재 중단/실패 요청의 `resume_required`는 후속 구현 안내이며 resume/reset 명령은 아직 지원하지 않습니다. 개발 자동 시험에서는 실제 계정이나 Hello를 사용하지 않았고 사람 보안·화면 검토가 남아 있습니다.
+`starttls_required`도 선택할 수 있습니다. `--lang ko`는 CLI 출력 언어를 바꾸고 확인 창은 저장된 GUI 언어·테마를 따릅니다. `--no-input`은 터미널 질문을 없애며 사람 확인 창을 생략하지 않습니다. `ready`는 해당 연결 진단 결과이며 CLI 권한을 자동 부여하지 않습니다. 기존 등록이 없으면 별도로 `clients register`를 실행하고, 이미 등록이 있으면 상태·계정 범위 재검토가 필요합니다. 중단/실패한 요청은 `resume`으로 같은 대상의 새 시도를 시작할 수 있습니다. 과거 이력을 보존하고 보호 입력·Hello 확인을 다시 요구합니다. 진행 중인 같은 시도나 이미 연결을 마친 시도는 상태만 반환합니다. 원래 대상이나 계정 버전이 바뀌면 재개를 거부하며 reset은 아직 지원하지 않습니다. 개발 자동 시험에서는 실제 계정이나 Hello를 사용하지 않았고 사람 보안·화면 검토가 남아 있습니다.

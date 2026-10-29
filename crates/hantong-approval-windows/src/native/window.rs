@@ -343,7 +343,14 @@ impl State {
                     || {
                         ConsentOperation::start(
                             hwnd,
-                            setup_text(language, SetupTextKey::VerificationRequired),
+                            setup_text(
+                                language,
+                                if review.is_resume() {
+                                    SetupTextKey::ResumeVerificationRequired
+                                } else {
+                                    SetupTextKey::VerificationRequired
+                                },
+                            ),
                         )
                     },
                 )?;
@@ -471,22 +478,55 @@ impl State {
     }
     fn caption(&self, id: i32) -> String {
         if self.model.review().is_setup() {
+            let resume = self.model.review().is_resume();
             let setup_key = match id {
-                HEADING => Some(SetupTextKey::Title),
-                INTRO => Some(SetupTextKey::Introduction),
+                HEADING => Some(if resume {
+                    SetupTextKey::ResumeTitle
+                } else {
+                    SetupTextKey::Title
+                }),
+                INTRO => Some(if resume {
+                    SetupTextKey::ResumeIntroduction
+                } else {
+                    SetupTextKey::Introduction
+                }),
                 PASSWORD_LABEL => Some(SetupTextKey::Password),
-                VERIFY => Some(SetupTextKey::VerifyConnect),
-                DENY => Some(SetupTextKey::Deny),
-                FOOTER => Some(SetupTextKey::Footer),
+                VERIFY => Some(if resume {
+                    SetupTextKey::ResumeVerifyConnect
+                } else {
+                    SetupTextKey::VerifyConnect
+                }),
+                DENY => Some(if resume {
+                    SetupTextKey::ResumeDeny
+                } else {
+                    SetupTextKey::Deny
+                }),
+                FOOTER => Some(if resume {
+                    SetupTextKey::ResumeFooter
+                } else {
+                    SetupTextKey::Footer
+                }),
                 STATUS => match self.model.state() {
                     ReviewState::Reviewing
                         if self.model.presentation().effective_theme()
                             != EffectiveTheme::HighContrast =>
                     {
-                        Some(SetupTextKey::Reviewing)
+                        Some(if resume {
+                            SetupTextKey::ResumeReviewing
+                        } else {
+                            SetupTextKey::Reviewing
+                        })
                     }
-                    ReviewState::Expired => Some(SetupTextKey::Expired),
-                    ReviewState::Unavailable => Some(SetupTextKey::Unavailable),
+                    ReviewState::Expired => Some(if resume {
+                        SetupTextKey::ResumeExpired
+                    } else {
+                        SetupTextKey::Expired
+                    }),
+                    ReviewState::Unavailable => Some(if resume {
+                        SetupTextKey::ResumeUnavailable
+                    } else {
+                        SetupTextKey::Unavailable
+                    }),
                     _ => None,
                 },
                 _ => None,

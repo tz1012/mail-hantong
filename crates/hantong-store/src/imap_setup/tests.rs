@@ -1,5 +1,6 @@
 #[cfg(windows)]
 mod native {
+    include!("resume_tests.rs");
     use super::super::*;
     use crate::account_provisioning::imap_account_stage_payload_hash;
     use hantong_domain::mail_connection::MailConnectionConfig;
@@ -669,10 +670,19 @@ mod native {
             f.store.create_imap_setup_request(first.intent()).unwrap(),
             first
         );
+        assert_eq!(
+            f.store.prepare_imap_setup_resume(
+                &first,
+                [8; 32],
+                "quota-resume".into(),
+                "quota-key".into()
+            ),
+            Err(ErrorCode::QuotaExceeded)
+        );
         assert_eq!(snapshot(&f.store), before);
         assert_eq!(f.store.list_imap_setup_requests().unwrap().len(), 1024);
         f.store.with_connection(|c| {
-            c.execute("INSERT INTO imap_setup_requests SELECT ?1,'overflow','overflow','overflow',display_name,color,endpoint_version,host,port,tls,login_name,authentication,payload_hash,origin,phase,version,created_at_utc_ms,expires_at_utc_ms,updated_at_utc_ms FROM imap_setup_requests LIMIT 1",params![[9_u8;32].as_slice()])?;
+            c.execute("INSERT INTO imap_setup_requests(request_id,account_id,operation_id,idempotency_key,display_name,color,endpoint_version,host,port,tls,login_name,authentication,payload_hash,origin,phase,version,created_at_utc_ms,expires_at_utc_ms,updated_at_utc_ms) SELECT ?1,'overflow','overflow','overflow',display_name,color,endpoint_version,host,port,tls,login_name,authentication,payload_hash,origin,phase,version,created_at_utc_ms,expires_at_utc_ms,updated_at_utc_ms FROM imap_setup_requests LIMIT 1",params![[9_u8;32].as_slice()])?;
             Ok(())
         }).unwrap();
         assert_eq!(
@@ -694,6 +704,10 @@ fn setup01_journal_does_not_enable_a_non_windows_store() {
     );
     assert_eq!(
         store.load_imap_setup_request([1; 32]),
+        Err(ErrorCode::CapabilityUnsupported)
+    );
+    assert_eq!(
+        store.resolve_imap_setup_leaf([1; 32]),
         Err(ErrorCode::CapabilityUnsupported)
     );
 }

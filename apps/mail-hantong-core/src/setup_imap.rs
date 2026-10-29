@@ -63,6 +63,51 @@ pub(super) fn create(store: &Store, input: &ImapSetupInput) -> Result<ImapSetupR
     )?;
     store.create_imap_setup_request(&request)
 }
+pub(super) fn prepare_resume(
+    store: &Store,
+    parent: &ImapSetupRequest,
+) -> Result<ImapSetupRequest, ErrorCode> {
+    store.prepare_imap_setup_resume(
+        parent,
+        hantong_platform::random_nonce()?,
+        wire_hex::encode(&hantong_platform::random_nonce()?),
+        wire_hex::encode(&hantong_platform::random_nonce()?),
+    )
+}
+fn existing_resume(request: &ImapSetupRequest) -> bool {
+    request
+        .intent()
+        .resume_binding()
+        .and_then(|b| b.existing_versions())
+        .is_some()
+}
+fn stage(store: &Store, request: &ImapSetupRequest) -> Result<ImapSetupRequest, ErrorCode> {
+    if existing_resume(request) {
+        store.stage_imap_setup_resume(request)
+    } else {
+        store.stage_imap_setup_request(request)
+    }
+}
+fn review_snapshot(
+    request: &ImapSetupRequest,
+    nonce: [u8; 32],
+) -> Result<hantong_approval::AccountSetupReview, ErrorCode> {
+    let i = request.intent();
+    let constructor = if existing_resume(request) {
+        hantong_approval::AccountSetupReview::resume
+    } else {
+        hantong_approval::AccountSetupReview::new
+    };
+    constructor(
+        i.draft().clone(),
+        i.endpoint().clone(),
+        *i.request_id(),
+        *i.review_payload_hash(),
+        nonce,
+        request.created_at_utc_ms(),
+        request.expires_at_utc_ms(),
+    )
+}
 pub(super) fn matches(
     request: &ImapSetupRequest,
     input: &ImapSetupInput,
@@ -117,6 +162,7 @@ fn progress(
         .ok_or(ErrorCode::InternalError)?
         .event();
     let (state, action) = match last {
+        ImapSetupEvent::Superseded(_) => (S::Interrupted, A::ResumeRequired),
         ImapSetupEvent::ReviewClosed(code) => (
             match code {
                 ErrorCode::ApprovalRequired => S::Cancelled,
@@ -220,7 +266,7 @@ impl Effects for Native<'_> {
         load(self.store, id)
     }
     fn stage(&self, r: &ImapSetupRequest) -> Result<ImapSetupRequest, ErrorCode> {
-        self.store.stage_imap_setup_request(r)
+        stage(self.store, r)
     }
     fn begin_credential(&self, r: &ImapSetupRequest) -> Result<ImapSetupRequest, ErrorCode> {
         self.store.begin_imap_credential_store(r)
@@ -232,7 +278,7 @@ impl Effects for Native<'_> {
     ) -> Result<(), ErrorCode> {
         let i = r.intent();
         if pending.setup_request_id() != i.request_id()
-            || pending.setup_payload_hash() != i.mutation().payload_hash()
+            || pending.setup_payload_hash() != i.review_payload_hash()
         {
             return Err(ErrorCode::ScopeDenied);
         }
@@ -313,18 +359,10 @@ pub(super) async fn review(
         i.draft().account_id(),
         i.endpoint(),
         *i.request_id(),
-        *i.mutation().payload_hash(),
+        *i.review_payload_hash(),
     )
     .map_err(secret_error)?;
-    let review = hantong_approval::AccountSetupReview::new(
-        i.draft().clone(),
-        i.endpoint().clone(),
-        *i.request_id(),
-        *i.mutation().payload_hash(),
-        *plan.nonce(),
-        expected.created_at_utc_ms(),
-        expected.expires_at_utc_ms(),
-    )?;
+    let review = review_snapshot(&expected, *plan.nonce())?;
     let config = store.load_config()?.ok_or(ErrorCode::InternalError)?;
     let verified = hantong_approval_windows::review_imap_setup(
         review.clone(),

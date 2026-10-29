@@ -380,6 +380,7 @@ pub(crate) async fn run_fixture_cases() {
     for scenario in [
         "request",
         "status",
+        "resume",
         "oversized_whitespace",
         "forbidden",
         "complete",
@@ -395,11 +396,14 @@ pub(crate) async fn run_fixture_cases() {
                 &mut |_, _| panic!("setup cannot enter protected executor"),
                 &mut |command| {
                     calls.set(calls.get() + 1);
-                    assert!(matches!(
-                        (scenario, command),
+                    match (scenario, command) {
                         ("request", SetupCommand::Imap(ImapSetupCommand::Request(_)))
-                            | ("status", SetupCommand::Imap(ImapSetupCommand::Status(_)))
-                    ));
+                        | ("status", SetupCommand::Imap(ImapSetupCommand::Status(_))) => {}
+                        ("resume", SetupCommand::Imap(ImapSetupCommand::Resume(id))) => {
+                            assert_eq!(id, [8; 32])
+                        }
+                        _ => panic!("unexpected setup command"),
+                    }
                     Ok(SetupReceipt::Imap(
                         ImapSetupReceipt::new(
                             [9; 32],
@@ -415,7 +419,7 @@ pub(crate) async fn run_fixture_cases() {
             assert_eq!(result, Ok(()));
             assert_eq!(
                 calls.get(),
-                if matches!(scenario, "request" | "status") {
+                if matches!(scenario, "request" | "status" | "resume") {
                     1
                 } else {
                     0
@@ -439,6 +443,9 @@ pub(crate) async fn run_fixture_cases() {
                 })).unwrap()),
                 "status" => ("setup.imap.status", serde_json::to_vec(&json!({
                     "jsonrpc":"2.0","id":"setup","method":"setup.imap.status","params":{"protocol_version":1,"request_id":wire_hex::encode(&[9;32])}
+                })).unwrap()),
+                "resume" => ("setup.imap.resume", serde_json::to_vec(&json!({
+                    "jsonrpc":"2.0","id":"setup","method":"setup.imap.resume","params":{"protocol_version":1,"request_id":wire_hex::encode(&[8;32])}
                 })).unwrap()),
                 "forbidden" => {
                     params["password"] = json!("untrusted");
@@ -464,8 +471,9 @@ pub(crate) async fn run_fixture_cases() {
             pipe.write_all(&bytes).await.unwrap();
             pipe.flush().await.unwrap();
             let response = receive(&mut pipe).await;
-            if matches!(scenario, "request" | "status") {
+            if matches!(scenario, "request" | "status" | "resume") {
                 assert_eq!(response["result"]["state"], "pending");
+                assert_eq!(response["result"]["request_id"], wire_hex::encode(&[9; 32]));
             } else if scenario == "oversized_whitespace" || scenario == "forbidden" {
                 assert_eq!(response["error"]["code"], "INVALID_INPUT");
             } else {

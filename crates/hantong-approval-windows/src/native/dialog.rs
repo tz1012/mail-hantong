@@ -31,6 +31,9 @@ impl DialogReview {
     pub(super) fn is_setup(&self) -> bool {
         matches!(self, Self::Imap(_))
     }
+    pub(super) fn is_resume(&self) -> bool {
+        matches!(self, Self::Imap(review) if review.is_resume())
+    }
     pub(super) fn summary(&self, language: Language) -> Result<String, ErrorCode> {
         match self {
             Self::Registration(review) => review_text(review, language),

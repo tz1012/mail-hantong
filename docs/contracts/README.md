@@ -35,7 +35,8 @@
 | `protected-mail-input.md` | Secrets 소유 password EDIT·불투명 pending·설정 확인 결속 | 구현 중, 실제 UI/사람 검토 전 |
 | `imap-setup-review.md` | 새 IMAP 설정 snapshot·영/한 표시·Hello 확인 결속 | 구현 중, 실제 UI/사람 검토 전 |
 | `imap-setup-journal.md` | v5 신규 설정 요청·원자 stage·비밀 저장/probe 효과 이력 | v5 저장/이전 자동 검증, Core 연결·명시 재개·사람 검토 진행 |
-| `imap-setup-bootstrap.md` | 신규 설정 요청/조회 DTO와 제한된 진행 응답 | Core/CLI 단일 시도 연결·검증 중, 명시 재개·사람 검토 전 |
+| `imap-setup-bootstrap.md` | 신규 설정 요청/조회·명시 재개 DTO와 제한된 진행 응답 | Core/CLI 연결·자동 검증, 사람 검토 전 |
+| `imap-setup-resume.md` | v6 부모·자식 이력, 기존 계정 버전 결속과 새 native 확인 | 저장·Core·CLI 통합 검증 중, 사람 검토 전 |
 | `mail-connection.md`, `mail-connection-store.md` | 독립 IMAP/SMTP 설정·v4 저장/CAS/중복/관측 | 모델·저장·v4 이전 검증, 설정 화면 전 |
 | `mail-credentials.md` | endpoint 전체·버전에 결속한 DPAPI 자격 증명 | Windows 저장/결속 대상 시험·독립 검토 통과, TLS/AUTH 연결 전 |
 | `smtp-probe.md` | Secrets 내부 일회성 TLS/AUTH 검사·수신/시간 제한 | 실제 DPAPI+in-memory TLS 대상 검증, GUI·IPC 미연결 |

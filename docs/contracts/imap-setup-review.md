@@ -1,8 +1,10 @@
 # 새 IMAP 계정 설정 확인 v1
 
-상태: 보호 입력·네이티브 설정 UI 연결 구현 기준, **사람 검토 필요**. 전체 설정 마법사·기존 계정 재연결·실제 로그인 검증 완료가 아니다.
+상태: 보호 입력·네이티브 설정 UI 연결 구현 기준, **사람 검토 필요**. 신규 생성과 [명시 재개](imap-setup-resume.md)의 표시·결속을 다루며 전체 설정 마법사·실제 로그인 검증 완료가 아니다.
 
 `hantong-approval::AccountSetupReview`는 데이터다. 공개 생성자는 사람 확인 증거를 만들지 않는다. 불변 `NewImapAccountDraft`, `ImapEndpointConfig`, 32-byte request ID, stage payload hash, credential capture nonce, UTC created/expires 값을 받는다. 세 byte 배열은 각각 0이 아니어야 하며 endpoint는 version=1, app_password만 허용한다. created>0, 1..300,000ms lifetime을 checked subtraction으로 검사한다. 모든 필드는 private, read-only getter와 Clone/Eq만 제공하고 Debug는 redacted다. Secrets·Store·Windows를 의존하지 않는다.
+
+`new()`는 새 계정 생성, `resume()`는 이미 stage된 기존 계정 재연결을 표시한다. `is_resume()`로 action만 조회할 수 있고 action도 exact Eq 결속에 포함한다. 계정 생성 전 중단된 child는 `new()` 표시를 유지한다. 재개 child는 원래 stage hash 대신 저장된 `review_payload_hash()`의 resume hash를 review/capture plan에 공통 적용한다. 영/한 summary·제목·설명·버튼·Hello 안내·상태는 새 계정 생성과 기존 계정 재연결을 구분한다. 생성자 선택 자체는 권한이 아니며 Core가 저장 이력의 existing_versions로 정한다.
 
 request ID는 새 설정 의도의 식별자다. Core 연결에서는 [v5 설정 저널](imap-setup-journal.md)에 저장한 request ID와 정확히 결속한다. 이 순수 review 모델 자체는 저널의 존재나 사람 확인을 증명하지 않는다. stage hash는 Core가 [계정 생성 계약](account-provisioning.md)의 함수로 계산하고, native binding은 review와 [capture plan](protected-mail-input.md)의 request/account/endpoint/hash/nonce가 정확히 같은지 검사한다. hash 자체를 권한 증거로 취급하지 않는다.
 

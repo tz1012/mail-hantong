@@ -5,10 +5,47 @@ use crate::{
 };
 use hantong_domain::{accounts::AccountStatus, mail_connection::MailConnectionConfig};
 use rusqlite::{Connection, OptionalExtension, Row, Transaction, params};
+use std::collections::{BTreeMap, BTreeSet};
 
 const REQUEST_LIMIT: usize = 1024;
 const EVENT_LIMIT: usize = 8;
 const TTL: i64 = 300000;
+#[path = "resume.rs"]
+mod resume;
+pub(super) use resume::{prepare_resume, resolve_leaf};
+
+fn optional_blob(row: &Row<'_>, index: usize) -> rusqlite::Result<Option<[u8; 32]>> {
+    if row.get_ref(index)?.data_type() == rusqlite::types::Type::Null {
+        Ok(None)
+    } else {
+        blob_column(row, index).map(Some)
+    }
+}
+fn resume_hash_for(
+    parent: &[u8; 32],
+    version: u64,
+    stage_hash: &[u8; 32],
+    existing: Option<(u64, u64)>,
+) -> Result<[u8; 32], ErrorCode> {
+    let mut bytes = b"mail-hantong.imap-setup-resume.v1\0".to_vec();
+    bytes.extend_from_slice(parent);
+    bytes.extend_from_slice(&version.to_be_bytes());
+    bytes.extend_from_slice(stage_hash);
+    bytes.push(u8::from(existing.is_some()));
+    if let Some((account, observation)) = existing {
+        bytes.extend_from_slice(&account.to_be_bytes());
+        bytes.extend_from_slice(&1_u64.to_be_bytes());
+        bytes.extend_from_slice(&observation.to_be_bytes());
+    }
+    hantong_platform::sha256(&bytes).map_err(|_| ErrorCode::InternalError)
+}
+fn effect_versions(intent: &NewImapSetupRequest) -> (u64, u64) {
+    intent
+        .resume
+        .as_ref()
+        .and_then(|r| r.existing_versions)
+        .map_or((1, 0), |(a, o)| (a + 1, o))
+}
 
 fn db<T>(value: rusqlite::Result<T>) -> Result<T, ErrorCode> {
     value.map_err(|_| ErrorCode::InternalError)
@@ -32,6 +69,8 @@ fn phase_text(phase: ImapSetupPhase) -> &'static str {
         ImapSetupPhase::CredentialStoreReturned => "credential_store_returned",
         ImapSetupPhase::ProbeStarted => "probe_started",
         ImapSetupPhase::ProbeFinished => "probe_finished",
+        ImapSetupPhase::Superseded => "superseded",
+        ImapSetupPhase::ResumeStaged => "resume_staged",
     }
 }
 fn parse_phase(s: &str) -> rusqlite::Result<ImapSetupPhase> {
@@ -43,6 +82,8 @@ fn parse_phase(s: &str) -> rusqlite::Result<ImapSetupPhase> {
         "credential_store_returned" => Ok(ImapSetupPhase::CredentialStoreReturned),
         "probe_started" => Ok(ImapSetupPhase::ProbeStarted),
         "probe_finished" => Ok(ImapSetupPhase::ProbeFinished),
+        "superseded" => Ok(ImapSetupPhase::Superseded),
+        "resume_staged" => Ok(ImapSetupPhase::ResumeStaged),
         _ => invalid(),
     }
 }
@@ -55,18 +96,31 @@ fn event_phase(event: &ImapSetupEvent) -> ImapSetupPhase {
         ImapSetupEvent::CredentialStoreReturned(_) => ImapSetupPhase::CredentialStoreReturned,
         ImapSetupEvent::ProbeStarted => ImapSetupPhase::ProbeStarted,
         ImapSetupEvent::ProbeFinished(_) => ImapSetupPhase::ProbeFinished,
+        ImapSetupEvent::Superseded(_) => ImapSetupPhase::Superseded,
+        ImapSetupEvent::ResumeStaged => ImapSetupPhase::ResumeStaged,
     }
 }
 fn allowed(previous: Option<&ImapSetupEvent>, event: &ImapSetupEvent) -> bool {
+    if matches!(event, ImapSetupEvent::Superseded(_)) {
+        return previous.is_some_and(|p| {
+            !matches!(
+                p,
+                ImapSetupEvent::Superseded(_)
+                    | ImapSetupEvent::ProbeFinished(InitialImapProbeOutcome::Ready(_))
+            )
+        });
+    }
     matches!(
         (previous, event),
         (None, ImapSetupEvent::RequestCreated)
             | (
                 Some(ImapSetupEvent::RequestCreated),
-                ImapSetupEvent::AccountStaged | ImapSetupEvent::ReviewClosed(_)
+                ImapSetupEvent::AccountStaged
+                    | ImapSetupEvent::ResumeStaged
+                    | ImapSetupEvent::ReviewClosed(_)
             )
             | (
-                Some(ImapSetupEvent::AccountStaged),
+                Some(ImapSetupEvent::AccountStaged | ImapSetupEvent::ResumeStaged),
                 ImapSetupEvent::CredentialStoreStarted
             )
             | (
@@ -87,6 +141,7 @@ fn requires_fresh_review(event: &ImapSetupEvent) -> bool {
     matches!(
         event,
         ImapSetupEvent::AccountStaged
+            | ImapSetupEvent::ResumeStaged
             | ImapSetupEvent::CredentialStoreStarted
             | ImapSetupEvent::ProbeStarted
     )
@@ -131,8 +186,55 @@ fn read_request_row(row: &Row<'_>) -> rusqlite::Result<ImapSetupRequest> {
         blob_column(row, 12)?,
     )
     .map_err(|_| rusqlite::Error::InvalidQuery)?;
-    let intent = NewImapSetupRequest::new(blob_column(row, 0)?, draft, endpoint, mutation)
+    let mut intent = NewImapSetupRequest::new(blob_column(row, 0)?, draft, endpoint, mutation)
         .map_err(|_| rusqlite::Error::InvalidQuery)?;
+    let resume_id = optional_blob(row, 19)?;
+    let parent_version: Option<i64> = row.get(20)?;
+    let account_version: Option<i64> = row.get(21)?;
+    let observation_version: Option<i64> = row.get(22)?;
+    let resume_hash = optional_blob(row, 23)?;
+    match (
+        resume_id,
+        parent_version,
+        account_version,
+        observation_version,
+        resume_hash,
+    ) {
+        (None, None, None, None, None) => {}
+        (Some(parent), Some(version), account, observation, Some(hash)) => {
+            let versions = match (account, observation) {
+                (None, None) => None,
+                (Some(a), Some(o))
+                    if (1..=i64::MAX - 2).contains(&a) && (0..i64::MAX).contains(&o) =>
+                {
+                    Some((a as u64, o as u64))
+                }
+                _ => return invalid(),
+            };
+            if parent == [0; 32]
+                || parent == intent.request_id
+                || !(1..=7).contains(&version)
+                || hash == [0; 32]
+                || resume_hash_for(
+                    &parent,
+                    version as u64,
+                    intent.mutation.payload_hash(),
+                    versions,
+                )
+                .map_err(|_| rusqlite::Error::InvalidQuery)?
+                    != hash
+            {
+                return invalid();
+            }
+            intent.resume = Some(ImapSetupResumeBinding {
+                parent_request_id: parent,
+                parent_version: version as u64,
+                existing_versions: versions,
+                payload_hash: hash,
+            });
+        }
+        _ => return invalid(),
+    }
     let version: i64 = row.get(15)?;
     let created: i64 = row.get(16)?;
     let expires: i64 = row.get(17)?;
@@ -161,7 +263,10 @@ fn parse_error(value: &str) -> rusqlite::Result<ErrorCode> {
         .find(|e| e.as_str() == value)
         .ok_or(rusqlite::Error::InvalidQuery)
 }
-fn read_event(row: &Row<'_>) -> rusqlite::Result<ImapSetupEventRecord> {
+fn read_event(
+    row: &Row<'_>,
+    intent: &NewImapSetupRequest,
+) -> rusqlite::Result<ImapSetupEventRecord> {
     let seq: i64 = row.get(0)?;
     let time: i64 = row.get(2)?;
     if !(1..=8).contains(&seq) || time <= 0 {
@@ -178,6 +283,11 @@ fn read_event(row: &Row<'_>) -> rusqlite::Result<ImapSetupEventRecord> {
         row.get::<_, Option<i64>>(9)?,
     );
     let none = (None, None, None);
+    let child = optional_blob(row, 10)?;
+    if kind != "superseded" && child.is_some() {
+        return invalid();
+    }
+    let (account, observation) = effect_versions(intent);
     let event = match kind {
         "request_created" | "credential_store_started" | "probe_started"
             if result.is_none()
@@ -193,13 +303,45 @@ fn read_event(row: &Row<'_>) -> rusqlite::Result<ImapSetupEventRecord> {
             }
         }
         "account_staged"
-            if result.is_none()
+            if intent
+                .resume
+                .as_ref()
+                .and_then(|r| r.existing_versions)
+                .is_none()
+                && result.is_none()
                 && error.is_none()
                 && probe.is_none()
                 && caps.is_none()
                 && versions == (Some(1), Some(1), Some(0)) =>
         {
             ImapSetupEvent::AccountStaged
+        }
+        "resume_staged"
+            if intent
+                .resume
+                .as_ref()
+                .and_then(|r| r.existing_versions)
+                .is_some()
+                && result.is_none()
+                && error.is_none()
+                && probe.is_none()
+                && caps.is_none()
+                && versions == (Some(account as i64), Some(1), Some(observation as i64)) =>
+        {
+            ImapSetupEvent::ResumeStaged
+        }
+        "superseded"
+            if result.is_none()
+                && error.is_none()
+                && probe.is_none()
+                && caps.is_none()
+                && versions == none =>
+        {
+            let child = child.ok_or(rusqlite::Error::InvalidQuery)?;
+            if child == [0; 32] || child == intent.request_id {
+                return invalid();
+            }
+            ImapSetupEvent::Superseded(child)
         }
         "review_closed"
             if result.as_deref() == Some("returned_error")
@@ -228,7 +370,14 @@ fn read_event(row: &Row<'_>) -> rusqlite::Result<ImapSetupEventRecord> {
             ImapSetupEvent::CredentialStoreReturned(result)
         }
         "probe_finished"
-            if result.is_none() && error.is_none() && versions == (Some(2), Some(1), Some(1)) =>
+            if result.is_none()
+                && error.is_none()
+                && versions
+                    == (
+                        Some(account as i64 + 1),
+                        Some(1),
+                        Some(observation as i64 + 1),
+                    ) =>
         {
             let values: Vec<String> =
                 serde_json::from_str(caps.as_deref().ok_or(rusqlite::Error::InvalidQuery)?)
@@ -257,13 +406,35 @@ pub(super) fn read_request(
     connection: &Connection,
     id: &[u8; 32],
 ) -> Result<Option<ImapSetupRequest>, ErrorCode> {
-    let Some(mut request)=db(connection.query_row(
-        "SELECT request_id,account_id,operation_id,idempotency_key,display_name,color,endpoint_version,host,port,tls,login_name,authentication,payload_hash,origin,phase,version,created_at_utc_ms,expires_at_utc_ms,updated_at_utc_ms FROM imap_setup_requests WHERE request_id=?1",
-        [id.as_slice()],read_request_row).optional())? else {return Ok(None);};
-    let mut stmt = db(connection.prepare(
-        "SELECT seq,kind,occurred_at_utc_ms,result_kind,error_code,probe_outcome,capabilities,account_version,endpoint_version,observation_version FROM imap_setup_events WHERE request_id=?1 ORDER BY seq LIMIT 9",
-    ))?;
-    request.events = db(db(stmt.query_map([id.as_slice()], read_event))?.collect())?;
+    let chain = resume::read_chain(connection, id)?;
+    Ok(chain.get(id).cloned())
+}
+fn read_local(
+    connection: &Connection,
+    id: &[u8; 32],
+    legacy: bool,
+) -> Result<Option<ImapSetupRequest>, ErrorCode> {
+    let columns = if legacy {
+        "NULL,NULL,NULL,NULL,NULL"
+    } else {
+        "resume_of_request_id,resume_parent_version,resume_account_version,resume_observation_version,resume_payload_hash"
+    };
+    let query = format!(
+        "SELECT request_id,account_id,operation_id,idempotency_key,display_name,color,endpoint_version,host,port,tls,login_name,authentication,payload_hash,origin,phase,version,created_at_utc_ms,expires_at_utc_ms,updated_at_utc_ms,{columns} FROM imap_setup_requests WHERE request_id=?1"
+    );
+    let Some(mut request) = db(connection
+        .query_row(&query, [id.as_slice()], read_request_row)
+        .optional())?
+    else {
+        return Ok(None);
+    };
+    let child = if legacy { "NULL" } else { "child_request_id" };
+    let query = format!(
+        "SELECT seq,kind,occurred_at_utc_ms,result_kind,error_code,probe_outcome,capabilities,account_version,endpoint_version,observation_version,{child} FROM imap_setup_events WHERE request_id=?1 ORDER BY seq LIMIT 9"
+    );
+    let mut stmt = db(connection.prepare(&query))?;
+    request.events =
+        db(db(stmt.query_map([id.as_slice()], |row| read_event(row, &request.intent)))?.collect())?;
     if request.events.len() > EVENT_LIMIT {
         return Err(ErrorCode::QuotaExceeded);
     }
@@ -389,6 +560,15 @@ fn check_capacity(connection: &Connection) -> Result<usize, ErrorCode> {
     Ok(count as usize)
 }
 pub(super) fn read_all(connection: &Connection) -> Result<Vec<ImapSetupRequest>, ErrorCode> {
+    read_all_schema(connection, false)
+}
+pub(super) fn read_all_v5(connection: &Connection) -> Result<Vec<ImapSetupRequest>, ErrorCode> {
+    read_all_schema(connection, true)
+}
+fn read_all_schema(
+    connection: &Connection,
+    legacy: bool,
+) -> Result<Vec<ImapSetupRequest>, ErrorCode> {
     check_capacity(connection)?;
     let mut stmt = db(connection
         .prepare("SELECT request_id FROM imap_setup_requests ORDER BY request_id LIMIT 1025"))?;
@@ -396,9 +576,17 @@ pub(super) fn read_all(connection: &Connection) -> Result<Vec<ImapSetupRequest>,
     if ids.len() > REQUEST_LIMIT {
         return Err(ErrorCode::QuotaExceeded);
     }
-    ids.iter()
-        .map(|id| read_request(connection, id)?.ok_or(ErrorCode::InternalError))
-        .collect()
+    let requests: BTreeMap<_, _> = ids
+        .iter()
+        .map(|id| {
+            Ok((
+                *id,
+                read_local(connection, id, legacy)?.ok_or(ErrorCode::InternalError)?,
+            ))
+        })
+        .collect::<Result<_, ErrorCode>>()?;
+    resume::validate_graph(&requests)?;
+    Ok(requests.into_values().collect())
 }
 fn assert_new_target(tx: &Transaction<'_>, intent: &NewImapSetupRequest) -> Result<(), ErrorCode> {
     let exists: bool = db(tx.query_row(
@@ -422,6 +610,9 @@ pub(super) fn create(
             Err(ErrorCode::Conflict)
         };
     }
+    if intent.resume.is_some() {
+        return Err(ErrorCode::InvalidInput);
+    }
     assert_new_target(tx, intent)?;
     let conflict: bool = db(tx.query_row(
         "SELECT EXISTS(SELECT 1 FROM imap_setup_requests WHERE operation_id=?1 OR (account_id=?2 AND (idempotency_key=?3 OR phase IN ('review_pending','account_staged','credential_store_started','credential_store_returned','probe_started'))))",
@@ -435,6 +626,14 @@ pub(super) fn create(
         return Err(ErrorCode::QuotaExceeded);
     }
     let now = db(crate::utc_millis())?;
+    insert_request(tx, intent, now)?;
+    read_request(tx, &intent.request_id)?.ok_or(ErrorCode::InternalError)
+}
+fn insert_request(
+    tx: &Transaction<'_>,
+    intent: &NewImapSetupRequest,
+    now: i64,
+) -> Result<(), ErrorCode> {
     let expires = now.checked_add(TTL).ok_or(ErrorCode::InternalError)?;
     let endpoint = &intent.endpoint;
     let tls = match endpoint.tls() {
@@ -442,31 +641,26 @@ pub(super) fn create(
         hantong_domain::mail_connection::TlsMode::StarttlsRequired => "starttls_required",
     };
     db(tx.execute(
-        "INSERT INTO imap_setup_requests(request_id,account_id,operation_id,idempotency_key,display_name,color,endpoint_version,host,port,tls,login_name,authentication,payload_hash,origin,phase,version,created_at_utc_ms,expires_at_utc_ms,updated_at_utc_ms) VALUES(?1,?2,?3,?4,?5,?6,1,?7,?8,?9,?10,'app_password',?11,'local_same_logon_bootstrap','review_pending',1,?12,?13,?12)",
+        "INSERT INTO imap_setup_requests(request_id,account_id,operation_id,idempotency_key,display_name,color,endpoint_version,host,port,tls,login_name,authentication,payload_hash,origin,phase,version,created_at_utc_ms,expires_at_utc_ms,updated_at_utc_ms,resume_of_request_id,resume_parent_version,resume_account_version,resume_observation_version,resume_payload_hash) VALUES(?1,?2,?3,?4,?5,?6,1,?7,?8,?9,?10,'app_password',?11,'local_same_logon_bootstrap','review_pending',1,?12,?13,?12,?14,?15,?16,?17,?18)",
         params![
             intent.request_id.as_slice(), intent.draft.account_id(),
             intent.mutation.operation_id(), intent.mutation.idempotency_key(),
             intent.draft.display_name(), intent.draft.color(),
             endpoint.host(), endpoint.port(), tls, endpoint.login_name(),
             intent.mutation.payload_hash().as_slice(), now, expires,
+            intent.resume.as_ref().map(|r| r.parent_request_id.as_slice()),
+            intent.resume.as_ref().map(|r| r.parent_version as i64),
+            intent.resume.as_ref().and_then(|r|r.existing_versions).map(|(a,_)|a as i64),
+            intent.resume.as_ref().and_then(|r|r.existing_versions).map(|(_,o)|o as i64),
+            intent.resume.as_ref().map(|r|r.payload_hash.as_slice()),
         ],
     ))?;
-    append(
-        tx,
-        &intent.request_id,
-        1,
-        now,
-        &ImapSetupEvent::RequestCreated,
-    )?;
-    read_request(tx, &intent.request_id)?.ok_or(ErrorCode::InternalError)
+    append(tx, intent, 1, now, &ImapSetupEvent::RequestCreated)?;
+    Ok(())
 }
 fn exact_connecting(tx: &Transaction<'_>, intent: &NewImapSetupRequest) -> Result<(), ErrorCode> {
-    let current = read_state(tx, intent.draft.account_id())?;
-    if current.status != AccountStatus::Connecting
-        || current.account_version != 1
-        || current.endpoint != intent.endpoint
-        || current.observation.is_some()
-    {
+    let current = resume::exact_target(tx, intent, effect_versions(intent))?;
+    if current.status != AccountStatus::Connecting {
         return Err(ErrorCode::Conflict);
     }
     Ok(())
@@ -496,6 +690,15 @@ pub(super) fn change(
     }
     match &event {
         ImapSetupEvent::AccountStaged => {
+            if current
+                .intent
+                .resume
+                .as_ref()
+                .and_then(|r| r.existing_versions)
+                .is_some()
+            {
+                return Err(ErrorCode::Conflict);
+            }
             assert_new_target(tx, &current.intent)?;
             stage_account(
                 tx,
@@ -505,32 +708,51 @@ pub(super) fn change(
                 now,
             )?;
         }
+        ImapSetupEvent::ResumeStaged => resume::stage_existing(tx, &current.intent)?,
         ImapSetupEvent::CredentialStoreStarted | ImapSetupEvent::ProbeStarted => {
             exact_connecting(tx, &current.intent)?
         }
         ImapSetupEvent::ProbeFinished(outcome) => {
             exact_connecting(tx, &current.intent)?;
-            finish_probe(tx, current.intent.draft.account_id(), 1, 1, 0, outcome, now)?;
+            let (account, observation) = effect_versions(&current.intent);
+            finish_probe(
+                tx,
+                current.intent.draft.account_id(),
+                account,
+                1,
+                observation,
+                outcome,
+                now,
+            )?;
         }
         _ => {}
     }
+    update_request(tx, &current, event_phase(&event), now)?;
+    append(tx, &current.intent, current.version + 1, now, &event)?;
+    read_request(tx, &current.intent.request_id)?.ok_or(ErrorCode::InternalError)
+}
+fn update_request(
+    tx: &Transaction<'_>,
+    current: &ImapSetupRequest,
+    phase: ImapSetupPhase,
+    now: i64,
+) -> Result<(), ErrorCode> {
     let next = current.version + 1;
     let count = db(tx.execute(
         "UPDATE imap_setup_requests SET phase=?2,version=?3,updated_at_utc_ms=?4 WHERE request_id=?1 AND version=?5",
         params![
-            current.intent.request_id.as_slice(), phase_text(event_phase(&event)),
+            current.intent.request_id.as_slice(), phase_text(phase),
             next as i64, now, current.version as i64,
         ],
     ))?;
     if count != 1 {
         return Err(ErrorCode::Conflict);
     }
-    append(tx, &current.intent.request_id, next, now, &event)?;
-    read_request(tx, &current.intent.request_id)?.ok_or(ErrorCode::InternalError)
+    Ok(())
 }
 fn append(
     tx: &Transaction<'_>,
-    id: &[u8; 32],
+    intent: &NewImapSetupRequest,
     seq: u64,
     now: i64,
     event: &ImapSetupEvent,
@@ -543,7 +765,22 @@ fn append(
     if existing >= (REQUEST_LIMIT * EVENT_LIMIT) as i64 {
         return Err(ErrorCode::QuotaExceeded);
     }
+    let (account, observation) = effect_versions(intent);
+    let child = if let ImapSetupEvent::Superseded(id) = event {
+        Some(id.as_slice())
+    } else {
+        None
+    };
     let (kind, result, error, probe, caps, versions) = match event {
+        ImapSetupEvent::Superseded(_) => ("superseded", None, None, None, None, (None, None, None)),
+        ImapSetupEvent::ResumeStaged => (
+            "resume_staged",
+            None,
+            None,
+            None,
+            None,
+            (Some(account as i64), Some(1), Some(observation as i64)),
+        ),
         ImapSetupEvent::RequestCreated => (
             "request_created",
             None,
@@ -608,15 +845,19 @@ fn append(
                 None,
                 Some(kind),
                 Some(json),
-                (Some(2), Some(1), Some(1)),
+                (
+                    Some(account as i64 + 1),
+                    Some(1),
+                    Some(observation as i64 + 1),
+                ),
             )
         }
     };
     db(tx.execute(
-        "INSERT INTO imap_setup_events(request_id,seq,kind,occurred_at_utc_ms,result_kind,error_code,probe_outcome,capabilities,account_version,endpoint_version,observation_version) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)",
+        "INSERT INTO imap_setup_events(request_id,seq,kind,occurred_at_utc_ms,result_kind,error_code,probe_outcome,capabilities,account_version,endpoint_version,observation_version,child_request_id) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)",
         params![
-            id.as_slice(), seq as i64, kind, now, result, error, probe, caps,
-            versions.0, versions.1, versions.2,
+            intent.request_id.as_slice(), seq as i64, kind, now, result, error, probe, caps,
+            versions.0, versions.1, versions.2, child,
         ],
     ))?;
     Ok(())

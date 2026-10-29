@@ -18,6 +18,25 @@ pub struct NewImapSetupRequest {
     draft: NewImapAccountDraft,
     endpoint: ImapEndpointConfig,
     mutation: MailMutation,
+    resume: Option<ImapSetupResumeBinding>,
+}
+#[derive(Clone, Eq, PartialEq)]
+pub struct ImapSetupResumeBinding {
+    parent_request_id: [u8; 32],
+    parent_version: u64,
+    existing_versions: Option<(u64, u64)>,
+    payload_hash: [u8; 32],
+}
+impl ImapSetupResumeBinding {
+    pub fn parent_request_id(&self) -> &[u8; 32] {
+        &self.parent_request_id
+    }
+    pub fn parent_version(&self) -> u64 {
+        self.parent_version
+    }
+    pub fn existing_versions(&self) -> Option<(u64, u64)> {
+        self.existing_versions
+    }
 }
 impl NewImapSetupRequest {
     pub fn new(
@@ -44,6 +63,7 @@ impl NewImapSetupRequest {
             draft,
             endpoint,
             mutation,
+            resume: None,
         })
     }
     pub fn request_id(&self) -> &[u8; 32] {
@@ -58,6 +78,14 @@ impl NewImapSetupRequest {
     pub fn mutation(&self) -> &MailMutation {
         &self.mutation
     }
+    pub fn resume_binding(&self) -> Option<&ImapSetupResumeBinding> {
+        self.resume.as_ref()
+    }
+    pub fn review_payload_hash(&self) -> &[u8; 32] {
+        self.resume
+            .as_ref()
+            .map_or(self.mutation.payload_hash(), |r| &r.payload_hash)
+    }
 }
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ImapSetupPhase {
@@ -68,6 +96,8 @@ pub enum ImapSetupPhase {
     CredentialStoreReturned,
     ProbeStarted,
     ProbeFinished,
+    Superseded,
+    ResumeStaged,
 }
 #[derive(Clone, Eq, PartialEq)]
 pub enum ImapSetupEvent {
@@ -78,6 +108,8 @@ pub enum ImapSetupEvent {
     CredentialStoreReturned(Result<(), ErrorCode>),
     ProbeStarted,
     ProbeFinished(InitialImapProbeOutcome),
+    Superseded([u8; 32]),
+    ResumeStaged,
 }
 #[derive(Clone, Eq, PartialEq)]
 pub struct ImapSetupEventRecord {
@@ -136,10 +168,58 @@ redacted_debug!(
     NewImapSetupRequest,
     ImapSetupEvent,
     ImapSetupEventRecord,
-    ImapSetupRequest
+    ImapSetupRequest,
+    ImapSetupResumeBinding
 );
 
 impl Store {
+    pub fn prepare_imap_setup_resume(
+        &self,
+        expected: &ImapSetupRequest,
+        new_id: [u8; 32],
+        operation_id: String,
+        idempotency_key: String,
+    ) -> Result<ImapSetupRequest, ErrorCode> {
+        if new_id == [0; 32] {
+            return Err(ErrorCode::InvalidInput);
+        }
+        let mutation = MailMutation::new(
+            operation_id,
+            idempotency_key,
+            0,
+            *expected.intent.mutation.payload_hash(),
+        )?;
+        #[cfg(not(windows))]
+        {
+            let _ = mutation;
+            Err(ErrorCode::CapabilityUnsupported)
+        }
+        #[cfg(windows)]
+        {
+            self.mail_transaction(TransactionBehavior::Immediate, |tx| {
+                prepare_resume(tx, expected, new_id, mutation)
+            })
+        }
+    }
+    pub fn resolve_imap_setup_leaf(&self, id: [u8; 32]) -> Result<ImapSetupRequest, ErrorCode> {
+        if id == [0; 32] {
+            return Err(ErrorCode::InvalidInput);
+        }
+        #[cfg(not(windows))]
+        {
+            Err(ErrorCode::CapabilityUnsupported)
+        }
+        #[cfg(windows)]
+        {
+            self.mail_transaction(TransactionBehavior::Deferred, |tx| resolve_leaf(tx, &id))
+        }
+    }
+    pub fn stage_imap_setup_resume(
+        &self,
+        expected: &ImapSetupRequest,
+    ) -> Result<ImapSetupRequest, ErrorCode> {
+        self.change_setup(expected, ImapSetupEvent::ResumeStaged)
+    }
     pub fn create_imap_setup_request(
         &self,
         intent: &NewImapSetupRequest,
@@ -252,6 +332,12 @@ impl Store {
 #[cfg(windows)]
 pub(crate) fn validate_journal(connection: &rusqlite::Connection) -> rusqlite::Result<()> {
     read_all(connection)
+        .map(|_| ())
+        .map_err(|_| rusqlite::Error::InvalidQuery)
+}
+#[cfg(windows)]
+pub(crate) fn validate_journal_v5(connection: &rusqlite::Connection) -> rusqlite::Result<()> {
+    read_all_v5(connection)
         .map(|_| ())
         .map_err(|_| rusqlite::Error::InvalidQuery)
 }
