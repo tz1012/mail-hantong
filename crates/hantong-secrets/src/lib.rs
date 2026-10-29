@@ -15,9 +15,11 @@ mod imap_probe;
 mod mail_credentials;
 #[cfg(windows)]
 mod mail_transport;
+mod protected_input;
 mod smtp_probe;
 pub use database::{DatabaseError, KeyedConnection};
 pub use imap_probe::{ImapCapabilities, ImapProbeReceipt};
+pub use protected_input::{ImapPasswordCapturePlan, PasswordInput, PendingImapCredential};
 pub use smtp_probe::{MailProbeError, SmtpProbeReceipt};
 
 const MAX_SECRET: usize = 65_536;
@@ -79,6 +81,8 @@ pub enum SecretError {
     InvalidCiphertext,
     InvalidCredential,
     CredentialMismatch,
+    InvalidInputWindow,
+    InputExpired,
 }
 impl fmt::Display for SecretError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -94,6 +98,8 @@ impl fmt::Display for SecretError {
             Self::InvalidCiphertext => "invalid protected secret",
             Self::InvalidCredential => "invalid mail credential",
             Self::CredentialMismatch => "mail credential requires matching connection settings",
+            Self::InvalidInputWindow => "invalid protected input window",
+            Self::InputExpired => "protected input expired",
         })
     }
 }

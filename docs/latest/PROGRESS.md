@@ -9,8 +9,8 @@
 | 항목 | 상태와 근거 |
 | --- | --- |
 | 기준 자료 | 사용자 승인으로 채택한 [Markdown 기준 요건](../requirements/README.md): 요건 170개·1단계 P0 144개·문장별 AC ID 341개. 작업 카드 정의 151개는 보존한다. |
-| 현재 카드 | **M2-01/ACC-01 새 IMAP 계정 저장 전이 자동 검증 완료, 사람 검토 필요**. 다음은 Secrets 소유 보호 입력과 네이티브 설정/확인 화면 연결이다. |
-| 최신 검증 | **603개 통과**(문서 29·빌드 도구 62·Rust 512). 전체 build/test/fmt/Clippy·의존/문서/추적 검사 및 Linux x86_64·macOS arm64 교차 Clippy 통과. 2026-10-30 새 IMAP 계정 저장 snapshot의 로그·hash는 아래 기록에 있다. 실제 Mac 실행·전체 기능 완료를 뜻하지 않는다. |
+| 현재 카드 | **M2-01/INST-05 보호 입력·새 계정 확인 자동 검증 완료, 보안 사람 검토 전**. 다음은 SETUP-01 전용 요청/효과 저널과 Core 연결이다. |
+| 최신 검증 | **637개 통과**(문서 29·빌드 도구 63·Rust 545). 전체 build/test/fmt/Clippy·의존/문서/추적 검사 및 Linux x86_64·macOS arm64 교차 Clippy 통과. 2026-10-30 보호 입력·설정 확인 snapshot의 로그·hash는 아래 기록에 있다. 실제 Mac 실행·전체 기능 완료를 뜻하지 않는다. |
 | 제품 구현 | Rust workspace·영/한 CLI·Windows 코어/IPC·DPAPI·SQLCipher·설정 검증·감사·기본 등록/프로필·권한이 있는 계정 목록 조회·IMAP/SMTP TLS/AUTH probe·CI/추적 도구 구현. 발송은 차단하며 계정 생성 UI·실제 메일 수신·전체 GUI·설치 패키지는 미완료다. |
 | GitHub | 로컬 Git main 저장소를 초기화해 개발 기준선을 기록한다. 공개 저장소 주소·remote·릴리스·패키지 ID는 아직 없음. 빌드 산출물·실행 데이터·에이전트 상태는 제외한다. |
 | 새 사용자 요청 | 진행 상황을 이 문서에 누적하고, GitHub에서 명령어로 설치 및 개발을 시작할 수 있는 경로를 마련한다. 상세 범위는 [공개와 설치 계획](DISTRIBUTION.md)에 기록한다. |
@@ -561,3 +561,28 @@ Domain `NewImapAccountDraft`는 ID·표시명·색상만 갖고 login을 이메�
 `scripts/check_all.py` 종료 코드 **0**: **603개**(문서 29·빌드 도구 62·Rust 512), 전체 build/test/fmt/Clippy·아키텍처·기준 문서·추적 검사 통과. 로그 `target/account-provision-full-check.log`, SHA-256 `CD9E232BF17D86D27F6E508F3B2F39FEE0EC874C47374EABEB5D9DF9791A7D7C`, source hash `381000af9b8afd2743adb5ebdfbf3e69e5feef58d2931baa5328e955ab1d09a9`. Linux x86_64/macOS arm64 all-target Clippy도 종료 코드 0이다(`target/account-provision-linux-check.log`, `target/account-provision-macos-check.log`). 실제 Mac 실행은 아니다.
 
 검사 뒤 CNG 서버 키 **1개**, names hash `3B692D49F1D08F7D3442806CF17694CDC02AF36B44839930FC18EB9C83CE9D4D`가 유지됐다. 실제 사용자 프로필·Hello·계정 로그인·메일 발송은 실행하지 않았다. 계약은 **[사람 검토 필요]**, 전체 제품 AC 완료는 **0개**다. 현재 결과는 저장 전이이며 설정 UI와 실제 로그인 성공을 뜻하지 않는다. 다음은 Secrets 소유 password EDIT와 불투명 pending credential을 네이티브 설정/사람 확인 흐름에 연결한다.
+
+
+## 2026-10-30 보호 입력·새 IMAP 계정 확인 (진행 중)
+
+새 계정 저장 전이는 로컬 커밋 `fa32477`로 기록했다. 다음 범위는 [보호 입력 계약](../contracts/protected-mail-input.md)과 [설정 확인 계약](../contracts/imap-setup-review.md)이다. Secrets-owned EDIT와 plan→input→opaque pending, native review가 pending을 직접 소유하는 Hello 결과를 구현한다. parent HWND는 배치 정보이며 권한 증거가 아니다. 사람 확인 뒤에만 Core가 저장/접속을 연결하도록 한다.
+
+순수 설정 모델의 초기 커밋 `67fed4a` 이후 표시 escape·시간/대상 검증·영/한 리소스를 보완했다. 기존 ReviewModel의 first paint/만료/취소 규칙을 generic snapshot에 재사용하며 기존 등록과 setup 상태 회귀를 통과했다. 현재 전체 snapshot은 직전 **603개**이며 진행 중 변경의 전체 검증은 아직 아니다.
+
+Secrets 초기 구현을 실제 숨김 Win32 fixture로 검토하니 nested root/중복 control ID 허용, 정상 컨트롤 상태 오판, Unicode 처리와 callback 수명 문제가 있었다. 대상 4개 실패를 먼저 재현하고 root가 native 구현을 수정하여 4개 통과했다(`target/protected-input-native-regression-red.log` → `target/protected-input-native-regression-green.log`). subclass는 자체 Rc 참조를 유지하고 NCDESTROY 뒤 wrapper가 숫자 HWND를 재사용하지 않는다. 고정 UTF-8/UTF-16 buffer와 scratch를 지우며, 실패 cleanup은 style/layout 검증과 소유 identity 검증을 분리한다. 추가 수명/DPAPI/경계 fixture를 작성 중이다.
+
+GetWindowSubclass가 기본 Common-Controls v5에서 export되지 않는 실제 loader 실패를 확인하여 v6 manifest를 native 제품/시험 build에 embed했다. source hash가 manifest 변경을 놓치는 실패 회귀도 보완했다(`target/native-manifest-hash-red.log` → `target/native-manifest-hash-green.log`, 11개 통과). 새 외부 package/version은 없고 Cargo.lock은 approval-windows→Secrets 내부 edge만 추가했다. 현재 native UI 담당자의 대상 검증과 root 통합 검토가 진행 중이다.
+
+다음 Core 연결에는 등록된 클라이언트/기존 계정을 전제로 한 AuditBegin을 그대로 쓸 수 없다. v4 DDL을 고정한 뒤 전용 setup request/event 저널을 v5에 추가하고, proof→stage→DPAPI→probe 각 경계의 중단 상태를 기록할 계획이다. 공개 CLI setup 메서드는 이 저장/복구 경계가 준비된 후 연결한다. 실제 사용자 창·Hello·계정·비밀번호·메일은 시험하지 않았다.
+
+### 보호 입력·설정 확인 최종 자동 검증 snapshot
+
+Secrets 보호 입력은 실제 숨김 Win32 fixture 14개와 순수 경계 4개를 통과했다. 원래 thread/root/subclass 소유권, parent 파괴와 숫자 HWND 재사용, 변경된 style/parent/limit, 잘못된 surrogate·제어 문자·UTF-8 한도, cancel/drop/만료, 최대 길이, DPAPI 대상/만료 불일치 때 기존 암호문 보존을 검사한다. 독립 검토가 찾은 visibility/scroll-style 누락과 native 길이 오류 분류는 실패 시험 2개로 확인하고 수정했다(`target/protected-input-expanded-red.log` → `target/protected-input-expanded-green.log`). Secrets 전체는 107개다.
+
+기존 등록·언어·테마·OS verifier와 창 동시 실행 gate를 재사용했다. 설정 확인 결과가 정확한 pending 값을 직접 소유하며 OS Verified 외에는 발급하지 않는다. native/binding 전체 30개와 순수 approval 23개가 통과했다. root가 native summary의 CRLF 중복 변환을 실패 시험으로 재현해 수정했다(`target/imap-setup-linebreak-red.log`, `target/imap-setup-final-green.log`). 독립 재검토에서 추가 HIGH/MEDIUM 결함은 발견되지 않았다. 자동 검토는 사람 검토를 대체하지 않는다.
+
+`scripts/check_all.py` 종료 코드 **0**: **637개**(문서 29·빌드 도구 63·Rust 545), 전체 build/test/fmt/Clippy·아키텍처·기준 문서·추적 검사 통과. 로그 `target/protected-setup-full-check.log`, SHA-256 `E00ECB3974F2A54A643CA6B3EE8BA00FEC31D7C4048D44F7815E6CF88F28C2BB`, source hash `d8f57155163c02d90f3f58b9eabd78f8d2d009b7c6e0461bdb97e544cb393a29`. Linux x86_64/macOS arm64 all-target Clippy 종료 코드 0(`target/protected-setup-linux-check.log`, `target/protected-setup-macos-check.log`). Windows 전용 시각/시험 helper의 cfg 누락은 교차 검사에서 수정했다. 실제 Mac 실행은 아니다.
+
+검사 뒤 CNG 제품 키는 기존 서버 **1개**, names hash `3B692D49F1D08F7D3442806CF17694CDC02AF36B44839930FC18EB9C83CE9D4D`로 유지됐다. 새 제3자 package/version은 없다. 실제 사용자 창·Hello·비밀번호·계정 로그인·메일 발송은 실행하지 않았다. Secrets/승인/계약은 **[사람 검토 필요]**, 보이는 창·IME·접근성은 수동 검증 전이고 전체 제품 AC 완료는 **0개**다. 현재 UI primitive는 아직 CLI/Core 설정 실행 경로에 노출하지 않았다.
+
+M5-06의 보호 입력 선행 부분을 진행 중으로 기록한다. 카드 정의와 선행은 보존하고 SMTP 입력·CLI/Core 종단·수동 검토가 남았음을 표시한다. 다음은 v4 보존 → v5 setup request/event 저널 → Core·CLI 연결 순서다.

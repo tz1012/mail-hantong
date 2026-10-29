@@ -17,3 +17,9 @@ Windows API는 Microsoft의 `windows-sys 0.61.2`를 선택해 필요한 Foundati
 IMAP와 SMTP는 MailCredentialSlot의 독립된 비밀을 사용한다. 새 종류는 Windows case-insensitive 경로 충돌을 피하는 v2 base32hex 파일명을 쓰고 기존 종류 이름/경로는 자동 변경하지 않는다. 공개 resolver는 mail slot만 받으며 plaintext getter나 임의 AUTH callback은 추가하지 않는다. 세부 동작은 [비밀 계약](../contracts/secrets.md)을 따른다. 기존 네 종류의 raw account 파일명은 case-safe 이전 결정 전 새 제품 인증 경로에서 사용하지 않는다. 검토 과정에서 발견한 호환성/격리 과제로 추적하며 사람 검토 의무를 유지한다.
 
 제품 AUTH는 [메일 자격 증명 envelope](../contracts/mail-credentials.md)에 endpoint 전체와 exact settings_version을 결속한다. 해시나 평문 sidecar 없이 검증된 필드의 bounded canonical prefix를 DPAPI 내부에서 비교한다. 이를 위해 Secrets→Domain 의존을 허용하고 Domain은 OS/Secrets/Store를 참조하지 않는다. 설정을 바꾼 뒤 이전 암호가 다른 서버로 자동 전달되는 경로를 차단하며, 비밀 사용은 향후 Secrets 소유 TLS broker 안에서만 구현한다.
+
+## INST-05 네이티브 보호 입력
+
+Core 소유 native UI의 같은 thread에 Secrets가 표준 password EDIT child를 생성·소유하는 안을 선택한다. Secrets 자체에 별도 top-level 설정 창을 만들면 언어·테마·DPI·취소·동시 창 gate를 중복하게 된다. arbitrary 기존 EDIT에서 값을 읽는 안은 대상과 수명을 보장하기 어렵다. 선택한 경로는 parent HWND를 배치 locator로 검증하고 plan→child→pending의 불변 target/nonce를 유지한다. HWND나 UI 클릭은 권한이 아니며 Hello 확인 결과는 별도로 결속한다.
+
+기존 windows-sys 0.61.2의 UI/Controls/Shell/Threading feature를 사용한다. UI는 plaintext API를 받지 않고, Secrets는 volatile-wiped UTF-16/UTF-8 buffer로 읽어 endpoint-bound DPAPI 저장에만 사용한다. Windows EDIT/IME 내부 메모리까지 지운다고 보장하지 않으며 같은 사용자/프로세스 침해를 격리한다고 주장하지 않는다. API·시간·정리·실패 경계와 Microsoft 근거는 [보호 입력 계약](../contracts/protected-mail-input.md)에 둔다.

@@ -241,17 +241,39 @@ pub enum ReviewIntent {
     Expired,
     Unavailable,
 }
+/// Immutable, validated display data. This trait carries no approval authority.
+pub trait ReviewSnapshot: Clone + Eq + fmt::Debug {
+    fn created_at_utc_ms(&self) -> i64;
+    fn expires_at_utc_ms(&self) -> i64;
+}
+impl ReviewSnapshot for RegistrationReview {
+    fn created_at_utc_ms(&self) -> i64 {
+        self.created_at_utc_ms()
+    }
+    fn expires_at_utc_ms(&self) -> i64 {
+        self.expires_at_utc_ms()
+    }
+}
+impl ReviewSnapshot for crate::AccountSetupReview {
+    fn created_at_utc_ms(&self) -> i64 {
+        self.created_at_utc_ms()
+    }
+    fn expires_at_utc_ms(&self) -> i64 {
+        self.expires_at_utc_ms()
+    }
+}
+
 #[derive(Debug)]
-pub struct ReviewModel {
-    review: RegistrationReview,
+pub struct ReviewModel<R: ReviewSnapshot = RegistrationReview> {
+    review: R,
     presentation: Presentation,
     state: ReviewState,
     last_utc_ms: i64,
     last_elapsed: Duration,
 }
-impl ReviewModel {
-    pub fn new(review: RegistrationReview, presentation: Presentation) -> Self {
-        let last_utc_ms = review.created_at_utc_ms;
+impl<R: ReviewSnapshot> ReviewModel<R> {
+    pub fn new(review: R, presentation: Presentation) -> Self {
+        let last_utc_ms = review.created_at_utc_ms();
         Self {
             review,
             presentation,
@@ -260,7 +282,7 @@ impl ReviewModel {
             last_elapsed: Duration::ZERO,
         }
     }
-    pub fn review(&self) -> &RegistrationReview {
+    pub fn review(&self) -> &R {
         &self.review
     }
     pub fn presentation(&self) -> &Presentation {
@@ -271,7 +293,7 @@ impl ReviewModel {
     }
     /// The native renderer calls this after rendering the matching immutable data.
     /// Matching data alone does not prove that a human saw it or approved it.
-    pub fn paint_completed(&mut self, displayed: &RegistrationReview) -> bool {
+    pub fn paint_completed(&mut self, displayed: &R) -> bool {
         if self.state != ReviewState::AwaitingPaint || displayed != &self.review {
             return false;
         }
@@ -296,7 +318,7 @@ impl ReviewModel {
             return ReviewIntent::None;
         }
         if now_utc_ms < self.last_utc_ms
-            || now_utc_ms >= self.review.expires_at_utc_ms
+            || now_utc_ms >= self.review.expires_at_utc_ms()
             || elapsed < self.last_elapsed
             || elapsed >= MAX_REVIEW_ELAPSED
         {

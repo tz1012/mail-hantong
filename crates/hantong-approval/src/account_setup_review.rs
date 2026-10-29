@@ -5,7 +5,7 @@ use hantong_domain::{
     account_provisioning::NewImapAccountDraft,
     mail_connection::{Authentication, ImapEndpointConfig, TlsMode},
 };
-use std::{fmt, time::Duration};
+use std::fmt;
 
 const MAX_LIFETIME_MS: i64 = 300_000;
 
@@ -27,7 +27,6 @@ impl fmt::Debug for AccountSetupReview {
 }
 
 impl AccountSetupReview {
-    #[allow(clippy::too_many_arguments)]
     pub fn new(
         draft: NewImapAccountDraft,
         endpoint: ImapEndpointConfig,
@@ -83,9 +82,6 @@ impl AccountSetupReview {
     pub fn expires_at_utc_ms(&self) -> i64 {
         self.expires_at_utc_ms
     }
-    pub fn lifetime(&self) -> Duration {
-        Duration::from_millis((self.expires_at_utc_ms - self.created_at_utc_ms) as u64)
-    }
 }
 
 fn escaped(value: &str) -> String {
@@ -94,7 +90,7 @@ fn escaped(value: &str) -> String {
         match ch {
             '\\' => out.push_str("\\\\"),
             '"' => out.push_str("\\\""),
-            '\u{2028}' | '\u{2029}' => out.push(' '),
+            '\u{2028}' | '\u{2029}' => out.push_str(&format!("\\u{{{:04X}}}", ch as u32)),
             '\u{061c}'
             | '\u{200e}'
             | '\u{200f}'
@@ -123,13 +119,14 @@ pub fn setup_summary(review: &AccountSetupReview, language: Language) -> String 
         TlsMode::StarttlsRequired => setup_text(language, SetupTextKey::Starttls),
     };
     format!(
-        "{}: {}\n{}: {}\n{}: {}:{}\n{}: {}\n{}: {}\n{}: {}",
+        "{}: \"{}\"\r\n{}: \"{}\"\r\n{}: \"{}\"\r\n{}: {}\r\n{}: {}\r\n{}: \"{}\"\r\n{}: {}",
         setup_text(language, SetupTextKey::DisplayName),
         display,
         setup_text(language, SetupTextKey::Color),
         color,
         setup_text(language, SetupTextKey::Server),
         escaped(e.host()),
+        setup_text(language, SetupTextKey::Port),
         e.port(),
         setup_text(language, SetupTextKey::Tls),
         tls,
@@ -150,7 +147,7 @@ mod tests {
         AccountSetupReview::new(d, e, [1; 32], [2; 32], [3; 32], 1, 300001).unwrap()
     }
     #[test]
-    fn setup_review_rejects_zero_ids_and_bad_lifetime() {
+    fn inst05_setup_review_rejects_zero_ids_and_bad_lifetime() {
         let r = review(None);
         assert_eq!(
             AccountSetupReview::new(
@@ -178,10 +175,217 @@ mod tests {
         );
     }
     #[test]
-    fn setup_summary_escapes_untrusted_fields_and_omits_secret_material() {
+    fn inst05_setup_summary_escapes_untrusted_fields_and_omits_secret_material() {
         let r = review(Some("A\"\\\u{202e}"));
         let s = setup_summary(&r, Language::En);
         assert!(s.contains("A\\\"\\\\\\u{202E}"));
         assert!(!s.contains("payload_hash") && !s.contains("nonce"));
+    }
+    #[test]
+    fn inst05_rejects_all_zero_bindings_and_invalid_times_or_endpoint() {
+        let r = review(None);
+        for (request, hash, nonce) in [
+            ([0; 32], [2; 32], [3; 32]),
+            ([1; 32], [0; 32], [3; 32]),
+            ([1; 32], [2; 32], [0; 32]),
+        ] {
+            assert_eq!(
+                AccountSetupReview::new(
+                    r.draft.clone(),
+                    r.endpoint.clone(),
+                    request,
+                    hash,
+                    nonce,
+                    1,
+                    2
+                ),
+                Err(hantong_contracts::ErrorCode::InvalidInput)
+            );
+        }
+        for (created, expires) in [
+            (0, 1),
+            (-1, 1),
+            (1, 1),
+            (2, 1),
+            (1, i64::MIN),
+            (1, 300002),
+            (i64::MAX, i64::MAX),
+        ] {
+            assert_eq!(
+                AccountSetupReview::new(
+                    r.draft.clone(),
+                    r.endpoint.clone(),
+                    [1; 32],
+                    [2; 32],
+                    [3; 32],
+                    created,
+                    expires
+                ),
+                Err(hantong_contracts::ErrorCode::InvalidInput)
+            );
+        }
+        assert!(
+            AccountSetupReview::new(
+                r.draft.clone(),
+                r.endpoint.clone(),
+                [1; 32],
+                [2; 32],
+                [3; 32],
+                i64::MAX - 300000,
+                i64::MAX
+            )
+            .is_ok()
+        );
+        assert!(
+            AccountSetupReview::new(
+                r.draft.clone(),
+                r.endpoint.clone(),
+                [1; 32],
+                [2; 32],
+                [3; 32],
+                i64::MAX - 1,
+                i64::MAX
+            )
+            .is_ok()
+        );
+        let version_two = MailConnectionConfig::from_json(br#"{"schema_version":1,"account_id":"acct","imap":{"settings_version":2,"host":"imap.example","port":993,"tls":"implicit_tls","login_name":"user","authentication":"app_password"}}"#).unwrap().imap().clone();
+        assert_eq!(
+            AccountSetupReview::new(
+                r.draft.clone(),
+                version_two,
+                [1; 32],
+                [2; 32],
+                [3; 32],
+                1,
+                2
+            ),
+            Err(hantong_contracts::ErrorCode::InvalidInput)
+        );
+        let oauth = MailConnectionConfig::from_json(br#"{"schema_version":1,"account_id":"acct","imap":{"settings_version":1,"host":"imap.example","port":993,"tls":"implicit_tls","login_name":"user","authentication":"oauth2"}}"#).unwrap().imap().clone();
+        assert_eq!(
+            AccountSetupReview::new(r.draft, oauth, [1; 32], [2; 32], [3; 32], 1, 2),
+            Err(hantong_contracts::ErrorCode::InvalidInput)
+        );
+    }
+    #[test]
+    fn acc03_each_binding_change_is_distinct_and_debug_redacts_target() {
+        let base = review(Some("Name"));
+        let other = NewImapAccountDraft::new("other".into(), Some("Name".into()), None).unwrap();
+        let variants = [
+            AccountSetupReview::new(
+                other,
+                base.endpoint.clone(),
+                [1; 32],
+                [2; 32],
+                [3; 32],
+                1,
+                300001,
+            )
+            .unwrap(),
+            AccountSetupReview::new(
+                base.draft.clone(),
+                base.endpoint.clone(),
+                [4; 32],
+                [2; 32],
+                [3; 32],
+                1,
+                300001,
+            )
+            .unwrap(),
+            AccountSetupReview::new(
+                base.draft.clone(),
+                base.endpoint.clone(),
+                [1; 32],
+                [4; 32],
+                [3; 32],
+                1,
+                300001,
+            )
+            .unwrap(),
+            AccountSetupReview::new(
+                base.draft.clone(),
+                base.endpoint.clone(),
+                [1; 32],
+                [2; 32],
+                [4; 32],
+                1,
+                300001,
+            )
+            .unwrap(),
+            AccountSetupReview::new(
+                base.draft.clone(),
+                base.endpoint.clone(),
+                [1; 32],
+                [2; 32],
+                [3; 32],
+                2,
+                300002,
+            )
+            .unwrap(),
+        ];
+        assert!(variants.iter().all(|candidate| candidate != &base));
+        assert_eq!(base.clone(), base);
+        for draft in [
+            NewImapAccountDraft::new("acct".into(), Some("Other name".into()), None).unwrap(),
+            NewImapAccountDraft::new("acct".into(), Some("Name".into()), Some("#123456".into()))
+                .unwrap(),
+        ] {
+            let mut changed = base.clone();
+            changed.draft = draft;
+            assert_ne!(changed, base);
+        }
+        for (host, port, tls, login) in [
+            ("other.example", 993, "implicit_tls", "user"),
+            ("imap.example", 994, "implicit_tls", "user"),
+            ("imap.example", 993, "starttls_required", "user"),
+            ("imap.example", 993, "implicit_tls", "other-user"),
+        ] {
+            let json = format!(
+                r#"{{"schema_version":1,"account_id":"acct","imap":{{"settings_version":1,"host":"{host}","port":{port},"tls":"{tls}","login_name":"{login}","authentication":"app_password"}}}}"#
+            );
+            let mut changed = base.clone();
+            changed.endpoint = MailConnectionConfig::from_json(json.as_bytes())
+                .unwrap()
+                .imap()
+                .clone();
+            assert_ne!(changed, base);
+        }
+        let mut changed = base.clone();
+        changed.expires_at_utc_ms -= 1;
+        assert_ne!(changed, base);
+        let debug = format!("{base:?}");
+        for value in ["acct", "Name", "imap.example", "user"] {
+            assert!(!debug.contains(value));
+        }
+    }
+    #[test]
+    fn inst05_summary_preserves_unicode_and_escapes_boundaries() {
+        let r = review(Some("한글 RTL אב\"\\\u{2028}\u{2029}\u{202e}"));
+        let s = setup_summary(&r, Language::En);
+        assert!(s.contains("\"한글 RTL אב\\\"\\\\\\u{2028}\\u{2029}\\u{202E}\""));
+        assert!(s.contains("Server: \"imap.example\""));
+        assert!(s.contains("Port: 993"));
+    }
+    #[test]
+    fn inst05_resources_are_nonempty_and_bilingual() {
+        use std::collections::BTreeSet;
+        let expected: BTreeSet<_> = SetupTextKey::ALL.iter().map(|key| key.as_str()).collect();
+        assert_eq!(expected.len(), SetupTextKey::ALL.len());
+        for (language, source) in [
+            (Language::En, include_str!("../resources/setup-en.txt")),
+            (Language::Ko, include_str!("../resources/setup-ko.txt")),
+        ] {
+            let mut actual = BTreeSet::new();
+            for line in source.lines() {
+                let (key, value) = line.split_once('=').unwrap();
+                assert!(actual.insert(key), "duplicate setup key");
+                assert!(!value.trim().is_empty());
+                assert!(!value.chars().any(char::is_control));
+            }
+            assert_eq!(actual, expected);
+            for key in SetupTextKey::ALL {
+                assert!(!setup_text(language, *key).trim().is_empty());
+            }
+        }
     }
 }

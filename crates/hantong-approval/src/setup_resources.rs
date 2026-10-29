@@ -12,12 +12,19 @@ pub enum SetupTextKey {
     DisplayName,
     Color,
     Server,
+    Port,
     Tls,
     Login,
     Authentication,
     AppPassword,
     ImplicitTls,
     Starttls,
+    Deny,
+    Footer,
+    Reviewing,
+    Expired,
+    Unavailable,
+    VerificationRequired,
 }
 impl SetupTextKey {
     pub const ALL: &'static [Self] = &[
@@ -31,14 +38,21 @@ impl SetupTextKey {
         Self::DisplayName,
         Self::Color,
         Self::Server,
+        Self::Port,
         Self::Tls,
         Self::Login,
         Self::Authentication,
         Self::AppPassword,
         Self::ImplicitTls,
         Self::Starttls,
+        Self::Deny,
+        Self::Footer,
+        Self::Reviewing,
+        Self::Expired,
+        Self::Unavailable,
+        Self::VerificationRequired,
     ];
-    const fn as_str(self) -> &'static str {
+    pub const fn as_str(self) -> &'static str {
         match self {
             Self::Title => "title",
             Self::Introduction => "introduction",
@@ -50,12 +64,19 @@ impl SetupTextKey {
             Self::DisplayName => "display_name",
             Self::Color => "color",
             Self::Server => "server",
+            Self::Port => "port",
             Self::Tls => "tls",
             Self::Login => "login",
             Self::Authentication => "authentication",
             Self::AppPassword => "app_password",
             Self::ImplicitTls => "implicit_tls",
             Self::Starttls => "starttls",
+            Self::Deny => "deny",
+            Self::Footer => "footer",
+            Self::Reviewing => "reviewing",
+            Self::Expired => "expired",
+            Self::Unavailable => "unavailable",
+            Self::VerificationRequired => "verification_required",
         }
     }
 }

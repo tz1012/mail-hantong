@@ -22,6 +22,7 @@ scripts/check-all text eol=lf
 scripts/check-all.ps1 text eol=lf
 .github/workflows/* text eol=lf
 scripts/*.py text eol=lf
+scripts/*.rs text eol=lf
 tests/Build/*.py text eol=lf
 tests/Docs/*.py text eol=lf
 tests/Fakes/** text eol=lf

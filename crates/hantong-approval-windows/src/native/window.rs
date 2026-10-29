@@ -1,17 +1,20 @@
 use super::{
     consent::{ConsentOperation, non_verified_error},
-    presentation::{Colors, os_colors, os_language_is_korean, review_text},
+    dialog::{DialogBinding, DialogReview, DialogVerified},
+    presentation::{Colors, os_colors, os_language_is_korean},
 };
 use crate::{
-    VerifiedRegistration,
+    VerifiedImapSetup, VerifiedRegistration,
     binding::{CapturedReview, utc_ms},
+    setup_binding::{capture_before_verification, input_error, validate_pending, validate_plan},
 };
 use hantong_approval::{
-    EffectiveTheme, Presentation, RegistrationReview, ReviewIntent, ReviewModel, ReviewState,
-    TextKey, text,
+    AccountSetupReview, EffectiveTheme, Presentation, RegistrationReview, ReviewIntent,
+    ReviewModel, ReviewState, SetupTextKey, TextKey, setup_text, text,
 };
 use hantong_contracts::ErrorCode;
 use hantong_domain::config::{Language, Theme};
+use hantong_secrets::{ImapPasswordCapturePlan, PasswordInput, PendingImapCredential};
 use std::{
     cell::RefCell,
     sync::{
@@ -61,6 +64,8 @@ const FOOTER: i32 = 21;
 const VERIFY: i32 = 22;
 const DENY: i32 = 23;
 const CLOSE: i32 = 24;
+const PASSWORD_LABEL: i32 = 25;
+const PASSWORD_INPUT: u16 = 26;
 const TIMER: usize = 1;
 const BUTTONS: [i32; 8] = [ENGLISH, KOREAN, LIGHT, DARK, SYSTEM, VERIFY, DENY, CLOSE];
 
@@ -159,12 +164,15 @@ impl Drop for WindowGuard {
 }
 
 struct State {
-    model: ReviewModel,
-    binding: Option<CapturedReview>,
+    model: ReviewModel<DialogReview>,
+    binding: Option<DialogBinding>,
+    password_plan: Option<ImapPasswordCapturePlan>,
+    password_input: Option<PasswordInput>,
+    pending: Option<PendingImapCredential>,
     cancellation: Receiver<()>,
     operation: Option<ConsentOperation>,
     cleanup: Option<ConsentOperation>,
-    outcome: Option<Result<VerifiedRegistration, ErrorCode>>,
+    outcome: Option<Result<DialogVerified, ErrorCode>>,
     controls: Vec<(i32, HWND)>,
     colors: Colors,
     background: OwnedBrush,
@@ -176,7 +184,8 @@ struct State {
 }
 impl State {
     fn new(
-        binding: CapturedReview,
+        binding: DialogBinding,
+        password_plan: Option<ImapPasswordCapturePlan>,
         language: Option<Language>,
         theme: Theme,
         cancellation: Receiver<()>,
@@ -187,8 +196,11 @@ impl State {
             Presentation::new(language, theme, os_language_is_korean(), dark, contrast);
         let colors = Colors::for_presentation(&presentation);
         Ok(Self {
-            model: ReviewModel::new(binding.review.clone(), presentation),
+            model: ReviewModel::new(binding.review(), presentation),
             binding: Some(binding),
+            password_plan,
+            password_input: None,
+            pending: None,
             cancellation,
             operation: None,
             cleanup: None,
@@ -209,9 +221,14 @@ impl State {
             .find(|(candidate, _)| *candidate == id)
             .map(|(_, hwnd)| *hwnd)
     }
-    fn finish(&mut self, result: Result<VerifiedRegistration, ErrorCode>) {
+    fn finish(&mut self, result: Result<DialogVerified, ErrorCode>) {
         // Mark the review dead before dropping/canceling an active OS operation.
         self.model.cancel();
+        self.pending.take();
+        self.password_plan.take();
+        if let Some(input) = self.password_input.take() {
+            let _ = input.cancel();
+        }
         if let Some(operation) = self.operation.take() {
             operation.cancel();
             self.cleanup = Some(operation);
@@ -227,7 +244,7 @@ impl State {
         }
         let binding = self.binding.as_ref().ok_or(ErrorCode::InternalError)?;
         let now = utc_ms()?;
-        if self.model.check_expiry(now, binding.started.elapsed()) == ReviewIntent::Expired {
+        if self.model.check_expiry(now, binding.started().elapsed()) == ReviewIntent::Expired {
             self.finish(Err(ErrorCode::ApprovalExpired));
             return Ok(true);
         }
@@ -245,7 +262,8 @@ impl State {
                     binding.validate(self.model.review())?;
                     // This is the only product issuance branch. Clicks/intents
                     // never enter it: only the private OS completion channel does.
-                    self.finish(binding.into_verified());
+                    let result = binding.into_verified(self.pending.take());
+                    self.finish(result);
                 }
                 Ok(other) => self.finish(Err(non_verified_error(other))),
                 Err(error) => self.finish(Err(error)),
@@ -276,16 +294,10 @@ impl State {
                 binding.validate(self.model.review())?;
                 match self
                     .model
-                    .begin_verification(utc_ms()?, binding.started.elapsed())
+                    .begin_verification(utc_ms()?, binding.started().elapsed())
                 {
                     ReviewIntent::RequestVerification => {
-                        self.operation = Some(ConsentOperation::start(
-                            hwnd,
-                            text(
-                                self.model.presentation().language(),
-                                TextKey::VerificationRequired,
-                            ),
-                        )?);
+                        self.start_verification(hwnd)?;
                         if self
                             .operation
                             .as_ref()
@@ -307,15 +319,51 @@ impl State {
         self.refresh(hwnd)?;
         Ok(false)
     }
+    fn start_verification(&mut self, hwnd: HWND) -> Result<(), ErrorCode> {
+        let language = self.model.presentation().language();
+        match self.model.review() {
+            DialogReview::Registration(_) => {
+                self.operation = Some(ConsentOperation::start(
+                    hwnd,
+                    text(language, TextKey::VerificationRequired),
+                )?);
+            }
+            DialogReview::Imap(review) => {
+                let input = self.password_input.take().ok_or(ErrorCode::InternalError)?;
+                let (pending, operation) = capture_before_verification(
+                    || {
+                        let pending = input.capture().map_err(input_error)?;
+                        validate_pending(review, &pending)?;
+                        self.binding
+                            .as_ref()
+                            .ok_or(ErrorCode::InternalError)?
+                            .validate(self.model.review())?;
+                        Ok(pending)
+                    },
+                    || {
+                        ConsentOperation::start(
+                            hwnd,
+                            setup_text(language, SetupTextKey::VerificationRequired),
+                        )
+                    },
+                )?;
+                self.pending = Some(pending);
+                self.operation = Some(operation);
+            }
+        }
+        Ok(())
+    }
     fn validate_display(&self, hwnd: HWND) -> Result<(), ErrorCode> {
         if !unsafe { IsWindowVisible(hwnd) }.as_bool() || unsafe { IsIconic(hwnd) }.as_bool() {
             return Err(ErrorCode::ApprovalRequired);
         }
         let body = self.control(REVIEW).ok_or(ErrorCode::InternalError)?;
-        let expected: Vec<u16> =
-            review_text(self.model.review(), self.model.presentation().language())?
-                .encode_utf16()
-                .collect();
+        let expected: Vec<u16> = self
+            .model
+            .review()
+            .summary(self.model.presentation().language())?
+            .encode_utf16()
+            .collect();
         let length = unsafe { GetWindowTextLengthW(body) };
         if length < 0 || length as usize != expected.len() || expected.len() > 32 * 1024 {
             return Err(ErrorCode::InternalError);
@@ -343,7 +391,7 @@ impl State {
         self.surface = OwnedBrush::new(self.colors.surface)?;
         for (id, child) in &self.controls {
             let caption = if *id == REVIEW {
-                review_text(self.model.review(), language)?
+                self.model.review().summary(language)?
             } else {
                 self.caption(*id)
             };
@@ -358,10 +406,19 @@ impl State {
                 );
             }
         }
+        if let Some(input) = &self.password_input {
+            // Only Secrets may access this control's text. It is never in controls.
+            input
+                .set_font(self.font.0.0 as isize)
+                .map_err(input_error)?;
+            input
+                .set_enabled(self.model.state() == ReviewState::Reviewing)
+                .map_err(input_error)?;
+        }
         unsafe {
             SetWindowTextW(
                 hwnd,
-                &HSTRING::from(format!("mail-hantong — {}", text(language, TextKey::Title))),
+                &HSTRING::from(format!("mail-hantong — {}", self.caption(HEADING))),
             )
             .map_err(|_| ErrorCode::InternalError)?;
             if let Some(verify) = self.control(VERIFY) {
@@ -413,6 +470,31 @@ impl State {
         }
     }
     fn caption(&self, id: i32) -> String {
+        if self.model.review().is_setup() {
+            let setup_key = match id {
+                HEADING => Some(SetupTextKey::Title),
+                INTRO => Some(SetupTextKey::Introduction),
+                PASSWORD_LABEL => Some(SetupTextKey::Password),
+                VERIFY => Some(SetupTextKey::VerifyConnect),
+                DENY => Some(SetupTextKey::Deny),
+                FOOTER => Some(SetupTextKey::Footer),
+                STATUS => match self.model.state() {
+                    ReviewState::Reviewing
+                        if self.model.presentation().effective_theme()
+                            != EffectiveTheme::HighContrast =>
+                    {
+                        Some(SetupTextKey::Reviewing)
+                    }
+                    ReviewState::Expired => Some(SetupTextKey::Expired),
+                    ReviewState::Unavailable => Some(SetupTextKey::Unavailable),
+                    _ => None,
+                },
+                _ => None,
+            };
+            if let Some(key) = setup_key {
+                return setup_text(self.model.presentation().language(), key).to_owned();
+            }
+        }
         let key = match id {
             HEADING => TextKey::Title,
             INTRO => TextKey::Introduction,
@@ -480,7 +562,11 @@ fn register_class() -> Result<(), ErrorCode> {
     })
 }
 fn create_controls(hwnd: HWND, state: &mut State) -> Result<(), ErrorCode> {
-    for id in HEADING..=CLOSE {
+    let password_label = state.model.review().is_setup().then_some(PASSWORD_LABEL);
+    for id in (HEADING..=REVIEW)
+        .chain(password_label)
+        .chain(STATUS..=CLOSE)
+    {
         let (class, style) = if id == REVIEW {
             (
                 w!("EDIT"),
@@ -516,6 +602,17 @@ fn create_controls(hwnd: HWND, state: &mut State) -> Result<(), ErrorCode> {
         }
         .map_err(|_| ErrorCode::InternalError)?;
         state.controls.push((id, child));
+        if id == PASSWORD_LABEL {
+            let plan = state.password_plan.take().ok_or(ErrorCode::InternalError)?;
+            let DialogReview::Imap(review) = state.model.review() else {
+                return Err(ErrorCode::InternalError);
+            };
+            validate_plan(review, &plan)?;
+            state.password_input = Some(
+                plan.attach_to_parent(hwnd.0 as isize, PASSWORD_INPUT)
+                    .map_err(input_error)?,
+            );
+        }
     }
     if let Some(body) = state.control(REVIEW) {
         unsafe {
@@ -532,6 +629,7 @@ fn layout(hwnd: HWND, state: &State) -> Result<(), ErrorCode> {
     let width = rect.right.max(p(600));
     let height = rect.bottom.max(p(470));
     let full = width - p(40);
+    let setup = state.model.review().is_setup();
     for (id, child) in &state.controls {
         let (x, y, w, h) = match *id {
             HEADING => (p(20), p(16), full, p(28)),
@@ -543,7 +641,13 @@ fn layout(hwnd: HWND, state: &State) -> Result<(), ErrorCode> {
             LIGHT => (p(124), p(140), p(112), p(36)),
             DARK => (p(244), p(140), p(112), p(36)),
             SYSTEM => (p(364), p(140), p(208), p(36)),
-            REVIEW => (p(20), p(190), full, (height - p(335)).max(p(100))),
+            REVIEW => (
+                p(20),
+                p(190),
+                full,
+                (height - p(if setup { 430 } else { 335 })).max(p(100)),
+            ),
+            PASSWORD_LABEL => (p(20), height - p(230), full, p(28)),
             STATUS => (p(20), height - p(130), full, p(30)),
             FOOTER => (p(20), height - p(98), full, p(32)),
             VERIFY => (p(20), height - p(56), p(270), p(38)),
@@ -555,6 +659,11 @@ fn layout(hwnd: HWND, state: &State) -> Result<(), ErrorCode> {
         // preventing nested color/owner-draw callbacks from borrowing State.
         unsafe { MoveWindow(*child, x, y, w, h, false) }.map_err(|_| ErrorCode::InternalError)?;
     }
+    if let Some(input) = &state.password_input {
+        input
+            .set_bounds(p(20), height - p(198), full, p(36))
+            .map_err(input_error)?;
+    }
     Ok(())
 }
 pub(super) fn run(
@@ -563,18 +672,63 @@ pub(super) fn run(
     theme: Theme,
     cancellation: Receiver<()>,
 ) -> Result<VerifiedRegistration, ErrorCode> {
+    match run_dialog(
+        DialogReview::Registration(review),
+        None,
+        language,
+        theme,
+        cancellation,
+    )? {
+        DialogVerified::Registration(verified) => Ok(*verified),
+        DialogVerified::Imap(_) => Err(ErrorCode::InternalError),
+    }
+}
+
+pub(super) fn run_setup(
+    review: AccountSetupReview,
+    plan: ImapPasswordCapturePlan,
+    language: Option<Language>,
+    theme: Theme,
+    cancellation: Receiver<()>,
+) -> Result<VerifiedImapSetup, ErrorCode> {
+    validate_plan(&review, &plan)?;
+    match run_dialog(
+        DialogReview::Imap(review),
+        Some(plan),
+        language,
+        theme,
+        cancellation,
+    )? {
+        DialogVerified::Imap(verified) => Ok(*verified),
+        DialogVerified::Registration(_) => Err(ErrorCode::InternalError),
+    }
+}
+
+fn run_dialog(
+    review: DialogReview,
+    plan: Option<ImapPasswordCapturePlan>,
+    language: Option<Language>,
+    theme: Theme,
+    cancellation: Receiver<()>,
+) -> Result<DialogVerified, ErrorCode> {
     let _sta = Sta::initialize()?;
     let _dpi = DpiContext::enter();
     register_class()?;
     if !matches!(cancellation.try_recv(), Err(TryRecvError::Empty)) {
         return Err(ErrorCode::ApprovalRequired);
     }
-    let binding = CapturedReview::capture(review)?;
+    let binding = match review {
+        DialogReview::Registration(review) => {
+            DialogBinding::Registration(CapturedReview::capture(review)?)
+        }
+        DialogReview::Imap(review) => DialogBinding::Imap(CapturedReview::capture(review)?),
+    };
     let dpi = unsafe { GetDpiForSystem() }.clamp(96, 768);
     // The allocation outlives CreateWindow, all synchronous/reentrant callbacks,
     // DestroyWindow and WM_NCDESTROY. The WndProc never frees it.
     let state = Box::new(RefCell::new(State::new(
         binding,
+        plan,
         language,
         theme,
         cancellation,
@@ -607,7 +761,9 @@ pub(super) fn run(
         let _ = ShowWindow(hwnd, SW_SHOWNORMAL);
         let _ = UpdateWindow(hwnd);
     }
-    if let Some(body) = state.borrow().control(REVIEW) {
+    if let Some(input) = &state.borrow().password_input {
+        input.focus().map_err(input_error)?;
+    } else if let Some(body) = state.borrow().control(REVIEW) {
         unsafe {
             let _ = SetFocus(Some(body));
         }
@@ -772,7 +928,11 @@ fn handle_message(hwnd: HWND, message: u32, wparam: WPARAM, lparam: LPARAM) -> L
     ) && let Ok(state) = cell.try_borrow()
     {
         let hdc = HDC(wparam.0 as *mut _);
-        let is_body = state.control(REVIEW) == Some(HWND(lparam.0 as *mut _));
+        let is_body = state.control(REVIEW) == Some(HWND(lparam.0 as *mut _))
+            || state
+                .password_input
+                .as_ref()
+                .is_some_and(|input| input.matches_child_hwnd(lparam.0));
         unsafe {
             SetTextColor(hdc, state.colors.text);
             SetBkColor(

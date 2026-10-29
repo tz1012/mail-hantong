@@ -23,7 +23,7 @@ ALLOWED = {
     "hantong-domain": set(),
     "hantong-policy": {"hantong-contracts", "hantong-domain", "hantong-approval"},
     "hantong-approval": {"hantong-contracts", "hantong-domain"},
-    "hantong-approval-windows": {"hantong-contracts", "hantong-domain", "hantong-approval", "hantong-platform"},
+    "hantong-approval-windows": {"hantong-contracts", "hantong-domain", "hantong-approval", "hantong-platform", "hantong-secrets"},
     "hantong-application": {"hantong-contracts", "hantong-domain", "hantong-policy", "hantong-approval", "hantong-outbox"},
     "hantong-outbox": {"hantong-contracts", "hantong-domain"},
     "hantong-ipc-client": {"hantong-contracts", "hantong-platform"},

@@ -29,6 +29,23 @@ def metadata(edges):
 
 
 class ArchitectureTests(unittest.TestCase):
+    def test_INST05_native_input_reaches_secrets_without_client_or_reverse_access(self):
+        self.assertEqual(check_architecture.validate_metadata(metadata([
+            ("hantong-approval-windows", "hantong-secrets", "normal", None),
+            ("hantong-secrets", "hantong-domain", "normal", None),
+        ])), [])
+        for caller in ("hantong-cli", "hantong-ipc-client", "hantong-platform", "hantong-approval"):
+            errors = check_architecture.validate_metadata(metadata([
+                (caller, "hantong-secrets", "normal", None),
+                ("hantong-cli", "hantong-ipc-client", "normal", None),
+                ("hantong-ipc-client", "hantong-platform", "normal", None),
+            ]))
+            self.assertTrue(any("forbidden dependency" in error and caller in error for error in errors))
+        errors = check_architecture.validate_metadata(metadata([
+            ("hantong-secrets", "hantong-approval-windows", "normal", None),
+        ]))
+        self.assertTrue(any("forbidden dependency" in error for error in errors))
+
     def test_INST04_only_core_may_reach_native_approval_issuer(self):
         self.assertEqual(check_architecture.validate_metadata(metadata([
             ("mail-hantong-core", "hantong-approval-windows", "normal", None),

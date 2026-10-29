@@ -93,12 +93,12 @@ class TraceabilityTests(unittest.TestCase):
         (scripts / "native-tools.json").write_text('{"tools": {}}', encoding="utf-8")
         self.assertNotEqual(traceability.source_hash(root), after)
 
-    def test_M004_compiled_tls_fixtures_invalidate_evidence(self):
+    def test_M004_compiled_tls_fixtures_and_native_manifest_invalidate_evidence(self):
         temp, root = self.fixture(); self.addCleanup(temp.cleanup)
         fixtures = root / "crates/a/tests/fixtures"
         fixtures.mkdir(parents=True)
         before = traceability.source_hash(root)
-        for name in ("ca.cert", "end.fullchain", "end.key"):
+        for name in ("ca.cert", "end.fullchain", "end.key", "common-controls.manifest"):
             path = fixtures / name
             path.write_bytes(b"public test fixture")
             after = traceability.source_hash(root)

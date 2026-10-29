@@ -25,7 +25,7 @@ M1-10,진단 내보내기,in_progress,에이전트,M1-07,../contracts/diagnostic
 M1-12,CLI 영어 리소스와 도움말,in_progress,에이전트,M1-06,../../apps/hantong-cli/resources; ../../apps/hantong-cli/build.rs,,,영어 기본·한국어 리소스·빌드 검사 구현; 저장된 cli.language 설정 연동 남음
 M1-11,코어 자동 시작과 수명 관리,in_progress,에이전트,M1-01,../contracts/core-lifecycle.md; ../adr/ADR-021-core-lifecycle.md; ../../crates/hantong-platform/src/windows_autostart.rs; ../../crates/hantong-application/src/lifecycle.rs,,,격리 HKCU 등록/해제/소유 충돌 시험8개·재시작 예산4개 통과; 실제 supervisor/설치/알림/유지보수 연결 남음
 M1-99,다음 마일스톤 계획 갱신,not_started,사람,M1 나머지 전부,,,,
-M2-01,IMAP·SMTP 계정 설정 모델,in_progress,에이전트,"M1-04, M1-03, ADR-006",../contracts/mail-connection.md; ../contracts/mail-connection-store.md; ../adr/ADR-006-mail-libraries.md; ../../crates/hantong-domain/src/mail_connection.rs; ../contracts/account-provisioning.md; ../../crates/hantong-store/src/account_provisioning.rs,,,독립 endpoint·v4 CAS/관측·결속 자격 증명·IMAP/SMTP TLS/AUTH·새 계정 원자 저장 전이 구현; Domain 25·Store 109개 및 603개 전체/cross 검사 통과; 보호 입력/설정 UI·사람 검토 남음
+M2-01,IMAP·SMTP 계정 설정 모델,in_progress,에이전트,"M1-04, M1-03, ADR-006",../contracts/mail-connection.md; ../contracts/mail-connection-store.md; ../adr/ADR-006-mail-libraries.md; ../../crates/hantong-domain/src/mail_connection.rs; ../contracts/account-provisioning.md; ../../crates/hantong-store/src/account_provisioning.rs; ../contracts/protected-mail-input.md; ../contracts/imap-setup-review.md,,,설정/새 계정 저장·IMAP/SMTP probe·Secrets 보호 입력/native 확인 구현; 637개 전체 및 교차 검사 통과. Core/CLI 설정 실행 연결·실계정·사람 검토 남음
 M2-02,CAPABILITY 탐지,in_progress,에이전트,M2-01,,,,인증 후 IMAP CAPABILITY snapshot 구현; rev1/rev2 모드·미지원 기능 대상 시험 통과; SMTP 확장·공통 ProviderCapabilities·대체 경로/UI 남음
 M2-03,폴더 동기화와 특수 폴더,not_started,에이전트,M2-02,,,,
 M2-04,UID 증분 동기화,not_started,에이전트,M2-03,,,,
@@ -72,7 +72,7 @@ M5-02,승인 요청·만료·소비,not_started,사람,M5-01,,,,
 M5-03,승인 발급 경로 제한,not_started,사람,M5-02,,,,
 M5-04,승인 도우미 창,in_progress,사람,"M5-02, ADR-015, ADR-019",../contracts/registration-review.md; ../../crates/hantong-approval-windows,,,기본 CLI 등록용 Core 소유 창 기반 구현; 발송 검토 UI와 실제 접근성/시각 검증·사람 검토 남음
 M5-05,Windows Hello 연동,in_progress,사람,M5-04,../adr/ADR-015-human-verification.md; ../contracts/registration-review.md,,,Core 소유 HWND의 Hello interop·일회 결과 결속 구현; 실제 Hello 및 발송 승인 검증·사람 검토 남음
-M5-06,비밀 입력 경로,not_started,사람,M5-04,,,,
+M5-06,비밀 입력 경로,in_progress,사람,M5-04,PROGRESS.md; ../contracts/protected-mail-input.md; ../contracts/imap-setup-review.md,,,M2-01 계정 설정 선행 부분으로 Secrets 소유 IMAP 입력·확인 결속 구현; 637개 전체/교차 검사. SMTP·CLI/Core 종단·실제 창/IME·사람 검토 남음; 카드 정의/선행 보존
 M5-07,TOTP 대체 승인 (P1),not_started,사람,"M5-04, M5-05, ADR-015",,,,
 M5-08,승인 위장 시험,not_started,사람,M5-05,,,,
 M5-09,발송 실행 연결,not_started,사람,"M5-03, M5-05, M5-08, M4-08",,,,

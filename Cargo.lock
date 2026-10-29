@@ -359,6 +359,7 @@ dependencies = [
  "hantong-contracts",
  "hantong-domain",
  "hantong-platform",
+ "hantong-secrets",
  "tokio",
  "windows",
  "windows-future",

@@ -1,4 +1,6 @@
 use std::{collections::BTreeSet, fs};
+#[path = "../../scripts/windows_manifest.rs"]
+mod windows_manifest;
 
 fn keys(path: &str) -> BTreeSet<String> {
     let mut keys = BTreeSet::new();
@@ -10,6 +12,7 @@ fn keys(path: &str) -> BTreeSet<String> {
     keys
 }
 fn main() {
+    windows_manifest::embed_common_controls_manifest();
     let en = keys("resources/en.txt");
     assert_eq!(en, keys("resources/ko.txt"));
     for key in [

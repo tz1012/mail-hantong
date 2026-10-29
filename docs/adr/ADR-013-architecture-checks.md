@@ -33,3 +33,5 @@ M2-01 보완(2026-10-30 연속 개발 위임): Windows Store→Platform 의존�
 M2-01 자격 증명 결속 보완: Secrets→Domain을 허용하여 검증된 endpoint를 암호문 안의 결속 정보와 대조한다. Domain→Secrets/Store는 계속 금지한다. Secrets→Store 역방향 의존이나 외부 plaintext callback은 만들지 않는다. 이 변경도 허용/금지 방향 시험과 사람 보안 검토 대상이다.
 
 package 경계, IPC/GUI 구조, 테스트 지원 package, ADR-003/008/010/019 결정이 바뀌면 허용표와 테스트를 함께 갱신한다. 사람 검토 없이 이 검사를 완화하거나 전체 보안 통과로 표시하지 않는다.
+
+INST-05 보호 입력 보완: Core 전용 native 승인/설정 UI에서 Secrets-owned password EDIT와 opaque pending을 사용하도록 approval-windows→Secrets 단방향 edge를 허용한다. 순수 approval 모델·CLI·IPC client·Platform은 Secrets를 의존하지 않는다. Secrets→approval-windows 역방향도 금지한다. UI는 비밀번호 bytes를 읽지 않고 Secrets가 소유한 child의 표시/배치와 소비형 capture만 요청한다. 허용/금지 방향 회귀 시험을 함께 유지한다.

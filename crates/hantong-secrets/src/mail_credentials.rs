@@ -145,18 +145,41 @@ impl SecretStore {
         binding: Binding<'_>,
         reader: R,
     ) -> Result<SecretHandle, SecretError> {
-        let prefix = binding.prefix(account)?;
+        // Reject an invalid target before consuming any caller-owned reader.
+        binding.prefix(account)?;
         let secret = SensitiveBuffer::read_limited(reader, binding.limit())?;
         if !binding.valid_credential(secret.as_slice()) {
             return Err(SecretError::InvalidCredential);
         }
+        self.store_bound_mail_bytes(account, binding, secret.as_slice())
+    }
+
+    pub(super) fn store_pending_imap_bytes(
+        &self,
+        account: &str,
+        endpoint: &ImapEndpointConfig,
+        bytes: &[u8],
+    ) -> Result<SecretHandle, SecretError> {
+        self.store_bound_mail_bytes(account, endpoint.into(), bytes)
+    }
+
+    fn store_bound_mail_bytes(
+        &self,
+        account: &str,
+        binding: Binding<'_>,
+        bytes: &[u8],
+    ) -> Result<SecretHandle, SecretError> {
+        let prefix = binding.prefix(account)?;
+        if !binding.valid_credential(bytes) {
+            return Err(SecretError::InvalidCredential);
+        }
         // Allocate once before copying any secret; all copied plaintext is wiped on Drop.
-        let mut envelope = SensitiveBuffer(Vec::with_capacity(prefix.len() + 4 + secret.0.len()));
+        let mut envelope = SensitiveBuffer(Vec::with_capacity(prefix.len() + 4 + bytes.len()));
         envelope.0.extend_from_slice(&prefix);
         envelope
             .0
-            .extend_from_slice(&(secret.0.len() as u32).to_be_bytes());
-        envelope.0.extend_from_slice(secret.as_slice());
+            .extend_from_slice(&(bytes.len() as u32).to_be_bytes());
+        envelope.0.extend_from_slice(bytes);
         validate_path(&self.root)?;
         let kind = SecretKind::Mail(binding.slot());
         let handle = self.handle(account, kind);

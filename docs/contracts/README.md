@@ -32,6 +32,8 @@
 | `accounts-read.md` | 계정 표시 DTO·범위 한정 DB 조회·엄격한 CLI 응답 검증 | 실제 인증·Store·응답 decoder 통합 시험, 사람 검토 필요 |
 | `policy-read.md` | 등록별 읽기 허용·단조 시계 호출 한도·재시작 의미 | 정책/실제 연결 시험, 사람 검토 필요 |
 | `account-provisioning.md` | 새 IMAP 계정/설정 원자 생성·첫 probe 결과 전이 | 구현 기준, 사람 검토 필요 |
+| `protected-mail-input.md` | Secrets 소유 password EDIT·불투명 pending·설정 확인 결속 | 구현 중, 실제 UI/사람 검토 전 |
+| `imap-setup-review.md` | 새 IMAP 설정 snapshot·영/한 표시·Hello 확인 결속 | 구현 중, 실제 UI/사람 검토 전 |
 | `mail-connection.md`, `mail-connection-store.md` | 독립 IMAP/SMTP 설정·v4 저장/CAS/중복/관측 | 모델·저장·v4 이전 검증, 설정 화면 전 |
 | `mail-credentials.md` | endpoint 전체·버전에 결속한 DPAPI 자격 증명 | Windows 저장/결속 대상 시험·독립 검토 통과, TLS/AUTH 연결 전 |
 | `smtp-probe.md` | Secrets 내부 일회성 TLS/AUTH 검사·수신/시간 제한 | 실제 DPAPI+in-memory TLS 대상 검증, GUI·IPC 미연결 |
