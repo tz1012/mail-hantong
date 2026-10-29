@@ -9,9 +9,9 @@
 | 항목 | 상태와 근거 |
 | --- | --- |
 | 기준 자료 | 사용자 승인으로 채택한 [Markdown 기준 요건](../requirements/README.md): 요건 170개·1단계 P0 144개·문장별 AC ID 341개. 작업 카드 정의 151개는 보존한다. |
-| 현재 카드 | **M6-02/CLI-15 기존 프로필 계정 범위 갱신 준비**. M9-01의 IMAP 단일 시도·명시 재개를 자동 검증했고, 별도 사람 확인을 통한 기본 CLI 권한 갱신으로 이어간다. |
-| 최신 검증 | **715개 통과**(문서 29·빌드 도구 63·Rust 623). 전체 build/test/fmt/Clippy·의존/문서/추적 검사 및 Linux x86_64·macOS arm64 교차 Clippy 통과. 2026-10-30 명시 재개 snapshot의 로그·hash와 이전 일시 실패 기록은 아래에 있다. 실제 Mac 실행·전체 기능 완료를 뜻하지 않는다. |
-| 제품 구현 | Rust workspace·영/한 CLI·Windows 코어/IPC·DPAPI·SQLCipher·설정 검증·감사·기본 등록/프로필·권한이 있는 계정 목록 조회·IMAP/SMTP TLS/AUTH probe·CI/추적 도구 구현. 신규 IMAP 설정과 중단/실패 후 명시 재개의 보호 입력·사람 확인·일회 진단을 연결했다. 발송은 차단하며 기존 프로필 범위 갱신·실제 메일 수신·전체 GUI·설치 패키지는 미완료다. |
+| 현재 카드 | **M2-02 서버 기능 공통 타입·M2-03 IMAP 폴더 탐색 준비**. 기본 CLI의 별도 사람 확인·계정 범위 갱신과 v7 중단 복구를 자동 검증하고 메일 수신의 선행 경계로 이어간다. |
+| 최신 검증 | **766개 통과**(문서 29·빌드 도구 63·Rust 674). 전체 build/test/fmt/Clippy·의존/문서/추적 검사 및 Linux x86_64·macOS arm64 교차 Clippy 통과. 2026-10-30 범위 갱신 snapshot의 로그·hash와 이전 일시 실패 기록은 아래에 있다. 실제 Mac 실행·전체 기능 완료를 뜻하지 않는다. |
+| 제품 구현 | Rust workspace·영/한 CLI·Windows 코어/IPC·DPAPI·SQLCipher·설정 검증·감사·기본 등록/프로필·권한이 있는 계정 목록 조회·IMAP/SMTP TLS/AUTH probe·CI/추적 도구 구현. 신규 IMAP 설정·명시 재개와 기본 CLI 계정 범위 갱신의 보호 확인·중단 복구를 연결했다. 발송은 차단하며 실제 메일 수신·전체 GUI·설치 패키지는 미완료다. |
 | GitHub | 로컬 Git main 저장소를 초기화해 개발 기준선을 기록한다. 공개 저장소 주소·remote·릴리스·패키지 ID는 아직 없음. 빌드 산출물·실행 데이터·에이전트 상태는 제외한다. |
 | 새 사용자 요청 | 진행 상황을 이 문서에 누적하고, GitHub에서 명령어로 설치 및 개발을 시작할 수 있는 경로를 마련한다. 상세 범위는 [공개와 설치 계획](DISTRIBUTION.md)에 기록한다. |
 | 문서 관리 방식 | Markdown을 개발 기준으로 갱신하고 기존 Word는 보관한다. 최신 사용자 지시 “제작 완료까지 일단 묻지말고 진행해”에 따라 일반 구현 판단은 기록하며 연속 진행한다. |
@@ -19,7 +19,7 @@
 | 런타임 결정 | **코어·CLI Rust 확정** — 2026-10-29 사용자 선택, [ADR-001](../adr/ADR-001-core-runtime.md). 비교 실험에서 .NET은 프로세스 시작, Rust는 메모리에 유리했고 검색은 혼재했다. [실측 보고서](RUNTIME-BENCHMARK.md)는 보존하며 제품의 1초 목표는 아직 검증 전이다. |
 | Mac 지원 방향 | 사용자 승인으로 정식 후속 목표에 포함했다. Windows 우선 출시 후 Mac 코어·CLI·최소 승인 도우미부터 제공하고 전체 GUI를 후속 제공한다. 구체적인 단계·일정·패키지는 미정이며 현재 제품은 미구현이다. |
 | 공개 사용 정책 | **[LICENSE Version 1.0](../../LICENSE) 정식 채택** — 개인·회사 내부 업무용 사용, 수정본 비공개 및 원본·수정본 무료 재배포 허용. 프로그램 판매·유료 제공 금지. 고지 유지·수정 표시·보증과 책임 조항 포함. 저작권자는 **Andrew Cho**, 웹사이트 **https://tzt.kr**, 연락처 **andrew@tzt.kr**이다. [한국어 안내](LICENSING.md), [ADR-016](../adr/ADR-016-license.md). |
-| 다음 제품 작업 | 새 IMAP 계정의 생성/설정 저장 전이 → 보호된 비밀 입력/연결 검사 → 기존 CLI의 명시적 계정 권한 갱신을 이어간다. 실제 계정 로그인은 개발 중 자동 실행하지 않는다. |
+| 다음 제품 작업 | 서버 기능 snapshot의 중복 매핑을 공통 타입으로 연결한 뒤 별도 읽기 전용 IMAP 폴더 탐색·특수 폴더 매핑을 구현한다. 실제 계정 로그인은 개발 중 자동 실행하지 않는다. |
 
 ## 기록 규칙
 
@@ -643,3 +643,27 @@ v6는 과거 v5 이력과 모든 기존 표의 값을 보존한다. Store **148�
 `scripts/check_all.py` 종료 코드 **0**: **715개**(문서 29·빌드 도구 63·Rust 623). 전체 build/test/fmt/Clippy·아키텍처·요건 무결성·추적 검사 통과. 로그 `target/setup-resume-full-check.log`, SHA-256 `631419DF2F03F46FFC8D17409BD53BF5DB1DE5E188454BC3A6D1BF245C09B8EB`, source hash `c64f2ff56bae23e97af3a2e7cda2fee961205e8f7ffef2951f1b36b245c73a0e`. Linux x86_64/macOS arm64 all-target Clippy도 종료 코드 0(`target/setup-resume-linux-check.log`, `target/setup-resume-macos-check.log`). 실제 Mac 실행은 아니다.
 
 CNG 제품 키는 **1개**, names hash `3B692D49F1D08F7D3442806CF17694CDC02AF36B44839930FC18EB9C83CE9D4D`로 유지됐다. 실제 사용자 DB·Core·프로필·Hello·계정·메일을 실행하지 않았다. 새/기존 계정 확인 문구는 영/한으로 구분하지만 실제 화면·접근성 검토는 남아 있다. 계약/보안은 **[사람 검토 필요]**이며 전체 AC 완료는 **0개**다. 다음은 등록 ID·키·서버 pin을 보존하는 기존 default CLI의 명시 계정 범위 갱신이다. DB와 프로필 파일은 단일 원자 트랜잭션으로 묶을 수 없으므로 비활성 준비→보호 파일 배포→활성화와 중단 복구를 별도 계약으로 정의한다.
+
+
+## 2026-10-30 기본 CLI 계정 범위 갱신 (진행 중)
+
+IMAP 재개는 로컬 커밋 `6594a02`로 기록했다. [기본 CLI 범위 갱신 계약](../contracts/client-scope-refresh.md)을 추가하고 기존 request/키 예약과 섞이지 않는 v7 전용 이력을 설계했다. 같은 등록 ID·CNG 키·서버 pin을 보존하고 기존/새 계정 목록을 영/한 신뢰 창에서 검토한다. 읽기 전용 accounts.list/60 rpm만 유지하며 새 도구·쓰기 권한을 추가하지 않는다. `clients refresh`는 현재 계정 snapshot에 대한 새 사람 확인 요청이고 CLI 승인이 아니다.
+
+DB와 파일은 단일 트랜잭션이 아니므로 stage에서 기존 인증을 중지하고, 열린 handle로 exact old 프로필을 요청별 backup에 옮긴 후 새 프로필을 no-replace 발행한다. 그 guard를 유지한 상태에서 정확한 새 grant를 활성화한다. 중단 시 known old/backup/new 조합만 복구하며 불일치는 보존하고 거부한다. 기존 read-only guard를 열어둔 채 별도 DELETE handle로 승격할 수 없다는 Win32 공유 규칙을 공식 문서로 확인했다. 관련 근거와 같은 사용자 공격·전원 차단 내구성 한계는 계약에 기록했다.
+
+Store 초기 12개 시험은 11개 실패와 기존 일반 등록 보존 1개 통과로 시작했다(`target/scope-refresh-store-red.log`). wire/client/server와 dispatch의 구현 전 실패 후 대상 시험이 통과했으며 기존 IPC 전체 110개도 통과했다. CLI 26개, 순수 approval 27개가 통과했다. v6→v7 이전의 실패 시험 2개 후 보존/backup 충돌/실제 DDL rollback 3개가 통과했다(`target/scope-refresh-migration-green.log`). native 파일 교체의 초기 구현에서 recovery 조합 누락·handle access 오류를 수정했고 대상 7개와 approval-windows 37개가 통과했다. 이후 native scope binding/paint/gate 회귀 시험을 추가했으므로 전체 재검증은 남아 있다.
+
+현재 Store 전이 구현과 Core 연결·독립 보안 검토를 진행 중이다. 최신 전체 **715개** 통과는 직전 재개 커밋의 증거이며 현재 v7 변경 전체의 완료를 뜻하지 않는다. 실제 사용자 profile/Hello/계정/메일은 사용하지 않는다. 계약/보안은 **[사람 검토 필요]**다.
+
+
+### 기본 CLI 범위 갱신 최종 자동 검증 snapshot
+
+v7 전용 이력은 원래 등록 request/ID/key/pin/승인 metadata를 보존한다. 새 native 확인 뒤 stage에서 기존 인증을 중지하고, 보호 파일 guard를 유지해 새 grant를 활성화한다. Store **167개**(단위 164·설정 3), 범위 이력 대상 **15개**, Core **46개**가 통과했다. Core의 5개 실패에서 구현을 시작했고, 실패·불확실한 commit 후 다음 효과가 실행되지 않음, 기존 키만 reopen, 초기 등록 복구에서 갱신 제외, queue 중복/종료/명시 복구를 검사했다.
+
+보호 파일 허용 조합(old/new/backup)과 충돌·reader 잠금·guard 수명을 격리 경로에서 검증했다. native 승인 **40개**가 통과했으며 독립 검토에서 발견한 최대 128+128개 계정 snapshot의 화면 상한 문제를 64Ki UTF-16 공통 한도로 수정하고 영/한 최대 입력 회귀를 추가했다. 별도 Store/Core 재검토에서는 추가 HIGH/MEDIUM 결함이 없었다. 이는 사람 보안 검토를 대체하지 않는다.
+
+기존 일반 정책 fixture는 default CLI의 고정 정책을 벗어나는 rpm/tool 변경 시험이므로 전용 표시명으로 분리했다. 제품의 기본 프로필 검증은 완화하지 않았다. 기존 schema 최종값 단언 6개와 테이블 수 17→18, Core 조건문 Clippy 지적을 수정했다. 이전 실패 로그 `target/scope-refresh-store-all.log`, `target/scope-refresh-full-check.log`, `target/scope-refresh-final-full-check.log`는 보존한다.
+
+`scripts/check_all.py` 종료 코드 **0**: **766개**(문서 29·빌드 도구 63·Rust 674). 전체 build/test/fmt/Clippy·아키텍처·요건 무결성·추적 검사 통과. 로그 `target/scope-refresh-verified-full-check.log`, SHA-256 `D05B60D965C39DD4C2F09D2DA38825EC2892A42A343FF534C5EFB3FFC910522B`, source hash `aff19bea5e8bc5f8f8363bb234a939d8c4d5fc18b69ebd238157f9ee56b8fecb`. Linux x86_64/macOS arm64 all-target Clippy 종료 코드 0(`target/scope-refresh-linux-check.log`, `target/scope-refresh-macos-check.log`). 실제 Mac 실행은 아니다.
+
+CNG 제품 키는 **1개**, names hash `3B692D49F1D08F7D3442806CF17694CDC02AF36B44839930FC18EB9C83CE9D4D`로 유지됐다. 실제 사용자 DB·Core·프로필·Hello·계정·메일은 실행하지 않았다. 외부 의존성 추가 없이 구현했고 카드 정의/선행·기준 요건을 보존했다. M6-02/M6-10은 MCP·선택적 도구/프로필 편집·철회 UI·전체 종단 검토가 남아 진행 중이다. 계약/보안은 **[사람 검토 필요]**이며 전체 제품 AC 완료는 **0개**다. 다음은 IMAP 서버 기능의 공통 표현과 별도 폴더 탐색 계약·읽기 경계다.

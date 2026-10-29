@@ -29,6 +29,17 @@ pub(super) async fn show_setup(
         .await
 }
 
+pub(super) async fn show_scope_refresh(
+    review: ScopeRefreshReview,
+    language: Option<Language>,
+    theme: Theme,
+) -> Result<VerifiedScopeRefresh, ErrorCode> {
+    spawn_review(move |cancellation| {
+        window::run_scope_refresh(review, language, theme, cancellation)
+    })
+    .await
+}
+
 async fn spawn_review<T: Send + 'static>(
     run: impl FnOnce(mpsc::Receiver<()>) -> Result<T, ErrorCode> + Send + 'static,
 ) -> Result<T, ErrorCode> {
@@ -82,6 +93,25 @@ mod tests {
         .unwrap();
         assert!(matches!(
             show_setup(review, plan, None, Theme::System).await,
+            Err(ErrorCode::ApprovalRateLimited)
+        ));
+        let refresh = ScopeRefreshReview::new(
+            [1; 32],
+            1,
+            [2; 16],
+            [3; 32],
+            4,
+            5,
+            [6; 32],
+            [7; 32],
+            vec!["acct_a".into()],
+            vec!["acct_b".into()],
+            1000,
+            301000,
+        )
+        .unwrap();
+        assert!(matches!(
+            show_scope_refresh(refresh, None, Theme::System).await,
             Err(ErrorCode::ApprovalRateLimited)
         ));
     }

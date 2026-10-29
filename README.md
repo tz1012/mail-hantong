@@ -46,7 +46,14 @@ python -X utf8 scripts/check_requirements.py
 
 등록 연결 개발 명령은 Windows 11에서 `cargo run -p hantong-cli -- clients register`, `cargo run -p hantong-cli -- clients status <request_id>`, `cargo run -p hantong-cli -- clients verify`입니다. 먼저 코어를 실행해야 합니다. 등록 요청은 코어 소유 창을 열며 사용자의 Windows Hello 확인 후 기본 읽기 전용 프로필을 발행합니다. CLI는 승인하지 않습니다. `verify`는 기존 프로필과 서버 신원만 확인합니다. 현재 등록 권한은 요청 당시 존재하는 계정 snapshot의 accounts.list로 제한되고, 계정이 없으면 권한도 0개입니다. 계정 설정·전체 GUI와 실제 Hello·사람 보안 검토가 남아 있습니다. 개발 자동 시험은 실제 사용자 등록이나 계정 로그인을 실행하지 않습니다.
 
-등록된 계정 조회는 `cargo run -p hantong-cli -- accounts list --json` 또는 `cargo run -p hantong-cli -- --lang ko accounts list`로 실행합니다. `--include-capabilities`를 추가하면 저장된 기능 식별자도 반환합니다. 상호 인증·현재 계정 범위·등록별 호출 한도·감사를 거친 로컬 계정 표시 자료이며, 지금 외부 메일 서버에 접속했다는 뜻은 아닙니다. 빈 권한은 SCOPE_DENIED이고 계정을 자동 추가하지 않습니다. 아래 신규 IMAP 설정은 단일 연결 시도까지 제공하며 전체 설정 마법사·기존 프로필 범위 갱신은 개발 중입니다. 발송 명령은 계속 차단됩니다.
+등록된 계정 조회는 `cargo run -p hantong-cli -- accounts list --json` 또는 `cargo run -p hantong-cli -- --lang ko accounts list`로 실행합니다. `--include-capabilities`를 추가하면 저장된 기능 식별자도 반환합니다. 상호 인증·현재 계정 범위·등록별 호출 한도·감사를 거친 로컬 계정 표시 자료이며, 지금 외부 메일 서버에 접속했다는 뜻은 아닙니다. 빈 권한은 SCOPE_DENIED이고 계정을 자동 추가하지 않습니다. 기본 CLI 범위 갱신의 bounded progress 요청/조회도 다음 명령으로 제공됩니다.
+
+```powershell
+cargo run -p hantong-cli -- clients refresh
+cargo run -p hantong-cli -- clients refresh-status <refresh_id>
+```
+
+범위 갱신은 현재 등록의 최초 요청·키·서버 pin을 보존하고, 현재 등록된 읽기 전용 `accounts.list`와 실제 계정 snapshot을 native 검토 대상으로 삼습니다. revoked 등록을 되살리지 않으며, native 확인·Core stage/activate·보호 프로필 배포의 실제 효과는 사람 검토가 필요한 Windows 경계입니다. 발송 명령은 계속 차단됩니다.
 
 
 신규 IMAP 연결 개발 명령은 다음과 같습니다. 코어를 먼저 실행하고 실제 서버 정보로 바꿉니다. 요청은 세션 ID를 반환하고 코어의 영/한 설정 확인 창을 엽니다. 비밀번호는 그 보호 입력 창에서만 입력하며 Windows Hello 확인 뒤 저장과 1회 TLS/AUTH 진단을 실행합니다. 이 기능은 메일 수신·발송을 수행하지 않습니다.

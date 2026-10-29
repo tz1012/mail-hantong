@@ -3,7 +3,7 @@
 
 //! Core-owned native user verification. Never a CLI/MCP dependency.
 
-use hantong_approval::{AccountSetupReview, RegistrationReview};
+use hantong_approval::{AccountSetupReview, RegistrationReview, ScopeRefreshReview};
 use hantong_contracts::ErrorCode;
 use hantong_domain::config::{Language, Theme};
 use std::fmt;
@@ -49,6 +49,39 @@ pub fn publish_default_profile(bytes: &[u8]) -> Result<PublishedProfile, ErrorCo
     }
 }
 
+/// Publishes a new default profile while retaining the exact old profile as a
+/// request-bound backup until Store activation. This is not authorization.
+pub fn refresh_default_profile(
+    refresh_id: [u8; 32],
+    old_bytes: &[u8],
+    new_bytes: &[u8],
+) -> Result<PublishedProfile, ErrorCode> {
+    #[cfg(windows)]
+    {
+        profile_publication::refresh(refresh_id, old_bytes, new_bytes)
+            .map(|inner| PublishedProfile { _inner: inner })
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (refresh_id, old_bytes, new_bytes);
+        Err(ErrorCode::CapabilityUnsupported)
+    }
+}
+
+/// Removes the inert old-profile backup after Store activation. Failure leaves
+/// the active profile intact and the backup recoverable for explicit cleanup.
+pub fn cleanup_profile_refresh_backup(publication: &mut PublishedProfile) -> Result<(), ErrorCode> {
+    #[cfg(windows)]
+    {
+        profile_publication::cleanup_backup(&mut publication._inner)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = publication;
+        Err(ErrorCode::CapabilityUnsupported)
+    }
+}
+
 /// In-process, single-use result of this crate's owned window and OS verifier.
 /// No constructor, cloning, serialization or boolean conversion is exposed.
 pub struct VerifiedRegistration {
@@ -88,6 +121,34 @@ pub struct VerifiedImapSetup {
     pending: hantong_secrets::PendingImapCredential,
     #[cfg(not(windows))]
     _private: (),
+}
+
+/// Single-use OS-verified default CLI scope refresh result.
+pub struct VerifiedScopeRefresh {
+    #[cfg(windows)]
+    binding: binding::CapturedReview<ScopeRefreshReview>,
+    #[cfg(windows)]
+    verified_at_utc_ms: i64,
+    #[cfg(not(windows))]
+    _private: (),
+}
+impl fmt::Debug for VerifiedScopeRefresh {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("VerifiedScopeRefresh { <redacted> }")
+    }
+}
+impl VerifiedScopeRefresh {
+    pub fn consume(self, expected: &ScopeRefreshReview) -> Result<ScopeRefreshReview, ErrorCode> {
+        #[cfg(windows)]
+        {
+            self.binding.consume(expected, self.verified_at_utc_ms)
+        }
+        #[cfg(not(windows))]
+        {
+            let _ = expected;
+            Err(ErrorCode::CapabilityUnsupported)
+        }
+    }
 }
 impl fmt::Debug for VerifiedImapSetup {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -142,6 +203,23 @@ pub async fn review_registration(
     #[cfg(windows)]
     {
         native::show(review, language, theme).await
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (review, language, theme);
+        Err(ErrorCode::CapabilityUnsupported)
+    }
+}
+
+/// Opens the core-owned default CLI scope refresh review window.
+pub async fn review_scope_refresh(
+    review: ScopeRefreshReview,
+    language: Option<Language>,
+    theme: Theme,
+) -> Result<VerifiedScopeRefresh, ErrorCode> {
+    #[cfg(windows)]
+    {
+        native::show_scope_refresh(review, language, theme).await
     }
     #[cfg(not(windows))]
     {

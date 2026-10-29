@@ -40,4 +40,6 @@ publisher는 열린 임시 파일 handle에서 쓰기·flush 후 `SetFileInforma
 
 코어는 신뢰 창의 일회성 사람 확인과 현재 요청 결속을 검증한 뒤 Store에 approved request + provisioning registration을 같은 트랜잭션으로 저장한다. 기존 CNG 키/공개값을 검증하고 고정 경로에 원자적으로 프로필을 발행한 후에만 registration을 active로 CAS 전환한다. 기존 파일이 정확히 같은 프로필이면 복구에 재사용할 수 있지만 불일치하면 자동 덮어쓰기/재pin하지 않는다. 파일만 있고 active 등록이 없으면 메일 접근은 생기지 않는다.
 
+기본 CLI 범위 갱신은 [client-scope-refresh.md](client-scope-refresh.md)의 DB v7 전용 이력과 native 검토를 거친다. 갱신은 기존 최초 request ID·registration ID·client key·server pin·승인 metadata를 보존하고, 기존 read-only `accounts.list` 정책에 대해 현재 계정 snapshot만 새 범위로 검토한다. 원래 등록 request나 profile key를 교체하는 새 등록으로 처리하지 않으며, revoked 등록을 다시 active로 만들지 않는다. 새 프로필 bytes는 Core가 정확한 old/new snapshot을 확인하고 stage한 뒤 보호 배포하며, activate 전에는 기존 프로필과 grant를 성공 상태로 주장하지 않는다.
+
 소프트웨어 CNG와 같은 사용자 파일 ACL은 같은 사용자 악성코드에 대한 완전한 격리를 보장하지 않는다. 등록 허용은 서버의 영속 grant와 현재 epoch를 매 요청 재검증하며 프로필의 선언 자체를 권한으로 쓰지 않는다. 첫 UI 구현은 default/read-only/accounts.list에 한정하고, 다른 프로필·쓰기 권한은 후속 계약에서 추가한다.

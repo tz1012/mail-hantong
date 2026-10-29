@@ -51,4 +51,4 @@ Core의 Secrets 루트는 시작 때 검증한 AppDirectories.secrets로만 정�
 
 Core 종료/취소는 queue gate를 해제하지만 영속 started 사건을 성공으로 바꾸지 않는다. 조회는 UI/Secrets/네트워크를 부르지 않는다. Ready 응답의 다음 행동은 현재 default CLI 등록 존재 여부에 따라 신규 등록 또는 범위 재검토이며 자동 scope 변경은 없다.
 
-기존 default 등록이 provisioning/suspended/revoked여도 새 등록을 중복 생성하지 않는다. `profile_scope_review_required`는 해당 등록의 상태와 범위를 다시 검토하라는 안내이며 활성/인증 성공을 뜻하지 않는다. 등록이 없는 경우에만 `client_registration_required`를 반환한다. 기존 등록 재검토 기능은 후속 구현이다.
+기존 default 등록이 provisioning/suspended/revoked여도 새 등록을 중복 생성하지 않는다. `profile_scope_review_required`는 해당 등록의 상태와 범위를 다시 검토하라는 안내이며 활성/인증 성공을 뜻하지 않는다. 등록이 없는 경우에만 `client_registration_required`를 반환한다. 활성 기본 CLI의 계정 범위는 [범위 갱신 계약](client-scope-refresh.md)의 `hantong clients refresh`로 별도 사람 확인 후 갱신한다. staged 갱신은 복구할 수 있지만 suspended/revoked 등록의 복원은 지원하지 않는다.

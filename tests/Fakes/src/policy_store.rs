@@ -58,6 +58,14 @@ impl PolicyStoreFixture {
         store.stage_cli_registration(&stage)?;
         store.activate_cli_registration(value.registration_id, 1, hash)?;
         drop(store);
+        // These fixtures exercise generic policy limits/tool grants/epochs.
+        // The default CLI has a separate fixed policy and scope-history contract.
+        value.database()?.with_connection(|c| {
+            let tx = c.unchecked_transaction()?;
+            tx.execute("UPDATE client_registration_requests SET display_label='Policy fixture' WHERE request_id=(SELECT request_id FROM client_registrations WHERE registration_id=?1)",[value.registration_id.as_slice()])?;
+            tx.execute("UPDATE client_registrations SET display_label='Policy fixture' WHERE registration_id=?1",[value.registration_id.as_slice()])?;
+            tx.commit()
+        }).map_err(|_|ErrorCode::InternalError)?;
         Ok(value)
     }
     pub fn open(&self) -> Result<Store, ErrorCode> {

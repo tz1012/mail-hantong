@@ -1,4 +1,5 @@
 use super::*;
+use hantong_approval::ScopeRefreshReview;
 use hantong_approval::registration_review::ReviewSnapshot;
 use hantong_contracts::auth::PeerContext;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -131,6 +132,16 @@ impl CapturedReview<AccountSetupReview> {
     }
 }
 
+impl CapturedReview<ScopeRefreshReview> {
+    pub(super) fn into_verified(self) -> Result<VerifiedScopeRefresh, ErrorCode> {
+        let verified_at_utc_ms = self.verification_time()?;
+        Ok(VerifiedScopeRefresh {
+            binding: self,
+            verified_at_utc_ms,
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -165,6 +176,33 @@ mod tests {
     fn captured_setup() -> CapturedReview<AccountSetupReview> {
         CapturedReview {
             review: setup_review(None),
+            started: Instant::now(),
+            captured_at_utc_ms: 1500,
+            user: context(8),
+            session: [4; 32],
+            nonce: [5; 32],
+        }
+    }
+    fn scope_review(epoch: u64, client_hash: u8) -> ScopeRefreshReview {
+        ScopeRefreshReview::new(
+            [1; 32],
+            1,
+            [2; 16],
+            [3; 32],
+            4,
+            epoch,
+            [client_hash; 32],
+            [7; 32],
+            vec!["acct_a".into()],
+            vec!["acct_b".into()],
+            1000,
+            301000,
+        )
+        .unwrap()
+    }
+    fn captured_scope() -> CapturedReview<ScopeRefreshReview> {
+        CapturedReview {
+            review: scope_review(5, 6),
             started: Instant::now(),
             captured_at_utc_ms: 1500,
             user: context(8),
@@ -247,6 +285,68 @@ mod tests {
             ),
             Ok(setup_review(None))
         );
+    }
+
+    #[test]
+    fn cli15_scope_binding_requires_exact_snapshot_user_nonce_and_live_time() {
+        let captured = captured_scope();
+        assert_eq!(
+            captured.validate_at(
+                &scope_review(5, 6),
+                2000,
+                Duration::from_secs(1),
+                &context(8)
+            ),
+            Ok(())
+        );
+        for expected in [
+            scope_review(5, 8),
+            ScopeRefreshReview::new(
+                [1; 32],
+                1,
+                [2; 16],
+                [3; 32],
+                4,
+                5,
+                [6; 32],
+                [7; 32],
+                vec!["acct_b".into()],
+                vec!["acct_c".into()],
+                1000,
+                301000,
+            )
+            .unwrap(),
+        ] {
+            assert_eq!(
+                captured.validate_at(&expected, 2000, Duration::from_secs(1), &context(8)),
+                Err(ErrorCode::ScopeDenied)
+            );
+        }
+        assert_eq!(
+            captured.validate_at(
+                &scope_review(5, 6),
+                2000,
+                Duration::from_secs(1),
+                &context(9)
+            ),
+            Err(ErrorCode::ScopeDenied)
+        );
+        let mut corrupt = captured_scope();
+        corrupt.nonce = [0; 32];
+        assert_eq!(
+            corrupt.validate_at(&scope_review(5, 6), 2000, Duration::ZERO, &context(8)),
+            Err(ErrorCode::ScopeDenied)
+        );
+        for (now, elapsed) in [
+            (1499, Duration::ZERO),
+            (301000, Duration::ZERO),
+            (2000, Duration::from_secs(300)),
+        ] {
+            assert_eq!(
+                captured_scope().validate_at(&scope_review(5, 6), now, elapsed, &context(8)),
+                Err(ErrorCode::ApprovalExpired)
+            );
+        }
     }
     #[test]
     fn inst04_current_request_and_context_are_required_for_consumption() {

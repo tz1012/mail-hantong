@@ -624,3 +624,125 @@ fn setup01_registration_and_imap_share_one_gate_and_status_never_schedules() {
         Err(ErrorCode::RateLimited)
     ));
 }
+
+#[test]
+fn cli15_scope_refresh_queue_deduplicates_and_resumes_only_explicit_requests() {
+    use hantong_contracts::scope_refresh::{ScopeRefreshCommand as C, ScopeRefreshProgress as P};
+    struct Key(Option<ServerSigningKey>);
+    impl Drop for Key {
+        fn drop(&mut self) {
+            self.0.take().unwrap().delete().unwrap();
+        }
+    }
+    struct Dir(std::path::PathBuf);
+    impl Drop for Dir {
+        fn drop(&mut self) {
+            std::fs::remove_dir_all(&self.0).unwrap();
+        }
+    }
+    let key = Key(Some(
+        ServerSigningKey::create(hantong_platform::random_nonce().unwrap()).unwrap(),
+    ));
+    let server = key.0.as_ref().unwrap();
+    let root = Dir(std::env::temp_dir().join(format!(
+        "hantong-scope-queue-{}",
+        hantong_contracts::wire_hex::encode(&hantong_platform::random_nonce().unwrap())
+    )));
+    std::fs::create_dir(&root.0).unwrap();
+    let store = Store::open(root.0.join("data"), root.0.join("keys")).unwrap();
+    store.stage_server_identity(server.id()).unwrap();
+    store
+        .activate_server_identity(server.id(), server.public_key().unwrap(), 1)
+        .unwrap();
+    let pin = hantong_platform::sha256(&server.public_key().unwrap()).unwrap();
+    let req = store
+        .create_registration_request(
+            [1; 32],
+            ClientKind::Cli,
+            DEFAULT_CLI_LABEL,
+            &RequestedScope::new(vec![], vec!["mail.accounts.list".into()]).unwrap(),
+        )
+        .unwrap();
+    let id = hantong_platform::registration_id_for_request([1; 32]).unwrap();
+    store
+        .stage_cli_registration(&CliRegistrationStage::new(req, id, public(), pin).unwrap())
+        .unwrap();
+    store.activate_cli_registration(id, 1, pin).unwrap();
+    let input = hantong_contracts::imap_setup::ImapSetupInput::new(
+        None,
+        None,
+        "imap.example".into(),
+        993,
+        hantong_contracts::imap_setup::ImapSetupTls::ImplicitTls,
+        "synthetic".into(),
+    )
+    .unwrap();
+    let setup = crate::setup_imap::create(&store, &input).unwrap();
+    store.stage_imap_setup_request(&setup).unwrap();
+    let secrets = root.0.join("keys");
+    let (handle, mut worker) = coordinator(&store, server, &secrets);
+    let command = || SetupCommand::ScopeRefresh(C::Request);
+    let SetupReceipt::ScopeRefresh(first) = handle.setup_command(command()).unwrap() else {
+        panic!("family")
+    };
+    assert_eq!(first.state(), P::Pending);
+    let rid = *first.refresh_id();
+    assert_eq!(worker.receiver.try_recv().unwrap(), Job::ScopeRefresh(rid));
+    assert!(
+        matches!(handle.setup_command(command()).unwrap(),SetupReceipt::ScopeRefresh(r)if r==first)
+    );
+    assert!(worker.receiver.try_recv().is_err());
+    assert!(matches!(
+        handle.setup_command(SetupCommand::Imap(ImapSetupCommand::Request(input.clone()))),
+        Err(ErrorCode::RateLimited)
+    ));
+    assert!(matches!(
+        handle.setup_command(SetupCommand::Imap(ImapSetupCommand::Resume(
+            *setup.intent().request_id()
+        ))),
+        Err(ErrorCode::RateLimited)
+    ));
+    assert!(
+        matches!(handle.setup_command(SetupCommand::ScopeRefresh(C::Status(rid))).unwrap(),SetupReceipt::ScopeRefresh(r)if r.state()==P::Pending)
+    );
+    assert!(worker.receiver.try_recv().is_err());
+    drop(worker);
+    assert!(
+        matches!(handle.setup_command(SetupCommand::ScopeRefresh(C::Status(rid))).unwrap(),SetupReceipt::ScopeRefresh(r)if r.state()==P::Interrupted)
+    );
+    assert!(matches!(
+        handle.setup_command(command()),
+        Err(ErrorCode::InternalError)
+    ));
+    let (handle, mut worker) = coordinator(&store, server, &secrets);
+    assert!(
+        matches!(handle.setup_command(command()).unwrap(),SetupReceipt::ScopeRefresh(r)if r.refresh_id()==&rid)
+    );
+    assert_eq!(worker.receiver.try_recv().unwrap(), Job::ScopeRefresh(rid));
+    drop(worker);
+    let pending = store.load_cli_scope_refresh(rid).unwrap().unwrap();
+    store.stage_cli_scope_refresh(&pending).unwrap();
+    assert_eq!(store.list_provisioning_registrations(128).unwrap().len(), 1);
+    assert!(
+        NativeEffects {
+            store: &store,
+            server
+        }
+        .provisioning()
+        .unwrap()
+        .is_empty()
+    );
+    let (handle, mut worker) = coordinator(&store, server, &secrets);
+    assert!(
+        matches!(handle.setup_command(command()).unwrap(),SetupReceipt::ScopeRefresh(r)if r.refresh_id()==&rid&&r.state()==P::Provisioning)
+    );
+    assert_eq!(worker.receiver.try_recv().unwrap(), Job::ScopeRefresh(rid));
+    assert_eq!(
+        store
+            .load_default_cli_registration()
+            .unwrap()
+            .unwrap()
+            .state,
+        RegistrationState::Provisioning
+    );
+}

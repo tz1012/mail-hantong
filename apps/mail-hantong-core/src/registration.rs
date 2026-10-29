@@ -1,6 +1,7 @@
 //! Trusted Core registration coordinator. IPC requests carry no approval data.
 use hantong_approval::RegistrationReview;
 use hantong_contracts::imap_setup::ImapSetupCommand;
+use hantong_contracts::scope_refresh::ScopeRefreshCommand;
 use hantong_contracts::{
     ErrorCode,
     auth::RequestedScope,
@@ -20,6 +21,7 @@ use tokio::sync::mpsc;
 enum Job {
     Registration([u8; 32]),
     Imap([u8; 32]),
+    ScopeRefresh([u8; 32]),
 }
 
 pub(crate) struct RegistrationHandle<'a> {
@@ -65,8 +67,36 @@ pub(crate) fn coordinator<'a>(
 impl RegistrationHandle<'_> {
     pub(crate) fn setup_command(&self, command: SetupCommand) -> Result<SetupReceipt, ErrorCode> {
         match command {
+            SetupCommand::ScopeRefresh(ScopeRefreshCommand::Status(id)) => {
+                crate::scope_refresh::status(
+                    self.state.store,
+                    id,
+                    self.state.scheduled.get() == Some(Job::ScopeRefresh(id)),
+                )
+                .map(SetupReceipt::ScopeRefresh)
+            }
+            SetupCommand::ScopeRefresh(ScopeRefreshCommand::Request) => {
+                if let Some(job) = self.state.scheduled.get() {
+                    let Job::ScopeRefresh(id) = job else {
+                        return Err(ErrorCode::RateLimited);
+                    };
+                    return crate::scope_refresh::status(self.state.store, id, true)
+                        .map(SetupReceipt::ScopeRefresh);
+                }
+                if self.sender.is_closed() {
+                    return Err(ErrorCode::InternalError);
+                }
+                let request = crate::scope_refresh::prepare(self.state.store, self.state.server)?;
+                let id = *request.refresh_id();
+                enqueue(&self.state.scheduled, &self.sender, Job::ScopeRefresh(id))?;
+                crate::scope_refresh::status(self.state.store, id, true)
+                    .map(SetupReceipt::ScopeRefresh)
+            }
             SetupCommand::Imap(ImapSetupCommand::Resume(id)) => {
-                if matches!(self.state.scheduled.get(), Some(Job::Registration(_))) {
+                if matches!(
+                    self.state.scheduled.get(),
+                    Some(Job::Registration(_) | Job::ScopeRefresh(_))
+                ) {
                     return Err(ErrorCode::RateLimited);
                 }
                 let parent = self.state.store.resolve_imap_setup_leaf(id)?;
@@ -143,7 +173,7 @@ impl RegistrationHandle<'_> {
                 if let Some(job) = self.state.scheduled.get() {
                     return match job {
                         Job::Registration(id) => self.state.receipt(id),
-                        Job::Imap(_) => Err(ErrorCode::RateLimited),
+                        Job::Imap(_) | Job::ScopeRefresh(_) => Err(ErrorCode::RateLimited),
                     };
                 }
                 let effects = NativeEffects {
@@ -189,11 +219,15 @@ impl RegistrationWorker<'_> {
         };
         // Recovery never prompts and never creates a missing key. An individual
         // failure remains provisioning and cannot authenticate or be replaced.
+        crate::scope_refresh::recover_startup(self.state.store, self.state.server)?;
         recover_startup(&effects)?;
         while let Some(job) = self.receiver.recv().await {
             let _window = ScheduledWindow(&self.state.scheduled);
             let result = match job {
                 Job::Registration(id) => self.state.review(id).await,
+                Job::ScopeRefresh(id) => {
+                    crate::scope_refresh::run_job(self.state.store, self.state.server, id).await
+                }
                 Job::Imap(id) => {
                     crate::setup_imap::review(self.state.store, self.state.secrets_root, id).await
                 }
@@ -509,7 +543,12 @@ impl Effects for NativeEffects<'_> {
         self.store.list_orphan_cli_registration_requests()
     }
     fn provisioning(&self) -> Result<Vec<RegistrationRecord>, ErrorCode> {
-        self.store.list_provisioning_registrations(128)
+        Ok(self
+            .store
+            .list_provisioning_registrations(128)?
+            .into_iter()
+            .filter(|record| record.profile_epoch == 1)
+            .collect())
     }
     fn report(&self, error: ErrorCode) {
         use std::io::Write;
@@ -573,7 +612,7 @@ impl Effects for NativeEffects<'_> {
     }
 }
 
-fn registration_failure_line(error: ErrorCode, now: i64) -> Result<String, ErrorCode> {
+pub(super) fn registration_failure_line(error: ErrorCode, now: i64) -> Result<String, ErrorCode> {
     use hantong_application::{DiagnosticEvent, EventKind, Severity};
     DiagnosticEvent::new(EventKind::OperationFailed, Severity::Error, now)
         .map_err(|_| ErrorCode::InternalError)?

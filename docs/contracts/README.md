@@ -17,7 +17,7 @@
 | `mail.accounts.list.schema.json` | 명시된 계정 프로필 조회 | 초안, 활성화 전 |
 | `mail.send.execute.schema.json` | 승인 결속 발송 의도 접수 | 초안, 활성화 전 |
 | `logical-data-model.md` | 27개 논리 엔터티와 키·보안 경계 | 초안, 활성화 전 |
-| `database.md`, `db-schema.sql` | 암호화 DB 키 경계·초기 스키마·백업과 마이그레이션 | 구현·검증 진행, 사람 검토 필요 |
+| `database.md`, `db-schema.sql`, `migrations/` | 암호화 DB 키 경계·v1→v7 백업과 마이그레이션 | v7 전용 범위 갱신 이력 포함, 구현·검증 진행, 사람 검토 필요 |
 | `query-language.md` | 검색 문법·계정 범위·기간·완전성 | 초안, 활성화 전 |
 | `config.md`, `config.schema.json` | 언어·테마·시간대와 보호 설정·CAS | 도메인·암호화 저장·코어 시작 연결 검증, 인증된 설정 IPC 미연결 |
 | `app-paths.md` | OS Known Folder와 고정 데이터/키 경로 | Windows 구현·시작 연결 검증 |
@@ -26,6 +26,7 @@
 | `auth-wire.md` | bounded JSON handshake·한 연결 한 도구 요청·bootstrap 분기 | 실제 Windows pair 검증, Core 등록 조회/기본 거부 실행기 연결 |
 | `registration-store.md`, `migrations/` | v1→v2 이전·서버 신원·클라이언트 등록 저장 | 기본 등록 전이/복구 자동 검증, 사람 검토 전 |
 | `client-registration.md`, `registration-review.md`, `client-profile.md` | 기본 CLI 요청/상태·신뢰 창·공개 프로필과 중단 복구 | 구현·자동 통합 검증, 실제 Hello/사람 검토 전 |
+| `client-scope-refresh.md` | 기본 CLI 읽기 범위 snapshot·native 검토·v7 전용 이력과 중단 복구 | `hantong clients refresh`/`refresh-status` progress 연결, Core 효과·파일 배포·사람 검토 전 |
 | `audit.md` | DB v3 감사 시작/불변 결과·용량·페이지·미확정 기록 | 저장 API 대상 시험 통과, 공통 실행기/효과 연결 전 |
 | `tool-validation.md` | 공통 envelope와 계정 조회/발송 의도 입력 검증 | 순수 검증 구현 중, 실제 실행·승인과 별개 |
 | `execution.md` | 인증 재검증·감사·전체 범위·정책·읽기 실행 순서 | Core/wire·계정 읽기 정책 연결, 발송 차단·사람 검토 필요 |

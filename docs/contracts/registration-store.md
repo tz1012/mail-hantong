@@ -57,7 +57,7 @@ stage 전 등록 ID가 플랫폼 `registration_id_for_request(expected_request.r
 
 `load_registration_by_request(request_id)`는 기존 validated snapshot 읽기와 같은 기준을 사용한다. `list_provisioning_registrations(limit)`는 1..128 입력만 받고 LIMIT limit+1로 읽어 초과 시 QUOTA_EXCEEDED로 거부하며, 모든 반환 행을 검증한다. `list_registrable_account_ids()`는 정렬된 실제 ID를 최대 129개 읽어 128개 초과/손상 시 오류를 반환하고, 빈 DB는 빈 목록이다. 이것은 Core의 사용자 검토 snapshot 구성용이며 외부 열거 API가 아니다.
 
-현재 DB v4의 기존 테이블/상태를 사용하므로 이 전이 추가는 DDL migration을 만들지 않는다. 실패 rollback, stale/expired/wrong-scope/deleted-account, duplicate ID/key/default profile, wrong pin, invalid public point, activation 순서/CAS, denial terminal, bounded recovery 조회를 합성 fixture로 검증한다. 실제 등록/Windows Hello를 자동 실행하지 않는다.
+기본 등록 전이는 기존 registration 테이블/상태를 사용하므로 그 전이 자체에는 별도 DDL migration을 만들지 않는다. 범위 갱신 이력은 [클라이언트 범위 갱신 계약](client-scope-refresh.md)의 DB v7 전용 `client_scope_refreshes` 표에 저장하며 기존 최초 request/key/pin을 변경하지 않는다. 실패 rollback, stale/expired/wrong-scope/deleted-account, duplicate ID/key/default profile, wrong pin, invalid public point, activation 순서/CAS, denial terminal, bounded recovery 조회를 합성 fixture로 검증한다. 실제 등록/Windows Hello를 자동 실행하지 않는다.
 
 ### Core의 기본 프로필·pending 조회
 
@@ -68,3 +68,9 @@ stage 전 등록 ID가 플랫폼 `registration_id_for_request(expected_request.r
 `list_orphan_cli_registration_requests()`는 고정 기본 CLI 요청을 LIMIT 1025로 읽고 1,024개 초과 시 QUOTA_EXCEEDED를 반환한다. 요청·연결된 등록을 같은 snapshot에서 검증하고 등록이 없는 pending/denied/expired 요청만 반환한다. approved인데 등록이 없거나 ID/정책/scope가 손상되면 INTERNAL_ERROR, 기본 등록이 중복되거나 서로 다른 요청의 유도 등록 ID가 충돌하면 CONFLICT다. 생성 시각이 현재 Store UTC보다 미래이면 APPROVAL_EXPIRED로 멈춘다. 조회는 요청을 삭제하거나 결정을 변경하지 않는다.
 
 `registration_key_is_linked(request_id, public_key)`는 같은 제한된 예약 목록을 검증하고 유도 등록 ID·요청 ID·공개 키 중 하나라도 연결된 등록이 있으면 true를 반환한다. 일치 후보는 유일 제약에 따른 최대 3개와 초과 탐지 1개만 읽어 모두 검증한다. false는 검증된 snapshot에 연결이 없다는 데이터일 뿐 임의 키 삭제 권한이 아니다. Core만 정확한 요청 유도 selector를 열어 얻은 공개 키로 호출하며, Store 조회부터 삭제까지 동일한 직렬 실행 구간을 유지한다. 조회 실패를 false로 바꾸거나 key namespace를 열거하지 않는다.
+
+### 기본 CLI 범위 갱신과 기존 등록 보존
+
+범위 갱신은 별도 [client-scope-refresh.md](client-scope-refresh.md)의 전용 이력으로만 기록한다. `create_cli_scope_refresh`가 만드는 입력은 현재 active default CLI 등록의 최초 request/key/pin과 고정 read-only `mail.accounts.list` 정책을 보존하고, 당시 실제 존재하는 정렬된 계정 snapshot만 새 target으로 검토한다. 빈 snapshot은 권한 0개이며 전체 계정의 별칭이 아니다. revoked/suspended 등록은 갱신 대상으로 되살리지 않으며, 최초 등록 activate 경로로 갱신을 우회하지 않는다.
+
+stage 전에는 grant·등록 상태·파일을 바꾸지 않는다. native 사람 확인 뒤 Core가 v7 이력과 현재 등록을 같은 snapshot에서 재검증하고 stage/activate를 수행한다. 성공한 갱신만 target snapshot으로 새 epoch를 활성화하며, 원래 request ID·registration ID·client key·server pin·승인 metadata는 유지한다. pending/denied/expired 이력은 성공한 권한을 대신하지 않으며, 실패 시 기존 등록 권한을 자동 복원하거나 revoked 상태를 재활성화하지 않는다.

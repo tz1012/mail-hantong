@@ -34,6 +34,7 @@ const MAX_PROFILE_BYTES: usize = 32 * 1024;
 pub(super) struct Publication {
     _file: File,
     _directories: Vec<File>,
+    backup: Option<File>,
 }
 
 impl std::fmt::Debug for Publication {
@@ -54,6 +55,47 @@ fn publish_at(profiles: &Path, bytes: &[u8]) -> Result<Publication, ErrorCode> {
     let identity = hantong_platform::current_peer_context()?;
     let user = identity.user_sid();
     let security = creation_security(user)?;
+    let directories = open_profile_directories(profiles, user, &security)?;
+    let destination = profiles.join("default.json");
+    if let Some(file) = existing(&destination, bytes, user)? {
+        return Ok(Publication {
+            _file: file,
+            _directories: directories,
+            backup: None,
+        });
+    }
+    let mut temporary = create_temporary(profiles, &security)?;
+    let file = temporary.0.as_mut().ok_or(ErrorCode::ScopeDenied)?;
+    check_type(file, false)?;
+    check_security(file, user, true)?;
+    file.write_all(bytes).map_err(|_| ErrorCode::ScopeDenied)?;
+    // SAFETY: source handle remains open with write access. Flush completes
+    // before the namespace rename; this is not a cross-Store transaction.
+    if unsafe { FlushFileBuffers(file.as_raw_handle()) } == 0 {
+        return Err(ErrorCode::ScopeDenied);
+    }
+    if rename_no_replace(file, &destination)? {
+        let file = temporary.0.take().ok_or(ErrorCode::ScopeDenied)?;
+        Ok(Publication {
+            _file: file,
+            _directories: directories,
+            backup: None,
+        })
+    } else {
+        let file = existing(&destination, bytes, user)?.ok_or(ErrorCode::Conflict)?;
+        Ok(Publication {
+            _file: file,
+            _directories: directories,
+            backup: None,
+        })
+    }
+}
+
+fn open_profile_directories(
+    profiles: &Path,
+    user: &str,
+    security: &LocalAllocation,
+) -> Result<Vec<File>, ErrorCode> {
     let product = profiles.parent().ok_or(ErrorCode::ScopeDenied)?;
     let mut directories = Vec::new();
     let mut current = PathBuf::new();
@@ -88,35 +130,174 @@ fn publish_at(profiles: &Path, bytes: &[u8]) -> Result<Publication, ErrorCode> {
         }
         directories.push(directory);
     }
-    let destination = profiles.join("default.json");
-    if let Some(file) = existing(&destination, bytes, user)? {
-        return Ok(Publication {
-            _file: file,
-            _directories: directories,
-        });
+    Ok(directories)
+}
+
+/// Replaces the fixed default profile only after proving the exact old bytes.
+/// The old object is renamed through its DELETE-capable handle; it is never
+/// closed and reopened by path. The returned publication retains both objects
+/// until activation calls `cleanup_backup`.
+pub(super) fn refresh(
+    refresh_id: [u8; 32],
+    old_bytes: &[u8],
+    new_bytes: &[u8],
+) -> Result<Publication, ErrorCode> {
+    refresh_at(
+        &hantong_platform::app_directories()?.profiles,
+        refresh_id,
+        old_bytes,
+        new_bytes,
+    )
+}
+
+fn refresh_at(
+    profiles: &Path,
+    refresh_id: [u8; 32],
+    old_bytes: &[u8],
+    new_bytes: &[u8],
+) -> Result<Publication, ErrorCode> {
+    if refresh_id == [0; 32]
+        || old_bytes.is_empty()
+        || old_bytes.len() > MAX_PROFILE_BYTES
+        || new_bytes.is_empty()
+        || new_bytes.len() > MAX_PROFILE_BYTES
+        || old_bytes == new_bytes
+    {
+        return Err(ErrorCode::InvalidInput);
     }
-    let mut temporary = create_temporary(profiles, &security)?;
-    let file = temporary.0.as_mut().ok_or(ErrorCode::ScopeDenied)?;
-    check_type(file, false)?;
-    check_security(file, user, true)?;
-    file.write_all(bytes).map_err(|_| ErrorCode::ScopeDenied)?;
-    // SAFETY: source handle remains open with write access. Flush completes
-    // before the namespace rename; this is not a cross-Store transaction.
-    if unsafe { FlushFileBuffers(file.as_raw_handle()) } == 0 {
-        return Err(ErrorCode::ScopeDenied);
+    validate_path(profiles)?;
+    let identity = hantong_platform::current_peer_context()?;
+    let user = identity.user_sid();
+    let security = creation_security(user)?;
+    let directories = open_profile_directories(profiles, user, &security)?;
+
+    let source_path = profiles.join("default.json");
+    let backup_path = profiles.join(format!(
+        "default.refresh-{}.bak",
+        hantong_contracts::wire_hex::encode(&refresh_id)
+    ));
+    let mut current = open_refresh_file(&source_path, user)?;
+    let mut backup = open_refresh_file(&backup_path, user)?;
+    match (current.is_some(), backup.is_some()) {
+        (true, false) => {
+            let default = current.as_ref().ok_or(ErrorCode::InternalError)?;
+            let bytes = read_profile(default)?;
+            if bytes == new_bytes {
+                let file = current.take().ok_or(ErrorCode::InternalError)?;
+                return Ok(Publication {
+                    _file: file,
+                    _directories: directories,
+                    backup: None,
+                });
+            }
+            if bytes != old_bytes {
+                return Err(ErrorCode::Conflict);
+            }
+            if !rename_no_replace(default, &backup_path)? {
+                return Err(ErrorCode::Conflict);
+            }
+            backup = current.take();
+        }
+        (false, true) => {
+            let old = backup.as_ref().ok_or(ErrorCode::InternalError)?;
+            if read_profile(old)? != old_bytes {
+                return Err(ErrorCode::Conflict);
+            }
+        }
+        (true, true) => {
+            let default = current.as_ref().ok_or(ErrorCode::InternalError)?;
+            let saved = backup.as_ref().ok_or(ErrorCode::InternalError)?;
+            let default_bytes = read_profile(default)?;
+            let saved_bytes = read_profile(saved)?;
+            if default_bytes != new_bytes || saved_bytes != old_bytes {
+                return Err(ErrorCode::Conflict);
+            }
+            let file = current.take().ok_or(ErrorCode::InternalError)?;
+            return Ok(Publication {
+                _file: file,
+                _directories: directories,
+                backup,
+            });
+        }
+        (false, false) => return Err(ErrorCode::NotFound),
     }
-    if rename_no_replace(file, &destination)? {
-        let file = temporary.0.take().ok_or(ErrorCode::ScopeDenied)?;
-        Ok(Publication {
-            _file: file,
-            _directories: directories,
-        })
+
+    let file = if let Some(file) = current.take() {
+        if read_profile(&file)? != new_bytes {
+            return Err(ErrorCode::Conflict);
+        }
+        file
     } else {
-        let file = existing(&destination, bytes, user)?.ok_or(ErrorCode::Conflict)?;
-        Ok(Publication {
-            _file: file,
-            _directories: directories,
-        })
+        let mut temporary = create_temporary(profiles, &security)?;
+        let file = temporary.0.as_mut().ok_or(ErrorCode::ScopeDenied)?;
+        check_type(file, false)?;
+        check_security(file, user, true)?;
+        file.write_all(new_bytes)
+            .map_err(|_| ErrorCode::ScopeDenied)?;
+        if unsafe { FlushFileBuffers(file.as_raw_handle()) } == 0 {
+            return Err(ErrorCode::ScopeDenied);
+        }
+        if !rename_no_replace(file, &source_path)? {
+            return Err(ErrorCode::Conflict);
+        }
+        let file = temporary.0.take().ok_or(ErrorCode::ScopeDenied)?;
+        if unsafe { FlushFileBuffers(file.as_raw_handle()) } == 0 {
+            return Err(ErrorCode::ScopeDenied);
+        }
+        file
+    };
+    Ok(Publication {
+        _file: file,
+        _directories: directories,
+        backup,
+    })
+}
+
+fn open_refresh_file(path: &Path, user: &str) -> Result<Option<File>, ErrorCode> {
+    let file = match OpenOptions::new()
+        .access_mode(FILE_GENERIC_READ | DELETE | READ_CONTROL)
+        .share_mode(FILE_SHARE_READ)
+        .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
+        .open(path)
+    {
+        Ok(file) => file,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
+        Err(_) => return Err(ErrorCode::ScopeDenied),
+    };
+    check_type(&file, false)?;
+    check_security(&file, user, true)?;
+    Ok(Some(file))
+}
+
+fn read_profile(file: &File) -> Result<Vec<u8>, ErrorCode> {
+    let mut actual = Vec::new();
+    file.take((MAX_PROFILE_BYTES + 1) as u64)
+        .read_to_end(&mut actual)
+        .map_err(|_| ErrorCode::ScopeDenied)?;
+    if actual.len() > MAX_PROFILE_BYTES {
+        return Err(ErrorCode::InvalidInput);
+    }
+    Ok(actual)
+}
+
+pub(super) fn cleanup_backup(publication: &mut Publication) -> Result<(), ErrorCode> {
+    let Some(file) = publication.backup.take() else {
+        return Ok(());
+    };
+    let disposition = FILE_DISPOSITION_INFO { DeleteFile: true };
+    let success = unsafe {
+        SetFileInformationByHandle(
+            file.as_raw_handle(),
+            FileDispositionInfo,
+            (&disposition as *const FILE_DISPOSITION_INFO).cast(),
+            std::mem::size_of::<FILE_DISPOSITION_INFO>() as u32,
+        )
+    };
+    drop(file);
+    if success == 0 {
+        Err(ErrorCode::ScopeDenied)
+    } else {
+        Ok(())
     }
 }
 
@@ -633,6 +814,180 @@ mod tests {
             assert!(!fixture.product.exists());
         }
         drop(publish_at(&fixture.profiles, &vec![b'x'; MAX_PROFILE_BYTES]).unwrap());
+    }
+
+    #[test]
+    fn cli15_scope_refresh_moves_exact_old_profile_and_retains_backup_until_cleanup() {
+        let fixture = Fixture::new();
+        fixture.dirs(true);
+        let old = br#"{"profile_epoch":1,"account_ids":["old"]}"#;
+        let new = br#"{"profile_epoch":2,"account_ids":["new"]}"#;
+        fixture.existing(old, true);
+        let id = [7; 32];
+        let mut published = refresh_at(&fixture.profiles, id, old, new).unwrap();
+        assert_eq!(
+            fs::read(fixture.profiles.join("default.json")).unwrap(),
+            new
+        );
+        let backup = fixture.profiles.join(format!(
+            "default.refresh-{}.bak",
+            hantong_contracts::wire_hex::encode(&id)
+        ));
+        assert_eq!(fs::read(&backup).unwrap(), old);
+        assert!(cleanup_backup(&mut published).is_ok());
+        assert!(!backup.exists());
+        drop(published);
+        // Exact new bytes with no backup are a permitted recovery state too.
+        let mut recovered = refresh_at(&fixture.profiles, id, old, new).unwrap();
+        assert!(
+            OpenOptions::new()
+                .write(true)
+                .open(fixture.profiles.join("default.json"))
+                .is_err()
+        );
+        cleanup_backup(&mut recovered).unwrap();
+        drop(recovered);
+        assert_eq!(fs::read_dir(&fixture.profiles).unwrap().count(), 1);
+        assert_eq!(
+            fs::read(fixture.profiles.join("default.json")).unwrap(),
+            new
+        );
+    }
+
+    #[test]
+    fn cli15_scope_refresh_rejects_stale_or_duplicate_source_without_mutation() {
+        let fixture = Fixture::new();
+        fixture.dirs(true);
+        fixture.existing(b"old", true);
+        assert_eq!(
+            refresh_at(&fixture.profiles, [0; 32], b"old", b"new").unwrap_err(),
+            ErrorCode::InvalidInput
+        );
+        assert_eq!(
+            refresh_at(&fixture.profiles, [1; 32], b"wrong", b"new").unwrap_err(),
+            ErrorCode::Conflict
+        );
+        assert_eq!(
+            fs::read(fixture.profiles.join("default.json")).unwrap(),
+            b"old"
+        );
+        let backup = fixture.profiles.join(format!(
+            "default.refresh-{}.bak",
+            hantong_contracts::wire_hex::encode(&[2; 32])
+        ));
+        fs::write(&backup, b"occupied").unwrap();
+        secure(&backup, false, true);
+        assert_eq!(
+            refresh_at(&fixture.profiles, [2; 32], b"old", b"new").unwrap_err(),
+            ErrorCode::Conflict
+        );
+        assert_eq!(
+            fs::read(fixture.profiles.join("default.json")).unwrap(),
+            b"old"
+        );
+    }
+
+    #[test]
+    fn cli15_scope_refresh_recovers_missing_default_from_exact_old_backup() {
+        let fixture = Fixture::new();
+        fixture.dirs(true);
+        fixture.existing(b"old", true);
+        let id = [8; 32];
+        drop(refresh_at(&fixture.profiles, id, b"old", b"new").unwrap());
+        fs::remove_file(fixture.profiles.join("default.json")).unwrap();
+        let mut recovered = refresh_at(&fixture.profiles, id, b"old", b"new").unwrap();
+        assert_eq!(
+            fs::read(fixture.profiles.join("default.json")).unwrap(),
+            b"new"
+        );
+        cleanup_backup(&mut recovered).unwrap();
+    }
+
+    #[test]
+    fn cli15_scope_refresh_recovers_new_default_with_old_backup_without_republish() {
+        let fixture = Fixture::new();
+        fixture.dirs(true);
+        fixture.existing(b"old", true);
+        let id = [9; 32];
+        drop(refresh_at(&fixture.profiles, id, b"old", b"new").unwrap());
+        let mut recovered = refresh_at(&fixture.profiles, id, b"old", b"new").unwrap();
+        assert_eq!(
+            fs::read(fixture.profiles.join("default.json")).unwrap(),
+            b"new"
+        );
+        cleanup_backup(&mut recovered).unwrap();
+    }
+
+    #[test]
+    fn cli15_scope_refresh_rejects_wrong_backup_even_when_new_default_exists() {
+        let fixture = Fixture::new();
+        fixture.dirs(true);
+        fixture.existing(b"old", true);
+        let id = [14; 32];
+        drop(refresh_at(&fixture.profiles, id, b"old", b"new").unwrap());
+        let backup = fixture.profiles.join(format!(
+            "default.refresh-{}.bak",
+            hantong_contracts::wire_hex::encode(&id)
+        ));
+        fs::write(&backup, b"wrong").unwrap();
+        secure(&backup, false, true);
+        assert_eq!(
+            refresh_at(&fixture.profiles, id, b"old", b"new").unwrap_err(),
+            ErrorCode::Conflict
+        );
+        assert_eq!(
+            fs::read(fixture.profiles.join("default.json")).unwrap(),
+            b"new"
+        );
+    }
+
+    #[test]
+    fn cli15_scope_refresh_rejects_missing_both_and_both_old() {
+        let fixture = Fixture::new();
+        fixture.dirs(true);
+        fixture.existing(b"old", true);
+        let id = [10; 32];
+        drop(refresh_at(&fixture.profiles, id, b"old", b"new").unwrap());
+        fs::remove_file(fixture.profiles.join("default.json")).unwrap();
+        let backup = fixture.profiles.join(format!(
+            "default.refresh-{}.bak",
+            hantong_contracts::wire_hex::encode(&id)
+        ));
+        fs::remove_file(&backup).unwrap();
+        assert_eq!(
+            refresh_at(&fixture.profiles, id, b"old", b"new").unwrap_err(),
+            ErrorCode::NotFound
+        );
+
+        fixture.existing(b"old", true);
+        fs::write(&backup, b"old").unwrap();
+        secure(&backup, false, true);
+        assert_eq!(
+            refresh_at(&fixture.profiles, id, b"old", b"new").unwrap_err(),
+            ErrorCode::Conflict
+        );
+    }
+
+    #[test]
+    fn cli15_scope_refresh_reader_blocks_move_and_new_guard_blocks_mutation() {
+        let fixture = Fixture::new();
+        fixture.dirs(true);
+        fixture.existing(b"old", true);
+        let reader = OpenOptions::new()
+            .read(true)
+            .share_mode(FILE_SHARE_READ)
+            .open(fixture.profiles.join("default.json"))
+            .unwrap();
+        assert_eq!(
+            refresh_at(&fixture.profiles, [13; 32], b"old", b"new").unwrap_err(),
+            ErrorCode::ScopeDenied
+        );
+        drop(reader);
+        let mut published = refresh_at(&fixture.profiles, [13; 32], b"old", b"new").unwrap();
+        let path = fixture.profiles.join("default.json");
+        assert!(OpenOptions::new().write(true).open(&path).is_err());
+        assert!(fs::remove_file(&path).is_err());
+        cleanup_backup(&mut published).unwrap();
     }
 
     #[test]

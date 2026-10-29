@@ -165,7 +165,7 @@ where
         SetupCommand::Registration(registration_command) => {
             registration(registration_command).map(SetupReceipt::Registration)
         }
-        SetupCommand::Imap(_) => Err(ErrorCode::InvalidInput),
+        SetupCommand::Imap(_) | SetupCommand::ScopeRefresh(_) => Err(ErrorCode::InvalidInput),
     };
     dispatch_connection_with_setup(
         connection,
@@ -277,7 +277,7 @@ where
         SetupCommand::Registration(registration_command) => {
             registration(registration_command).map(SetupReceipt::Registration)
         }
-        SetupCommand::Imap(_) => Err(ErrorCode::InvalidInput),
+        SetupCommand::Imap(_) | SetupCommand::ScopeRefresh(_) => Err(ErrorCode::InvalidInput),
     };
     serve_until_with_setup(
         shutdown,

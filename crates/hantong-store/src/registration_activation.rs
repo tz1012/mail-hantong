@@ -422,7 +422,10 @@ fn request_clock(request: &RegistrationRequest, now: i64) -> Result<(), ErrorCod
 }
 #[cfg(windows)]
 fn provisioning_version(registration: &RegistrationRecord, expected: u64) -> Result<(), ErrorCode> {
-    if registration.state != RegistrationState::Provisioning || registration.version != expected {
+    if registration.state != RegistrationState::Provisioning
+        || registration.version != expected
+        || registration.profile_epoch != 1
+    {
         return Err(ErrorCode::Conflict);
     }
     Ok(())

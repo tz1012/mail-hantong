@@ -1,7 +1,10 @@
 use super::presentation::review_text;
-use crate::{VerifiedImapSetup, VerifiedRegistration, binding::CapturedReview};
+use crate::{
+    VerifiedImapSetup, VerifiedRegistration, VerifiedScopeRefresh, binding::CapturedReview,
+};
 use hantong_approval::{
-    AccountSetupReview, RegistrationReview, registration_review::ReviewSnapshot, setup_summary,
+    AccountSetupReview, RegistrationReview, ScopeRefreshReview,
+    registration_review::ReviewSnapshot, setup_summary,
 };
 use hantong_contracts::ErrorCode;
 use hantong_domain::config::Language;
@@ -12,24 +15,30 @@ use std::time::Instant;
 pub(super) enum DialogReview {
     Registration(RegistrationReview),
     Imap(AccountSetupReview),
+    ScopeRefresh(ScopeRefreshReview),
 }
 impl ReviewSnapshot for DialogReview {
     fn created_at_utc_ms(&self) -> i64 {
         match self {
             Self::Registration(review) => review.created_at_utc_ms(),
             Self::Imap(review) => review.created_at_utc_ms(),
+            Self::ScopeRefresh(review) => review.created_at_utc_ms(),
         }
     }
     fn expires_at_utc_ms(&self) -> i64 {
         match self {
             Self::Registration(review) => review.expires_at_utc_ms(),
             Self::Imap(review) => review.expires_at_utc_ms(),
+            Self::ScopeRefresh(review) => review.expires_at_utc_ms(),
         }
     }
 }
 impl DialogReview {
     pub(super) fn is_setup(&self) -> bool {
         matches!(self, Self::Imap(_))
+    }
+    pub(super) fn is_scope_refresh(&self) -> bool {
+        matches!(self, Self::ScopeRefresh(_))
     }
     pub(super) fn is_resume(&self) -> bool {
         matches!(self, Self::Imap(review) if review.is_resume())
@@ -38,6 +47,7 @@ impl DialogReview {
         match self {
             Self::Registration(review) => review_text(review, language),
             Self::Imap(review) => Ok(setup_summary(review, language)),
+            Self::ScopeRefresh(review) => Ok(review.summary(language)),
         }
     }
 }
@@ -45,18 +55,21 @@ impl DialogReview {
 pub(super) enum DialogBinding {
     Registration(CapturedReview),
     Imap(CapturedReview<AccountSetupReview>),
+    ScopeRefresh(CapturedReview<ScopeRefreshReview>),
 }
 impl DialogBinding {
     pub(super) fn review(&self) -> DialogReview {
         match self {
             Self::Registration(binding) => DialogReview::Registration(binding.review.clone()),
             Self::Imap(binding) => DialogReview::Imap(binding.review.clone()),
+            Self::ScopeRefresh(binding) => DialogReview::ScopeRefresh(binding.review.clone()),
         }
     }
     pub(super) fn started(&self) -> Instant {
         match self {
             Self::Registration(binding) => binding.started,
             Self::Imap(binding) => binding.started,
+            Self::ScopeRefresh(binding) => binding.started,
         }
     }
     pub(super) fn validate(&self, expected: &DialogReview) -> Result<(), ErrorCode> {
@@ -65,6 +78,9 @@ impl DialogBinding {
                 binding.validate(review)
             }
             (Self::Imap(binding), DialogReview::Imap(review)) => binding.validate(review),
+            (Self::ScopeRefresh(binding), DialogReview::ScopeRefresh(review)) => {
+                binding.validate(review)
+            }
             _ => Err(ErrorCode::ScopeDenied),
         }
     }
@@ -80,6 +96,9 @@ impl DialogBinding {
             (Self::Imap(binding), Some(pending)) => binding
                 .into_verified_setup(pending)
                 .map(|value| DialogVerified::Imap(Box::new(value))),
+            (Self::ScopeRefresh(binding), None) => binding
+                .into_verified()
+                .map(|value| DialogVerified::ScopeRefresh(Box::new(value))),
             _ => Err(ErrorCode::InternalError),
         }
     }
@@ -87,12 +106,15 @@ impl DialogBinding {
 pub(super) enum DialogVerified {
     Registration(Box<VerifiedRegistration>),
     Imap(Box<VerifiedImapSetup>),
+    ScopeRefresh(Box<VerifiedScopeRefresh>),
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hantong_approval::{Presentation, ReviewIntent, ReviewModel, ReviewState};
+    use hantong_approval::{
+        Presentation, ReviewIntent, ReviewModel, ReviewState, ScopeRefreshReview,
+    };
     use hantong_domain::{
         account_provisioning::NewImapAccountDraft, config::Theme,
         mail_connection::MailConnectionConfig,
@@ -150,6 +172,57 @@ mod tests {
             model.cancel();
             assert_eq!(
                 model.begin_verification(2003, Duration::from_secs(3)),
+                ReviewIntent::None
+            );
+        }
+    }
+
+    #[test]
+    fn cli15_scope_refresh_dialog_paints_exact_bilingual_snapshot_before_verification() {
+        let review = ScopeRefreshReview::new(
+            [1; 32],
+            1,
+            [2; 16],
+            [3; 32],
+            4,
+            5,
+            [6; 32],
+            [7; 32],
+            vec!["acct_a".into()],
+            vec!["acct_b".into()],
+            1000,
+            301000,
+        )
+        .unwrap();
+        let dialog = DialogReview::ScopeRefresh(review.clone());
+        for language in [Language::En, Language::Ko] {
+            let summary = dialog.summary(language).unwrap();
+            assert_eq!(summary, review.summary(language));
+            assert!(summary.contains("acct_a\r\n"));
+            assert!(summary.contains("acct_b\r\n"));
+            assert!(summary.contains("5 -> 6"));
+            let mut model = ReviewModel::new(
+                dialog.clone(),
+                Presentation::new(Some(language), Theme::System, false, true, false),
+            );
+            assert_eq!(
+                model.begin_verification(2000, Duration::from_secs(1)),
+                ReviewIntent::None
+            );
+            assert!(model.paint_completed(&dialog));
+            model.set_theme(Theme::Light);
+            model.system_theme_changed(true, true);
+            assert_eq!(
+                model.presentation().effective_theme(),
+                hantong_approval::EffectiveTheme::HighContrast
+            );
+            assert_eq!(
+                model.begin_verification(2001, Duration::from_secs(1)),
+                ReviewIntent::RequestVerification
+            );
+            model.cancel();
+            assert_eq!(
+                model.begin_verification(2002, Duration::from_secs(2)),
                 ReviewIntent::None
             );
         }

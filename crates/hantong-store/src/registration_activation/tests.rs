@@ -519,9 +519,11 @@ fn cli07_activation_checks_version_pin_grant_and_clock_without_mutation() {
             .activate_cli_registration(rid(1), 1, server_hash()),
         Err(ErrorCode::InternalError)
     );
+    // Default CLI grants must retain approved provenance even before initial
+    // activation; the deliberately removed grant is corrupt stored state.
     assert_eq!(
-        f.store().load_registration(rid(1)).unwrap().unwrap().state,
-        RegistrationState::Provisioning
+        f.store().load_registration(rid(1)),
+        Err(ErrorCode::InternalError)
     );
 }
 #[test]

@@ -7,6 +7,9 @@ use hantong_contracts::imap_setup::{
 use hantong_contracts::registration::{
     RegistrationCommand, RegistrationProgress, RegistrationReceipt,
 };
+use hantong_contracts::scope_refresh::{
+    ScopeRefreshCommand, ScopeRefreshProgress, ScopeRefreshReceipt,
+};
 use std::env;
 use std::io::{self, Write};
 
@@ -75,12 +78,13 @@ fn error_json(code: ErrorCode, lang: Lang) -> String {
 }
 
 fn run(args: impl IntoIterator<Item = String>) -> i32 {
-    run_with_boundaries_and_setup(
+    run_with_boundaries_and_scope(
         args,
         hantong_ipc_client::registration::exchange,
         verify_profile,
         hantong_ipc_client::accounts::list_default_accounts,
         hantong_ipc_client::imap_setup::exchange,
+        hantong_ipc_client::scope_refresh::exchange,
     )
 }
 
@@ -219,7 +223,43 @@ fn run_with_boundaries_and_accounts(
     })
 }
 
+#[cfg(test)]
 fn run_with_boundaries_and_setup(
+    args: impl IntoIterator<Item = String>,
+    registration: impl FnMut(RegistrationCommand) -> Result<RegistrationReceipt, ErrorCode>,
+    verification: impl FnMut() -> Result<(), ErrorCode>,
+    account_list: impl FnMut(
+        bool,
+    )
+        -> Result<hantong_ipc_client::accounts::AccountListResponse, ErrorCode>,
+    setup: impl FnMut(ImapSetupCommand) -> Result<ImapSetupReceipt, ErrorCode>,
+) -> i32 {
+    run_with_boundaries_and_scope(
+        args,
+        registration,
+        verification,
+        account_list,
+        setup,
+        |_| Err(ErrorCode::CapabilityUnsupported),
+    )
+}
+
+#[cfg(test)]
+fn run_with_boundaries_and_scope_for_test(
+    args: impl IntoIterator<Item = String>,
+    scope_refresh: impl FnMut(ScopeRefreshCommand) -> Result<ScopeRefreshReceipt, ErrorCode>,
+) -> i32 {
+    run_with_boundaries_and_scope(
+        args,
+        |_| panic!("registration must not run"),
+        || panic!("verification must not run"),
+        |_| Err(ErrorCode::CapabilityUnsupported),
+        |_| Err(ErrorCode::CapabilityUnsupported),
+        scope_refresh,
+    )
+}
+
+fn run_with_boundaries_and_scope(
     args: impl IntoIterator<Item = String>,
     mut registration: impl FnMut(RegistrationCommand) -> Result<RegistrationReceipt, ErrorCode>,
     mut verification: impl FnMut() -> Result<(), ErrorCode>,
@@ -228,6 +268,7 @@ fn run_with_boundaries_and_setup(
     )
         -> Result<hantong_ipc_client::accounts::AccountListResponse, ErrorCode>,
     mut setup: impl FnMut(ImapSetupCommand) -> Result<ImapSetupReceipt, ErrorCode>,
+    mut scope_refresh: impl FnMut(ScopeRefreshCommand) -> Result<ScopeRefreshReceipt, ErrorCode>,
 ) -> i32 {
     let mut lang = Lang::En;
     let mut json = false;
@@ -317,6 +358,19 @@ fn run_with_boundaries_and_setup(
             Err(error) => emit_error(error, lang, json),
         };
     }
+    match scope_refresh_command(&command) {
+        Ok(Some(value)) => {
+            return match scope_refresh(value) {
+                Ok(receipt) => {
+                    print_scope_refresh(&receipt, lang, json);
+                    0
+                }
+                Err(code) => emit_error(code, lang, json),
+            };
+        }
+        Err(code) => return emit_error(code, lang, json),
+        Ok(None) => {}
+    }
     match registration_command(&command) {
         Ok(Some(value)) => {
             return match registration(value) {
@@ -371,6 +425,20 @@ fn registration_command(command: &[String]) -> Result<Option<RegistrationCommand
             Ok(Some(RegistrationCommand::Status(id)))
         }
         [a, ..] if a == "clients" => Err(ErrorCode::InvalidInput),
+        _ => Ok(None),
+    }
+}
+
+fn scope_refresh_command(command: &[String]) -> Result<Option<ScopeRefreshCommand>, ErrorCode> {
+    match command {
+        [a, b] if a == "clients" && b == "refresh" => Ok(Some(ScopeRefreshCommand::Request)),
+        [a, b, id] if a == "clients" && b == "refresh-status" => {
+            let id = hantong_contracts::wire_hex::decode_fixed::<32>(id)?;
+            if id == [0; 32] {
+                return Err(ErrorCode::InvalidInput);
+            }
+            Ok(Some(ScopeRefreshCommand::Status(id)))
+        }
         _ => Ok(None),
     }
 }
@@ -488,6 +556,33 @@ fn print_registration(receipt: &RegistrationReceipt, lang: Lang, json: bool) {
             "{}\n{}: {}",
             resource(lang, key),
             resource(lang, "registration_request_id"),
+            id
+        );
+    }
+}
+
+fn print_scope_refresh(receipt: &ScopeRefreshReceipt, lang: Lang, json: bool) {
+    let id = hantong_contracts::wire_hex::encode(receipt.refresh_id());
+    if json {
+        println!(
+            "{{\"schema_version\":1,\"ok\":true,\"items\":[{{\"refresh_id\":\"{}\",\"expires_at_utc_ms\":{},\"state\":\"{}\"}}],\"next_cursor\":null,\"account_results\":[],\"completeness\":\"complete\",\"warnings\":[],\"observed_at\":null}}",
+            id,
+            receipt.expires_at_utc_ms(),
+            receipt.state().as_str()
+        );
+    } else {
+        let key = match receipt.state() {
+            ScopeRefreshProgress::Pending => "scope_refresh_pending",
+            ScopeRefreshProgress::Denied => "scope_refresh_denied",
+            ScopeRefreshProgress::Expired => "scope_refresh_expired",
+            ScopeRefreshProgress::Provisioning => "scope_refresh_provisioning",
+            ScopeRefreshProgress::Ready => "scope_refresh_ready",
+            ScopeRefreshProgress::Interrupted => "scope_refresh_interrupted",
+        };
+        println!(
+            "{}\n{}: {}",
+            resource(lang, key),
+            resource(lang, "scope_refresh_id"),
             id
         );
     }
@@ -1022,6 +1117,59 @@ mod tests {
             assert_eq!(verifications.get(), 0);
             assert_eq!(accounts.get(), 0);
             assert_eq!(setups.get(), 0);
+        }
+    }
+
+    #[test]
+    fn cli15_scope_refresh_request_and_status_use_only_opaque_progress() {
+        let calls = std::cell::RefCell::new(Vec::new());
+        let code = run_with_boundaries_and_scope_for_test(
+            ["--json", "--no-input", "clients", "refresh"].map(String::from),
+            |command| {
+                calls.borrow_mut().push(command);
+                Ok(ScopeRefreshReceipt::new([1; 32], 123, ScopeRefreshProgress::Pending).unwrap())
+            },
+        );
+        assert_eq!(code, 0);
+        assert_eq!(*calls.borrow(), vec![ScopeRefreshCommand::Request]);
+
+        let refresh_id = hantong_contracts::wire_hex::encode(&[2; 32]);
+        let code = run_with_boundaries_and_scope_for_test(
+            [
+                "--lang",
+                "ko",
+                "clients",
+                "refresh-status",
+                refresh_id.as_str(),
+            ]
+            .map(String::from),
+            |command| {
+                assert_eq!(command, ScopeRefreshCommand::Status([2; 32]));
+                Ok(
+                    ScopeRefreshReceipt::new([2; 32], 123, ScopeRefreshProgress::Interrupted)
+                        .unwrap(),
+                )
+            },
+        );
+        assert_eq!(code, 0);
+    }
+
+    #[test]
+    fn cli15_scope_refresh_rejects_approval_and_help_mixes_before_callback() {
+        for args in [
+            vec!["--include-capabilities", "clients", "refresh"],
+            vec!["--help", "clients", "refresh"],
+            vec!["clients", "refresh", "--version"],
+            vec!["clients", "refresh-status", "bad"],
+        ] {
+            let calls = std::cell::Cell::new(0);
+            let code =
+                run_with_boundaries_and_scope_for_test(args.into_iter().map(String::from), |_| {
+                    calls.set(calls.get() + 1);
+                    Err(ErrorCode::InternalError)
+                });
+            assert_eq!(code, ErrorCode::InvalidInput.exit_code());
+            assert_eq!(calls.get(), 0);
         }
     }
 

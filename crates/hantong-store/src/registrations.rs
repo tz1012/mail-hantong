@@ -416,6 +416,20 @@ pub(super) fn read_registration(
     connection: &rusqlite::Connection,
     id: &[u8; 16],
 ) -> rusqlite::Result<Option<RegistrationRecord>> {
+    let record = read_registration_bare(connection, id)?;
+    if let Some(value) = &record {
+        crate::scope_refresh::validate_registration(connection, value)?;
+    }
+    Ok(record)
+}
+
+// Scope provenance reads this structural snapshot directly; calling the public
+// adapter from history validation would recurse through the refresh reader.
+#[cfg(windows)]
+pub(super) fn read_registration_bare(
+    connection: &rusqlite::Connection,
+    id: &[u8; 16],
+) -> rusqlite::Result<Option<RegistrationRecord>> {
     use rusqlite::OptionalExtension;
     connection
         .query_row(

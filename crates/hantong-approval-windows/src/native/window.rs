@@ -4,13 +4,13 @@ use super::{
     presentation::{Colors, os_colors, os_language_is_korean},
 };
 use crate::{
-    VerifiedImapSetup, VerifiedRegistration,
+    VerifiedImapSetup, VerifiedRegistration, VerifiedScopeRefresh,
     binding::{CapturedReview, utc_ms},
     setup_binding::{capture_before_verification, input_error, validate_pending, validate_plan},
 };
 use hantong_approval::{
     AccountSetupReview, EffectiveTheme, Presentation, RegistrationReview, ReviewIntent,
-    ReviewModel, ReviewState, SetupTextKey, TextKey, setup_text, text,
+    ReviewModel, ReviewState, ScopeRefreshReview, SetupTextKey, TextKey, setup_text, text,
 };
 use hantong_contracts::ErrorCode;
 use hantong_domain::config::{Language, Theme};
@@ -68,6 +68,10 @@ const PASSWORD_LABEL: i32 = 25;
 const PASSWORD_INPUT: u16 = 26;
 const TIMER: usize = 1;
 const BUTTONS: [i32; 8] = [ENGLISH, KOREAN, LIGHT, DARK, SYSTEM, VERIFY, DENY, CLOSE];
+// Scope-refresh reviews may contain 128 old and 128 target IDs, each up to
+// 128 ASCII bytes. Keep the edit control and post-paint validator on one
+// explicit UTF-16-unit bound with room for labels and localized text.
+const MAX_REVIEW_UTF16_UNITS: usize = 64 * 1024;
 
 struct Sta;
 impl Sta {
@@ -357,6 +361,12 @@ impl State {
                 self.pending = Some(pending);
                 self.operation = Some(operation);
             }
+            DialogReview::ScopeRefresh(_) => {
+                self.operation = Some(ConsentOperation::start(
+                    hwnd,
+                    text(language, TextKey::ScopeRefreshVerificationRequired),
+                )?);
+            }
         }
         Ok(())
     }
@@ -372,7 +382,10 @@ impl State {
             .encode_utf16()
             .collect();
         let length = unsafe { GetWindowTextLengthW(body) };
-        if length < 0 || length as usize != expected.len() || expected.len() > 32 * 1024 {
+        if length < 0
+            || length as usize != expected.len()
+            || expected.len() > MAX_REVIEW_UTF16_UNITS
+        {
             return Err(ErrorCode::InternalError);
         }
         let mut actual = vec![0; expected.len() + 1];
@@ -477,6 +490,25 @@ impl State {
         }
     }
     fn caption(&self, id: i32) -> String {
+        if self.model.review().is_scope_refresh() {
+            let key = match id {
+                HEADING => TextKey::ScopeRefreshTitle,
+                INTRO => TextKey::ScopeRefreshIntroduction,
+                VERIFY => TextKey::ScopeRefreshVerify,
+                DENY => TextKey::ScopeRefreshDeny,
+                FOOTER => TextKey::ScopeRefreshFooter,
+                STATUS => match self.model.state() {
+                    ReviewState::AwaitingPaint => TextKey::AwaitingPaint,
+                    ReviewState::Reviewing => TextKey::Reviewing,
+                    ReviewState::Verifying => TextKey::Verifying,
+                    ReviewState::Closed => TextKey::Closed,
+                    ReviewState::Expired => TextKey::Expired,
+                    ReviewState::Unavailable => TextKey::Unavailable,
+                },
+                _ => return self.generic_caption(id),
+            };
+            return text(self.model.presentation().language(), key).to_owned();
+        }
         if self.model.review().is_setup() {
             let resume = self.model.review().is_resume();
             let setup_key = match id {
@@ -535,6 +567,9 @@ impl State {
                 return setup_text(self.model.presentation().language(), key).to_owned();
             }
         }
+        self.generic_caption(id)
+    }
+    fn generic_caption(&self, id: i32) -> String {
         let key = match id {
             HEADING => TextKey::Title,
             INTRO => TextKey::Introduction,
@@ -656,7 +691,12 @@ fn create_controls(hwnd: HWND, state: &mut State) -> Result<(), ErrorCode> {
     }
     if let Some(body) = state.control(REVIEW) {
         unsafe {
-            SendMessageW(body, EM_SETLIMITTEXT, Some(WPARAM(32 * 1024)), None);
+            SendMessageW(
+                body,
+                EM_SETLIMITTEXT,
+                Some(WPARAM(MAX_REVIEW_UTF16_UNITS)),
+                None,
+            );
         }
     }
     state.refresh(hwnd)?;
@@ -721,6 +761,7 @@ pub(super) fn run(
     )? {
         DialogVerified::Registration(verified) => Ok(*verified),
         DialogVerified::Imap(_) => Err(ErrorCode::InternalError),
+        DialogVerified::ScopeRefresh(_) => Err(ErrorCode::InternalError),
     }
 }
 
@@ -741,6 +782,25 @@ pub(super) fn run_setup(
     )? {
         DialogVerified::Imap(verified) => Ok(*verified),
         DialogVerified::Registration(_) => Err(ErrorCode::InternalError),
+        DialogVerified::ScopeRefresh(_) => Err(ErrorCode::InternalError),
+    }
+}
+
+pub(super) fn run_scope_refresh(
+    review: ScopeRefreshReview,
+    language: Option<Language>,
+    theme: Theme,
+    cancellation: Receiver<()>,
+) -> Result<VerifiedScopeRefresh, ErrorCode> {
+    match run_dialog(
+        DialogReview::ScopeRefresh(review),
+        None,
+        language,
+        theme,
+        cancellation,
+    )? {
+        DialogVerified::ScopeRefresh(verified) => Ok(*verified),
+        _ => Err(ErrorCode::InternalError),
     }
 }
 
@@ -762,6 +822,9 @@ fn run_dialog(
             DialogBinding::Registration(CapturedReview::capture(review)?)
         }
         DialogReview::Imap(review) => DialogBinding::Imap(CapturedReview::capture(review)?),
+        DialogReview::ScopeRefresh(review) => {
+            DialogBinding::ScopeRefresh(CapturedReview::capture(review)?)
+        }
     };
     let dpi = unsafe { GetDpiForSystem() }.clamp(96, 768);
     // The allocation outlives CreateWindow, all synchronous/reentrant callbacks,
@@ -1184,6 +1247,43 @@ fn draw_button(state: &State, draw: &DRAWITEMSTRUCT) {
             rect.top += 3;
             rect.bottom -= 3;
             let _ = DrawFocusRect(draw.hDC, &rect);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cli15_scope_refresh_maximum_bilingual_snapshot_fits_native_review_bound() {
+        let old = (0..128)
+            .map(|index| format!("a{index:0>127}"))
+            .collect::<Vec<_>>();
+        let target = (0..128)
+            .map(|index| format!("b{index:0>127}"))
+            .collect::<Vec<_>>();
+        let review = ScopeRefreshReview::new(
+            [1; 32],
+            1,
+            [2; 16],
+            [3; 32],
+            4,
+            5,
+            [6; 32],
+            [7; 32],
+            old,
+            target,
+            1_700_000_000_000,
+            1_700_000_300_000,
+        )
+        .unwrap();
+
+        for language in [Language::En, Language::Ko] {
+            let summary = review.summary(language);
+            let units = summary.encode_utf16().count();
+            assert!(units > 32 * 1024, "regression must exceed the old bound");
+            assert!(units <= MAX_REVIEW_UTF16_UNITS);
         }
     }
 }

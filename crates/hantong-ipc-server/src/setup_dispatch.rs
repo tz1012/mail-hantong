@@ -5,16 +5,19 @@ use hantong_contracts::{
     ErrorCode,
     imap_setup::{ImapSetupCommand, ImapSetupReceipt},
     registration::{RegistrationCommand, RegistrationReceipt},
+    scope_refresh::{ScopeRefreshCommand, ScopeRefreshReceipt},
 };
 use serde_json::{Value, json};
 
 pub enum SetupCommand {
     Registration(RegistrationCommand),
     Imap(ImapSetupCommand),
+    ScopeRefresh(ScopeRefreshCommand),
 }
 pub enum SetupReceipt {
     Registration(RegistrationReceipt),
     Imap(ImapSetupReceipt),
+    ScopeRefresh(ScopeRefreshReceipt),
 }
 
 /// Original frame length includes JSON whitespace; reserialization is not a bound.
@@ -35,7 +38,24 @@ fn dispatch<F>(
 where
     F: FnMut(SetupCommand) -> Result<SetupReceipt, ErrorCode>,
 {
-    if request.method.starts_with("registration.") {
+    if request.method.starts_with("registration.scope.") {
+        if !(1..=16_384).contains(&frame_length) {
+            return Err(ErrorCode::InvalidInput);
+        }
+        let command = crate::scope_refresh_wire::parse(request)?;
+        let expected_id = match command {
+            ScopeRefreshCommand::Request => None,
+            ScopeRefreshCommand::Status(id) => Some(id),
+        };
+        let SetupReceipt::ScopeRefresh(receipt) = callback(SetupCommand::ScopeRefresh(command))?
+        else {
+            return Err(ErrorCode::InternalError);
+        };
+        if expected_id.is_some_and(|id| receipt.refresh_id() != &id) {
+            return Err(ErrorCode::InternalError);
+        }
+        Ok(crate::scope_refresh_wire::result(&receipt))
+    } else if request.method.starts_with("registration.") {
         let command = crate::registration_wire::parse(request)?;
         let expected_id = match command {
             RegistrationCommand::Request => None,
@@ -203,6 +223,7 @@ mod tests {
                 Ok(match command {
                     SetupCommand::Registration(_) => SetupReceipt::Registration(reg.clone()),
                     SetupCommand::Imap(_) => imap_receipt([2; 32]),
+                    SetupCommand::ScopeRefresh(_) => panic!("unexpected scope refresh"),
                 })
             });
             assert_eq!(mismatch["error"]["code"], "INTERNAL_ERROR");
@@ -258,4 +279,64 @@ fn setup01_resume_dispatch_allows_child_id_but_not_wrong_receipt_family() {
         ))
     });
     assert_eq!(reply["error"]["code"], "INTERNAL_ERROR");
+}
+#[cfg(test)]
+mod scope_refresh_tests {
+    use super::*;
+    use hantong_contracts::{registration::RegistrationProgress, wire_hex};
+    fn request(method: &str, params: Value) -> RpcRequest {
+        RpcRequest {
+            id: "scope-1".into(),
+            method: method.into(),
+            params,
+        }
+    }
+    #[test]
+    fn cli15_scope_refresh_dispatch_is_bounded_and_distinct_from_registration() {
+        use hantong_contracts::scope_refresh::ScopeRefreshProgress;
+        let make =
+            |id| ScopeRefreshReceipt::new(id, 300001, ScopeRefreshProgress::Pending).unwrap();
+        let r = request("registration.scope.request", json!({"protocol_version":1}));
+        let mut calls = 0;
+        let result = response(&r, 16384, &mut |c| {
+            calls += 1;
+            assert_eq!(
+                match c {
+                    SetupCommand::ScopeRefresh(c) => c,
+                    _ => panic!("wrong family"),
+                },
+                ScopeRefreshCommand::Request
+            );
+            Ok(SetupReceipt::ScopeRefresh(make([3; 32])))
+        });
+        assert_eq!(calls, 1);
+        assert_eq!(result["result"]["refresh_id"], wire_hex::encode(&[3; 32]));
+        for length in [0, 16385] {
+            let result = response(&r, length, &mut |_| panic!("size before callback"));
+            assert_eq!(result["error"]["code"], "INVALID_INPUT");
+        }
+        let result = response(&r, 100, &mut |_| {
+            Ok(SetupReceipt::Registration(
+                RegistrationReceipt::new([3; 32], 300001, RegistrationProgress::Pending).unwrap(),
+            ))
+        });
+        assert_eq!(result["error"]["code"], "INTERNAL_ERROR");
+        let r = request(
+            "registration.scope.status",
+            json!({"protocol_version":1,"refresh_id":wire_hex::encode(&[4;32])}),
+        );
+        let result = response(&r, 100, &mut |_| {
+            Ok(SetupReceipt::ScopeRefresh(make([3; 32])))
+        });
+        assert_eq!(result["error"]["code"], "INTERNAL_ERROR");
+        for method in [
+            "registration.scope.approve",
+            "registration.scope.complete",
+            "registration.scope.execute",
+        ] {
+            let r = request(method, json!({"protocol_version":1,"approved":true}));
+            let result = response(&r, 100, &mut |_| panic!("cannot issue approval"));
+            assert_eq!(result["error"]["code"], "HUMAN_STEP_REQUIRED");
+        }
+    }
 }

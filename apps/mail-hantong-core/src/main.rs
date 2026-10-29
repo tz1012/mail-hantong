@@ -12,6 +12,8 @@ mod identity;
 #[cfg(windows)]
 mod registration;
 #[cfg(windows)]
+mod scope_refresh;
+#[cfg(windows)]
 mod setup_imap;
 #[cfg(windows)]
 mod storage;

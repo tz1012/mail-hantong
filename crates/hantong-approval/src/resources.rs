@@ -39,6 +39,17 @@ pub enum TextKey {
     VerificationRequired,
     ScopeNotice,
     Footer,
+    ScopeRefreshIntroduction,
+    ScopeRefreshTitle,
+    ScopeRefreshCurrentScope,
+    ScopeRefreshTargetScope,
+    ScopeRefreshNoAccounts,
+    ScopeRefreshEpochChange,
+    ScopeRefreshDisconnected,
+    ScopeRefreshVerify,
+    ScopeRefreshDeny,
+    ScopeRefreshVerificationRequired,
+    ScopeRefreshFooter,
 }
 impl TextKey {
     pub const ALL: &'static [Self] = &[
@@ -78,6 +89,17 @@ impl TextKey {
         Self::VerificationRequired,
         Self::ScopeNotice,
         Self::Footer,
+        Self::ScopeRefreshIntroduction,
+        Self::ScopeRefreshTitle,
+        Self::ScopeRefreshCurrentScope,
+        Self::ScopeRefreshTargetScope,
+        Self::ScopeRefreshNoAccounts,
+        Self::ScopeRefreshEpochChange,
+        Self::ScopeRefreshDisconnected,
+        Self::ScopeRefreshVerify,
+        Self::ScopeRefreshDeny,
+        Self::ScopeRefreshVerificationRequired,
+        Self::ScopeRefreshFooter,
     ];
     pub fn as_str(self) -> &'static str {
         match self {
@@ -117,6 +139,17 @@ impl TextKey {
             Self::VerificationRequired => "verification_required",
             Self::ScopeNotice => "scope_notice",
             Self::Footer => "footer",
+            Self::ScopeRefreshIntroduction => "scope_refresh_introduction",
+            Self::ScopeRefreshTitle => "scope_refresh_title",
+            Self::ScopeRefreshCurrentScope => "scope_refresh_current_scope",
+            Self::ScopeRefreshTargetScope => "scope_refresh_target_scope",
+            Self::ScopeRefreshNoAccounts => "scope_refresh_no_accounts",
+            Self::ScopeRefreshEpochChange => "scope_refresh_epoch_change",
+            Self::ScopeRefreshDisconnected => "scope_refresh_disconnected",
+            Self::ScopeRefreshVerify => "scope_refresh_verify",
+            Self::ScopeRefreshDeny => "scope_refresh_deny",
+            Self::ScopeRefreshVerificationRequired => "scope_refresh_verification_required",
+            Self::ScopeRefreshFooter => "scope_refresh_footer",
         }
     }
 }

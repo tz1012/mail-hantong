@@ -362,3 +362,5 @@ mod tests {
         );
     }
 }
+
+pub mod scope_refresh_wire;

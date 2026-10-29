@@ -17,6 +17,7 @@ pub mod imap_setup;
 pub mod mail_connection;
 mod registration_activation;
 mod registrations;
+pub mod scope_refresh;
 pub use registration_activation::{CliRegistrationStage, DEFAULT_CLI_LABEL};
 mod server_identity;
 pub use registrations::{
@@ -26,7 +27,7 @@ pub use registrations::{
 pub use server_identity::ServerIdentity;
 
 #[cfg(windows)]
-const CURRENT_SCHEMA_VERSION: u32 = 6;
+const CURRENT_SCHEMA_VERSION: u32 = 7;
 #[cfg(windows)]
 const DATABASE_FORMAT: &str = "mail-hantong";
 #[cfg(windows)]
@@ -39,6 +40,10 @@ const SCHEMA: &str = include_str!("../../../docs/contracts/db-schema.sql");
 const SCHEMA_V4: &str = include_str!("../../../docs/contracts/migrations/schema-v4.sql");
 #[cfg(windows)]
 const SCHEMA_V5: &str = include_str!("../../../docs/contracts/migrations/schema-v5.sql");
+#[cfg(windows)]
+const SCHEMA_V6: &str = include_str!("../../../docs/contracts/migrations/schema-v6.sql");
+#[cfg(windows)]
+const MIGRATION_V6_TO_V7: &str = include_str!("../../../docs/contracts/migrations/006-to-007.sql");
 #[cfg(windows)]
 const SCHEMA_V1: &str = include_str!("../../../docs/contracts/migrations/schema-v1.sql");
 #[cfg(windows)]
@@ -235,6 +240,7 @@ impl Store {
                 (3, _) => Ok(SchemaState::V3),
                 (4, _) => Ok(SchemaState::V4),
                 (5, _) => Ok(SchemaState::V5),
+                (6, _) => Ok(SchemaState::V6),
                 (CURRENT_SCHEMA_VERSION, _) => Ok(SchemaState::Current),
                 _ => Ok(SchemaState::Unsupported),
             }
@@ -247,29 +253,38 @@ impl Store {
                 self.migrate_v2_to_v3()?;
                 self.migrate_v3_to_v4()?;
                 self.migrate_v4_to_v5()?;
-                self.migrate_v5_to_v6()
+                self.migrate_v5_to_v6()?;
+                self.migrate_v6_to_v7()
             }
             SchemaState::V2 => {
                 self.with_connection(|connection| validate_schema(connection, SCHEMA_V2, 2))?;
                 self.migrate_v2_to_v3()?;
                 self.migrate_v3_to_v4()?;
                 self.migrate_v4_to_v5()?;
-                self.migrate_v5_to_v6()
+                self.migrate_v5_to_v6()?;
+                self.migrate_v6_to_v7()
             }
             SchemaState::V3 => {
                 self.with_connection(|connection| validate_schema(connection, SCHEMA_V3, 3))?;
                 self.migrate_v3_to_v4()?;
                 self.migrate_v4_to_v5()?;
-                self.migrate_v5_to_v6()
+                self.migrate_v5_to_v6()?;
+                self.migrate_v6_to_v7()
             }
             SchemaState::V4 => {
                 self.with_connection(|connection| validate_schema(connection, SCHEMA_V4, 4))?;
                 self.migrate_v4_to_v5()?;
-                self.migrate_v5_to_v6()
+                self.migrate_v5_to_v6()?;
+                self.migrate_v6_to_v7()
             }
             SchemaState::V5 => {
                 self.with_connection(|connection| validate_schema(connection, SCHEMA_V5, 5))?;
-                self.migrate_v5_to_v6()
+                self.migrate_v5_to_v6()?;
+                self.migrate_v6_to_v7()
+            }
+            SchemaState::V6 => {
+                self.with_connection(|connection| validate_schema(connection, SCHEMA_V6, 6))?;
+                self.migrate_v6_to_v7()
             }
             SchemaState::Current => self.with_connection(|connection| {
                 validate_schema(connection, SCHEMA, CURRENT_SCHEMA_VERSION)
@@ -309,8 +324,15 @@ impl Store {
 
     #[cfg(windows)]
     fn migrate_v5_to_v6(&self) -> Result<(), ErrorCode> {
-        self.migrate_with_backup(5, 6, SCHEMA, |connection| {
+        self.migrate_with_backup(5, 6, SCHEMA_V6, |connection| {
             connection.execute_batch(MIGRATION_V5_TO_V6)
+        })
+    }
+
+    #[cfg(windows)]
+    fn migrate_v6_to_v7(&self) -> Result<(), ErrorCode> {
+        self.migrate_with_backup(6, 7, SCHEMA, |connection| {
+            connection.execute_batch(MIGRATION_V6_TO_V7)
         })
     }
 
@@ -398,6 +420,7 @@ enum SchemaState {
     V3,
     V4,
     V5,
+    V6,
     Newer,
     Unsupported,
     Corrupt,
@@ -498,6 +521,9 @@ fn validate_schema(
         crate::imap_setup::validate_journal_v5(connection)?;
     } else if schema_version >= 6 {
         crate::imap_setup::validate_journal(connection)?;
+    }
+    if schema_version >= 7 {
+        crate::scope_refresh::validate_history(connection)?;
     }
     Ok(())
 }
@@ -871,7 +897,7 @@ mod tests {
                     |row| row.get::<_, i64>(0)
                 ))
                 .unwrap(),
-            6
+            i64::from(CURRENT_SCHEMA_VERSION)
         );
         assert_eq!(
             keyed
@@ -881,7 +907,7 @@ mod tests {
                     |row| row.get::<_, i64>(0)
                 ))
                 .unwrap(),
-            17
+            18
         );
     }
 
@@ -919,7 +945,7 @@ mod tests {
                     |c| c.pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0))
                 )
                 .unwrap(),
-            6
+            i64::from(CURRENT_SCHEMA_VERSION)
         );
         assert_eq!(
             store
@@ -946,7 +972,7 @@ mod tests {
                     |c| c.pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0))
                 )
                 .unwrap(),
-            6
+            i64::from(CURRENT_SCHEMA_VERSION)
         );
         assert_eq!(store.with_connection(|c| c.query_row("SELECT retained_executions,retained_account_refs FROM audit_capacity WHERE singleton=1", [], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?)))).unwrap(), (0, 0));
     }
@@ -995,7 +1021,7 @@ mod tests {
                     |c| c.pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0))
                 )
                 .unwrap(),
-            6
+            i64::from(CURRENT_SCHEMA_VERSION)
         );
         assert_eq!(
             store
@@ -1186,7 +1212,7 @@ mod tests {
                     |c| c.pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0))
                 )
                 .unwrap(),
-            6
+            i64::from(CURRENT_SCHEMA_VERSION)
         );
         assert_eq!(
             store
@@ -1581,7 +1607,7 @@ mod tests {
                     |c| c.pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0))
                 )
                 .unwrap(),
-            6
+            i64::from(CURRENT_SCHEMA_VERSION)
         );
         assert!(fixture.0.join("data/backup-before-v4.db").is_file());
     }
@@ -1747,7 +1773,7 @@ mod tests {
                     |c| c.pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0))
                 )
                 .unwrap(),
-            6
+            i64::from(CURRENT_SCHEMA_VERSION)
         );
         assert!(fixture.0.join("data/backup-before-v5.db").is_file());
     }
@@ -1836,7 +1862,7 @@ mod tests {
             connection: fixture.keyed(),
         };
         assert_eq!(
-            store.migrate_with_backup(5, 6, SCHEMA, |connection| {
+            store.migrate_with_backup(5, 6, SCHEMA_V6, |connection| {
                 connection.execute_batch(MIGRATION_V5_TO_V6)?;
                 connection.execute_batch("CREATE TABLE unwanted_v6(x)")?;
                 Ok(())
@@ -1872,5 +1898,134 @@ mod tests {
             .with_connection(|c| validate_schema(c, SCHEMA_V5, 5))
             .unwrap();
         assert_eq!(before, store.with_connection(snapshot).unwrap());
+    }
+    fn seed_v6_fixture(fixture: &Fixture) {
+        fixture.seed_v5();
+        let store = Store {
+            connection: fixture.keyed(),
+        };
+        store
+            .migrate_with_backup(5, 6, SCHEMA_V6, |c| c.execute_batch(MIGRATION_V5_TO_V6))
+            .unwrap();
+    }
+    fn v6_rows(
+        c: &rusqlite::Connection,
+    ) -> rusqlite::Result<Vec<Vec<Vec<rusqlite::types::Value>>>> {
+        let mut result = Vec::new();
+        for table in [
+            "settings",
+            "accounts",
+            "server_identity",
+            "client_registration_requests",
+            "client_registrations",
+            "client_registration_accounts",
+            "client_registration_tools",
+            "audit_capacity",
+            "audit_starts",
+            "audit_start_accounts",
+            "audit_terminals",
+            "mail_connection_settings",
+            "mail_connection_observations",
+            "mail_connection_operations",
+            "imap_setup_requests",
+            "imap_setup_events",
+            "sqlite_sequence",
+        ] {
+            let mut statement = c.prepare(&format!("SELECT * FROM {table} ORDER BY rowid"))?;
+            let columns = statement.column_count();
+            result.push(
+                statement
+                    .query_map([], |r| {
+                        (0..columns)
+                            .map(|i| r.get(i))
+                            .collect::<rusqlite::Result<Vec<rusqlite::types::Value>>>()
+                    })?
+                    .collect::<rusqlite::Result<Vec<_>>>()?,
+            );
+        }
+        Ok(result)
+    }
+    #[test]
+    fn cli15_v6_migrates_to_v7_without_changing_existing_rows() {
+        let f = Fixture::new();
+        seed_v6_fixture(&f);
+        let before = f.keyed().with_connection(v6_rows).unwrap();
+        let store = f.open().unwrap();
+        assert_eq!(before, store.with_connection(v6_rows).unwrap());
+        assert_eq!(
+            store
+                .with_connection(
+                    |c| c.pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0))
+                )
+                .unwrap(),
+            7
+        );
+        assert_eq!(
+            store
+                .with_connection(|c| c.query_row(
+                    "SELECT count(*) FROM client_scope_refreshes",
+                    [],
+                    |r| r.get::<_, i64>(0)
+                ))
+                .unwrap(),
+            0
+        );
+        assert!(f.0.join("data/backup-before-v6.db").is_file());
+    }
+    #[test]
+    fn cli15_v6_backup_collision_preserves_original_and_artifact() {
+        let f = Fixture::new();
+        seed_v6_fixture(&f);
+        let database = f.0.join("data/mail-hantong.db");
+        let before = fs::read(&database).unwrap();
+        let backup = f.0.join("data/backup-before-v6.db");
+        fs::write(&backup, b"keep-existing-v6").unwrap();
+        assert!(matches!(f.open(), Err(ErrorCode::Conflict)));
+        assert_eq!(fs::read(&database).unwrap(), before);
+        assert_eq!(fs::read(backup).unwrap(), b"keep-existing-v6");
+    }
+    #[test]
+    fn cli15_v7_failed_validation_rolls_back_real_ddl_and_all_v6_rows() {
+        let f = Fixture::new();
+        seed_v6_fixture(&f);
+        let before = f.keyed().with_connection(v6_rows).unwrap();
+        let store = Store {
+            connection: f.keyed(),
+        };
+        assert_eq!(
+            store.migrate_with_backup(6, 7, SCHEMA, |c| {
+                c.execute_batch(MIGRATION_V6_TO_V7)?;
+                c.execute_batch("CREATE TABLE unexpected_refresh(x)")
+            }),
+            Err(ErrorCode::InternalError)
+        );
+        assert_eq!(before, store.with_connection(v6_rows).unwrap());
+        store
+            .with_connection(|c| validate_schema(c, SCHEMA_V6, 6))
+            .unwrap();
+        assert_eq!(
+            store
+                .with_connection(
+                    |c| c.pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0))
+                )
+                .unwrap(),
+            6
+        );
+        assert!(f.0.join("data/backup-before-v6.db").is_file());
+    }
+    #[test]
+    fn cli15_corrupt_v6_history_is_rejected_before_backup() {
+        let f = Fixture::new();
+        seed_v6_fixture(&f);
+        f.keyed()
+            .with_connection(|c| {
+                c.execute(
+                    "UPDATE imap_setup_requests SET payload_hash=?1 WHERE request_id=?2",
+                    rusqlite::params![vec![31u8; 32], vec![27u8; 32]],
+                )
+            })
+            .unwrap();
+        assert!(matches!(f.open(), Err(ErrorCode::InternalError)));
+        assert!(!f.0.join("data/backup-before-v6.db").exists());
     }
 }
