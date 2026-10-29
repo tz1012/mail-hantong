@@ -22,6 +22,10 @@ hantong-domain = { path = "../../crates/hantong-domain" }
 hantong-contracts = { path = "../../crates/hantong-contracts" }
 hantong-ipc-server = { path = "../../crates/hantong-ipc-server" }
 hantong-platform = { path = "../../crates/hantong-platform" }
+hantong-policy = { path = "../../crates/hantong-policy" }
 hantong-store = { path = "../../crates/hantong-store" }
 tokio = { version = "1.54.1", features = ["rt", "net", "time", "signal", "macros", "sync"] }
 serde_json = "1.0.154"
+
+[dev-dependencies]
+hantong-test-support = { path = "../../tests/Fakes" }

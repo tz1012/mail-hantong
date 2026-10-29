@@ -9,9 +9,9 @@
 | 항목 | 상태와 근거 |
 | --- | --- |
 | 기준 자료 | 사용자 승인으로 채택한 [Markdown 기준 요건](../requirements/README.md): 요건 170개·1단계 P0 144개·문장별 AC ID 341개. 작업 카드 정의 151개는 보존한다. |
-| 현재 카드 | **M1-02/M1-06·M6-02 등록 연결의 자동 검증 완료, 사람 검토 필요**. 기본 CLI 등록 요청·Windows 신뢰 창·Hello 결속·provisioning/active·보호 프로필 배포·중단 복구·인증 확인을 연결했다. 다음은 M1-09 정책과 등록된 CLI 계정 목록 조회다. |
-| 최신 검증 | **553개 통과**(문서 29·빌드 도구 62·Rust 462). 전체 build/test/fmt/Clippy·의존/문서/추적 검사 및 Linux x86_64·macOS arm64 교차 Clippy 통과. 2026-10-30 등록 snapshot의 로그·hash는 아래 기록에 있다. 실제 Mac 실행·전체 기능 완료를 뜻하지 않는다. |
-| 제품 구현 | Rust workspace·영/한 CLI·Windows 코어/IPC·DPAPI·SQLCipher·설정 검증·감사·기본 등록/프로필·IMAP/SMTP TLS/AUTH probe·CI/추적 도구 구현. 메일 도구는 정책 기본 거부 상태다. 실제 메일 수신·전체 GUI·설치 패키지는 미완료다. |
+| 현재 카드 | **M1-06/M1-09 등록된 CLI 계정 읽기의 자동 검증 완료, 사람 검토 필요**. 인증·최신 권한·등록별 호출 한도·감사를 통과한 계정 목록을 영/한·JSON으로 출력한다. 다음은 새 IMAP 계정 생성/설정의 저장 전이다. |
+| 최신 검증 | **581개 통과**(문서 29·빌드 도구 62·Rust 490). 전체 build/test/fmt/Clippy·의존/문서/추적 검사 및 Linux x86_64·macOS arm64 교차 Clippy 통과. 2026-10-30 계정 읽기 snapshot의 로그·hash는 아래 기록에 있다. 실제 Mac 실행·전체 기능 완료를 뜻하지 않는다. |
+| 제품 구현 | Rust workspace·영/한 CLI·Windows 코어/IPC·DPAPI·SQLCipher·설정 검증·감사·기본 등록/프로필·권한이 있는 계정 목록 조회·IMAP/SMTP TLS/AUTH probe·CI/추적 도구 구현. 발송은 차단하며 계정 생성 UI·실제 메일 수신·전체 GUI·설치 패키지는 미완료다. |
 | GitHub | 로컬 Git main 저장소를 초기화해 개발 기준선을 기록한다. 공개 저장소 주소·remote·릴리스·패키지 ID는 아직 없음. 빌드 산출물·실행 데이터·에이전트 상태는 제외한다. |
 | 새 사용자 요청 | 진행 상황을 이 문서에 누적하고, GitHub에서 명령어로 설치 및 개발을 시작할 수 있는 경로를 마련한다. 상세 범위는 [공개와 설치 계획](DISTRIBUTION.md)에 기록한다. |
 | 문서 관리 방식 | Markdown을 개발 기준으로 갱신하고 기존 Word는 보관한다. 최신 사용자 지시 “제작 완료까지 일단 묻지말고 진행해”에 따라 일반 구현 판단은 기록하며 연속 진행한다. |
@@ -19,7 +19,7 @@
 | 런타임 결정 | **코어·CLI Rust 확정** — 2026-10-29 사용자 선택, [ADR-001](../adr/ADR-001-core-runtime.md). 비교 실험에서 .NET은 프로세스 시작, Rust는 메모리에 유리했고 검색은 혼재했다. [실측 보고서](RUNTIME-BENCHMARK.md)는 보존하며 제품의 1초 목표는 아직 검증 전이다. |
 | Mac 지원 방향 | 사용자 승인으로 정식 후속 목표에 포함했다. Windows 우선 출시 후 Mac 코어·CLI·최소 승인 도우미부터 제공하고 전체 GUI를 후속 제공한다. 구체적인 단계·일정·패키지는 미정이며 현재 제품은 미구현이다. |
 | 공개 사용 정책 | **[LICENSE Version 1.0](../../LICENSE) 정식 채택** — 개인·회사 내부 업무용 사용, 수정본 비공개 및 원본·수정본 무료 재배포 허용. 프로그램 판매·유료 제공 금지. 고지 유지·수정 표시·보증과 책임 조항 포함. 저작권자는 **Andrew Cho**, 웹사이트 **https://tzt.kr**, 연락처 **andrew@tzt.kr**이다. [한국어 안내](LICENSING.md), [ADR-016](../adr/ADR-016-license.md). |
-| 다음 제품 작업 | 등록된 CLI의 계정 목록 조회를 공통 정책·호출 한도·감사에 연결한다. 이어 IMAP/SMTP probe를 설정·관측 서비스에 연결한다. 실제 계정 설정·수신 UI는 아직 남아 있다. |
+| 다음 제품 작업 | 새 IMAP 계정의 생성/설정 저장 전이 → 보호된 비밀 입력/연결 검사 → 기존 CLI의 명시적 계정 권한 갱신을 이어간다. 실제 계정 로그인은 개발 중 자동 실행하지 않는다. |
 
 ## 기록 규칙
 
@@ -519,3 +519,25 @@ private IMAP response gate는 초기 13개 실패 후 13개 통과했다. CRLF·
 `scripts/check_all.py` 종료 코드 **0**: **553개**(문서 29·빌드 도구 62·Rust 462), build/fmt/Clippy·아키텍처·불변 요건·추적 검사 통과. 로그 `target/registration-final-full-check.log`, SHA-256 `E1BB43E383FE5EC1C0459F22F489FF085AB7A64575682D2D1794777708D6AF53`, source hash `69a2de2aaa456c45389c1a7bc88d338eba1268de6404b054d1d7a8d8172991b8`. Linux x86_64/macOS arm64 all-target Clippy도 종료 코드 0이다(`target/registration-final-linux-check.log`, `target/registration-final-macos-check.log`). 교차 검사에서 Windows 전용 응답 helper의 cfg 누락을 수정한 뒤 전체 검사를 다시 실행했다.
 
 검사 뒤 제품 CNG 키는 기존 서버 **1개**, names hash `3B692D49F1D08F7D3442806CF17694CDC02AF36B44839930FC18EB9C83CE9D4D`로 유지됐다. 실제 사용자 프로필 등록·Hello·외부 계정·메일을 실행하지 않았다. 실제 화면/접근성·OS Hello와 **[사람 검토 필요]** 상태는 유지한다. 전체 제품 AC 완료 표시는 계속 0개다. 다음은 등록된 CLI 계정 목록의 정책·호출 한도·엄격한 응답 검증 연결이다.
+
+등록 변경의 로컬 커밋은 `a83732b`다. 외부 push/공개/릴리스는 실행하지 않았다.
+
+## 2026-10-30 M1-06/M1-09 등록된 CLI 계정 읽기 (진행 중)
+
+구현 전에 [초기 읽기 정책](../contracts/policy-read.md)과 [계정 응답 소비 경계](../contracts/accounts-read.md)를 정했다. 실제 인증·최신 등록·감사·전체 scope를 거친 `mail.accounts.list`만 허용하며 발송 경로는 차단한다. 프로세스 수명의 등록별 단조 시계 60초 한도는 최대 1,024 bucket/각 600회로 제한한다. 재시작 때 한도가 초기화되고 거부 호출도 감사 용량을 사용한다는 한계를 명시했다. DB 스키마·제3자 의존성은 추가하지 않는다.
+
+정책/Core와 IPC client/CLI를 분리 구현한다. CLI는 고정 프로필의 명시적 계정 범위를 사용하고, 원본 응답 bytes에서 중복/알 수 없는 필드·추가 계정·부분 결과·표시값을 검사한 타입만 출력한다. 변경 후 새 전체 검사와 독립 검토를 수행할 예정이며 **553개 snapshot은 직전 등록 커밋의 증거**다. 현재 진행 중 변경 전체의 통과를 뜻하지 않는다.
+
+### 계정 읽기 최종 자동 검증 snapshot
+
+`ReadPolicy`는 Core 프로세스 수명 동안 유지되며 최신 Store 등록 한도를 매번 읽는다. 순수 한도 시험 7개, 실제 Windows pipe/CNG·격리 Store 시나리오에서 읽기/감사 수치, 연결 간 한도 공유, 최신 한도 감소/증가, scope·철회·epoch 거부, 발송 차단을 확인했다. 합성 DB 준비는 제품에서 의존할 수 없는 dev-only `hantong-test-support` 안에 두었다. 새 제3자 패키지나 DB 스키마 변경은 없다.
+
+초기 응답 decoder 검토에서 중첩 Value 변환이 중복 키를 잃는 문제, positional array/필수 nullable 누락 허용, ID 정렬과 계정 번호 정렬 혼동, 개수/UTC 검증 누락을 발견했다. 실패 회귀 7개를 먼저 확인한 뒤 직접 스트림의 object/typed visitor로 보완했다(`target/accounts-codec-regression-red.log` → `target/accounts-codec-regression-green.log`). 추가 경계 사례를 포함한 decoder 14개와 실제 Core 성공 응답의 decoder/re-serialization 대조가 통과했다. 임의 중첩 필드·오류 원문·추가 계정·부분 결과·잘못된 날짜/시간·capability 경계를 검사한다.
+
+독립 검토에서 `--include-capabilities`를 다른 명령에 붙여도 등록 동작이 먼저 실행되는 순서 문제를 찾아 모든 동작 전 거부하도록 수정했다. 영어/한국어 상태·주소·제공자·기능 라벨, 언어 독립 JSON, 터미널 방향 제어 문자 escape를 확인했다. 최종 프로세스 시험은 보호된 계정 조회 대신 고정 거부 명령으로 오류 envelope를 검사하여 실제 사용자 프로필 상태에 의존하지 않는다.
+
+`scripts/check_all.py` 종료 코드 **0**: **581개**(문서 29·빌드 도구 62·Rust 490), 전체 build/fmt/Clippy·아키텍처·기준 요건·추적 검사 통과. 로그 `target/accounts-read-full-check.log`, SHA-256 `8F081044CD14F5C86551B05DC4F3584C566A41E41931E40CB0136630313E48FE`, source hash `468be36868cc438881a194aeace1fb9cb02fcb039408872e3b46f1f469211771`. Linux x86_64/macOS arm64 all-target Clippy 종료 코드 0(`target/accounts-read-linux-check.log`, `target/accounts-read-macos-check.log`). 실제 Mac 실행은 아니다.
+
+검사 뒤 정상 CNG 서버 키 1개와 names hash `3B692D49F1D08F7D3442806CF17694CDC02AF36B44839930FC18EB9C83CE9D4D`를 확인했다. 실제 사용자 등록·Hello·메일 로그인/발송은 실행하지 않았다. 정책·보안 계약은 **[사람 검토 필요]**이며 전체 제품 AC 완료는 0개다. 새 설치에서는 아직 계정 생성 화면이 없어 전체 설정 과정이 완성되지 않았다.
+
+다음 개발의 병목은 새 accounts 행과 endpoint/비밀 저장의 중단 복구다. 현재 M2-01 설정 API는 기존 계정을 요구하지만 실제 추가는 계획상 ACC-01/M3-10에 있다. 카드 정의를 임의 변경하지 않고 이 선행 공백을 기록하며 필요한 저장 전이부터 구현한다. 기존 빈 scope 등록에 새 계정을 자동 허용하지 않고 별도의 사람 검토와 profile epoch 갱신으로 연결한다.

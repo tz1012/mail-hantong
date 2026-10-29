@@ -16,12 +16,14 @@ use hantong_ipc_server::{
     auth::{AuthenticatedConnection, RegisteredClient},
 };
 use hantong_platform::random_nonce;
+use hantong_policy::ReadPolicy;
 use hantong_store::{RegistrationRecord, RegistrationState, Store};
 use serde_json::Value;
 
 pub(crate) struct CoreExecutionAdapter<'a, 'server> {
     connection: &'a mut AuthenticatedConnection<'server>,
     store: &'a Store,
+    policy: &'a mut ReadPolicy,
 }
 
 pub(crate) fn load_registration(
@@ -36,10 +38,11 @@ pub(crate) fn load_registration(
 
 pub(crate) fn execute<'server>(
     store: &Store,
+    policy: &mut ReadPolicy,
     connection: &mut AuthenticatedConnection<'server>,
     request: &RpcRequest,
 ) -> Result<Value, ErrorCode> {
-    let mut adapter = CoreExecutionAdapter::new(connection, store);
+    let mut adapter = CoreExecutionAdapter::new(connection, store, policy);
     hantong_application::execute_tool(&mut adapter, &request.method, &request.params)
 }
 
@@ -47,22 +50,27 @@ impl<'a, 'server> CoreExecutionAdapter<'a, 'server> {
     pub(crate) fn new(
         connection: &'a mut AuthenticatedConnection<'server>,
         store: &'a Store,
+        policy: &'a mut ReadPolicy,
     ) -> Self {
-        Self { connection, store }
+        Self {
+            connection,
+            store,
+            policy,
+        }
     }
 
-    fn current_registration(&mut self) -> Result<RegisteredClient, ErrorCode> {
-        match load_registration(self.store, self.connection.registration_id()) {
-            Ok(Some(current)) => Ok(current),
-            Ok(None) => {
-                let _ = self.connection.revalidate_registration(None);
-                Err(ErrorCode::ClientNotRegistered)
-            }
-            Err(error) => {
-                let _ = self.connection.revalidate_registration(None);
-                Err(error)
-            }
+    fn current_registration(
+        &mut self,
+    ) -> Result<(RegistrationRecord, RegisteredClient), ErrorCode> {
+        let current = self
+            .store
+            .load_registration(*self.connection.registration_id())
+            .and_then(|record| record.ok_or(ErrorCode::ClientNotRegistered))
+            .and_then(|record| registered_client(record.clone()).map(|client| (record, client)));
+        if current.is_err() {
+            let _ = self.connection.revalidate_registration(None);
         }
+        current
     }
 }
 
@@ -81,7 +89,7 @@ impl<'a, 'server> ExecutionContext for CoreExecutionAdapter<'a, 'server> {
     type Output = Value;
 
     fn revalidate(&mut self) -> Result<(), ErrorCode> {
-        let current = self.current_registration()?;
+        let (_, current) = self.current_registration()?;
         self.connection.revalidate_registration(Some(&current))
     }
 
@@ -99,7 +107,7 @@ impl<'a, 'server> ExecutionContext for CoreExecutionAdapter<'a, 'server> {
     }
 
     fn check_scope(&mut self, request: &ToolRequest) -> Result<(), ErrorCode> {
-        let current = self.current_registration()?;
+        let (_, current) = self.current_registration()?;
         self.connection.check_accounts_scope(
             Some(&current),
             request.account_ids(),
@@ -107,10 +115,18 @@ impl<'a, 'server> ExecutionContext for CoreExecutionAdapter<'a, 'server> {
         )
     }
 
-    fn check_policy(&mut self, _request: &ToolRequest) -> Result<(), ErrorCode> {
-        // The policy engine is not connected to this core adapter yet.  A
-        // missing policy is a denial, never an implicit allow.
-        Err(ErrorCode::PolicyBlocked)
+    fn check_policy(&mut self, request: &ToolRequest) -> Result<(), ErrorCode> {
+        // Keep the current Store policy fields alongside the authentication
+        // view: RegisteredClient deliberately contains no rate/policy grant.
+        let (record, current) = self.current_registration()?;
+        self.connection.revalidate_registration(Some(&current))?;
+        self.policy.check(
+            record.registration_id,
+            record.read_only,
+            record.requests_per_minute,
+            request.tool(),
+            std::time::Instant::now(),
+        )
     }
 
     fn read_accounts(

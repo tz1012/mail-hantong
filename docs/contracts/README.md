@@ -22,14 +22,15 @@
 | `config.md`, `config.schema.json` | 언어·테마·시간대와 보호 설정·CAS | 도메인·암호화 저장·코어 시작 연결 검증, 인증된 설정 IPC 미연결 |
 | `app-paths.md` | OS Known Folder와 고정 데이터/키 경로 | Windows 구현·시작 연결 검증 |
 | `auth-transcript.md`, `cng-identity.md` | 정규 서명 입력·CNG 키 경계 | 구현·검증 중, 보호된 IPC 활성화 전 |
-| `client-authentication.md` | 서버 pin·OS context·nonce와 단일 응답 | Windows 양측 서명·wire 검증, 등록 UI/프로필 배포 미연결 |
+| `client-authentication.md` | 서버 pin·OS context·nonce와 단일 응답 | Windows 양측 서명·등록/프로필 검증, 실제 Hello·사람 검토 전 |
 | `auth-wire.md` | bounded JSON handshake·한 연결 한 도구 요청·bootstrap 분기 | 실제 Windows pair 검증, Core 등록 조회/기본 거부 실행기 연결 |
-| `registration-store.md`, `migrations/` | v1→v2 이전·서버 신원·클라이언트 등록 저장 | 구현·검증 중, 사람 승인 활성화 전 |
-| `client-registration.md`, `registration-review.md`, `client-profile.md` | 기본 CLI 요청/상태·신뢰 창·공개 프로필과 중단 복구 | 구현·통합 검증 진행, 실제 Hello/사람 검토 전 |
+| `registration-store.md`, `migrations/` | v1→v2 이전·서버 신원·클라이언트 등록 저장 | 기본 등록 전이/복구 자동 검증, 사람 검토 전 |
+| `client-registration.md`, `registration-review.md`, `client-profile.md` | 기본 CLI 요청/상태·신뢰 창·공개 프로필과 중단 복구 | 구현·자동 통합 검증, 실제 Hello/사람 검토 전 |
 | `audit.md` | DB v3 감사 시작/불변 결과·용량·페이지·미확정 기록 | 저장 API 대상 시험 통과, 공통 실행기/효과 연결 전 |
 | `tool-validation.md` | 공통 envelope와 계정 조회/발송 의도 입력 검증 | 순수 검증 구현 중, 실제 실행·승인과 별개 |
-| `execution.md` | 인증 재검증·감사·전체 범위·정책·읽기 실행 순서 | coordinator·Core/wire adapter 연결, 정책 기본 거부·사람 검토 필요 |
-| `accounts-read.md` | 계정 표시 DTO·범위 한정 DB 조회·로컬 JSON 응답 | 대상 시험·독립 검토 통과, Core adapter 연결·정책 허용 미구현 |
+| `execution.md` | 인증 재검증·감사·전체 범위·정책·읽기 실행 순서 | Core/wire·계정 읽기 정책 연결, 발송 차단·사람 검토 필요 |
+| `accounts-read.md` | 계정 표시 DTO·범위 한정 DB 조회·엄격한 CLI 응답 검증 | 실제 인증·Store·응답 decoder 통합 시험, 사람 검토 필요 |
+| `policy-read.md` | 등록별 읽기 허용·단조 시계 호출 한도·재시작 의미 | 정책/실제 연결 시험, 사람 검토 필요 |
 | `mail-connection.md`, `mail-connection-store.md` | 독립 IMAP/SMTP 설정·v4 저장/CAS/중복/관측 | 모델·저장·v4 이전 검증, 설정 화면 전 |
 | `mail-credentials.md` | endpoint 전체·버전에 결속한 DPAPI 자격 증명 | Windows 저장/결속 대상 시험·독립 검토 통과, TLS/AUTH 연결 전 |
 | `smtp-probe.md` | Secrets 내부 일회성 TLS/AUTH 검사·수신/시간 제한 | 실제 DPAPI+in-memory TLS 대상 검증, GUI·IPC 미연결 |

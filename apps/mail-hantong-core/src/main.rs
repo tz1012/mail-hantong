@@ -75,6 +75,7 @@ fn start() -> Result<(), ErrorCode> {
     let store = storage::initialize_storage(&directories)?;
     let server_identity = identity::initialize_server_identity(&store)?;
     let server_instance = hantong_platform::random_nonce()?;
+    let mut read_policy = hantong_policy::ReadPolicy::new();
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_io()
         .enable_time()
@@ -100,7 +101,9 @@ fn start() -> Result<(), ErrorCode> {
             &server_identity,
             server_instance,
             |id| execution_adapter::load_registration(&store, id),
-            |session, request| execution_adapter::execute(&store, session, request),
+            |session, request| {
+                execution_adapter::execute(&store, &mut read_policy, session, request)
+            },
             |command| registration.command(command),
         );
         tokio::select! {

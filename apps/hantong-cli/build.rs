@@ -34,6 +34,21 @@ fn main() {
         "registration_provisioning",
         "registration_ready",
         "registration_request_id",
+        "account_number",
+        "provider",
+        "address",
+        "capabilities",
+        "status",
+        "provider_gmail",
+        "provider_graph",
+        "provider_imap",
+        "provider_archive",
+        "status_ready",
+        "status_connecting",
+        "status_reauth_required",
+        "status_offline",
+        "status_disabled",
+        "status_error",
     ] {
         assert!(en.contains(key), "missing required resource key: {key}");
     }

@@ -1,7 +1,6 @@
 #![forbid(unsafe_code)]
 
-//! Bounded client-side bootstrap protocol. Mail methods remain unavailable until
-//! registration and mutual authentication are implemented.
+//! Bounded bootstrap, registration, and mutually authenticated read clients.
 
 #[cfg(windows)]
 mod auth;
@@ -14,6 +13,7 @@ mod trusted_profile;
 #[cfg(windows)]
 pub use trusted_profile::{AuthenticatedDefaultProfile, authenticate_default, verify_default};
 
+pub mod accounts;
 pub mod auth_wire;
 pub mod profile;
 pub mod registration;

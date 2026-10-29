@@ -3,6 +3,8 @@
 //! Deterministic, network-free provider fixtures. Test support only.
 
 pub mod platform;
+#[cfg(windows)]
+pub mod policy_store;
 
 use std::collections::BTreeSet;
 

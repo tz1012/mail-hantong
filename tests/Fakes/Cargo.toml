@@ -9,5 +9,10 @@ publish = false
 [dependencies]
 hantong-contracts = { path = "../../crates/hantong-contracts" }
 
+[target.'cfg(windows)'.dependencies]
+hantong-store = { path = "../../crates/hantong-store" }
+hantong-secrets = { path = "../../crates/hantong-secrets" }
+hantong-platform = { path = "../../crates/hantong-platform" }
+
 [lints]
 workspace = true

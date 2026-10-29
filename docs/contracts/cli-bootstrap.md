@@ -13,3 +13,5 @@
 이 초기 계약은 실제 IPC의 JSON-RPC 프레이밍·주체 인증을 정의하지 않는다. 향후 IPC 계약은 별도로 작성하고 보호 경로를 연결할 때 이 초기 거부 동작의 시험을 유지한다.
 
 2026-10-30 확장: `--client`는 `client-profile.md`의 `default` 선택자만 허용한다. 다른 선택자·파일 경로는 INVALID_INPUT이다. `client-registration.md`에 따른 clients register/status/verify는 요청 제출·상태 조회·기존 프로필 상호 인증만 수행한다. 승인 발급 기능이 아니며 메일 실행 정책을 우회하지 않는다.
+
+2026-10-30 계정 읽기 연결: accounts list는 `accounts-read.md`와 `policy-read.md`를 따라 기존 default 프로필 인증 후 허용된 계정 집합만 조회한다. 선택 `--include-capabilities`를 지원하며 다른 명령에서 이 옵션을 사용하면 INVALID_INPUT이다. send execute/approvals get의 초기 거부와 CLI의 승인 발급 금지는 유지한다.

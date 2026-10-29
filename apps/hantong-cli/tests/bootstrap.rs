@@ -49,7 +49,7 @@ fn cli16_version_uses_package_version() {
 
 #[test]
 fn cli02_json_error_has_stable_fields_and_stdout_only() {
-    let output = cli(&["--json", "accounts", "list"]);
+    let output = cli(&["--json", "send", "execute"]);
     assert_eq!(output.status.code(), Some(22));
     let text = String::from_utf8_lossy(&output.stdout);
     for field in [
@@ -109,8 +109,7 @@ fn cli04_no_input_does_not_wait_or_echo_untrusted_input() {
 fn cli15_client_name_cannot_authenticate_and_unknown_options_are_invalid() {
     let spoof = cli(&["--client", "admin", "accounts", "list"]);
     assert_eq!(spoof.status.code(), Some(2));
-    let unregistered = cli(&["--client", "default", "accounts", "list"]);
-    assert_eq!(unregistered.status.code(), Some(22));
+    // Protected command rejection is covered without loading a real profile.
     let unknown = cli(&["--mystery"]);
     assert_eq!(unknown.status.code(), Some(2));
     let missing = cli(&["--client", "--json", "accounts", "list"]);

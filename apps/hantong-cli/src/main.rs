@@ -72,10 +72,11 @@ fn error_json(code: ErrorCode, lang: Lang) -> String {
 }
 
 fn run(args: impl IntoIterator<Item = String>) -> i32 {
-    run_with_boundaries(
+    run_with_boundaries_and_accounts(
         args,
         hantong_ipc_client::registration::exchange,
         verify_profile,
+        hantong_ipc_client::accounts::list_default_accounts,
     )
 }
 
@@ -106,13 +107,111 @@ fn verification_output(lang: Lang, json: bool) -> String {
     }
 }
 
+#[cfg(test)]
 fn run_with_boundaries(
+    args: impl IntoIterator<Item = String>,
+    registration: impl FnMut(RegistrationCommand) -> Result<RegistrationReceipt, ErrorCode>,
+    verification: impl FnMut() -> Result<(), ErrorCode>,
+) -> i32 {
+    run_with_boundaries_and_accounts(args, registration, verification, |_| {
+        Err(ErrorCode::CapabilityUnsupported)
+    })
+}
+
+fn account_output(
+    response: &hantong_ipc_client::accounts::AccountListResponse,
+    lang: Lang,
+    json: bool,
+) -> String {
+    if json {
+        return response.to_json();
+    }
+    let mut out = String::new();
+    for item in response.items() {
+        let name = item
+            .display_name()
+            .or(item.primary_address())
+            .unwrap_or(item.account_id());
+        let provider = resource(
+            lang,
+            match item.provider() {
+                "gmail" => "provider_gmail",
+                "graph" => "provider_graph",
+                "imap" => "provider_imap",
+                _ => "provider_archive",
+            },
+        );
+        let status = resource(
+            lang,
+            match item.status() {
+                "ready" => "status_ready",
+                "connecting" => "status_connecting",
+                "reauth_required" => "status_reauth_required",
+                "offline" => "status_offline",
+                "disabled" => "status_disabled",
+                _ => "status_error",
+            },
+        );
+        out.push_str(&format!(
+            "{} {}: {} ({}: {}, {}: {})\n",
+            resource(lang, "account_number"),
+            item.account_number(),
+            safe_human(name),
+            resource(lang, "provider"),
+            provider,
+            resource(lang, "status"),
+            status
+        ));
+        if let Some(address) = item.primary_address() {
+            out.push_str(&format!(
+                "  {}: {}\n",
+                resource(lang, "address"),
+                safe_human(address)
+            ));
+        }
+        if let Some(capabilities) = item.capabilities() {
+            out.push_str(&format!(
+                "  {}: {}\n",
+                resource(lang, "capabilities"),
+                capabilities
+                    .iter()
+                    .map(|v| safe_human(v))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ));
+        }
+    }
+    out
+}
+
+fn safe_human(value: &str) -> String {
+    value
+        .chars()
+        .map(|c| match c {
+            '\u{2028}'
+            | '\u{2029}'
+            | '\u{200e}'
+            | '\u{200f}'
+            | '\u{061c}'
+            | '\u{202a}'..='\u{202e}'
+            | '\u{2066}'..='\u{2069}' => format!("\\u{{{:x}}}", c as u32),
+            c => c.to_string(),
+        })
+        .collect()
+}
+
+fn run_with_boundaries_and_accounts(
     args: impl IntoIterator<Item = String>,
     mut registration: impl FnMut(RegistrationCommand) -> Result<RegistrationReceipt, ErrorCode>,
     mut verification: impl FnMut() -> Result<(), ErrorCode>,
+    mut account_list: impl FnMut(
+        bool,
+    )
+        -> Result<hantong_ipc_client::accounts::AccountListResponse, ErrorCode>,
 ) -> i32 {
     let mut lang = Lang::En;
     let mut json = false;
+    let mut include_capabilities = false;
     let mut want_help = false;
     let mut want_version = false;
     let mut command: Vec<String> = Vec::new();
@@ -125,6 +224,7 @@ fn run_with_boundaries(
                 _ => return emit_error(ErrorCode::InvalidInput, lang, json),
             },
             "--json" => json = true,
+            "--include-capabilities" => include_capabilities = true,
             "--no-input" => {}
             "--client" => {
                 if it.next().as_deref().is_none_or(|value| {
@@ -144,6 +244,13 @@ fn run_with_boundaries(
             }
             value => command.push(value.to_owned()),
         }
+    }
+    // This option is meaningful only for the account-list action. Reject it
+    // before any action branch can authenticate, register, or query the core.
+    if include_capabilities
+        && !matches!(command.as_slice(), [a, b] if a == "accounts" && b == "list")
+    {
+        return emit_error(ErrorCode::InvalidInput, lang, json);
     }
     if want_help && command.is_empty() {
         println!("{}", help(lang));
@@ -189,6 +296,15 @@ fn run_with_boundaries(
         };
     }
     let protected = matches!(command.as_slice(), [a, b] if (a == "accounts" && b == "list") || (a == "send" && b == "execute") || (a == "approvals" && b == "get"));
+    if matches!(command.as_slice(), [a,b] if a == "accounts" && b == "list") {
+        return match account_list(include_capabilities) {
+            Ok(value) => {
+                print!("{}", account_output(&value, lang, json));
+                0
+            }
+            Err(code) => emit_error(code, lang, json),
+        };
+    }
     if protected {
         emit_error(ErrorCode::ClientNotRegistered, lang, json)
     } else {
@@ -385,6 +501,148 @@ mod tests {
     #[test]
     fn cli04_protected_command_never_grants_approval() {
         assert_eq!(run(["send", "execute"].into_iter().map(String::from)), 22);
+    }
+
+    #[test]
+    fn cli01_accounts_list_uses_injected_validated_response_and_capability_flag() {
+        let raw = br#"{"jsonrpc":"2.0","id":"accounts-list-1","result":{"schema_version":1,"ok":true,"items":[{"account_id":"a","provider":"imap","primary_address":null,"display_name":"A","color":null,"account_number":1,"status":"ready"}],"next_cursor":null,"account_results":[{"account_id":"a","status":"complete","items":[{"account_id":"a","provider":"imap","primary_address":null,"display_name":"A","color":null,"account_number":1,"status":"ready"}]}],"completeness":"complete","warnings":[],"observed_at":"2026-01-01T00:00:00Z","metadata":{"source":"local_store","cached":true}}}"#;
+        let response = hantong_ipc_client::accounts::parse_account_list_response(
+            raw,
+            "accounts-list-1",
+            &["a".into()],
+            false,
+        )
+        .unwrap();
+        let calls = std::cell::Cell::new(false);
+        let code = run_with_boundaries_and_accounts(
+            ["--json", "--include-capabilities", "accounts", "list"].map(String::from),
+            |_| panic!("registration must not run"),
+            || panic!("verification must not run"),
+            |include| {
+                calls.set(include);
+                Ok(response.clone())
+            },
+        );
+        assert_eq!(code, 0);
+        assert!(calls.get());
+    }
+
+    #[test]
+    fn cli01_human_account_fields_escape_directional_and_line_separator_controls() {
+        assert_eq!(
+            safe_human("한통\u{202e}mail\u{2028}x"),
+            "한통\\u{202e}mail\\u{2028}x"
+        );
+    }
+
+    #[test]
+    fn cli01_accounts_list_propagates_unsupported_and_rejects_flag_on_other_commands() {
+        let unsupported = run_with_boundaries_and_accounts(
+            ["accounts", "list"].map(String::from),
+            |_| panic!("registration must not run"),
+            || panic!("verification must not run"),
+            |_| Err(ErrorCode::CapabilityUnsupported),
+        );
+        assert_eq!(unsupported, ErrorCode::CapabilityUnsupported.exit_code());
+
+        let invalid = run_with_boundaries_and_accounts(
+            ["--include-capabilities", "send", "execute"].map(String::from),
+            |_| panic!("registration must not run"),
+            || panic!("verification must not run"),
+            |_| panic!("account list must not run"),
+        );
+        assert_eq!(invalid, ErrorCode::InvalidInput.exit_code());
+    }
+
+    #[test]
+    fn cli01_capability_flag_rejects_every_non_account_action_before_callbacks() {
+        let request_id = hantong_contracts::wire_hex::encode(&[1; 32]);
+        let commands: Vec<Vec<String>> = vec![
+            vec!["--include-capabilities", "clients", "register"],
+            vec!["clients", "status", &request_id, "--include-capabilities"],
+            vec!["--include-capabilities", "clients", "verify"],
+            vec!["core", "status", "--include-capabilities"],
+            vec!["--include-capabilities", "send", "execute"],
+            vec!["approvals", "get", "--include-capabilities"],
+            vec!["--include-capabilities", "--help"],
+        ]
+        .into_iter()
+        .map(|args| args.into_iter().map(String::from).collect())
+        .collect();
+        for args in commands {
+            let registrations = std::cell::Cell::new(0);
+            let verifications = std::cell::Cell::new(0);
+            let accounts = std::cell::Cell::new(0);
+            let code = run_with_boundaries_and_accounts(
+                args,
+                |_| {
+                    registrations.set(registrations.get() + 1);
+                    Err(ErrorCode::InternalError)
+                },
+                || {
+                    verifications.set(verifications.get() + 1);
+                    Err(ErrorCode::InternalError)
+                },
+                |_| {
+                    accounts.set(accounts.get() + 1);
+                    Err(ErrorCode::InternalError)
+                },
+            );
+            assert_eq!(code, ErrorCode::InvalidInput.exit_code());
+            assert_eq!(registrations.get(), 0);
+            assert_eq!(verifications.get(), 0);
+            assert_eq!(accounts.get(), 0);
+        }
+    }
+
+    #[test]
+    fn cli01_account_json_is_language_neutral_and_human_labels_are_localized() {
+        let raw = br#"{"jsonrpc":"2.0","id":"accounts-list-1","result":{"schema_version":1,"ok":true,"items":[{"account_id":"a","provider":"imap","primary_address":null,"display_name":"\uD55C\uD1B5","color":null,"account_number":1,"status":"ready"}],"next_cursor":null,"account_results":[{"account_id":"a","status":"complete","items":[{"account_id":"a","provider":"imap","primary_address":null,"display_name":"\uD55C\uD1B5","color":null,"account_number":1,"status":"ready"}]}],"completeness":"complete","warnings":[],"observed_at":"2026-01-01T00:00:00Z","metadata":{"source":"local_store","cached":true}}}"#;
+        let response = hantong_ipc_client::accounts::parse_account_list_response(
+            raw,
+            "accounts-list-1",
+            &["a".into()],
+            false,
+        )
+        .unwrap();
+        assert_eq!(
+            account_output(&response, Lang::En, true),
+            account_output(&response, Lang::Ko, true)
+        );
+        assert!(account_output(&response, Lang::En, false).contains("Account"));
+        assert!(account_output(&response, Lang::Ko, false).contains("계정"));
+    }
+
+    #[test]
+    fn cli01_human_output_includes_capabilities_and_localizes_status() {
+        let raw = br#"{"jsonrpc":"2.0","id":"accounts-list-1","result":{"schema_version":1,"ok":true,"items":[{"account_id":"a","provider":"imap","primary_address":"u@example.test","display_name":"A","color":null,"account_number":1,"status":"reauth_required","capabilities":["mail.read","mail.send"]}],"next_cursor":null,"account_results":[{"account_id":"a","status":"complete","items":[{"account_id":"a","provider":"imap","primary_address":"u@example.test","display_name":"A","color":null,"account_number":1,"status":"reauth_required","capabilities":["mail.read","mail.send"]}]}],"completeness":"complete","warnings":[],"observed_at":"2026-01-01T00:00:00Z","metadata":{"source":"local_store","cached":true}}}"#;
+        let response = hantong_ipc_client::accounts::parse_account_list_response(
+            raw,
+            "accounts-list-1",
+            &["a".into()],
+            true,
+        )
+        .unwrap();
+        let en = account_output(&response, Lang::En, false);
+        let ko = account_output(&response, Lang::Ko, false);
+        assert!(
+            en.contains("Capabilities")
+                && en.contains("mail.read")
+                && en.contains("Reauthentication required")
+        );
+        assert!(ko.contains("기능") && ko.contains("재인증 필요") && ko.contains("주소"));
+    }
+
+    #[test]
+    fn cli01_unknown_input_is_rejected_without_reflection() {
+        let secret = "fixture-secret-한통";
+        let code = run_with_boundaries_and_accounts(
+            ["--mystery", secret].map(String::from),
+            |_| panic!("registration must not run"),
+            || panic!("verification must not run"),
+            |_| panic!("account list must not run"),
+        );
+        assert_eq!(code, ErrorCode::InvalidInput.exit_code());
     }
 
     #[test]

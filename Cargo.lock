@@ -424,6 +424,9 @@ dependencies = [
 [[package]]
 name = "hantong-policy"
 version = "0.1.0"
+dependencies = [
+ "hantong-contracts",
+]
 
 [[package]]
 name = "hantong-secrets"
@@ -460,6 +463,9 @@ name = "hantong-test-support"
 version = "0.1.0"
 dependencies = [
  "hantong-contracts",
+ "hantong-platform",
+ "hantong-secrets",
+ "hantong-store",
 ]
 
 [[package]]
@@ -807,7 +813,9 @@ dependencies = [
  "hantong-ipc-client",
  "hantong-ipc-server",
  "hantong-platform",
+ "hantong-policy",
  "hantong-store",
+ "hantong-test-support",
  "serde_json",
  "tokio",
 ]

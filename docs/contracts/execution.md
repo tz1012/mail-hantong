@@ -18,4 +18,4 @@ coordinator의 유일한 서비스 포트는 계정 목록 **읽기**다. 결과
 
 최소 시험은 method/tool 불일치, unknown 필드, 미등록/만료/철회, 다중 계정 부분 scope, 감사 start 실패, 정책 거부, send 차단, 서비스 오류 및 실제 성공 수치, terminal 실패 후 무재시도, 민감 입력 비반향이다. 실제 인증 재검증은 Windows pipe/CNG 시험으로, coordinator 순서는 합성 포트로 검사한다. bootstrap의 모든 미인증 mail.* 거부는 유지한다.
 
-Core의 private execution_adapter는 같은 connection-owned 세션과 열린 Store만 차용한다. Store 등록을 매번 다시 읽고 CNG 공개 키 검증을 통과한 RegisteredClient로 변환한다. 등록 누락/읽기 오류는 세션을 닫고 원래 안정 오류를 유지한다. 감사 ID는 core CSPRNG에서 만들고 request ID를 사용하지 않는다. 등록/인증 wire를 연결했더라도 현재 check_policy는 항상 POLICY_BLOCKED다. read_only/rate_limits 정책·승인 서비스가 준비되기 전에는 로컬 계정 읽기까지 기본 거부하며 fake allow/seed 등록은 제품에 연결하지 않는다.
+Core의 private execution_adapter는 같은 connection-owned 세션과 열린 Store, 프로세스 수명의 ReadPolicy를 차용한다. Store 등록을 매번 다시 읽고 CNG 공개 키 검증을 통과한 RegisteredClient로 변환한다. 등록 누락/읽기 오류는 세션을 닫고 원래 안정 오류를 유지한다. 감사 ID는 core CSPRNG에서 만들고 request ID를 사용하지 않는다. 초기 계정 읽기의 read_only/호출 한도는 [policy-read.md](policy-read.md)를 따르며 나머지 도구는 기본 거부한다. fake allow/seed 등록은 제품에 연결하지 않는다.
