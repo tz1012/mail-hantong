@@ -23,6 +23,7 @@ hantong-contracts = { path = "../../crates/hantong-contracts" }
 hantong-ipc-server = { path = "../../crates/hantong-ipc-server" }
 hantong-platform = { path = "../../crates/hantong-platform" }
 hantong-policy = { path = "../../crates/hantong-policy" }
+hantong-secrets = { path = "../../crates/hantong-secrets" }
 hantong-store = { path = "../../crates/hantong-store" }
 tokio = { version = "1.54.1", features = ["rt", "net", "time", "signal", "macros", "sync"] }
 serde_json = "1.0.154"

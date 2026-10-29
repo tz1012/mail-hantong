@@ -12,6 +12,8 @@ mod identity;
 #[cfg(windows)]
 mod registration;
 #[cfg(windows)]
+mod setup_imap;
+#[cfg(windows)]
 mod storage;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -94,8 +96,8 @@ fn start() -> Result<(), ErrorCode> {
             Ok(())
         };
         let (registration, registration_worker) =
-            registration::coordinator(&store, &server_identity);
-        let server = hantong_ipc_server::authenticated_wire::serve_until_with_registration(
+            registration::coordinator(&store, &server_identity, &directories.secrets);
+        let server = hantong_ipc_server::authenticated_wire::serve_until_with_setup(
             shutdown,
             || event(EventKind::CoreTransportReady),
             &server_identity,
@@ -104,7 +106,7 @@ fn start() -> Result<(), ErrorCode> {
             |session, request| {
                 execution_adapter::execute(&store, &mut read_policy, session, request)
             },
-            |command| registration.command(command),
+            |command| registration.setup_command(command),
         );
         tokio::select! {
             biased;

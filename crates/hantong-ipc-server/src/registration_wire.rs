@@ -48,19 +48,6 @@ pub fn result(receipt: &RegistrationReceipt) -> Value {
     })
 }
 
-#[cfg(windows)]
-pub(crate) fn response<F>(request: &RpcRequest, callback: &mut F) -> Value
-where
-    F: FnMut(RegistrationCommand) -> Result<RegistrationReceipt, ErrorCode>,
-{
-    match parse(request).and_then(callback) {
-        Ok(receipt) => json!({"jsonrpc":"2.0","id":request.id,"result":result(&receipt)}),
-        Err(code) => {
-            json!({"jsonrpc":"2.0","id":request.id,"error":{"code":code.as_str(),"message":code.as_str()}})
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -815,6 +815,7 @@ dependencies = [
  "hantong-ipc-server",
  "hantong-platform",
  "hantong-policy",
+ "hantong-secrets",
  "hantong-store",
  "hantong-test-support",
  "serde_json",

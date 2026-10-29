@@ -1,5 +1,6 @@
 //! Connection-owned JSON authentication exchange; no registration issuance.
 
+use crate::setup_dispatch::{SetupCommand, SetupReceipt};
 use crate::{
     RpcRequest,
     auth::{AuthenticatedConnection, PendingAuthentication, RegisteredClient},
@@ -148,7 +149,7 @@ where
 /// Registration callback receives only a parsed fixed request/status command.
 /// It cannot intercept authenticated mail or manufacture an auth session.
 pub async fn dispatch_connection_with_registration<L, E, C>(
-    mut connection: LocalPipeConnection<'_>,
+    connection: LocalPipeConnection<'_>,
     server_key: &ServerSigningKey,
     instance: [u8; 32],
     lookup: &mut L,
@@ -160,10 +161,46 @@ where
     E: FnMut(&mut AuthenticatedConnection<'_>, &RpcRequest) -> Result<Value, ErrorCode>,
     C: FnMut(RegistrationCommand) -> Result<RegistrationReceipt, ErrorCode>,
 {
+    let mut registration_adapter = |command| match command {
+        SetupCommand::Registration(registration_command) => {
+            registration(registration_command).map(SetupReceipt::Registration)
+        }
+        SetupCommand::Imap(_) => Err(ErrorCode::InvalidInput),
+    };
+    dispatch_connection_with_setup(
+        connection,
+        server_key,
+        instance,
+        lookup,
+        execute,
+        &mut registration_adapter,
+    )
+    .await
+}
+
+/// Routes bootstrap registration and IMAP setup through one typed callback.
+/// Existing `dispatch_connection_with_registration` deliberately remains
+/// registration-only so its compatibility boundary cannot start setup.
+pub async fn dispatch_connection_with_setup<L, E, C>(
+    mut connection: LocalPipeConnection<'_>,
+    server_key: &ServerSigningKey,
+    instance: [u8; 32],
+    lookup: &mut L,
+    execute: &mut E,
+    setup: &mut C,
+) -> Result<(), ErrorCode>
+where
+    L: FnMut(&[u8; 16]) -> Result<Option<RegisteredClient>, ErrorCode>,
+    E: FnMut(&mut AuthenticatedConnection<'_>, &RpcRequest) -> Result<Value, ErrorCode>,
+    C: FnMut(SetupCommand) -> Result<SetupReceipt, ErrorCode>,
+{
     let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
-    let request = tokio::time::timeout_at(deadline, read_request(&mut connection))
-        .await
-        .map_err(|_| ErrorCode::AuthRequired)??;
+    let (request, frame_length) = tokio::time::timeout_at(
+        deadline,
+        read_bounded_request_with_length(&mut connection, MAX_AUTH_FRAME),
+    )
+    .await
+    .map_err(|_| ErrorCode::AuthRequired)??;
     if request.method == "auth.begin" {
         let authenticated = authenticate_after_begin(
             connection,
@@ -179,8 +216,10 @@ where
     } else if request.method.starts_with("auth.") {
         Err(ErrorCode::InvalidInput)
     } else {
-        let response = if request.method.starts_with("registration.") {
-            crate::registration_wire::response(&request, registration)
+        let response = if request.method.starts_with("registration.")
+            || request.method.starts_with("setup.imap.")
+        {
+            crate::setup_dispatch::response(&request, frame_length, setup)
         } else {
             crate::bootstrap::response(request)
         };
@@ -223,8 +262,8 @@ pub async fn serve_until_with_registration<F, R, L, E, C>(
     on_ready: R,
     server_key: &ServerSigningKey,
     instance: [u8; 32],
-    mut lookup: L,
-    mut execute: E,
+    lookup: L,
+    execute: E,
     mut registration: C,
 ) -> Result<(), ErrorCode>
 where
@@ -233,6 +272,42 @@ where
     L: FnMut(&[u8; 16]) -> Result<Option<RegisteredClient>, ErrorCode>,
     E: FnMut(&mut AuthenticatedConnection<'_>, &RpcRequest) -> Result<Value, ErrorCode>,
     C: FnMut(RegistrationCommand) -> Result<RegistrationReceipt, ErrorCode>,
+{
+    let mut registration_adapter = move |command| match command {
+        SetupCommand::Registration(registration_command) => {
+            registration(registration_command).map(SetupReceipt::Registration)
+        }
+        SetupCommand::Imap(_) => Err(ErrorCode::InvalidInput),
+    };
+    serve_until_with_setup(
+        shutdown,
+        on_ready,
+        server_key,
+        instance,
+        lookup,
+        execute,
+        &mut registration_adapter,
+    )
+    .await
+}
+
+/// Core-owned serial server variant with typed registration + IMAP setup
+/// bootstrap routing. The existing registration-only server remains intact.
+pub async fn serve_until_with_setup<F, R, L, E, C>(
+    shutdown: F,
+    on_ready: R,
+    server_key: &ServerSigningKey,
+    instance: [u8; 32],
+    mut lookup: L,
+    mut execute: E,
+    mut setup: C,
+) -> Result<(), ErrorCode>
+where
+    F: std::future::Future<Output = Result<(), ErrorCode>>,
+    R: FnOnce(),
+    L: FnMut(&[u8; 16]) -> Result<Option<RegisteredClient>, ErrorCode>,
+    E: FnMut(&mut AuthenticatedConnection<'_>, &RpcRequest) -> Result<Value, ErrorCode>,
+    C: FnMut(SetupCommand) -> Result<SetupReceipt, ErrorCode>,
 {
     let mut listener = hantong_platform::LocalPipeServer::bind()?;
     tokio::pin!(shutdown);
@@ -250,7 +325,7 @@ where
         tokio::select! {
             biased;
             result=&mut shutdown => return result,
-            result=dispatch_connection_with_registration(connection,server_key,instance,&mut lookup,&mut execute,&mut registration) => {
+            result=dispatch_connection_with_setup(connection,server_key,instance,&mut lookup,&mut execute,&mut setup) => {
                 if result == Err(ErrorCode::InternalError) { return result; }
             },
         }
@@ -265,6 +340,15 @@ async fn read_bounded_request(
     connection: &mut LocalPipeConnection<'_>,
     max_length: usize,
 ) -> Result<RpcRequest, ErrorCode> {
+    read_bounded_request_with_length(connection, max_length)
+        .await
+        .map(|(request, _)| request)
+}
+
+async fn read_bounded_request_with_length(
+    connection: &mut LocalPipeConnection<'_>,
+    max_length: usize,
+) -> Result<(RpcRequest, usize), ErrorCode> {
     let length = connection
         .read_u32_le()
         .await
@@ -278,7 +362,7 @@ async fn read_bounded_request(
         .read_exact(&mut frame[4..])
         .await
         .map_err(|_| ErrorCode::AuthRequired)?;
-    decode_request(&frame)
+    decode_request(&frame).map(|request| (request, length))
 }
 
 /// Consumes this authenticated connection after exactly one protected request.

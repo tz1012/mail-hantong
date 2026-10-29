@@ -1,6 +1,6 @@
 # 신규 IMAP 설정 요청·진행 조회 v1
 
-상태: SETUP-01/SETUP-06·INST-05의 Core/CLI 연결 준비 계약, **사람 검토 필요**. codec 구현만으로 외부 실행을 활성화하지 않는다. [설정 저널](imap-setup-journal.md)과 native 확인·Core 효과 순서의 통합 검증 뒤 기존 로컬 pipe에 연결한다.
+상태: SETUP-01/SETUP-06·INST-05의 Core/CLI 단일 시도 연결 계약, **사람 검토 필요**. [설정 저널](imap-setup-journal.md)과 native 확인·Core 효과 순서에 따라 기존 로컬 pipe에 연결한다. 실제 사용자 Hello/계정 검증은 별도다.
 
 ## 요청과 형식
 
@@ -38,3 +38,16 @@ client decoder는 원본 bytes의 strict map visitor로 envelope/result/error의
 Core는 Domain 검증 후 자체 난수 ID와 stage hash로 저널 request를 만들고 단일 native queue에 넣는다. 요청/조회 I/O는 사람 확인을 기다리지 않는다. native plan/review request ID·대상·nonce를 결속하고 Verified 결과를 소비한 후 journal stage → credential 시작 commit → Secrets 저장 → 반환 commit → probe 시작 commit → Secrets 일회 probe → account/observation/journal 결과 commit 순서다. 어느 경계의 오류도 다음 효과 실행으로 바꾸지 않는다. status는 조회와 만료된 review의 제한된 종료만 가능하며 UI/credential/network를 실행하지 않는다.
 
 codec 시험은 정상 roundtrip과 중복/누락/unknown/타입/경계/권한 필드, callback 0, 응답 privacy·상태/행동 조합·target Debug 마스킹을 검사한다. 기존 등록 codec/인증/mail 동작을 유지한다. 실제 pipe routing·단일 UI queue·Core 효과 순서·CLI 영/한 출력은 이후 통합 시험으로 구분하며, 실제 사용자 계정/Hello/메일은 개발 시험에 사용하지 않는다.
+
+
+## Core/CLI 활성화 구현 범위
+
+CLI는 `hantong setup imap request --host HOST --port PORT --tls implicit_tls|starttls_required --login LOGIN [--name NAME] [--color #RRGGBB]`와 `hantong setup imap status REQUEST_ID`를 제공한다. 영/한 문구와 기존 JSON envelope를 사용한다. `--no-input`은 터미널 질문을 없애며 native 사람 확인을 승인하거나 건너뛰지 않는다. 다른 명령에 setup flag를 섞거나 duplicate/unknown/missing 값을 주면 모든 효과 전에 거부한다.
+
+동일 UI queue는 등록/IMAP job을 구분한다. 다른 job이 있으면 RATE_LIMITED이며 요청을 추가하지 않는다. 진행 중인 IMAP 요청과 canonical endpoint·표시값이 같은 재요청은 같은 ID의 상태만 돌려주고 창이나 효과를 중복 실행하지 않는다. worker가 사라졌거나 시작 후 중단된 요청은 자동 재개하지 않는다. 영속 review pending이라도 현재 job이 없으면 interrupted/resume_required로 안내하고, 만료되면 제한된 review close로 expired를 기록한다. 새 설치의 모든 단계와 resume/reset 구현 완료를 뜻하지 않는다.
+
+Core의 Secrets 루트는 시작 때 검증한 AppDirectories.secrets로만 정한다. CLI·IPC 입력으로 경로를 받지 않는다. native VerifiedImapSetup 소비에서 얻은 불투명 pending만 실행 함수에 전달하며 가짜 native token 생성은 없다. 이 함수의 private 효과 경계는 실패 순서 시험에 사용하고 제품 구현은 Store/Secrets 하나뿐이다. 실제 probe 성공의 settings_version이 snapshot과 다르면 error로 기록한다. 인증 거부는 auth_required, TLS 거부는 tls_failed, 연결 실패/시간초과는 offline, 나머지는 error이며 capabilities는 알려진 6개를 정렬해 저장한다.
+
+Core 종료/취소는 queue gate를 해제하지만 영속 started 사건을 성공으로 바꾸지 않는다. 조회는 UI/Secrets/네트워크를 부르지 않는다. Ready 응답의 다음 행동은 현재 default CLI 등록 존재 여부에 따라 신규 등록 또는 범위 재검토이며 자동 scope 변경은 없다.
+
+기존 default 등록이 provisioning/suspended/revoked여도 새 등록을 중복 생성하지 않는다. `profile_scope_review_required`는 해당 등록의 상태와 범위를 다시 검토하라는 안내이며 활성/인증 성공을 뜻하지 않는다. 등록이 없는 경우에만 `client_registration_required`를 반환한다. 기존 등록 재검토 기능은 후속 구현이다.

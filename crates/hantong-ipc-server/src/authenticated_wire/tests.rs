@@ -3,6 +3,7 @@ use crate::auth::RegisteredClient;
 use hantong_contracts::{
     ErrorCode,
     auth::{AuthTranscript, RequestedScope, SignerRole},
+    imap_setup::{ImapSetupCommand, ImapSetupNextAction, ImapSetupReceipt, ImapSetupState},
     wire_hex,
 };
 use hantong_platform::{
@@ -369,6 +370,106 @@ pub(crate) async fn run_fixture_cases() {
                 assert_eq!(response["result"].as_object().unwrap().len(), 4);
             } else {
                 assert_eq!(response["error"]["code"], expected);
+            }
+            pipe.write_u8(6).await.unwrap();
+            pipe.flush().await.unwrap();
+        };
+        tokio::join!(server, client);
+    }
+
+    for scenario in [
+        "request",
+        "status",
+        "oversized_whitespace",
+        "forbidden",
+        "complete",
+    ] {
+        let server = async {
+            let connection = listener.accept().await.unwrap();
+            let calls = Cell::new(0);
+            let result = dispatch_connection_with_setup(
+                connection,
+                server_key,
+                instance,
+                &mut |_| panic!("setup cannot enter authentication lookup"),
+                &mut |_, _| panic!("setup cannot enter protected executor"),
+                &mut |command| {
+                    calls.set(calls.get() + 1);
+                    assert!(matches!(
+                        (scenario, command),
+                        ("request", SetupCommand::Imap(ImapSetupCommand::Request(_)))
+                            | ("status", SetupCommand::Imap(ImapSetupCommand::Status(_)))
+                    ));
+                    Ok(SetupReceipt::Imap(
+                        ImapSetupReceipt::new(
+                            [9; 32],
+                            300001,
+                            ImapSetupState::Pending,
+                            ImapSetupNextAction::HelperRequired,
+                        )
+                        .unwrap(),
+                    ))
+                },
+            )
+            .await;
+            assert_eq!(result, Ok(()));
+            assert_eq!(
+                calls.get(),
+                if matches!(scenario, "request" | "status") {
+                    1
+                } else {
+                    0
+                }
+            );
+        };
+        let client = async {
+            let mut pipe = connect().await.unwrap();
+            let mut params = json!({
+                "protocol_version":1,
+                "display_name":null,
+                "color":null,
+                "host":"imap.example",
+                "port":993,
+                "tls":"implicit_tls",
+                "login_name":"synthetic"
+            });
+            let (method, bytes) = match scenario {
+                "request" => ("setup.imap.request", serde_json::to_vec(&json!({
+                    "jsonrpc":"2.0","id":"setup","method":"setup.imap.request","params":params
+                })).unwrap()),
+                "status" => ("setup.imap.status", serde_json::to_vec(&json!({
+                    "jsonrpc":"2.0","id":"setup","method":"setup.imap.status","params":{"protocol_version":1,"request_id":wire_hex::encode(&[9;32])}
+                })).unwrap()),
+                "forbidden" => {
+                    params["password"] = json!("untrusted");
+                    ("setup.imap.request", serde_json::to_vec(&json!({
+                        "jsonrpc":"2.0","id":"setup","method":"setup.imap.request","params":params
+                    })).unwrap())
+                }
+                "complete" => ("setup.imap.complete", serde_json::to_vec(&json!({
+                    "jsonrpc":"2.0","id":"setup","method":"setup.imap.complete","params":{"approved":true}
+                })).unwrap()),
+                "oversized_whitespace" => {
+                    let mut value = serde_json::to_vec(&json!({
+                        "jsonrpc":"2.0","id":"setup","method":"setup.imap.request","params":params
+                    })).unwrap();
+                    value.resize(16_385, b' ');
+                    ("setup.imap.request", value)
+                }
+                _ => unreachable!(),
+            };
+            assert!(method.starts_with("setup.imap."));
+            let frame_length = bytes.len() as u32;
+            pipe.write_u32_le(frame_length).await.unwrap();
+            pipe.write_all(&bytes).await.unwrap();
+            pipe.flush().await.unwrap();
+            let response = receive(&mut pipe).await;
+            if matches!(scenario, "request" | "status") {
+                assert_eq!(response["result"]["state"], "pending");
+            } else if scenario == "oversized_whitespace" || scenario == "forbidden" {
+                assert_eq!(response["error"]["code"], "INVALID_INPUT");
+            } else {
+                assert_eq!(response["error"]["code"], "HUMAN_STEP_REQUIRED");
             }
             pipe.write_u8(6).await.unwrap();
             pipe.flush().await.unwrap();

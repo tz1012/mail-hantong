@@ -126,7 +126,7 @@ M8-17,주소록 UI,not_started,사람,"M8-03, M4-19",,,,
 M8-18,GUI 언어 지원 통합,not_started,에이전트,"M8-01, M8-02, M8-09",,,,
 M8-19,GUI 테마 통합,not_started,에이전트,"M8-01, M8-09, M8-10",,,,
 M8-99,다음 마일스톤 계획 갱신,not_started,사람,"M8-01~13, M8-15~19",,,,
-M9-01,설정 마법사 엔진,in_progress,사람,M5-04,PROGRESS.md; ../contracts/imap-setup-journal.md; ../contracts/imap-setup-bootstrap.md; ../../crates/hantong-store/src/imap_setup.rs,,,신규 IMAP 단일 시도 저널·v5 이전·준비 codec 선행 구현; Core/CLI 연결·명시 재개·전체 마법사·사람 검토 남음; 기존 카드 선행/완료 조건 유지
+M9-01,설정 마법사 엔진,in_progress,사람,M5-04,PROGRESS.md; ../contracts/imap-setup-journal.md; ../contracts/imap-setup-bootstrap.md; ../../crates/hantong-store/src/imap_setup.rs; ../../apps/mail-hantong-core/src/setup_imap.rs; ../../apps/hantong-cli/src/main.rs,,,신규 IMAP 저널·v5 이전·보호 확인·Core/CLI 단일 시도 연결; 명시 재개·전체 마법사·사람 검토 남음; 카드 선행/완료 조건 유지
 M9-02,BYO OAuth 클라이언트 단계,not_started,에이전트,"M9-01, M3-01",,,,
 M9-03,환경 진단과 사례별 안내,not_started,에이전트,M9-01,,,,
 M9-04,사람 확인 단계 보호,not_started,사람,M9-01,,,,

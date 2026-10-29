@@ -1,11 +1,13 @@
 //! Trusted Core registration coordinator. IPC requests carry no approval data.
 use hantong_approval::RegistrationReview;
+use hantong_contracts::imap_setup::ImapSetupCommand;
 use hantong_contracts::{
     ErrorCode,
     auth::RequestedScope,
     registration::{RegistrationCommand, RegistrationProgress, RegistrationReceipt},
 };
 use hantong_ipc_client::profile::ParsedClientProfile;
+use hantong_ipc_server::setup_dispatch::{SetupCommand, SetupReceipt};
 use hantong_platform::{ClientSigningKey, ServerSigningKey};
 use hantong_store::{
     CliRegistrationStage, ClientKind, DEFAULT_CLI_LABEL, RegistrationRecord, RegistrationRequest,
@@ -14,27 +16,41 @@ use hantong_store::{
 use std::{cell::Cell, rc::Rc};
 use tokio::sync::mpsc;
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Job {
+    Registration([u8; 32]),
+    Imap([u8; 32]),
+}
+
 pub(crate) struct RegistrationHandle<'a> {
     state: Rc<Shared<'a>>,
-    sender: mpsc::Sender<[u8; 32]>,
+    sender: mpsc::Sender<Job>,
 }
 pub(crate) struct RegistrationWorker<'a> {
     state: Rc<Shared<'a>>,
-    receiver: mpsc::Receiver<[u8; 32]>,
+    receiver: mpsc::Receiver<Job>,
+}
+impl Drop for RegistrationWorker<'_> {
+    fn drop(&mut self) {
+        self.state.scheduled.set(None);
+    }
 }
 struct Shared<'a> {
     store: &'a Store,
     server: &'a ServerSigningKey,
-    scheduled: Cell<Option<[u8; 32]>>,
+    scheduled: Cell<Option<Job>>,
+    secrets_root: &'a std::path::Path,
 }
 
 pub(crate) fn coordinator<'a>(
     store: &'a Store,
     server: &'a ServerSigningKey,
+    secrets_root: &'a std::path::Path,
 ) -> (RegistrationHandle<'a>, RegistrationWorker<'a>) {
     let state = Rc::new(Shared {
         store,
         server,
+        secrets_root,
         scheduled: Cell::new(None),
     });
     let (sender, receiver) = mpsc::channel(1);
@@ -47,6 +63,41 @@ pub(crate) fn coordinator<'a>(
     )
 }
 impl RegistrationHandle<'_> {
+    pub(crate) fn setup_command(&self, command: SetupCommand) -> Result<SetupReceipt, ErrorCode> {
+        match command {
+            SetupCommand::Registration(c) => self.command(c).map(SetupReceipt::Registration),
+            SetupCommand::Imap(ImapSetupCommand::Status(id)) => crate::setup_imap::status(
+                self.state.store,
+                id,
+                self.state.scheduled.get() == Some(Job::Imap(id)),
+            )
+            .map(SetupReceipt::Imap),
+            SetupCommand::Imap(ImapSetupCommand::Request(input)) => {
+                if let Some(job) = self.state.scheduled.get() {
+                    let Job::Imap(id) = job else {
+                        return Err(ErrorCode::RateLimited);
+                    };
+                    let current = self
+                        .state
+                        .store
+                        .load_imap_setup_request(id)?
+                        .ok_or(ErrorCode::InternalError)?;
+                    if !crate::setup_imap::matches(&current, &input)? {
+                        return Err(ErrorCode::RateLimited);
+                    }
+                    return crate::setup_imap::status(self.state.store, id, true)
+                        .map(SetupReceipt::Imap);
+                }
+                if self.sender.is_closed() {
+                    return Err(ErrorCode::InternalError);
+                }
+                let request = crate::setup_imap::create(self.state.store, &input)?;
+                let id = *request.intent().request_id();
+                enqueue(&self.state.scheduled, &self.sender, Job::Imap(id))?;
+                crate::setup_imap::status(self.state.store, id, true).map(SetupReceipt::Imap)
+            }
+        }
+    }
     pub(crate) fn command(
         &self,
         command: RegistrationCommand,
@@ -57,8 +108,11 @@ impl RegistrationHandle<'_> {
                 if self.state.store.load_default_cli_registration()?.is_some() {
                     return Err(ErrorCode::Conflict);
                 }
-                if let Some(id) = self.state.scheduled.get() {
-                    return self.state.receipt(id);
+                if let Some(job) = self.state.scheduled.get() {
+                    return match job {
+                        Job::Registration(id) => self.state.receipt(id),
+                        Job::Imap(_) => Err(ErrorCode::RateLimited),
+                    };
                 }
                 let effects = NativeEffects {
                     store: self.state.store,
@@ -85,7 +139,11 @@ impl RegistrationHandle<'_> {
                         )?
                     }
                 };
-                enqueue(&self.state.scheduled, &self.sender, request.request_id)?;
+                enqueue(
+                    &self.state.scheduled,
+                    &self.sender,
+                    Job::Registration(request.request_id),
+                )?;
                 receipt(&request, RegistrationProgress::Pending)
             }
         }
@@ -100,9 +158,15 @@ impl RegistrationWorker<'_> {
         // Recovery never prompts and never creates a missing key. An individual
         // failure remains provisioning and cannot authenticate or be replaced.
         recover_startup(&effects)?;
-        while let Some(id) = self.receiver.recv().await {
+        while let Some(job) = self.receiver.recv().await {
             let _window = ScheduledWindow(&self.state.scheduled);
-            if let Err(error) = self.state.review(id).await {
+            let result = match job {
+                Job::Registration(id) => self.state.review(id).await,
+                Job::Imap(id) => {
+                    crate::setup_imap::review(self.state.store, self.state.secrets_root, id).await
+                }
+            };
+            if let Err(error) = result {
                 effects.report(error);
             }
         }
@@ -184,10 +248,10 @@ impl Shared<'_> {
         }
     }
 }
-fn enqueue(
-    scheduled: &Cell<Option<[u8; 32]>>,
-    sender: &mpsc::Sender<[u8; 32]>,
-    id: [u8; 32],
+fn enqueue<T: Copy + Eq>(
+    scheduled: &Cell<Option<T>>,
+    sender: &mpsc::Sender<T>,
+    id: T,
 ) -> Result<(), ErrorCode> {
     if let Some(current) = scheduled.get() {
         return if current == id {
@@ -203,8 +267,8 @@ fn enqueue(
     scheduled.set(Some(id));
     Ok(())
 }
-struct ScheduledWindow<'a>(&'a Cell<Option<[u8; 32]>>);
-impl Drop for ScheduledWindow<'_> {
+struct ScheduledWindow<'a, T: Copy>(&'a Cell<Option<T>>);
+impl<T: Copy> Drop for ScheduledWindow<'_, T> {
     fn drop(&mut self) {
         self.0.set(None);
     }

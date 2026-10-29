@@ -463,3 +463,104 @@ fn cli15_orphan_cleanup_preserves_explicit_denial_and_diagnostics_have_only_stab
     assert!(!line.contains("key"));
     assert!(!line.contains("path"));
 }
+
+#[test]
+fn setup01_registration_and_imap_share_one_gate_and_status_never_schedules() {
+    use hantong_contracts::imap_setup::{ImapSetupInput, ImapSetupState, ImapSetupTls};
+    struct Key(Option<ServerSigningKey>);
+    impl Drop for Key {
+        fn drop(&mut self) {
+            self.0.take().unwrap().delete().unwrap();
+        }
+    }
+    struct Directory(std::path::PathBuf);
+    impl Drop for Directory {
+        fn drop(&mut self) {
+            std::fs::remove_dir_all(&self.0).unwrap();
+        }
+    }
+    let key = Key(Some(
+        ServerSigningKey::create(hantong_platform::random_nonce().unwrap()).unwrap(),
+    ));
+    let root = Directory(std::env::temp_dir().join(format!(
+        "hantong-core-queue-{}",
+        hantong_contracts::wire_hex::encode(&hantong_platform::random_nonce().unwrap())
+    )));
+    std::fs::create_dir(&root.0).unwrap();
+    let store = Store::open(root.0.join("data"), root.0.join("keys")).unwrap();
+    let secrets = root.0.join("keys");
+    let (handle, mut worker) = coordinator(&store, key.0.as_ref().unwrap(), &secrets);
+    let input = ImapSetupInput::new(
+        None,
+        None,
+        "IMAP.EXAMPLE".into(),
+        993,
+        ImapSetupTls::ImplicitTls,
+        "user".into(),
+    )
+    .unwrap();
+    let cmd = || SetupCommand::Imap(ImapSetupCommand::Request(input.clone()));
+    let SetupReceipt::Imap(receipt) = handle.setup_command(cmd()).unwrap() else {
+        panic!("wrong family");
+    };
+    assert_eq!(receipt.state(), ImapSetupState::Pending);
+    let id = *receipt.request_id();
+    assert_eq!(worker.receiver.try_recv().unwrap(), Job::Imap(id));
+    assert!(
+        matches!(handle.setup_command(cmd()).unwrap(),SetupReceipt::Imap(value) if value==receipt)
+    );
+    assert!(worker.receiver.try_recv().is_err());
+    assert_eq!(store.list_imap_setup_requests().unwrap().len(), 1);
+    assert_eq!(
+        handle.command(RegistrationCommand::Request),
+        Err(ErrorCode::RateLimited)
+    );
+    let other = ImapSetupInput::new(
+        None,
+        None,
+        "other.example".into(),
+        993,
+        ImapSetupTls::ImplicitTls,
+        "user".into(),
+    )
+    .unwrap();
+    assert!(matches!(
+        handle.setup_command(SetupCommand::Imap(ImapSetupCommand::Request(other))),
+        Err(ErrorCode::RateLimited)
+    ));
+    assert!(
+        matches!(handle.setup_command(SetupCommand::Imap(ImapSetupCommand::Status(id))).unwrap(),SetupReceipt::Imap(value) if value==receipt)
+    );
+    assert!(worker.receiver.try_recv().is_err());
+    drop(worker);
+    let SetupReceipt::Imap(interrupted) = handle
+        .setup_command(SetupCommand::Imap(ImapSetupCommand::Status(id)))
+        .unwrap()
+    else {
+        panic!("wrong family");
+    };
+    assert_eq!(interrupted.state(), ImapSetupState::Interrupted);
+    assert!(matches!(
+        handle.setup_command(cmd()),
+        Err(ErrorCode::InternalError)
+    ));
+    assert_eq!(store.list_imap_setup_requests().unwrap().len(), 1);
+    assert!(store.list_registrable_account_ids().unwrap().is_empty());
+    drop(handle);
+    let (handle, mut worker) = coordinator(&store, key.0.as_ref().unwrap(), &secrets);
+    enqueue(
+        &handle.state.scheduled,
+        &handle.sender,
+        Job::Registration([9; 32]),
+    )
+    .unwrap();
+    assert!(matches!(
+        handle.setup_command(cmd()),
+        Err(ErrorCode::RateLimited)
+    ));
+    assert_eq!(
+        worker.receiver.try_recv().unwrap(),
+        Job::Registration([9; 32])
+    );
+    assert_eq!(store.list_imap_setup_requests().unwrap().len(), 1);
+}

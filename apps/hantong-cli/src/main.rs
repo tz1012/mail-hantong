@@ -1,6 +1,9 @@
 #![forbid(unsafe_code)]
 
 use hantong_contracts::ErrorCode;
+use hantong_contracts::imap_setup::{
+    ImapSetupCommand, ImapSetupInput, ImapSetupReceipt, ImapSetupTls,
+};
 use hantong_contracts::registration::{
     RegistrationCommand, RegistrationProgress, RegistrationReceipt,
 };
@@ -72,11 +75,12 @@ fn error_json(code: ErrorCode, lang: Lang) -> String {
 }
 
 fn run(args: impl IntoIterator<Item = String>) -> i32 {
-    run_with_boundaries_and_accounts(
+    run_with_boundaries_and_setup(
         args,
         hantong_ipc_client::registration::exchange,
         verify_profile,
         hantong_ipc_client::accounts::list_default_accounts,
+        hantong_ipc_client::imap_setup::exchange,
     )
 }
 
@@ -200,7 +204,22 @@ fn safe_human(value: &str) -> String {
         .collect()
 }
 
+#[cfg(test)]
 fn run_with_boundaries_and_accounts(
+    args: impl IntoIterator<Item = String>,
+    registration: impl FnMut(RegistrationCommand) -> Result<RegistrationReceipt, ErrorCode>,
+    verification: impl FnMut() -> Result<(), ErrorCode>,
+    account_list: impl FnMut(
+        bool,
+    )
+        -> Result<hantong_ipc_client::accounts::AccountListResponse, ErrorCode>,
+) -> i32 {
+    run_with_boundaries_and_setup(args, registration, verification, account_list, |_| {
+        Err(ErrorCode::CapabilityUnsupported)
+    })
+}
+
+fn run_with_boundaries_and_setup(
     args: impl IntoIterator<Item = String>,
     mut registration: impl FnMut(RegistrationCommand) -> Result<RegistrationReceipt, ErrorCode>,
     mut verification: impl FnMut() -> Result<(), ErrorCode>,
@@ -208,6 +227,7 @@ fn run_with_boundaries_and_accounts(
         bool,
     )
         -> Result<hantong_ipc_client::accounts::AccountListResponse, ErrorCode>,
+    mut setup: impl FnMut(ImapSetupCommand) -> Result<ImapSetupReceipt, ErrorCode>,
 ) -> i32 {
     let mut lang = Lang::En;
     let mut json = false;
@@ -215,6 +235,7 @@ fn run_with_boundaries_and_accounts(
     let mut want_help = false;
     let mut want_version = false;
     let mut command: Vec<String> = Vec::new();
+    let mut setup_options: Vec<(String, String)> = Vec::new();
     let mut it = args.into_iter();
     while let Some(arg) = it.next() {
         match arg.as_str() {
@@ -233,6 +254,12 @@ fn run_with_boundaries_and_accounts(
                     return emit_error(ErrorCode::InvalidInput, lang, json);
                 }
             }
+            "--host" | "--port" | "--tls" | "--login" | "--name" | "--color" => {
+                let Some(value) = it.next() else {
+                    return emit_error(ErrorCode::InvalidInput, lang, json);
+                };
+                setup_options.push((arg, value));
+            }
             "--help" | "-h" if command.is_empty() => {
                 want_help = true;
             }
@@ -250,6 +277,27 @@ fn run_with_boundaries_and_accounts(
     if include_capabilities
         && !matches!(command.as_slice(), [a, b] if a == "accounts" && b == "list")
     {
+        return emit_error(ErrorCode::InvalidInput, lang, json);
+    }
+    // A help/version flag is a standalone action. Reject combinations before
+    // parsing or dispatching any command so native/setup callbacks cannot run.
+    if (want_help || want_version) && !command.is_empty() {
+        return emit_error(ErrorCode::InvalidInput, lang, json);
+    }
+    if let Some(command) = parse_setup_command(&command, &setup_options) {
+        return match command {
+            Ok(Some(value)) => match setup(value) {
+                Ok(receipt) => {
+                    print_setup(&receipt, lang, json);
+                    0
+                }
+                Err(code) => emit_error(code, lang, json),
+            },
+            Ok(None) => emit_error(ErrorCode::HumanStepRequired, lang, json),
+            Err(code) => emit_error(code, lang, json),
+        };
+    }
+    if !setup_options.is_empty() {
         return emit_error(ErrorCode::InvalidInput, lang, json);
     }
     if want_help && command.is_empty() {
@@ -324,6 +372,94 @@ fn registration_command(command: &[String]) -> Result<Option<RegistrationCommand
         }
         [a, ..] if a == "clients" => Err(ErrorCode::InvalidInput),
         _ => Ok(None),
+    }
+}
+
+fn parse_setup_command(
+    command: &[String],
+    options: &[(String, String)],
+) -> Option<Result<Option<ImapSetupCommand>, ErrorCode>> {
+    if command.first().map(String::as_str) != Some("setup") {
+        return None;
+    }
+    if command.get(1).map(String::as_str) != Some("imap") {
+        return Some(Err(ErrorCode::InvalidInput));
+    }
+    match command.get(2).map(String::as_str) {
+        Some("status") => {
+            if command.len() != 4 || !options.is_empty() {
+                return Some(Err(ErrorCode::InvalidInput));
+            }
+            let id = match hantong_contracts::wire_hex::decode_fixed::<32>(&command[3]) {
+                Ok(id) if id != [0; 32] => id,
+                _ => return Some(Err(ErrorCode::InvalidInput)),
+            };
+            Some(Ok(Some(ImapSetupCommand::Status(id))))
+        }
+        Some("request") => {
+            if command.len() != 3 {
+                return Some(Err(ErrorCode::InvalidInput));
+            }
+            let mut values = std::collections::BTreeMap::new();
+            for (key, value) in options {
+                if values.insert(key.as_str(), value.as_str()).is_some() {
+                    return Some(Err(ErrorCode::InvalidInput));
+                }
+            }
+            let host = match values.get("--host") {
+                Some(v) => (*v).to_owned(),
+                None => return Some(Err(ErrorCode::InvalidInput)),
+            };
+            let port = match values.get("--port").and_then(|v| v.parse::<u16>().ok()) {
+                Some(v) if v != 0 => v,
+                _ => return Some(Err(ErrorCode::InvalidInput)),
+            };
+            let tls = match values.get("--tls").copied() {
+                Some("implicit_tls") => ImapSetupTls::ImplicitTls,
+                Some("starttls_required") => ImapSetupTls::StarttlsRequired,
+                _ => return Some(Err(ErrorCode::InvalidInput)),
+            };
+            let login = match values.get("--login") {
+                Some(v) => (*v).to_owned(),
+                None => return Some(Err(ErrorCode::InvalidInput)),
+            };
+            let input = ImapSetupInput::new(
+                values.get("--name").map(|v| (*v).to_owned()),
+                values.get("--color").map(|v| (*v).to_owned()),
+                host,
+                port,
+                tls,
+                login,
+            );
+            Some(input.map(ImapSetupCommand::Request).map(Some))
+        }
+        Some("complete" | "approve" | "execute") => Some(Ok(None)),
+        Some("resume" | "reset") => Some(Err(ErrorCode::InvalidInput)),
+        _ => Some(Err(ErrorCode::InvalidInput)),
+    }
+}
+
+fn print_setup(receipt: &ImapSetupReceipt, lang: Lang, json: bool) {
+    let id = hantong_contracts::wire_hex::encode(receipt.request_id());
+    if json {
+        println!(
+            "{{\"schema_version\":1,\"ok\":true,\"items\":[{{\"request_id\":\"{}\",\"expires_at_utc_ms\":{},\"state\":\"{}\",\"next_action\":\"{}\"}}],\"next_cursor\":null,\"account_results\":[],\"completeness\":\"complete\",\"warnings\":[],\"observed_at\":null}}",
+            id,
+            receipt.expires_at_utc_ms(),
+            receipt.state().as_str(),
+            receipt.next_action().as_str()
+        );
+    } else {
+        let state_key = format!("setup_state_{}", receipt.state().as_str());
+        let action_key = format!("setup_action_{}", receipt.next_action().as_str());
+        println!(
+            "{}\n{}: {}\n{}: {}",
+            resource(lang, &state_key),
+            resource(lang, "setup_request_id"),
+            id,
+            resource(lang, "setup_next_action"),
+            resource(lang, &action_key)
+        );
     }
 }
 
@@ -643,6 +779,191 @@ mod tests {
             |_| panic!("account list must not run"),
         );
         assert_eq!(code, ErrorCode::InvalidInput.exit_code());
+    }
+
+    #[test]
+    fn cli_setup_request_and_status_use_injected_callback_without_secret_input() {
+        let request_id = [7u8; 32];
+        let receipt = ImapSetupReceipt::new(
+            request_id,
+            1_800_000_000_000,
+            hantong_contracts::imap_setup::ImapSetupState::Pending,
+            hantong_contracts::imap_setup::ImapSetupNextAction::HelperRequired,
+        )
+        .unwrap();
+        let calls = std::cell::Cell::new(0);
+        let request_args = [
+            "--no-input",
+            "setup",
+            "imap",
+            "request",
+            "--host",
+            "imap.example.test",
+            "--port",
+            "993",
+            "--tls",
+            "implicit_tls",
+            "--login",
+            "user@example.test",
+            "--name",
+            "Work",
+            "--color",
+            "#aBc123",
+        ];
+        let code = run_with_boundaries_and_setup(
+            request_args.map(String::from),
+            |_| panic!("registration must not run"),
+            || panic!("verification must not run"),
+            |_| panic!("account list must not run"),
+            |command| {
+                calls.set(calls.get() + 1);
+                match command {
+                    ImapSetupCommand::Request(input) => {
+                        assert_eq!(input.host(), "imap.example.test");
+                        assert_eq!(input.port(), 993);
+                        assert_eq!(input.login_name(), "user@example.test");
+                    }
+                    ImapSetupCommand::Status(_) => panic!("unexpected status"),
+                }
+                Ok(receipt)
+            },
+        );
+        assert_eq!(code, 0);
+        assert_eq!(calls.get(), 1);
+
+        let id = hantong_contracts::wire_hex::encode(&request_id);
+        let code = run_with_boundaries_and_setup(
+            ["setup", "imap", "status", &id].map(String::from),
+            |_| panic!("registration must not run"),
+            || panic!("verification must not run"),
+            |_| panic!("account list must not run"),
+            |command| {
+                assert!(matches!(command, ImapSetupCommand::Status(id) if id == request_id));
+                Ok(receipt)
+            },
+        );
+        assert_eq!(code, 0);
+    }
+
+    #[test]
+    fn cli_setup_rejects_duplicate_missing_secret_or_resume_commands_before_callback() {
+        for args in [
+            vec![
+                "setup",
+                "imap",
+                "request",
+                "--host",
+                "a",
+                "--host",
+                "b",
+                "--port",
+                "993",
+                "--tls",
+                "implicit_tls",
+                "--login",
+                "u",
+            ],
+            vec![
+                "setup",
+                "imap",
+                "request",
+                "--host",
+                "a",
+                "--port",
+                "993",
+                "--tls",
+                "implicit_tls",
+            ],
+            vec![
+                "setup",
+                "imap",
+                "request",
+                "--host",
+                "a",
+                "--port",
+                "993",
+                "--tls",
+                "implicit_tls",
+                "--login",
+                "u",
+                "--password",
+                "secret",
+            ],
+            vec!["setup", "imap", "resume"],
+            vec!["setup", "imap", "complete"],
+        ] {
+            let expected = if args.get(2) == Some(&"complete") {
+                ErrorCode::HumanStepRequired.exit_code()
+            } else {
+                ErrorCode::InvalidInput.exit_code()
+            };
+            let calls = std::cell::Cell::new(0);
+            let code = run_with_boundaries_and_setup(
+                args.into_iter().map(String::from),
+                |_| panic!("registration must not run"),
+                || panic!("verification must not run"),
+                |_| panic!("account list must not run"),
+                |_| {
+                    calls.set(calls.get() + 1);
+                    Err(ErrorCode::InternalError)
+                },
+            );
+            assert_eq!(calls.get(), 0);
+            assert_eq!(code, expected);
+        }
+    }
+
+    #[test]
+    fn cli_rejects_help_or_version_with_command_before_callbacks() {
+        let status_id = hantong_contracts::wire_hex::encode(&[1u8; 32]);
+        let cases = [
+            vec![
+                "--help",
+                "setup",
+                "imap",
+                "request",
+                "--host",
+                "imap.example.test",
+                "--port",
+                "993",
+                "--tls",
+                "implicit_tls",
+                "--login",
+                "user@example.test",
+            ],
+            vec!["setup", "imap", "status", status_id.as_str(), "--version"],
+            vec!["--version", "clients", "register"],
+        ];
+        for args in cases {
+            let registrations = std::cell::Cell::new(0);
+            let verifications = std::cell::Cell::new(0);
+            let accounts = std::cell::Cell::new(0);
+            let setups = std::cell::Cell::new(0);
+            let code = run_with_boundaries_and_setup(
+                args.into_iter().map(String::from),
+                |_| {
+                    registrations.set(registrations.get() + 1);
+                    Err(ErrorCode::InternalError)
+                },
+                || {
+                    verifications.set(verifications.get() + 1);
+                    Err(ErrorCode::InternalError)
+                },
+                |_| {
+                    accounts.set(accounts.get() + 1);
+                    Err(ErrorCode::InternalError)
+                },
+                |_| {
+                    setups.set(setups.get() + 1);
+                    Err(ErrorCode::InternalError)
+                },
+            );
+            assert_eq!(code, ErrorCode::InvalidInput.exit_code());
+            assert_eq!(registrations.get(), 0);
+            assert_eq!(verifications.get(), 0);
+            assert_eq!(accounts.get(), 0);
+            assert_eq!(setups.get(), 0);
+        }
     }
 
     #[test]

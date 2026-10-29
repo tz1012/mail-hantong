@@ -9,9 +9,9 @@
 | 항목 | 상태와 근거 |
 | --- | --- |
 | 기준 자료 | 사용자 승인으로 채택한 [Markdown 기준 요건](../requirements/README.md): 요건 170개·1단계 P0 144개·문장별 AC ID 341개. 작업 카드 정의 151개는 보존한다. |
-| 현재 카드 | **M9-01/SETUP-01 Core·CLI 설정 연결 진행**. DB v5 설정 저널·이전·준비 codec의 전체 검증을 마쳤고 같은 UI 대기열과 실행 경계를 연결한다. |
-| 최신 검증 | **675개 통과**(문서 29·빌드 도구 63·Rust 583). 전체 build/test/fmt/Clippy·의존/문서/추적 검사 및 Linux x86_64·macOS arm64 교차 Clippy 통과. 2026-10-30 설정 저널·준비 codec snapshot의 로그·hash는 아래 기록에 있다. 실제 Mac 실행·전체 기능 완료를 뜻하지 않는다. |
-| 제품 구현 | Rust workspace·영/한 CLI·Windows 코어/IPC·DPAPI·SQLCipher·설정 검증·감사·기본 등록/프로필·권한이 있는 계정 목록 조회·IMAP/SMTP TLS/AUTH probe·CI/추적 도구 구현. 발송은 차단하며 계정 생성 UI·실제 메일 수신·전체 GUI·설치 패키지는 미완료다. |
+| 현재 카드 | **M9-01/SETUP-01 명시 재개 진행**. 신규 IMAP 설정의 Core·CLI 단일 시도 연결을 검증했고, 중단 이력 보존과 새 사람 확인을 통한 재개를 구현한다. |
+| 최신 검증 | **689개 통과**(문서 29·빌드 도구 63·Rust 597). 전체 build/test/fmt/Clippy·의존/문서/추적 검사 및 Linux x86_64·macOS arm64 교차 Clippy 통과. 2026-10-30 Core·CLI 설정 연결 snapshot의 로그·hash와 일시 실패 기록은 아래에 있다. 실제 Mac 실행·전체 기능 완료를 뜻하지 않는다. |
+| 제품 구현 | Rust workspace·영/한 CLI·Windows 코어/IPC·DPAPI·SQLCipher·설정 검증·감사·기본 등록/프로필·권한이 있는 계정 목록 조회·IMAP/SMTP TLS/AUTH probe·CI/추적 도구 구현. 신규 IMAP 설정의 보호 입력·사람 확인·일회 진단을 연결했다. 발송은 차단하며 설정 재개·실제 메일 수신·전체 GUI·설치 패키지는 미완료다. |
 | GitHub | 로컬 Git main 저장소를 초기화해 개발 기준선을 기록한다. 공개 저장소 주소·remote·릴리스·패키지 ID는 아직 없음. 빌드 산출물·실행 데이터·에이전트 상태는 제외한다. |
 | 새 사용자 요청 | 진행 상황을 이 문서에 누적하고, GitHub에서 명령어로 설치 및 개발을 시작할 수 있는 경로를 마련한다. 상세 범위는 [공개와 설치 계획](DISTRIBUTION.md)에 기록한다. |
 | 문서 관리 방식 | Markdown을 개발 기준으로 갱신하고 기존 Word는 보관한다. 최신 사용자 지시 “제작 완료까지 일단 묻지말고 진행해”에 따라 일반 구현 판단은 기록하며 연속 진행한다. |
@@ -603,3 +603,25 @@ Contracts/client/server의 요청·조회 codec과 등록/설정 공용 dispatch
 `scripts/check_all.py` 종료 코드 **0**: **675개**(문서 29·빌드 도구 63·Rust 583), build/test/fmt/Clippy·아키텍처·기준 문서·추적 검사 통과. 로그 `target/setup-journal-full-check.log`, SHA-256 `95A4E621EB4822DD42156BF0853B2312778EA799C7B7612AC3CAB4162E2CB6D8`, source hash `1aee6f912cc08159d9ffda59ba6da2f6c344a736038dfffb5ec1e9195b324793`. Linux x86_64/macOS arm64 all-target Clippy도 종료 코드 0이다(`target/setup-journal-linux-check.log`, `target/setup-journal-macos-check.log`). 실제 Mac 실행은 아니다.
 
 검사 뒤 제품 CNG 키 **1개**, names hash `3B692D49F1D08F7D3442806CF17694CDC02AF36B44839930FC18EB9C83CE9D4D`가 유지됐다. 실제 사용자 DB 이전·프로필 등록·Hello·계정 로그인·메일은 실행하지 않았다. 계약/보안은 **[사람 검토 필요]**, 전체 제품 AC 완료는 계속 **0개**다. M9-01은 선행 저널 구현으로 진행 중이며 카드 정의/선행은 보존했다. 다음은 Core와 CLI 연결 및 중단된 설정의 명시 재개다.
+
+
+## 2026-10-30 신규 IMAP Core·CLI 연결 (진행 중)
+
+설정 저널·준비 codec은 로컬 커밋 `9e1adb4`에 기록했다. 신규 설정 request/status를 실제 OS 검증 pipe에 연결하고, 기존 등록과 같은 단일 queue에서 native 확인을 실행한다. Core는 native 결과 소비 후 저널 stage→credential 시작/결과→probe 시작/결과 순서를 따른다. CLI는 서버·로그인·표시 정보만 전달하고 영/한 도움말·상태·다음 행동과 JSON을 제공한다. 비밀 인자·승인 완료 명령은 허용하지 않는다.
+
+효과 함수의 초기 stub 시험 8개 실패를 확인한 뒤 통과했다. fixture의 trailing-dot host와 앞뒤 공백 login은 기존 Domain이 거부하는 값이므로 기존 정책을 유지하고 유효 fixture와 거부 시험을 구분했다. 시작/반환 commit 실패·불확실한 응답·취소·중복 호출의 다음 효과 0건을 검사했다. queue worker drop 후 pending으로 남는 실패 회귀를 확인하고 중단 상태로 수정했다. 실제 native proof를 시험에서 제조하거나 실제 사용자 창을 열지 않는다.
+
+Core 전체 36개와 Clippy 통과 뒤 접속 중 종료·오류 분류 시험을 추가 검증했다. 현재 직전 675개 snapshot은 `9e1adb4`의 증거이며 진행 중 통합 변경의 새 전체 검증은 아직이다. 새 외부 의존성 없이 Core→Secrets 내부 edge만 추가했다. status의 기존 등록 안내는 활성 인증 성공 주장이 아니며 기존 등록의 상태·범위 재검토를 뜻한다. 명시 재개·기존 프로필 범위 갱신·전체 마법사·실제 Hello/화면 검토는 남아 있다.
+
+
+### Core·CLI 설정 연결 최종 자동 검증 snapshot
+
+실제 pipe의 설정 요청·상태·원본 공백을 포함한 16KiB 한도·권한 필드 거부를 검증했다. 등록 API는 공통 dispatch/server에 위임해 인증 수명주기 중복을 제거했다. Core의 한 대기열에서 같은 요청은 중복 창을 만들지 않고 다른 등록/설정 요청은 제한한다. 새 Core 시험 11개가 단계별 실패/불확실한 commit, probe 중 종료, 상태 분류, stale 재실행, queue 종료를 검사한다. 전체 Core 38개·CLI 23개를 포함한 검증이다. 도움말/버전과 명령 혼합은 모든 효과 전에 거부하고 미지원 resume/reset은 INVALID_INPUT으로 분리했다.
+
+독립 검토의 기존 등록 안내 지적은 계약 대조 후 철회됐다. existing 등록이 비활성이어도 새 등록을 중복 만들 수 없으므로 상태·계정 범위 재검토로 안내하며, ready가 CLI 인증 성공을 뜻하지 않음을 문구에 명시했다. 남은 HIGH/MEDIUM 결함은 없었으나 사람 보안 검토는 대체하지 않는다.
+
+첫 전체 검사에서 기존 account-provision 시험의 임시 Store::open이 INTERNAL_ERROR로 한 번 실패했다(`target/setup-activation-full-check.log`). 실패 fixture에는 0-byte DB와 보호된 키 파일이 있었고 오류 원인은 특정하지 못했다. 해당 단독 시험과 Store 전체 129개 재실행은 통과했다(`target/setup-activation-store-repro.log`, `target/setup-activation-store-recheck.log`). 원인 추정으로 제품 코드를 바꾸거나 시험을 제외하지 않았다. 일시 초기화 실패의 원인 미확인은 알려진 제한으로 남긴다.
+
+다시 실행한 `scripts/check_all.py` 종료 코드 **0**: **689개**(문서 29·빌드 도구 63·Rust 597), build/test/fmt/Clippy·아키텍처·기준 문서·추적 검사 통과. 로그 `target/setup-activation-final-full-check.log`, SHA-256 `AC3855715ECB4637F8FCBA526334CD008FE5FACAD7DAFADE7AF8DAD880FF6EFC`, source hash `8db2bec5fda78c13900caf458b402d95bed4a63fd1afd17392d3ca2857665271`. Linux x86_64/macOS arm64 all-target Clippy 종료 코드 0(`target/setup-activation-linux-check.log`, `target/setup-activation-macos-check.log`). 실제 Mac 실행은 아니다.
+
+검사 뒤 CNG 제품 키 **1개**, names hash `3B692D49F1D08F7D3442806CF17694CDC02AF36B44839930FC18EB9C83CE9D4D`를 확인했다. 실제 사용자 Core 실행·DB 이전·프로필 등록·Hello·계정 로그인·메일은 실행하지 않았다. 계약/보안은 **[사람 검토 필요]**, 전체 제품 AC 완료는 **0개**다. 다음은 v5를 보존하는 v6 재개 시도 이력과 CLI/native 연결이다.
