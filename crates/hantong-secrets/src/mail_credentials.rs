@@ -167,6 +167,14 @@ impl SecretStore {
         self.unseal_bound_mail(account, binding).map(|_| ())
     }
     #[cfg(windows)]
+    pub(super) fn unseal_imap_credential(
+        &self,
+        account: &str,
+        endpoint: &ImapEndpointConfig,
+    ) -> Result<BoundCredential, SecretError> {
+        self.unseal_bound_mail(account, endpoint.into())
+    }
+    #[cfg(windows)]
     pub(super) fn unseal_smtp_credential(
         &self,
         account: &str,

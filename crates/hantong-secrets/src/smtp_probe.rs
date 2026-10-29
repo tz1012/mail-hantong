@@ -6,8 +6,6 @@ use std::fmt;
 #[cfg(all(windows, test))]
 mod tests;
 #[cfg(windows)]
-mod transport;
-#[cfg(windows)]
 mod windows;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

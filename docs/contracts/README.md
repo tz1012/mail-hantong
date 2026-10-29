@@ -32,6 +32,7 @@
 | `mail-connection.md`, `mail-connection-store.md` | 독립 IMAP/SMTP 설정·v4 저장/CAS/중복/관측 | 모델·저장·v4 이전 검증, 설정 화면 전 |
 | `mail-credentials.md` | endpoint 전체·버전에 결속한 DPAPI 자격 증명 | Windows 저장/결속 대상 시험·독립 검토 통과, TLS/AUTH 연결 전 |
 | `smtp-probe.md` | Secrets 내부 일회성 TLS/AUTH 검사·수신/시간 제한 | 실제 DPAPI+in-memory TLS 대상 검증, GUI·IPC 미연결 |
+| `imap-probe.md` | Secrets 내부 IMAP TLS/AUTH·tag/응답 한도·기능 snapshot | 실제 DPAPI+in-memory TLS 대상 검증, GUI·IPC/메일 수신 미연결 |
 | `core-lifecycle.md` | 고정 HKCU 자동 시작 값·충돌 보존·재시작 예산 | 격리 registry/상태 시험, 설치·supervisor 연결 전 |
 | `diagnostic-export.md` | 선택한 비민감 진단 항목의 미리보기/내보내기 값 | 순수 직렬화 검증, 실제 수집·UI·파일 쓰기 미연결 |
 

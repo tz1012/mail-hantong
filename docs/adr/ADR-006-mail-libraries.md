@@ -51,3 +51,11 @@ AUTH 235와 QUIT 221을 직접 검사하며 다른 positive reply를 성공으�
 또한 `imap-types::Secret`의 Debug는 개발 빌드에서 값을 보일 수 있고 io-imap/io-sasl의 trace가 원문 bytes를 기록한다. 제품에 이 의존성을 추가하면 `log =0.4.34`의 `max_level_off`를 Secrets 의존에서 활성화하고 정적 수준 시험을 둔다. Core에만 넣으면 Secrets 단독 시험 graph에는 적용되지 않으므로 충분하지 않다. 자체 구조화 Core 로그는 log facade를 쓰지 않는다. 새 의존성이 다른 log 버전/상충 max_level feature를 추가할 때 이 경계를 다시 검사한다.
 
 근거: [io-imap 0.7.1 send](https://github.com/pimalaya/io-imap/blob/v0.7.1/src/send.rs), [STARTTLS](https://github.com/pimalaya/io-imap/blob/v0.7.1/src/rfc3501/starttls.rs), [log compile-time filters](https://docs.rs/log/0.4.34/log/#compile-time-filters), [RFC 3501 STARTTLS](https://www.rfc-editor.org/rfc/rfc3501.html#section-6.2.1). 현재 제품에는 io-imap을 아직 추가하지 않았고 분리된 hostile-response/TLS 시험을 진행한다.
+
+## 2026-10-30 codec 전용 IMAP broker 통합
+
+위 분리 시험 이후 Windows Secrets에 io-imap 0.7.1(client/scram), nom 7.1.3(alloc), log 0.4.34(max_level_off)를 고정해 추가했다. 고수준 coroutine 대신 codec/types만 사용한다. 실제 DPAPI envelope + in-memory TLS에서 제품 gate/driver 시험 26개가 통과했으며 SMTP/DB 회귀를 포함한 Secrets 시험 89개와 Clippy도 통과했다. 세부 경계는 [IMAP probe 계약](../contracts/imap-probe.md)에 있다. MIME 의존성은 아직 제품에 추가하지 않았다.
+
+기능 snapshot은 인증 뒤 새 CAPABILITY만 사용한다. IMAP4REV2만 광고하면 기본 IDLE/MOVE/UIDPLUS를 반영하고, rev1과 rev2를 함께 광고하면 명시적 기능만 반영한다. SPECIAL-USE는 extended LIST 지원을 의미하며 실제 특수 폴더의 존재와 구분한다. AUTH 중 bounded status/CAPABILITY를 허용하되 기능·인증 방식은 바꾸지 않는다. SASL-IR은 명시적으로 광고된 경우만 사용하고 그 외에는 한정된 continuation 교환을 한다. 근거: [RFC 9051 CAPABILITY](https://www.rfc-editor.org/rfc/rfc9051.html#section-6.1.1), [Appendix E](https://www.rfc-editor.org/rfc/rfc9051.html#appendix-E), [AUTHENTICATE](https://www.rfc-editor.org/rfc/rfc9051.html#section-6.2.2), [RFC 4959](https://www.rfc-editor.org/rfc/rfc4959.html), [RFC 6154](https://www.rfc-editor.org/rfc/rfc6154.html#section-2).
+
+codec의 ASCII response text 및 좁은 응답 whitelist 때문에 모든 rev2/비표준 서버와 호환된다고 주장하지 않는다. 제품 호출자는 CA/transport/비밀 callback을 주입할 수 없으며 실제 OS 신뢰와 제공자 상호 운용성은 후속 검증이다. 독립 코드 검토에서 중대한 결함은 발견되지 않았으나 이는 사람 보안 검토가 아니다.

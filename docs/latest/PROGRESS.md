@@ -9,8 +9,8 @@
 | 항목 | 상태와 근거 |
 | --- | --- |
 | 기준 자료 | 사용자 승인으로 채택한 [Markdown 기준 요건](../requirements/README.md): 요건 170개·1단계 P0 144개·문장별 AC ID 341개. 작업 카드 정의 151개는 보존한다. |
-| 현재 카드 | **M2-01 IMAP/SMTP 연결 구현 진행 중**. 독립 endpoint·DB v4 CAS/관측·DPAPI 결속 자격 증명과 SMTP TLS/AUTH probe를 구현했다. M1의 CNG·인증 wire·감사·공통 실행 경로는 연결됐으며 정책은 기본 거부다. 등록 UI/프로필 배포·IMAP driver·사람 보안 검토는 남아 있다. |
-| 최신 검증 | **408개 통과**(문서 29·빌드 도구 60·Rust 319). 전체 build/test/fmt/Clippy·의존/문서/추적 검사 및 Linux x86_64·macOS arm64 교차 Clippy 통과. 2026-10-30 SMTP snapshot의 로그·hash는 아래 마지막 기록에 있다. 실제 Mac 실행·전체 기능 완료를 뜻하지 않는다. |
+| 현재 카드 | **M2-01 연결 및 M2-02 기능 탐지 진행 중**. 독립 endpoint·DB v4 CAS/관측·DPAPI 결속 자격 증명과 IMAP/SMTP TLS/AUTH probe를 구현했다. M1의 CNG·인증 wire·감사·공통 실행 경로는 연결됐으며 정책은 기본 거부다. 등록 UI/프로필 배포·공통 정책 연결·사람 보안 검토는 남아 있다. |
+| 최신 검증 | **435개 통과**(문서 29·빌드 도구 61·Rust 345). 전체 build/test/fmt/Clippy·의존/문서/추적 검사 및 Linux x86_64·macOS arm64 교차 Clippy 통과. 2026-10-30 IMAP snapshot의 로그·hash는 아래 마지막 기록에 있다. 실제 Mac 실행·전체 기능 완료를 뜻하지 않는다. |
 | 제품 구현 | Rust workspace·영/한 CLI·Windows 코어/최소 IPC·DPAPI·SQLCipher·설정 검증·구조화 로그·가짜 공급자·CI/의존 검사·추적 도구 구현. 보호된 메일 명령은 계속 거부한다. 실제 메일 연동·인증 등록·GUI·설치 패키지는 미완료다. |
 | GitHub | 로컬 Git main 저장소를 초기화해 개발 기준선을 기록한다. 공개 저장소 주소·remote·릴리스·패키지 ID는 아직 없음. 빌드 산출물·실행 데이터·에이전트 상태는 제외한다. |
 | 새 사용자 요청 | 진행 상황을 이 문서에 누적하고, GitHub에서 명령어로 설치 및 개발을 시작할 수 있는 경로를 마련한다. 상세 범위는 [공개와 설치 계획](DISTRIBUTION.md)에 기록한다. |
@@ -19,7 +19,7 @@
 | 런타임 결정 | **코어·CLI Rust 확정** — 2026-10-29 사용자 선택, [ADR-001](../adr/ADR-001-core-runtime.md). 비교 실험에서 .NET은 프로세스 시작, Rust는 메모리에 유리했고 검색은 혼재했다. [실측 보고서](RUNTIME-BENCHMARK.md)는 보존하며 제품의 1초 목표는 아직 검증 전이다. |
 | Mac 지원 방향 | 사용자 승인으로 정식 후속 목표에 포함했다. Windows 우선 출시 후 Mac 코어·CLI·최소 승인 도우미부터 제공하고 전체 GUI를 후속 제공한다. 구체적인 단계·일정·패키지는 미정이며 현재 제품은 미구현이다. |
 | 공개 사용 정책 | **[LICENSE Version 1.0](../../LICENSE) 정식 채택** — 개인·회사 내부 업무용 사용, 수정본 비공개 및 원본·수정본 무료 재배포 허용. 프로그램 판매·유료 제공 금지. 고지 유지·수정 표시·보증과 책임 조항 포함. 저작권자는 **Andrew Cho**, 웹사이트 **https://tzt.kr**, 연락처 **andrew@tzt.kr**이다. [한국어 안내](LICENSING.md), [ADR-016](../adr/ADR-016-license.md). |
-| 다음 제품 작업 | Secrets 소유 IMAP TLS/AUTH driver와 기능 탐지, 계정 설정 화면을 구현한다. 등록 승인 화면의 Windows Hello 연결을 병행 검토한다. SMTP는 가짜 TLS 서버+실제 DPAPI로 검증됐고 실제 계정/공통 UI·IPC에는 아직 연결하지 않았다. |
+| 다음 제품 작업 | IMAP/SMTP probe를 설정·관측 서비스에 연결하고 등록 승인 화면/프로필 배포를 구현한다. probe는 가짜 TLS 서버+실제 DPAPI로 검증됐고 실제 계정/공통 UI·IPC에는 아직 연결하지 않았다. |
 
 ## 기록 규칙
 
@@ -479,3 +479,19 @@ private IMAP response gate는 초기 13개 실패 후 13개 통과했다. CRLF·
 새 Git checkout에서 core.autocrlf에 의해 계약/스크립트가 CRLF로 바뀌어 추적 hash 검사가 실패하는 것을 재현했다(`target/git-checkout-traceability-red.log`). `.gitattributes`에 모든 hash 입력의 LF 보존 규칙을 추가하고 기존 CRLF 입력 8개를 정규화했다. frozen v2 SQL은 줄바꿈만 바뀌었으며 Store의 DDL 비교는 `split_whitespace`로 정규화하므로 기존 DB 구조 판정은 유지된다. 두 번째 index checkout에서 traceability와 문서 29·빌드 도구 60개가 통과했다. 로그: `target/git-checkout-traceability-check.log`, `target/git-checkout-docs-check.log`, `target/git-checkout-build-check.log`.
 
 정규화 후 전체 검사도 **408개**(문서 29·빌드 도구 60·Rust 319), build/fmt/Clippy/아키텍처/기준 문서/추적 검사 통과다. `target/git-baseline-full-check.log` SHA-256 `BBF287280697C24ADA4322DDDD4FE7F39D2CA1997DB23998ACAC176C11A80F78`, source hash `a2db7c49422adf94ca8d305d2ca8feb568108dc52b6fc0771a17baa3d8ade029`. 이전 SMTP snapshot 이후 기능 코드는 바뀌지 않았다. 이 검증은 개발 기준선과 checkout 재현성을 확인하며 전체 기능/보안의 사람 검토 완료를 뜻하지 않는다.
+
+로컬 기준선은 `0b8d50f`에 커밋했다. 원문 보존 문서/CSV의 의도된 공백·CRLF는 유지했으며 제품/도구/시험 코드의 Git whitespace 검사는 통과했다. 외부 remote/push는 없다.
+
+### 2026-10-30 — M2-01/02 IMAP TLS·인증 probe와 기능 snapshot
+
+`hantong-secrets::probe_imap`을 구현했다. OS 검증 TLS, 엄격한 STARTTLS 전환, TLS 후 CAPABILITY, endpoint 전체에 결속된 DPAPI 해제, 단일 PLAIN/LOGIN/XOAUTH2 인증, 인증 후 CAPABILITY와 BYE+tagged OK LOGOUT을 수행한다. 고수준 io-imap coroutine 대신 private bounded response gate/codec을 사용하고 log facade를 컴파일 시 비활성화했다. 입력 tag/문법/literal/frame/challenge와 전체 수신·송신·시간 한도를 검사한다. receipt는 settings_version과 알려진 기능 boolean만 포함하며 session·비밀·원문·임의 command를 노출하지 않는다. 메일 읽기/쓰기/발송은 아직 없다.
+
+기존 SMTP transport를 동작 변경 없이 `mail_transport.rs`로 옮겨 수신 byte 제한을 재사용했다. 12개 transport 회귀 시험과 기존 SMTP/DB 시험도 통과했다. [IMAP 계약](../contracts/imap-probe.md)·[ADR-006](../adr/ADR-006-mail-libraries.md)에 순서·한도·rev1/rev2 기능 해석·strict ASCII/CRLF 호환성 한계를 기록했다. 실제 제공자/OS-root 네트워크 시험과 사람 보안 검토는 남아 있다.
+
+초기 제품 시험은 stub에서 **5개 모두 실패**했다(`target/imap-broker-red.log`). 구현 후 gate 15·TLS/인증/상태 11 = **26개**가 통과했다. TLS 두 방식, PLAIN/LOGIN/XOAUTH2 및 SASL-IR, 서버 신뢰/hostname 오류 시 unseal 0, STARTTLS 거절/평문 주입, tag/리터럴/폭주, 미지원 방식, stale/missing credential, 조기 성공/비정상·추가 challenge, AUTH 누적 frame 제한, post-auth 기능 갱신/실패, 30초 가상 시계 timeout/drop을 포함한다. Secrets 전체는 **89개**(단위 77·DB 통합 12)와 Clippy 통과다. 독립 검토에서 중대한 결함은 발견되지 않았으나 사람 승인으로 기록하지 않는다.
+
+추적 source hash가 컴파일에 포함되는 공개 TLS fixture 확장자 `.cert/.fullchain/.key`를 빠뜨리는 것을 실패 시험으로 확인하고 포함했다. fixture가 바뀌면 검증 증거도 무효화된다. `target/tls-fixture-hash-red.log` → `target/tls-fixture-hash-check.log` **11개 통과**. 이 파일들은 provenance가 있는 공개 테스트 재료이며 실제 자격 증명이 아니다.
+
+최종 `scripts/check_all.py`: **435개**(문서 29·빌드 도구 61·Rust 345), build/fmt/Clippy/아키텍처/기준 문서/추적 검사 통과. 로그 `target/imap-broker-full-check.log`, SHA-256 `8D4A8D7EADC4773904ADC5E0AB2158DACA16A4330FB0CB9F6583347AE29D5009`, source hash `7a0279d2d9a9b05ce65d39194b74b82790a4eff4037e2733c747875ae4551d81`. Linux x86_64·macOS arm64 workspace/all-target 교차 Clippy도 통과(`target/imap-broker-linux-check.log`, `target/imap-broker-macos-check.log`). 실제 Mac 실행이 아니다. 검사 후 제품 CNG 키는 기존 서버 1개이며 inventory hash `3B692D49F1D08F7D3442806CF17694CDC02AF36B44839930FC18EB9C83CE9D4D`로 유지됐다. 실제 계정·메일·Windows Hello는 사용하지 않았다.
+
+상태: M2-01/02 진행 중, Secrets/계약은 **[사람 검토 필요]**. 전체 제품 AC 완료는 여전히 0개이며 UI·등록 프로필·공통 정책·실제 메일 수신을 다음 작업으로 연결한다.

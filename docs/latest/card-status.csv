@@ -1,4 +1,4 @@
-card_id,title,status,review_type,dependencies,evidence,reviewer,approved_at_utc,blocking_reason
+﻿card_id,title,status,review_type,dependencies,evidence,reviewer,approved_at_utc,blocking_reason
 M0-00,요건서 분할과 기준 문서 전환,complete,사람,—,PROGRESS.md; ../requirements/README.md; ../requirements/adoption.json; ../traceability.md; ../../scripts/check_requirements.py,Andrew Cho (user),2026-10-29T12:34:51Z,
 M0-01,저장소 골격과 빌드,complete,에이전트,"M0-00, ADR-001, ADR-016",PROGRESS.md; RUST-STRUCTURE.md; ../../scripts/check_all.py,Codex (agent verification),,
 M0-02,CI 파이프라인,in_progress,에이전트,M0-01,CI.md; ../../.github/workflows/check.yml,,,로컬 구성 검증 완료; 실제 GitHub 두 플랫폼 실행·필수 검사 설정 미확인
@@ -25,8 +25,8 @@ M1-10,진단 내보내기,in_progress,에이전트,M1-07,../contracts/diagnostic
 M1-12,CLI 영어 리소스와 도움말,in_progress,에이전트,M1-06,../../apps/hantong-cli/resources; ../../apps/hantong-cli/build.rs,,,영어 기본·한국어 리소스·빌드 검사 구현; 저장된 cli.language 설정 연동 남음
 M1-11,코어 자동 시작과 수명 관리,in_progress,에이전트,M1-01,../contracts/core-lifecycle.md; ../adr/ADR-021-core-lifecycle.md; ../../crates/hantong-platform/src/windows_autostart.rs; ../../crates/hantong-application/src/lifecycle.rs,,,격리 HKCU 등록/해제/소유 충돌 시험8개·재시작 예산4개 통과; 실제 supervisor/설치/알림/유지보수 연결 남음
 M1-99,다음 마일스톤 계획 갱신,not_started,사람,M1 나머지 전부,,,,
-M2-01,IMAP·SMTP 계정 설정 모델,in_progress,에이전트,"M1-04, M1-03, ADR-006",../contracts/mail-connection.md; ../contracts/mail-connection-store.md; ../adr/ADR-006-mail-libraries.md; ../../crates/hantong-domain/src/mail_connection.rs,,,독립 endpoint·v4 CAS/관측·결속 자격 증명·SMTP TLS/AUTH·408개 전체검사 통과; IMAP·계정 생성/설정 화면·사람 검토 남음
-M2-02,CAPABILITY 탐지,not_started,에이전트,M2-01,,,,
+M2-01,IMAP·SMTP 계정 설정 모델,in_progress,에이전트,"M1-04, M1-03, ADR-006",../contracts/mail-connection.md; ../contracts/mail-connection-store.md; ../adr/ADR-006-mail-libraries.md; ../../crates/hantong-domain/src/mail_connection.rs,,,독립 endpoint·v4 CAS/관측·결속 자격 증명·IMAP/SMTP TLS/AUTH 구현; Secrets 89개 대상 검사 통과; 435개 전체검사 및 Linux/macOS 교차 Clippy 통과; 계정 생성/설정 화면·공통 정책·사람 검토 남음
+M2-02,CAPABILITY 탐지,in_progress,에이전트,M2-01,,,,인증 후 IMAP CAPABILITY snapshot 구현; rev1/rev2 모드·미지원 기능 대상 시험 통과; SMTP 확장·공통 ProviderCapabilities·대체 경로/UI 남음
 M2-03,폴더 동기화와 특수 폴더,not_started,에이전트,M2-02,,,,
 M2-04,UID 증분 동기화,not_started,에이전트,M2-03,,,,
 M2-05,단계적 최초 동기화,not_started,에이전트,M2-04,,,,

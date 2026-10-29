@@ -11,9 +11,13 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 
 mod database;
+mod imap_probe;
 mod mail_credentials;
+#[cfg(windows)]
+mod mail_transport;
 mod smtp_probe;
 pub use database::{DatabaseError, KeyedConnection};
+pub use imap_probe::{ImapCapabilities, ImapProbeReceipt};
 pub use smtp_probe::{MailProbeError, SmtpProbeReceipt};
 
 const MAX_SECRET: usize = 65_536;

@@ -21,6 +21,10 @@ serde_json = "=1.0.154"
 tokio = { version = "=1.54.1", features = ["test-util"] }
 
 [target.'cfg(windows)'.dependencies]
+io-imap = { version = "=0.7.1", default-features = false, features = ["client", "scram"] }
+# Published imap-codec disables nom defaults without selecting its required alloc feature.
+nom = { version = "=7.1.3", default-features = false, features = ["alloc"] }
+log = { version = "=0.4.34", default-features = false, features = ["max_level_off"] }
 tokio = { version = "=1.54.1", features = ["rt", "net", "time", "io-util", "macros"] }
 lettre = { version = "=0.11.23", default-features = false, features = ["smtp-transport", "tokio1", "tokio1-rustls", "rustls-platform-verifier", "ring"] }
 rustls = { version = "=0.23.46", default-features = false, features = ["ring", "std", "tls12"] }

@@ -1,7 +1,5 @@
-use super::{
-    transport::{BoundedAsyncStream, LettreTokioStream, StarttlsReadGate},
-    *,
-};
+use super::*;
+use crate::mail_transport::{BoundedAsyncStream, LettreTokioStream, StarttlsReadGate};
 use hantong_domain::mail_connection::{Authentication, TlsMode};
 use lettre::transport::smtp::{
     authentication::{Credentials, Mechanism},
