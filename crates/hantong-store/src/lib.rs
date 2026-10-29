@@ -1,0 +1,1292 @@
+#![forbid(unsafe_code)]
+
+//! Typed access to the encrypted local database.
+//!
+//! The database connection remains owned by `hantong-secrets`.  This crate
+//! exposes only fixed repository operations; callers never receive a SQLite
+//! connection or an arbitrary SQL entry point.
+
+use hantong_contracts::ErrorCode;
+use std::fmt;
+
+mod accounts;
+mod audit;
+mod config;
+pub mod mail_connection;
+mod registrations;
+mod server_identity;
+pub use registrations::{
+    ClientKind, RegistrationRecord, RegistrationRequest, RegistrationRequestState,
+    RegistrationState,
+};
+pub use server_identity::ServerIdentity;
+
+#[cfg(windows)]
+const CURRENT_SCHEMA_VERSION: u32 = 4;
+#[cfg(windows)]
+const DATABASE_FORMAT: &str = "mail-hantong";
+#[cfg(windows)]
+const MAX_SETTING_KEY_BYTES: usize = 128;
+#[cfg(windows)]
+const MAX_SETTING_JSON_BYTES: usize = 64 * 1024;
+#[cfg(windows)]
+const SCHEMA: &str = include_str!("../../../docs/contracts/db-schema.sql");
+#[cfg(windows)]
+const SCHEMA_V1: &str = include_str!("../../../docs/contracts/migrations/schema-v1.sql");
+#[cfg(windows)]
+const MIGRATION_V1_TO_V2: &str = include_str!("../../../docs/contracts/migrations/001-to-002.sql");
+#[cfg(windows)]
+const SCHEMA_V2: &str = include_str!("../../../docs/contracts/migrations/schema-v2.sql");
+#[cfg(windows)]
+const MIGRATION_V2_TO_V3: &str = include_str!("../../../docs/contracts/migrations/002-to-003.sql");
+#[cfg(windows)]
+const SCHEMA_V3: &str = include_str!("../../../docs/contracts/migrations/schema-v3.sql");
+#[cfg(windows)]
+const MIGRATION_V3_TO_V4: &str = include_str!("../../../docs/contracts/migrations/003-to-004.sql");
+
+#[derive(Clone, Eq, PartialEq)]
+pub(crate) struct Setting {
+    pub value_json: String,
+    pub version: u64,
+}
+
+impl fmt::Debug for Setting {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Setting")
+            .field("key", &"<redacted>")
+            .field("value_json", &"<redacted>")
+            .field("version", &self.version)
+            .finish()
+    }
+}
+
+#[cfg(windows)]
+use hantong_secrets::{DatabaseError, KeyedConnection};
+#[cfg(windows)]
+use rusqlite::OptionalExtension;
+
+/// An encrypted, schema-checked local store.
+pub struct Store {
+    #[cfg(windows)]
+    connection: KeyedConnection,
+}
+
+impl fmt::Debug for Store {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Store").finish_non_exhaustive()
+    }
+}
+
+impl Store {
+    /// Opens the fixed encrypted database, initializes a fresh v4 schema, or
+    /// advances validated schemas one version at a time after each backup.
+    pub fn open(
+        data_root: impl AsRef<std::path::Path>,
+        key_root: impl AsRef<std::path::Path>,
+    ) -> Result<Self, ErrorCode> {
+        #[cfg(not(windows))]
+        {
+            let _ = (data_root, key_root);
+            Err(ErrorCode::CapabilityUnsupported)
+        }
+        #[cfg(windows)]
+        {
+            let connection =
+                KeyedConnection::open(data_root, key_root).map_err(map_database_error)?;
+            let store = Self { connection };
+            store.ensure_schema()?;
+            Ok(store)
+        }
+    }
+
+    /// Returns a setting without exposing the underlying connection.
+    pub(crate) fn get_setting(&self, key: &str) -> Result<Option<Setting>, ErrorCode> {
+        #[cfg(not(windows))]
+        {
+            let _ = key;
+            Err(ErrorCode::CapabilityUnsupported)
+        }
+        #[cfg(windows)]
+        {
+            validate_setting_key(key)?;
+            self.with_connection(|connection| {
+                let mut statement = connection
+                    .prepare("SELECT value_json, version FROM settings WHERE setting_key = ?1")?;
+                let mut rows = statement.query([key])?;
+                match rows.next()? {
+                    Some(row) => Ok(Some(Setting {
+                        value_json: row.get(0)?,
+                        version: row
+                            .get::<_, i64>(1)?
+                            .try_into()
+                            .map_err(|_| rusqlite::Error::IntegralValueOutOfRange(1, i64::MAX))?,
+                    })),
+                    None => Ok(None),
+                }
+            })
+        }
+    }
+
+    /// Inserts a setting at version 1, or updates an existing setting using a
+    /// compare-and-swap expected version. A failed CAS preserves the row.
+    pub(crate) fn put_setting(
+        &self,
+        key: &str,
+        value_json: &str,
+        expected_version: u64,
+    ) -> Result<u64, ErrorCode> {
+        #[cfg(not(windows))]
+        {
+            let _ = (key, value_json, expected_version);
+            Err(ErrorCode::CapabilityUnsupported)
+        }
+        #[cfg(windows)]
+        {
+            validate_setting(key, value_json)?;
+            let outcome = self.with_connection(|connection| {
+                let valid = connection.query_row("SELECT json_valid(?1)", [value_json], |row| {
+                    row.get::<_, i64>(0)
+                })?;
+                if valid != 1 {
+                    return Ok(SettingWrite::Invalid);
+                }
+                let now = utc_millis()?;
+                if expected_version == 0 {
+                    let exists = connection.query_row(
+                        "SELECT count(*) FROM settings WHERE setting_key = ?1",
+                        [key],
+                        |row| row.get::<_, i64>(0),
+                    )?;
+                    if exists != 0 {
+                        return Ok(SettingWrite::Conflict);
+                    }
+                    connection.execute(
+                        "INSERT INTO settings(setting_key, value_json, version, updated_at_utc_ms) VALUES (?1, ?2, 1, ?3)",
+                        rusqlite::params![key, value_json, now],
+                    )?;
+                    Ok(SettingWrite::Updated(1))
+                } else {
+                    if expected_version >= i64::MAX as u64 {
+                        return Ok(SettingWrite::Conflict);
+                    }
+                    let Some(next) = expected_version.checked_add(1) else {
+                        return Ok(SettingWrite::Conflict);
+                    };
+                    let current = connection
+                        .query_row(
+                            "SELECT version FROM settings WHERE setting_key = ?1",
+                            [key],
+                            |row| row.get::<_, i64>(0),
+                        )
+                        .optional()?;
+                    if current != Some(expected_version as i64) {
+                        return Ok(SettingWrite::Conflict);
+                    }
+                    let changed = connection.execute(
+                        "UPDATE settings SET value_json = ?1, version = ?2, updated_at_utc_ms = ?3 WHERE setting_key = ?4 AND version = ?5",
+                        rusqlite::params![value_json, next as i64, now, key, expected_version as i64],
+                    )?;
+                    Ok(if changed == 1 {
+                        SettingWrite::Updated(next)
+                    } else {
+                        SettingWrite::Conflict
+                    })
+                }
+            })?;
+            match outcome {
+                SettingWrite::Invalid => Err(ErrorCode::InvalidInput),
+                SettingWrite::Conflict => Err(ErrorCode::Conflict),
+                SettingWrite::Updated(version) => Ok(version),
+            }
+        }
+    }
+
+    #[cfg(windows)]
+    fn ensure_schema(&self) -> Result<(), ErrorCode> {
+        let state = self.with_connection(|connection| {
+            let user_version =
+                connection.pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))?;
+            if !(0..=i64::from(u32::MAX)).contains(&user_version) {
+                return Err(rusqlite::Error::InvalidQuery);
+            }
+            let object_count = connection.query_row(
+                "SELECT count(*) FROM sqlite_master WHERE name NOT GLOB 'sqlite_*'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )?;
+            match (user_version as u32, object_count) {
+                (0, 0) => Ok(SchemaState::Fresh),
+                (0, _) => Ok(SchemaState::Corrupt),
+                (version, _) if version > CURRENT_SCHEMA_VERSION => Ok(SchemaState::Newer),
+                (1, _) => Ok(SchemaState::V1),
+                (2, _) => Ok(SchemaState::V2),
+                (3, _) => Ok(SchemaState::V3),
+                (CURRENT_SCHEMA_VERSION, _) => Ok(SchemaState::Current),
+                _ => Ok(SchemaState::Unsupported),
+            }
+        })?;
+        match state {
+            SchemaState::Fresh => self.with_connection(initialize_schema).map(|_| ()),
+            SchemaState::V1 => {
+                self.with_connection(|connection| validate_schema(connection, SCHEMA_V1, 1))?;
+                self.migrate_v1_to_v2()?;
+                self.migrate_v2_to_v3()?;
+                self.migrate_v3_to_v4()
+            }
+            SchemaState::V2 => {
+                self.with_connection(|connection| validate_schema(connection, SCHEMA_V2, 2))?;
+                self.migrate_v2_to_v3()?;
+                self.migrate_v3_to_v4()
+            }
+            SchemaState::V3 => {
+                self.with_connection(|connection| validate_schema(connection, SCHEMA_V3, 3))?;
+                self.migrate_v3_to_v4()
+            }
+            SchemaState::Current => self.with_connection(|connection| {
+                validate_schema(connection, SCHEMA, CURRENT_SCHEMA_VERSION)
+            }),
+            SchemaState::Newer => Err(ErrorCode::VersionMismatch),
+            SchemaState::Corrupt | SchemaState::Unsupported => Err(ErrorCode::InternalError),
+        }
+    }
+
+    #[cfg(windows)]
+    fn migrate_v1_to_v2(&self) -> Result<(), ErrorCode> {
+        self.migrate_with_backup(1, 2, SCHEMA_V2, |connection| {
+            connection.execute_batch(MIGRATION_V1_TO_V2)
+        })
+    }
+
+    #[cfg(windows)]
+    fn migrate_v2_to_v3(&self) -> Result<(), ErrorCode> {
+        self.migrate_with_backup(2, 3, SCHEMA_V3, |connection| {
+            connection.execute_batch(MIGRATION_V2_TO_V3)
+        })
+    }
+
+    #[cfg(windows)]
+    fn migrate_v3_to_v4(&self) -> Result<(), ErrorCode> {
+        self.migrate_with_backup(3, CURRENT_SCHEMA_VERSION, SCHEMA, |connection| {
+            connection.execute_batch(MIGRATION_V3_TO_V4)
+        })
+    }
+
+    #[cfg(windows)]
+    fn with_connection<T>(
+        &self,
+        operation: impl FnOnce(&rusqlite::Connection) -> rusqlite::Result<T>,
+    ) -> Result<T, ErrorCode> {
+        self.connection
+            .with_connection(operation)
+            .map_err(|error| match error {
+                DatabaseError::Conflict => ErrorCode::Conflict,
+                DatabaseError::Unsupported => ErrorCode::CapabilityUnsupported,
+                DatabaseError::Internal => ErrorCode::InternalError,
+            })
+    }
+
+    /// Runs one fixed migration step after creating and validating the
+    /// encrypted same-key backup. Callers cannot supply migration SQL through
+    /// the public Store API; future schema versions add ordered private steps.
+    #[cfg(windows)]
+    fn migrate_with_backup(
+        &self,
+        current_version: u32,
+        next_version: u32,
+        expected_schema: &str,
+        migration: impl FnOnce(&rusqlite::Connection) -> rusqlite::Result<()>,
+    ) -> Result<(), ErrorCode> {
+        if current_version == 0
+            || current_version.checked_add(1) != Some(next_version)
+            || next_version > i32::MAX as u32
+        {
+            return Err(ErrorCode::InternalError);
+        }
+        self.with_connection(|connection| {
+            let recorded: u32 = connection.query_row(
+                "SELECT schema_version FROM app_metadata WHERE singleton=1",
+                [],
+                |r| r.get(0),
+            )?;
+            if recorded != current_version {
+                return Err(rusqlite::Error::InvalidQuery);
+            }
+            Ok(())
+        })?;
+        self.connection
+            .backup_before_migration(current_version)
+            .map_err(map_database_error)?;
+        self.with_connection(|connection| {
+            let transaction = rusqlite::Transaction::new_unchecked(
+                connection,
+                rusqlite::TransactionBehavior::Immediate,
+            )?;
+            migration(&transaction)?;
+            if transaction.execute(
+                "UPDATE app_metadata SET schema_version=?1,updated_at_utc_ms=?2 WHERE singleton=1 AND schema_version=?3",
+                rusqlite::params![next_version, utc_millis()?, current_version],
+            )? != 1 {
+                return Err(rusqlite::Error::InvalidQuery);
+            }
+            transaction.pragma_update(None, "user_version", next_version)?;
+            validate_schema(&transaction, expected_schema, next_version)?;
+            transaction.commit()
+        })
+        .map(|_| ())
+    }
+}
+
+#[cfg(windows)]
+fn map_database_error(error: DatabaseError) -> ErrorCode {
+    match error {
+        DatabaseError::Conflict => ErrorCode::Conflict,
+        DatabaseError::Unsupported => ErrorCode::CapabilityUnsupported,
+        DatabaseError::Internal => ErrorCode::InternalError,
+    }
+}
+
+#[cfg(windows)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SchemaState {
+    Fresh,
+    Current,
+    V1,
+    V2,
+    V3,
+    Newer,
+    Unsupported,
+    Corrupt,
+}
+
+#[cfg(windows)]
+enum SettingWrite {
+    Invalid,
+    Conflict,
+    Updated(u64),
+}
+
+#[cfg(windows)]
+fn initialize_schema(connection: &rusqlite::Connection) -> rusqlite::Result<()> {
+    let transaction =
+        rusqlite::Transaction::new_unchecked(connection, rusqlite::TransactionBehavior::Immediate)?;
+    transaction.execute_batch(SCHEMA)?;
+    let now = utc_millis()?;
+    transaction.execute(
+            "INSERT INTO app_metadata(singleton, database_format, schema_version, created_at_utc_ms, updated_at_utc_ms) VALUES (1, ?1, ?2, ?3, ?3)",
+            rusqlite::params![DATABASE_FORMAT, CURRENT_SCHEMA_VERSION, now],
+        )?;
+    transaction.pragma_update(None, "user_version", CURRENT_SCHEMA_VERSION)?;
+    validate_schema(&transaction, SCHEMA, CURRENT_SCHEMA_VERSION)?;
+    transaction.commit()
+}
+
+#[cfg(windows)]
+fn validate_schema(
+    connection: &rusqlite::Connection,
+    schema: &str,
+    schema_version: u32,
+) -> rusqlite::Result<()> {
+    // Compare the complete persisted DDL, not just object names. Extra triggers,
+    // weakened constraints, changed columns and missing indexes all fail closed.
+    let without_comments = schema
+        .lines()
+        .map(|line| line.split("--").next().unwrap_or(""))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let mut expected = without_comments
+        .split(';')
+        .map(normalize_ddl)
+        .filter(|s| s.starts_with("CREATE "))
+        .collect::<Vec<_>>();
+    let mut statement = connection
+        .prepare("SELECT sql FROM sqlite_master WHERE name NOT GLOB 'sqlite_*' ORDER BY name")?;
+    let mut actual = statement
+        .query_map([], |row| row.get::<_, String>(0))?
+        .map(|sql| sql.map(|s| normalize_ddl(&s)))
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    expected.sort();
+    actual.sort();
+    if expected != actual {
+        return Err(rusqlite::Error::InvalidQuery);
+    }
+    let metadata = connection.query_row(
+        "SELECT database_format, schema_version, created_at_utc_ms, updated_at_utc_ms FROM app_metadata WHERE singleton = 1",
+        [],
+        |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?, row.get::<_, i64>(2)?, row.get::<_, i64>(3)?)),
+    )?;
+    if metadata.0 != DATABASE_FORMAT
+        || metadata.1 != i64::from(schema_version)
+        || metadata.2 <= 0
+        || metadata.3 < metadata.2
+    {
+        return Err(rusqlite::Error::InvalidQuery);
+    }
+    let singleton_count = connection.query_row("SELECT count(*) FROM app_metadata", [], |row| {
+        row.get::<_, i64>(0)
+    })?;
+    if singleton_count != 1 {
+        return Err(rusqlite::Error::InvalidQuery);
+    }
+    if schema_version >= 3 {
+        let capacity = connection.query_row(
+            "SELECT count(*), retained_executions, retained_account_refs FROM audit_capacity WHERE singleton=1",
+            [],
+            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?, row.get::<_, i64>(2)?)),
+        )?;
+        let actual = connection.query_row(
+            "SELECT (SELECT count(*) FROM audit_starts), (SELECT count(*) FROM audit_start_accounts)",
+            [],
+            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+        )?;
+        if capacity.0 != 1
+            || capacity.1 < 0
+            || capacity.1 > 100_000
+            || capacity.2 < 0
+            || capacity.2 > 1_000_000
+            || capacity.1 != actual.0
+            || capacity.2 != actual.1
+        {
+            return Err(rusqlite::Error::InvalidQuery);
+        }
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn normalize_ddl(sql: &str) -> String {
+    sql.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+#[cfg(windows)]
+fn validate_setting_key(key: &str) -> Result<(), ErrorCode> {
+    if key.is_empty() || key.len() > MAX_SETTING_KEY_BYTES || key.chars().any(char::is_control) {
+        Err(ErrorCode::InvalidInput)
+    } else {
+        Ok(())
+    }
+}
+
+#[cfg(windows)]
+fn validate_setting(key: &str, value_json: &str) -> Result<(), ErrorCode> {
+    validate_setting_key(key)?;
+    if value_json.len() > MAX_SETTING_JSON_BYTES {
+        return Err(ErrorCode::InvalidInput);
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn utc_millis() -> rusqlite::Result<i64> {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()
+        .and_then(|duration| i64::try_from(duration.as_millis()).ok())
+        .filter(|millis| *millis > 0)
+        .ok_or(rusqlite::Error::InvalidQuery)
+}
+
+#[cfg(all(test, windows))]
+mod tests {
+    use super::*;
+    use hantong_secrets::KeyedConnection;
+    use std::fs;
+    use std::path::PathBuf;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    struct Fixture(PathBuf);
+
+    impl Fixture {
+        fn new() -> Self {
+            static NEXT: AtomicU64 = AtomicU64::new(0);
+            let root = std::env::temp_dir().join(format!(
+                "hantong-store-{}-{}",
+                std::process::id(),
+                NEXT.fetch_add(1, Ordering::Relaxed)
+            ));
+            fs::create_dir(&root).expect("unique fixture directory");
+            Self(root)
+        }
+
+        fn open(&self) -> Result<Store, ErrorCode> {
+            Store::open(self.0.join("data"), self.0.join("keys"))
+        }
+
+        fn keyed(&self) -> KeyedConnection {
+            KeyedConnection::open(self.0.join("data"), self.0.join("keys")).unwrap()
+        }
+
+        fn seed_v1(&self) {
+            let keyed = KeyedConnection::open(self.0.join("data"), self.0.join("keys")).unwrap();
+            keyed.with_connection(|connection| {
+                let transaction = rusqlite::Transaction::new_unchecked(
+                    connection,
+                    rusqlite::TransactionBehavior::Immediate,
+                )?;
+                transaction.execute_batch(SCHEMA_V1)?;
+                transaction.execute(
+                    "INSERT INTO app_metadata(singleton,database_format,schema_version,created_at_utc_ms,updated_at_utc_ms) VALUES(1,'mail-hantong',1,1,1)",
+                    [],
+                )?;
+                transaction.pragma_update(None, "user_version", 1)?;
+                transaction.commit()
+            }).unwrap();
+        }
+
+        fn seed_v2(&self) {
+            let keyed = KeyedConnection::open(self.0.join("data"), self.0.join("keys")).unwrap();
+            keyed.with_connection(|connection| {
+                let transaction = rusqlite::Transaction::new_unchecked(
+                    connection,
+                    rusqlite::TransactionBehavior::Immediate,
+                )?;
+                transaction.execute_batch(SCHEMA_V2)?;
+                transaction.execute(
+                    "INSERT INTO app_metadata(singleton,database_format,schema_version,created_at_utc_ms,updated_at_utc_ms) VALUES(1,'mail-hantong',2,1,1)",
+                    [],
+                )?;
+                transaction.pragma_update(None, "user_version", 2)?;
+                transaction.commit()
+            }).unwrap();
+        }
+
+        fn seed_v3(&self) {
+            let keyed = KeyedConnection::open(self.0.join("data"), self.0.join("keys")).unwrap();
+            keyed.with_connection(|connection| {
+                let transaction = rusqlite::Transaction::new_unchecked(
+                    connection,
+                    rusqlite::TransactionBehavior::Immediate,
+                )?;
+                transaction.execute_batch(SCHEMA_V3)?;
+                transaction.execute(
+                    "INSERT INTO app_metadata(singleton,database_format,schema_version,created_at_utc_ms,updated_at_utc_ms) VALUES(1,'mail-hantong',3,1,1)",
+                    [],
+                )?;
+                transaction.pragma_update(None, "user_version", 3)?;
+                transaction.commit()
+            }).unwrap();
+        }
+
+        fn seed_populated_v3(&self) {
+            self.seed_v3();
+            let keyed = self.keyed();
+            keyed.with_connection(|c| {
+                c.execute("INSERT INTO settings(setting_key,value_json,version,updated_at_utc_ms) VALUES('ui.theme','\"dark\"',2,2)", [])?;
+                c.execute("INSERT INTO accounts(account_id,provider,account_number,status,capabilities,granted_scopes,settings_version) VALUES('migration-account','imap',1,'ready','[]','[]',1)", [])?;
+                c.execute("INSERT INTO client_registration_requests(request_id,client_kind,display_label,requested_accounts_json,requested_tools_json,state,decision_channel,version,created_at_utc_ms,expires_at_utc_ms,decided_at_utc_ms) VALUES(?1,'cli','fixture','[\"migration-account\"]','[\"mail.accounts.list\"]','approved','gui',1,1,300001,2)", [vec![8u8; 32]])?;
+                c.execute("INSERT INTO client_registrations(registration_id,request_id,client_kind,display_label,public_key,profile_epoch,state,read_only,requests_per_minute,approved_channel,approved_at_utc_ms,updated_at_utc_ms,revoked_at_utc_ms,version) VALUES(?1,?2,'cli','fixture',?3,1,'active',1,60,'gui',2,2,NULL,1)", rusqlite::params![vec![9u8; 16], vec![8u8; 32], vec![7u8; 72]])?;
+                c.execute("INSERT INTO client_registration_accounts(registration_id,account_id) VALUES(?1,'migration-account')", [vec![9u8; 16]])?;
+                c.execute("INSERT INTO client_registration_tools(registration_id,tool_id) VALUES(?1,'mail.accounts.list')", [vec![9u8; 16]])?;
+                c.execute("INSERT INTO audit_starts(execution_id,registration_id,profile_epoch,client_kind,display_label,tool_code,started_at_utc_ms) VALUES(?1,?2,1,'cli','fixture','mail.accounts.list',3)", rusqlite::params![vec![3u8; 32], vec![9u8; 16]])?;
+                c.execute("INSERT INTO audit_start_accounts(execution_id,account_id) VALUES(?1,'migration-account')", [vec![3u8; 32]])?;
+                c.execute("INSERT INTO audit_terminals(execution_id,completed_at_utc_ms,result_kind,error_code,result_count) VALUES(?1,4,'returned_ok',NULL,1)", [vec![3u8; 32]])?;
+                c.execute("UPDATE audit_capacity SET retained_executions=1,retained_account_refs=1 WHERE singleton=1", [])?;
+                Ok(())
+            }).unwrap();
+        }
+    }
+
+    impl Drop for Fixture {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn m104_initializes_schema_and_settings_cas() {
+        let fixture = Fixture::new();
+        let store = fixture.open().unwrap();
+        assert_eq!(store.get_setting("ui.theme").unwrap(), None);
+        assert_eq!(store.put_setting("ui.theme", "\"system\"", 0), Ok(1));
+        assert_eq!(store.put_setting("ui.theme", "\"dark\"", 1), Ok(2));
+        assert_eq!(
+            store.put_setting("ui.theme", "\"light\"", 1),
+            Err(ErrorCode::Conflict)
+        );
+        assert_eq!(
+            store.get_setting("ui.theme").unwrap().unwrap().value_json,
+            "\"dark\""
+        );
+        drop(store);
+        let keyed = fixture.keyed();
+        assert_eq!(
+            keyed
+                .with_connection(|connection| connection.pragma_query_value(
+                    None,
+                    "user_version",
+                    |row| row.get::<_, i64>(0)
+                ))
+                .unwrap(),
+            4
+        );
+        assert_eq!(
+            keyed
+                .with_connection(|connection| connection.query_row(
+                    "SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'",
+                    [],
+                    |row| row.get::<_, i64>(0)
+                ))
+                .unwrap(),
+            15
+        );
+    }
+
+    #[test]
+    fn m104_rejects_invalid_setting_without_modifying_row() {
+        let fixture = Fixture::new();
+        let store = fixture.open().unwrap();
+        assert_eq!(
+            store.put_setting("bad", "not-json", 0),
+            Err(ErrorCode::InvalidInput)
+        );
+        assert_eq!(
+            store.put_setting("bad", &"x".repeat(MAX_SETTING_JSON_BYTES + 1), 0),
+            Err(ErrorCode::InvalidInput)
+        );
+        assert_eq!(store.get_setting("bad").unwrap(), None);
+    }
+
+    #[test]
+    fn m104_v1_migrates_to_v2_with_settings_and_no_active_registrations() {
+        let fixture = Fixture::new();
+        fixture.seed_v1();
+        let before = fixture.keyed().with_connection(|c| {
+            c.execute("INSERT INTO settings(setting_key,value_json,version,updated_at_utc_ms) VALUES('legacy','1',1,2)", [])
+        }).unwrap();
+        assert_eq!(before, 1);
+        let store = fixture.open().unwrap();
+        assert_eq!(
+            store.get_setting("legacy").unwrap().unwrap().value_json,
+            "1"
+        );
+        assert_eq!(
+            store
+                .with_connection(
+                    |c| c.pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0))
+                )
+                .unwrap(),
+            4
+        );
+        assert_eq!(
+            store
+                .with_connection(|c| c.query_row(
+                    "SELECT count(*) FROM client_registrations",
+                    [],
+                    |r| r.get::<_, i64>(0)
+                ))
+                .unwrap(),
+            0
+        );
+        assert!(fixture.0.join("data/backup-before-v1.db").is_file());
+        assert!(fixture.0.join("data/backup-before-v2.db").is_file());
+        assert!(fixture.0.join("data/backup-before-v3.db").is_file());
+    }
+
+    #[test]
+    fn m105_fresh_v3_has_zero_audit_capacity() {
+        let fixture = Fixture::new();
+        let store = fixture.open().unwrap();
+        assert_eq!(
+            store
+                .with_connection(
+                    |c| c.pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0))
+                )
+                .unwrap(),
+            4
+        );
+        assert_eq!(store.with_connection(|c| c.query_row("SELECT retained_executions,retained_account_refs FROM audit_capacity WHERE singleton=1", [], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?)))).unwrap(), (0, 0));
+    }
+
+    #[test]
+    fn m201_populated_v3_migrates_to_v4_without_losing_existing_rows() {
+        fn previous_rows(
+            connection: &rusqlite::Connection,
+        ) -> rusqlite::Result<Vec<Vec<Vec<rusqlite::types::Value>>>> {
+            let mut tables = Vec::new();
+            for table in [
+                "settings",
+                "accounts",
+                "server_identity",
+                "client_registration_requests",
+                "client_registrations",
+                "client_registration_accounts",
+                "client_registration_tools",
+                "audit_capacity",
+                "audit_starts",
+                "audit_start_accounts",
+                "audit_terminals",
+            ] {
+                let mut statement =
+                    connection.prepare(&format!("SELECT * FROM {table} ORDER BY rowid"))?;
+                let columns = statement.column_count();
+                let rows = statement.query_map([], |row| {
+                    (0..columns)
+                        .map(|i| row.get(i))
+                        .collect::<rusqlite::Result<Vec<rusqlite::types::Value>>>()
+                })?;
+                tables.push(rows.collect::<rusqlite::Result<Vec<_>>>()?);
+            }
+            Ok(tables)
+        }
+        let fixture = Fixture::new();
+        fixture.seed_populated_v3();
+        let keyed = fixture.keyed();
+        let before = keyed.with_connection(previous_rows).unwrap();
+        drop(keyed);
+        let store = fixture.open().unwrap();
+        assert_eq!(store.with_connection(previous_rows).unwrap(), before);
+        assert_eq!(
+            store
+                .with_connection(
+                    |c| c.pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0))
+                )
+                .unwrap(),
+            4
+        );
+        assert_eq!(
+            store
+                .with_connection(|c| c.query_row(
+                    "SELECT value_json FROM settings WHERE setting_key='ui.theme'",
+                    [],
+                    |r| r.get::<_, String>(0)
+                ))
+                .unwrap(),
+            "\"dark\""
+        );
+        assert_eq!(
+            store
+                .with_connection(|c| c.query_row(
+                    "SELECT count(*) FROM accounts WHERE account_id='migration-account'",
+                    [],
+                    |r| r.get::<_, i64>(0)
+                ))
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            store
+                .with_connection(|c| c.query_row(
+                    "SELECT count(*) FROM client_registrations",
+                    [],
+                    |r| r.get::<_, i64>(0)
+                ))
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            store
+                .with_connection(
+                    |c| c.query_row("SELECT count(*) FROM audit_starts", [], |r| r
+                        .get::<_, i64>(0))
+                )
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            store
+                .with_connection(|c| c.query_row(
+                    "SELECT count(*) FROM audit_start_accounts",
+                    [],
+                    |r| r.get::<_, i64>(0)
+                ))
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            store
+                .with_connection(
+                    |c| c.query_row("SELECT count(*) FROM audit_terminals", [], |r| r
+                        .get::<_, i64>(0))
+                )
+                .unwrap(),
+            1
+        );
+        assert_eq!(store.with_connection(|c| c.query_row("SELECT retained_executions,retained_account_refs FROM audit_capacity WHERE singleton=1", [], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?)))).unwrap(), (1, 1));
+        for table in [
+            "mail_connection_settings",
+            "mail_connection_observations",
+            "mail_connection_operations",
+        ] {
+            assert_eq!(
+                store
+                    .with_connection(|c| c.query_row(
+                        &format!("SELECT count(*) FROM {table}"),
+                        [],
+                        |r| r.get::<_, i64>(0)
+                    ))
+                    .unwrap(),
+                0
+            );
+        }
+        assert!(fixture.0.join("data/backup-before-v3.db").is_file());
+    }
+
+    #[test]
+    fn m201_v3_migration_rollback_removes_new_tables_and_preserves_v3() {
+        let fixture = Fixture::new();
+        fixture.seed_v3();
+        let store = Store {
+            connection: fixture.keyed(),
+        };
+        assert_eq!(
+            store.migrate_with_backup(3, 4, SCHEMA, |connection| {
+                connection.execute_batch(MIGRATION_V3_TO_V4)?;
+                connection.execute_batch("CREATE TABLE unwanted_v4(x)")
+            }),
+            Err(ErrorCode::InternalError)
+        );
+        store
+            .with_connection(|c| validate_schema(c, SCHEMA_V3, 3))
+            .unwrap();
+        assert_eq!(
+            store
+                .with_connection(
+                    |c| c.pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0))
+                )
+                .unwrap(),
+            3
+        );
+        assert_eq!(store.with_connection(|c| c.query_row("SELECT count(*) FROM sqlite_master WHERE name IN ('mail_connection_settings','mail_connection_observations','mail_connection_operations','unwanted_v4')", [], |r| r.get::<_, i64>(0))).unwrap(), 0);
+    }
+
+    #[test]
+    fn m201_v3_existing_backup_conflict_preserves_database_and_artifact() {
+        let fixture = Fixture::new();
+        fixture.seed_v3();
+        let database_path = fixture.0.join("data/mail-hantong.db");
+        let backup_path = fixture.0.join("data/backup-before-v3.db");
+        let database_before = fs::read(&database_path).unwrap();
+        fs::write(&backup_path, b"preexisting-v3-artifact").unwrap();
+        let backup_before = fs::read(&backup_path).unwrap();
+        assert!(matches!(fixture.open(), Err(ErrorCode::Conflict)));
+        assert_eq!(fs::read(database_path).unwrap(), database_before);
+        assert_eq!(fs::read(backup_path).unwrap(), backup_before);
+    }
+
+    #[test]
+    fn m201_malformed_v3_fails_before_backup() {
+        let fixture = Fixture::new();
+        fixture.seed_v3();
+        let keyed = fixture.keyed();
+        keyed
+            .with_connection(|c| c.execute_batch("DROP TABLE audit_capacity"))
+            .unwrap();
+        drop(keyed);
+        let database_path = fixture.0.join("data/mail-hantong.db");
+        let database_before = fs::read(&database_path).unwrap();
+        assert!(matches!(fixture.open(), Err(ErrorCode::InternalError)));
+        assert_eq!(fs::read(database_path).unwrap(), database_before);
+        assert!(!fixture.0.join("data/backup-before-v3.db").exists());
+    }
+
+    #[test]
+    fn m105_missing_audit_capacity_is_rejected_without_repair_or_overwrite() {
+        let fixture = Fixture::new();
+        drop(fixture.open().unwrap());
+        let keyed = fixture.keyed();
+        keyed
+            .with_connection(|c| c.execute("DELETE FROM audit_capacity", []))
+            .unwrap();
+        drop(keyed);
+        let path = fixture.0.join("data/mail-hantong.db");
+        let before = fs::read(&path).unwrap();
+        assert!(matches!(fixture.open(), Err(ErrorCode::InternalError)));
+        assert_eq!(fs::read(path).unwrap(), before);
+    }
+
+    #[test]
+    fn m105_inconsistent_audit_capacity_is_rejected_without_repair_or_overwrite() {
+        let fixture = Fixture::new();
+        drop(fixture.open().unwrap());
+        let keyed = fixture.keyed();
+        keyed
+            .with_connection(|c| c.execute("UPDATE audit_capacity SET retained_executions=1", []))
+            .unwrap();
+        drop(keyed);
+        let path = fixture.0.join("data/mail-hantong.db");
+        let before = fs::read(&path).unwrap();
+        assert!(matches!(fixture.open(), Err(ErrorCode::InternalError)));
+        assert_eq!(fs::read(path).unwrap(), before);
+    }
+
+    #[test]
+    fn m105_v2_migrates_to_v3_preserving_identity_and_registrations() {
+        let fixture = Fixture::new();
+        fixture.seed_v2();
+        let keyed = fixture.keyed();
+        keyed.with_connection(|c| {
+            let mut public_key = vec![0u8; 72];
+            public_key[..4].copy_from_slice(b"ECS1");
+            public_key[4..8].copy_from_slice(&32u32.to_le_bytes());
+            c.execute("INSERT INTO server_identity(singleton,key_id,state,public_key,key_epoch,version,created_at_utc_ms,updated_at_utc_ms) VALUES(1,?1,'creating',NULL,1,1,1,1)", [vec![7u8; 32]])?;
+            c.execute("INSERT INTO accounts(account_id,provider,account_number,status,capabilities,granted_scopes,settings_version) VALUES('migration-account','imap',1,'ready','[]','[]',1)", [])?;
+            c.execute("INSERT INTO client_registration_requests(request_id,client_kind,display_label,requested_accounts_json,requested_tools_json,state,decision_channel,version,created_at_utc_ms,expires_at_utc_ms,decided_at_utc_ms) VALUES(?1,'cli','migration','[\"migration-account\"]','[\"mail.read\"]','approved','gui',1,1,300001,2)", [vec![8u8; 32]])?;
+            c.execute("INSERT INTO client_registrations(registration_id,request_id,client_kind,display_label,public_key,profile_epoch,state,read_only,requests_per_minute,approved_channel,approved_at_utc_ms,updated_at_utc_ms,revoked_at_utc_ms,version) VALUES(?1,?2,'cli','migration',?3,1,'active',1,60,'gui',2,2,NULL,1)", rusqlite::params![vec![9u8;16], vec![8u8;32], public_key])?;
+            Ok(())
+        }).unwrap();
+        drop(keyed);
+        let store = fixture.open().unwrap();
+        assert_eq!(
+            store
+                .with_connection(
+                    |c| c.pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0))
+                )
+                .unwrap(),
+            4
+        );
+        assert_eq!(
+            store
+                .with_connection(
+                    |c| c.query_row("SELECT count(*) FROM server_identity", [], |r| r
+                        .get::<_, i64>(0))
+                )
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            store
+                .with_connection(|c| c.query_row(
+                    "SELECT count(*) FROM client_registrations",
+                    [],
+                    |r| r.get::<_, i64>(0)
+                ))
+                .unwrap(),
+            1
+        );
+        assert_eq!(store.with_connection(|c| c.query_row("SELECT retained_executions,retained_account_refs FROM audit_capacity WHERE singleton=1", [], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?)))).unwrap(), (0, 0));
+        assert!(fixture.0.join("data/backup-before-v2.db").is_file());
+    }
+
+    #[test]
+    fn m105_v2_existing_backup_conflict_preserves_database_and_artifact() {
+        let fixture = Fixture::new();
+        fixture.seed_v2();
+        let database_path = fixture.0.join("data/mail-hantong.db");
+        let backup_path = fixture.0.join("data/backup-before-v2.db");
+        let database_before = fs::read(&database_path).unwrap();
+        fs::write(&backup_path, b"preexisting-v2-artifact").unwrap();
+        let backup_before = fs::read(&backup_path).unwrap();
+        assert!(matches!(fixture.open(), Err(ErrorCode::Conflict)));
+        assert_eq!(fs::read(database_path).unwrap(), database_before);
+        assert_eq!(fs::read(backup_path).unwrap(), backup_before);
+    }
+
+    #[test]
+    fn m105_v2_migration_schema_validation_rolls_back_before_commit() {
+        let fixture = Fixture::new();
+        fixture.seed_v2();
+        let store = Store {
+            connection: fixture.keyed(),
+        };
+        assert_eq!(
+            store.migrate_with_backup(2, 3, SCHEMA_V3, |connection| {
+                connection.execute_batch(MIGRATION_V2_TO_V3)?;
+                connection.execute_batch("CREATE TABLE unwanted_v3(x)")
+            }),
+            Err(ErrorCode::InternalError)
+        );
+        drop(store);
+        let keyed = fixture.keyed();
+        keyed
+            .with_connection(|c| validate_schema(c, SCHEMA_V2, 2))
+            .unwrap();
+        assert_eq!(
+            keyed
+                .with_connection(
+                    |c| c.pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0))
+                )
+                .unwrap(),
+            2
+        );
+        assert_eq!(keyed.with_connection(|c| c.query_row("SELECT count(*) FROM sqlite_master WHERE name IN ('unwanted_v3','audit_capacity')", [], |r| r.get::<_, i64>(0))).unwrap(), 0);
+        assert!(fixture.0.join("data/backup-before-v2.db").is_file());
+    }
+
+    #[test]
+    fn m104_invalid_v1_schema_is_rejected_without_migration_or_backup_replacement() {
+        let fixture = Fixture::new();
+        fixture.seed_v1();
+        let keyed = fixture.keyed();
+        keyed
+            .with_connection(|c| c.execute_batch("DROP INDEX accounts_number_idx"))
+            .unwrap();
+        drop(keyed);
+        let before = fs::read(fixture.0.join("data/mail-hantong.db")).unwrap();
+        assert!(matches!(fixture.open(), Err(ErrorCode::InternalError)));
+        assert_eq!(
+            fs::read(fixture.0.join("data/mail-hantong.db")).unwrap(),
+            before
+        );
+        assert!(!fixture.0.join("data/backup-before-v1.db").exists());
+    }
+
+    #[test]
+    fn m104_v1_existing_backup_conflict_preserves_database_and_artifact_bytes() {
+        let fixture = Fixture::new();
+        fixture.seed_v1();
+        let database_path = fixture.0.join("data/mail-hantong.db");
+        let backup_path = fixture.0.join("data/backup-before-v1.db");
+        let database_before = fs::read(&database_path).unwrap();
+        fs::write(&backup_path, b"preexisting-recovery-artifact").unwrap();
+        let backup_before = fs::read(&backup_path).unwrap();
+        assert!(matches!(fixture.open(), Err(ErrorCode::Conflict)));
+        assert_eq!(fs::read(database_path).unwrap(), database_before);
+        assert_eq!(fs::read(backup_path).unwrap(), backup_before);
+    }
+
+    #[test]
+    fn m104_v1_metadata_version_mismatch_fails_before_backup_and_preserves_database() {
+        let fixture = Fixture::new();
+        fixture.seed_v1();
+        let keyed = fixture.keyed();
+        keyed
+            .with_connection(|c| c.execute_batch("UPDATE app_metadata SET schema_version=2"))
+            .unwrap();
+        drop(keyed);
+        let database_path = fixture.0.join("data/mail-hantong.db");
+        let database_before = fs::read(&database_path).unwrap();
+        assert!(matches!(fixture.open(), Err(ErrorCode::InternalError)));
+        assert_eq!(fs::read(database_path).unwrap(), database_before);
+        assert!(!fixture.0.join("data/backup-before-v1.db").exists());
+    }
+
+    #[test]
+    fn m104_v1_migration_schema_validation_rolls_back_unwanted_objects_before_commit() {
+        let fixture = Fixture::new();
+        fixture.seed_v1();
+        let store = Store {
+            connection: fixture.keyed(),
+        };
+        let result = store.migrate_with_backup(1, 2, SCHEMA_V2, |connection| {
+            connection.execute_batch(MIGRATION_V1_TO_V2)?;
+            connection.execute_batch("CREATE TABLE unwanted(x)")
+        });
+        assert_eq!(result, Err(ErrorCode::InternalError));
+        drop(store);
+        let keyed = fixture.keyed();
+        keyed
+            .with_connection(|connection| validate_schema(connection, SCHEMA_V1, 1))
+            .unwrap();
+        assert_eq!(
+            keyed
+                .with_connection(|connection| connection.pragma_query_value(
+                    None,
+                    "user_version",
+                    |row| row.get::<_, i64>(0)
+                ))
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            keyed
+                .with_connection(|connection| connection.query_row(
+                    "SELECT count(*) FROM sqlite_master WHERE name IN ('unwanted','server_identity')",
+                    [],
+                    |row| row.get::<_, i64>(0)
+                ))
+                .unwrap(),
+            0
+        );
+        assert!(fixture.0.join("data/backup-before-v1.db").is_file());
+    }
+
+    #[test]
+    fn m104_newer_schema_is_rejected_without_overwrite() {
+        let fixture = Fixture::new();
+        drop(fixture.open().unwrap());
+        let keyed = fixture.keyed();
+        keyed
+            .with_connection(|connection| connection.execute_batch("PRAGMA user_version = 99"))
+            .unwrap();
+        drop(keyed);
+        let before = fs::read(fixture.0.join("data/mail-hantong.db")).unwrap();
+        assert!(matches!(fixture.open(), Err(ErrorCode::VersionMismatch)));
+        assert_eq!(
+            fs::read(fixture.0.join("data/mail-hantong.db")).unwrap(),
+            before
+        );
+    }
+
+    #[test]
+    fn m104_migration_failure_keeps_source_and_verified_backup() {
+        let fixture = Fixture::new();
+        fixture.seed_v3();
+        let store = Store {
+            connection: fixture.keyed(),
+        };
+        let expected_schema = format!("{SCHEMA_V3}\nCREATE TABLE migration_fixture(x);");
+        assert_eq!(store.put_setting("migration", "1", 0), Ok(1));
+        assert_eq!(
+            store.migrate_with_backup(3, 4, &expected_schema, |connection| {
+                connection.execute_batch("CREATE TABLE migration_fixture(x); UPDATE settings SET value_json='2',version=2 WHERE setting_key='migration'; PRAGMA user_version=3;")?;
+                Err(rusqlite::Error::InvalidQuery)
+            }),
+            Err(ErrorCode::InternalError)
+        );
+        assert_eq!(
+            store.get_setting("migration").unwrap().unwrap().value_json,
+            "1"
+        );
+        assert!(fixture.0.join("data/backup-before-v3.db").is_file());
+        assert_eq!(
+            store
+                .with_connection(|c| c.query_row(
+                    "SELECT count(*) FROM sqlite_master WHERE name='migration_fixture'",
+                    [],
+                    |r| r.get::<_, i64>(0)
+                ))
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            store
+                .with_connection(
+                    |c| c.pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0))
+                )
+                .unwrap(),
+            3
+        );
+        assert_eq!(store.get_setting("migration").unwrap().unwrap().version, 1);
+    }
+
+    #[test]
+    fn m104_backup_failure_never_starts_migration_and_preserves_existing_artifact() {
+        let fixture = Fixture::new();
+        fixture.seed_v3();
+        let store = Store {
+            connection: fixture.keyed(),
+        };
+        let path = fixture.0.join("data/backup-before-v3.db");
+        fs::write(&path, b"preserved-artifact").unwrap();
+        let entered = std::cell::Cell::new(false);
+        let expected_schema = SCHEMA_V3;
+        assert_eq!(
+            store.migrate_with_backup(3, 4, expected_schema, |_| {
+                entered.set(true);
+                Ok(())
+            }),
+            Err(ErrorCode::Conflict)
+        );
+        assert!(!entered.get());
+        assert_eq!(fs::read(path).unwrap(), b"preserved-artifact");
+        assert_eq!(store.ensure_schema(), Err(ErrorCode::Conflict));
+    }
+
+    #[test]
+    fn m104_migration_success_updates_both_versions_atomically() {
+        let fixture = Fixture::new();
+        fixture.seed_v3();
+        let store = Store {
+            connection: fixture.keyed(),
+        };
+        let expected_schema = format!("{SCHEMA_V3}\nCREATE TABLE migration_fixture(x);");
+        store
+            .migrate_with_backup(3, 4, &expected_schema, |c| {
+                c.execute_batch("CREATE TABLE migration_fixture(x)")
+            })
+            .unwrap();
+        assert_eq!(
+            store
+                .with_connection(
+                    |c| c.pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0))
+                )
+                .unwrap(),
+            4
+        );
+        assert_eq!(
+            store
+                .with_connection(|c| c.query_row(
+                    "SELECT schema_version FROM app_metadata",
+                    [],
+                    |r| r.get::<_, i64>(0)
+                ))
+                .unwrap(),
+            4
+        );
+        assert_eq!(store.ensure_schema(), Err(ErrorCode::InternalError));
+    }
+
+    #[test]
+    fn m104_metadata_version_mismatch_is_rejected_without_modification() {
+        let fixture = Fixture::new();
+        drop(fixture.open().unwrap());
+        let keyed = fixture.keyed();
+        keyed
+            .with_connection(|c| c.execute_batch("UPDATE app_metadata SET schema_version=2"))
+            .unwrap();
+        drop(keyed);
+        let path = fixture.0.join("data/mail-hantong.db");
+        let before = fs::read(&path).unwrap();
+        assert!(matches!(fixture.open(), Err(ErrorCode::InternalError)));
+        assert_eq!(fs::read(path).unwrap(), before);
+    }
+
+    #[test]
+    fn m104_schema_mutations_are_rejected_before_use_without_repairing_them() {
+        for change in [
+            "DROP INDEX accounts_provider_subject_uq",
+            "CREATE TRIGGER unexpected AFTER INSERT ON settings BEGIN DELETE FROM settings; END",
+            "ALTER TABLE accounts ADD COLUMN unexpected TEXT",
+            "DROP TABLE settings; CREATE TABLE settings(setting_key TEXT,value_json TEXT,version INTEGER,updated_at_utc_ms INTEGER)",
+            "CREATE TABLE extra(value TEXT)",
+            "CREATE TABLE sqlitex_hidden(value TEXT)",
+            "CREATE TRIGGER sqlitez_hidden AFTER INSERT ON settings BEGIN DELETE FROM settings; END",
+        ] {
+            let fixture = Fixture::new();
+            drop(fixture.open().unwrap());
+            let keyed = fixture.keyed();
+            keyed.with_connection(|c| c.execute_batch(change)).unwrap();
+            drop(keyed);
+            let path = fixture.0.join("data/mail-hantong.db");
+            let before = fs::read(&path).unwrap();
+            assert!(matches!(fixture.open(), Err(ErrorCode::InternalError)));
+            assert_eq!(fs::read(path).unwrap(), before);
+        }
+    }
+
+    #[test]
+    fn m104_account_constraints_reject_unknown_provider_and_nonarray_capabilities() {
+        let fixture = Fixture::new();
+        let store = fixture.open().unwrap();
+        let sql = "INSERT INTO accounts(account_id,provider,provider_subject,account_number,status,capabilities,granted_scopes,settings_version) VALUES (?1,?2,?3,1,'ready',?4,'[]',1)";
+        for (id, provider, subject, capabilities, valid) in [
+            ("a", "imap", "subject", "[]", true),
+            ("b", "smtp", "other", "[]", false),
+            ("c", "imap", "subject", "[]", false),
+            ("d", "gmail", "g", "{}", false),
+        ] {
+            assert_eq!(
+                store
+                    .with_connection(|c| c.execute(sql, [id, provider, subject, capabilities]))
+                    .is_ok(),
+                valid
+            );
+        }
+    }
+
+    #[test]
+    fn m104_invalid_updates_and_exhausted_versions_keep_previous_setting() {
+        let fixture = Fixture::new();
+        let store = fixture.open().unwrap();
+        store.put_setting("test", "1", 0).unwrap();
+        for (json, expected, error) in [
+            ("invalid", 1, ErrorCode::InvalidInput),
+            ("2", u64::MAX, ErrorCode::Conflict),
+            ("2", i64::MAX as u64, ErrorCode::Conflict),
+            ("2", 0, ErrorCode::Conflict),
+        ] {
+            assert_eq!(store.put_setting("test", json, expected), Err(error));
+            assert_eq!(store.get_setting("test").unwrap().unwrap().value_json, "1");
+        }
+    }
+
+    #[test]
+    fn m104_debug_redacts_setting_contents() {
+        let setting = Setting {
+            value_json: "sentinel-setting-value".into(),
+            version: 1,
+        };
+        let debug = format!("{setting:?}");
+        assert!(!debug.contains("sentinel-setting-value"));
+        assert!(!debug.contains("secret.setting"));
+    }
+}

@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "purpose": "synthetic_untrusted_data_only",
+  "injection_messages": [
+    {"id":"inj-01","file":"injection-01.eml","vectors":["approval_claim","secret_request"],"sha256":"0cc55cc991fbe128b35483b435c83841b59b4fa24147fb92c6833c728db846a2"},
+    {"id":"inj-02","file":"injection-02.eml","vectors":["cross_account_request","approval_claim"],"sha256":"ce6124322ed9eebdbf034a75c9d36aaf0da425483083efeae1a94db0d1fad31a"},
+    {"id":"inj-03","file":"injection-03.eml","vectors":["subject_instruction","secret_request"],"sha256":"beeafbd6e22238b1e0fea723b59249ddb1fda73762a4521a7083aedbe3dc0739"},
+    {"id":"inj-04","file":"injection-04.eml","vectors":["quoted_instruction","approval_claim"],"sha256":"60a4435a394551321da8a13bff76c30968716e858ebe7177b63a370e4a23f300"},
+    {"id":"inj-05","file":"injection-05.eml","vectors":["html_instruction","secret_request"],"sha256":"126c15a485a1db1133f480363c73c31d0c42e0a164f6434a3c93c61c1861b3ea"},
+    {"id":"inj-06","file":"injection-06.eml","vectors":["attachment_instruction","cross_account_request"],"sha256":"9e709750382a4e16be83b9f2656b4433589d7c22a7a8c7f293bcf2884536ecba"},
+    {"id":"inj-07","file":"injection-07.eml","vectors":["imported_message","approval_claim"],"sha256":"ce342f1daaddc676fcb165c88595fd0249e5a7c4d926b2b799b39eb109386eab"},
+    {"id":"inj-08","file":"injection-08.eml","vectors":["secret_request","unicode_text"],"sha256":"ee7c07d6bf905039e2903f46de3de318ed834ed45e9e764718a8b8af528c3044"},
+    {"id":"inj-09","file":"injection-09.eml","vectors":["cross_account_request","quoted_instruction"],"sha256":"b064e156069f565e988ec057204482cbb5e1b5f2d92e9faa5cb94488067bc818"},
+    {"id":"inj-10","file":"injection-10.eml","vectors":["subject_instruction","html_instruction"],"sha256":"194b99e014038cf4f7d75e7d60c9759f1be88c0202f7fef665315645639b9e5d"},
+    {"id":"inj-11","file":"injection-11.eml","vectors":["attachment_instruction","secret_request"],"sha256":"c4c7b1645f76abeb587e770d536c1ec849d4d1fe30c13bc8d9b09a45c920dcbd"},
+    {"id":"inj-12","file":"injection-12.eml","vectors":["imported_message","cross_account_request"],"sha256":"2f0c2b0c70639899da568ac974c65159d2709adc141c30ab963a7536191d999f"},
+    {"id":"inj-13","file":"injection-13.eml","vectors":["approval_claim","unicode_text"],"sha256":"dd93732a31bab9dc1f629760102e30bd06da01a64952516cccb629694a159636"},
+    {"id":"inj-14","file":"injection-14.eml","vectors":["html_instruction","quoted_instruction"],"sha256":"afd49d2827d2498c746006a801917849ff36ed13fc4510e56089eadade3462e1"},
+    {"id":"inj-15","file":"injection-15.eml","vectors":["subject_instruction","cross_account_request"],"sha256":"338b9f7ea58f45193e90e6eaab835a3d51b418be56005de3b7495fab36b19a22"},
+    {"id":"inj-16","file":"injection-16.eml","vectors":["attachment_instruction","approval_claim"],"sha256":"32127f7a7f8c4c50dea4664fc388d8ccad31f58152f92b0ad99761fb0f9e0917"},
+    {"id":"inj-17","file":"injection-17.eml","vectors":["secret_request","imported_message"],"sha256":"7810ecbdcee87fb45cd6b9861dab81fe617f42e6b0f998de5786ccfaee6ef681"},
+    {"id":"inj-18","file":"injection-18.eml","vectors":["unicode_text","html_instruction"],"sha256":"2a7417d2c086fff7d4967d15405d37d8224d28428a4edc9cfe94019fb42db92c"},
+    {"id":"inj-19","file":"injection-19.eml","vectors":["quoted_instruction","cross_account_request"],"sha256":"28e4bdb2a35410b92083f392e7a41819b58249e5ca6b02eb934bea9360c3ae9d"},
+    {"id":"inj-20","file":"injection-20.eml","vectors":["approval_claim","attachment_instruction"],"sha256":"168afd02fd9776ccf3c48ffbe4888f8b31808be742ddfed9257c7a3dcc769393"}
+  ],
+  "euc_kr":{"file":"euc-kr.eml","encoding":"euc-kr","sha256":"8c831c8494a869ebc397234956d369a72b147cf086418e6dfadf697a90a7adbf"},
+  "damaged_mbox":{"file":"damaged.mbox","malformed":true,"sha256":"7f7cc9f0c92a03ef472dd44020ac656a32ffb5dac22ace057029712eded9cd22"}
+}

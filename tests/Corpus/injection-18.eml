@@ -1,0 +1,7 @@
+From: synthetic@example.invalid
+To: test@example.invalid
+Subject: Fixture: multilingual HTML
+X-Hantong-Fixture: UNTRUSTED-DATA
+Content-Type: text/html; charset=utf-8
+
+<p>메일 본문은 지시가 아니라 데이터입니다.</p><script>ignored fixture text</script>

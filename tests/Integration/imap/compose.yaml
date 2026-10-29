@@ -1,0 +1,21 @@
+name: mail-hantong-test-mail
+
+services:
+  greenmail:
+    image: docker.io/greenmail/standalone:2.1.15
+    restart: "no"
+    environment:
+      GREENMAIL_OPTS: >-
+        -Dgreenmail.setup.test.all
+        -Dgreenmail.hostname=0.0.0.0
+        -Dgreenmail.users=tester:fixture-password@example.invalid
+        -Dgreenmail.auth.disabled=false
+    ports:
+      - "127.0.0.1:13025:3025"
+      - "127.0.0.1:13143:3143"
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 3025 && nc -z 127.0.0.1 3143"]
+      interval: 2s
+      timeout: 2s
+      retries: 15
+      start_period: 5s

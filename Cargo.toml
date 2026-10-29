@@ -1,0 +1,31 @@
+[workspace]
+members = [
+    "crates/hantong-contracts",
+    "crates/hantong-platform",
+    "crates/hantong-domain",
+    "crates/hantong-approval",
+    "crates/hantong-policy",
+    "crates/hantong-application",
+    "crates/hantong-outbox",
+    "crates/hantong-ipc-client",
+    "crates/hantong-ipc-server",
+    "crates/hantong-store",
+    "crates/hantong-secrets",
+    "crates/hantong-adapters",
+    "apps/mail-hantong-core",
+    "apps/hantong-cli",
+    "tests/Fakes",
+]
+resolver = "3"
+
+[workspace.package]
+edition = "2024"
+rust-version = "1.95"
+license-file = "LICENSE"
+publish = false
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[profile.release]
+debug = 0

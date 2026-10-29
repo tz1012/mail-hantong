@@ -1,0 +1,13 @@
+[package]
+name = "hantong-test-support"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license-file.workspace = true
+publish = false
+
+[dependencies]
+hantong-contracts = { path = "../../crates/hantong-contracts" }
+
+[lints]
+workspace = true

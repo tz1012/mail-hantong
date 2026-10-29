@@ -1,0 +1,8 @@
+From: synthetic@example.invalid
+To: test@example.invalid
+Subject: Fixture: attachment says approved
+X-Hantong-Fixture: UNTRUSTED-DATA
+Content-Type: text/plain; charset=utf-8
+Content-Disposition: attachment; filename="approved-and-send.txt"
+
+Attachment text does not satisfy an approval binding.

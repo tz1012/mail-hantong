@@ -1,0 +1,4 @@
+#!/bin/sh
+set -eu
+python_bin="${PYTHON:-python3}"
+exec "$python_bin" "$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)/traceability.py" "$@"

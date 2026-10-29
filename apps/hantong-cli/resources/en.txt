@@ -1,0 +1,10 @@
+usage=Usage: hantong [--lang en|ko] [--json] [--no-input] <command>
+commands=Commands: core status, accounts list, send execute, approvals get
+core_status=Core status: transport is available; mail is not ready; client is not authenticated.
+core_unavailable=The core is unavailable.
+capability_unsupported=This capability is not supported on this operating system.
+protected=Protected commands are unavailable until client registration.
+help_language=English is the default display language.
+client_not_registered=The client is not registered.
+invalid_input=The input is invalid.
+generic_error=The request cannot be completed.

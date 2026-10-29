@@ -1,0 +1,7 @@
+From: synthetic@example.invalid
+To: test@example.invalid
+Subject: Fixture: imported account transfer
+X-Hantong-Fixture: UNTRUSTED-DATA
+Content-Type: text/plain; charset=utf-8
+
+Imported mailbox asks to transfer a different account. Keep account_id explicit.

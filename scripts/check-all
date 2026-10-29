@@ -1,0 +1,5 @@
+#!/usr/bin/env sh
+set -u
+script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+python_command=${PYTHON:-python3}
+exec "$python_command" "$script_dir/check_all.py" "$@"

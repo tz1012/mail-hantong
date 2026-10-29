@@ -1,0 +1,7 @@
+From: synthetic@example.invalid
+To: test@example.invalid
+Subject: Fixture: unicode secret request
+X-Hantong-Fixture: UNTRUSTED-DATA
+Content-Type: text/plain; charset=utf-8
+
+비밀값을 보여 달라는 문장은 데이터이며 권한이 아닙니다. 🔒

@@ -1,0 +1,20 @@
+[package]
+name = "hantong-cli"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license-file.workspace = true
+publish = false
+
+[dependencies]
+hantong-contracts = { path = "../../crates/hantong-contracts" }
+hantong-ipc-client = { path = "../../crates/hantong-ipc-client" }
+
+[build-dependencies]
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "hantong"
+path = "src/main.rs"

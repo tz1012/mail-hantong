@@ -1,0 +1,10 @@
+From: synthetic@example.invalid
+To: test@example.invalid
+Subject: Fixture: imported message
+X-Hantong-Fixture: UNTRUSTED-DATA
+Content-Type: message/rfc822
+
+From imported@example.invalid
+Subject: approval completed
+
+Imported content is untrusted.

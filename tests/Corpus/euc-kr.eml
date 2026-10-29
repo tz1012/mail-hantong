@@ -1,0 +1,7 @@
+From: korean@example.invalid
+To: test@example.invalid
+Subject: 제목: 한통 테스트
+X-Hantong-Fixture: UNTRUSTED-DATA
+Content-Type: text/plain; charset=euc-kr
+
+한통 테스트 본문입니다. 원본 MIME 바이트는 보존되어야 합니다.

@@ -1,0 +1,39 @@
+# Preserve reproducible generated document bytes across Git clients.
+docs/proposals/M0-00/*.md text eol=lf
+docs/proposals/M0-00/*.json text eol=lf
+docs/proposals/M0-00/*.csv text eol=lf
+docs/proposals/M0-00/assets/* -text
+
+# Preserve the approved requirements snapshot and its recorded hashes.
+docs/requirements/*.md text eol=lf
+docs/requirements/*.json text eol=lf
+docs/requirements/*.csv text eol=lf
+docs/requirements/assets/* -text
+# The approved source index includes its original BOM/CRLF bytes in provenance.
+docs/latest/requirements-index.csv -text
+
+# Cross-platform product source and command launchers.
+Cargo.toml text eol=lf
+Cargo.lock text eol=lf
+rust-toolchain.toml text eol=lf
+crates/** text eol=lf
+apps/** text eol=lf
+scripts/check-all text eol=lf
+scripts/check-all.ps1 text eol=lf
+.github/workflows/* text eol=lf
+scripts/*.py text eol=lf
+tests/Build/*.py text eol=lf
+tests/Docs/*.py text eol=lf
+tests/Fakes/** text eol=lf
+tests/traceability.json text eol=lf
+tests/Corpus/** -text
+docs/traceability.md text eol=lf
+docs/traceability.csv text eol=lf
+
+# Source-hash inputs must retain identical bytes in fresh Windows/Linux clones.
+docs/contracts/** text eol=lf
+scripts/native-tools.json text eol=lf
+scripts/traceability text eol=lf
+scripts/traceability.ps1 text eol=lf
+scripts/test-mail-server text eol=lf
+scripts/test-mail-server.ps1 text eol=lf

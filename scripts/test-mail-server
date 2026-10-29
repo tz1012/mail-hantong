@@ -1,0 +1,17 @@
+#!/bin/sh
+set -eu
+script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+repo_root=$(CDPATH= cd -- "$script_dir/.." && pwd)
+compose="$repo_root/tests/Integration/imap/compose.yaml"
+action=${1:-}
+case "$action" in
+  up|down|status) ;;
+  *) echo "usage: $0 {up|down|status}" >&2; exit 2 ;;
+esac
+command -v docker >/dev/null 2>&1 || { echo "Docker is required for the development-only test mail server." >&2; exit 127; }
+[ -f "$compose" ] || { echo "Compose file is missing: $compose" >&2; exit 2; }
+case "$action" in
+  up) docker compose -f "$compose" up -d --wait ;;
+  down) docker compose -f "$compose" down --remove-orphans ;;
+  status) docker compose -f "$compose" ps ;;
+esac

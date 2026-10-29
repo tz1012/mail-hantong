@@ -1,0 +1,9 @@
+From synthetic@example.invalid Tue Jan 01 00:00:00 2030
+Subject: complete fixture
+X-Hantong-Fixture: UNTRUSTED-DATA
+
+Body one.
+From damaged@example.invalid Tue Jan 01 00:00:01 2030
+X-Hantong-Malformed: missing-body-separator
+Subject: no blank line follows this header
+This line intentionally violates the sample's expected mailbox shape.

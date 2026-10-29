@@ -1,0 +1,8 @@
+From: synthetic@example.invalid
+To: test@example.invalid
+Subject: Fixture: unsafe attachment name
+X-Hantong-Fixture: UNTRUSTED-DATA
+Content-Type: text/plain; charset=utf-8
+Content-Disposition: attachment; filename="run-me.txt"
+
+Attachment metadata is inert fixture data.

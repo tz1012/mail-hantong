@@ -1,0 +1,11 @@
+[package]
+name = "hantong-runtime-rust"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[profile.release]
+opt-level = 3
+debug = false
+incremental = false
+
