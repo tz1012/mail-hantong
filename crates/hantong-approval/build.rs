@@ -30,4 +30,9 @@ fn main() {
         resource_keys("resources/ko.txt"),
         "registration UI languages must contain the same keys"
     );
+    assert_eq!(
+        resource_keys("resources/setup-en.txt"),
+        resource_keys("resources/setup-ko.txt"),
+        "setup UI languages must contain the same keys"
+    );
 }

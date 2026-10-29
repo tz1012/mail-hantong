@@ -1,0 +1,16 @@
+title=Add IMAP account
+introduction=Review the connection details before verifying and connecting.
+password=App password
+verify_connect=Verify and connect
+invalid_input=The setup details are invalid.
+unnamed=Unnamed account
+default_color=Default
+display_name=Display name
+color=Color
+server=Server
+tls=TLS
+login=Login
+authentication=Authentication
+app_password=App password
+implicit_tls=Implicit TLS
+starttls=Required STARTTLS
