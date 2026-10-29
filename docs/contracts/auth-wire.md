@@ -31,3 +31,7 @@ OS preface 2초, begin frame/응답 5초, challenge 발급부터 finish 검증/�
 인증된 클라이언트 wrapper는 연결을 소비하는 exchange 한 번만 공개하며 raw transport를 내보내지 않는다. method-specific decoder 전의 응답 bytes는 신뢰하지 않는 자료다. receipt는 bytes를 읽었다는 표시이며 응답 내용의 신뢰/권한 승인이 아니다. 서버도 인증된 연결을 소비하는 execute_once에서 보호 요청 하나만 받는다. trusted core callback은 공통 실행기와 같은 연결의 ExecutionContext를 구성한다. callback을 요청 데이터/플러그인으로부터 받지 않는다. 현재 동기 Store 작업은 강제 중단하지 않으며, 5초 경과를 작업 전후 확인하고 기한 초과 응답/재실행 없이 연결을 닫는다. I/O 대기는 실제 timeout으로 취소한다.
 
 client helper는 신뢰된 프로필 resolver에서 registration ID/epoch, 기존 CNG key selector, pinned server key, 요청 scope를 받는다. CLI 옵션으로 raw ID/키 이름/공개 키/epoch를 덮어쓰지 않는다. --client는 프로필 선택자이고 프로필 누락 시 자동 등록/TOFU/fake 성공을 하지 않는다. resolver·등록 UI가 준비되기 전 CLI의 보호 호출은 계속 거부한다. wire parser/fixture 시험을 제품 등록 완료로 표시하지 않는다.
+
+## 2026-10-30 등록 요청 분기 추가
+
+기존 bootstrap-only 설명의 후속 확장으로 `client-registration.md`의 registration.request/status 두 메서드를 같은 OS 검증 pipe에 연결한다. dispatcher가 엄격히 해석한 RegistrationCommand만 Core callback에 전달한다. 인증/메일 메서드는 이 callback에 도달하지 않는다. UI는 별도 lazy STA에서 실행하고 bounded queue로 요청하므로 IPC가 사람 확인을 기다리지 않는다. 실제 승인·provisioning/프로필 발행/active는 Core coordinator의 고정 경로를 따른다. common policy는 여전히 기본 거부이며 등록만으로 메일 기능 완성을 뜻하지 않는다.

@@ -54,11 +54,35 @@ impl PendingClientAuthentication {
         if profile_epoch == 0 || started_at_utc_ms < 0 {
             return Err(ErrorCode::InvalidInput);
         }
+        let key = ClientSigningKey::open(key_name).map_err(|_| ErrorCode::AuthRequired)?;
+        Self::begin_existing(
+            key,
+            pinned_server_key,
+            registration_id,
+            profile_epoch,
+            requested_scope,
+            started_at_utc_ms,
+        )
+    }
+
+    /// Consumes the already checked key handle. The trusted profile path must
+    /// not close and reopen its key by name between public-key comparison and
+    /// signing: the namespace could have changed in that interval.
+    pub(crate) fn begin_existing(
+        key: ClientSigningKey,
+        pinned_server_key: [u8; 72],
+        registration_id: [u8; 16],
+        profile_epoch: u64,
+        requested_scope: RequestedScope,
+        started_at_utc_ms: i64,
+    ) -> Result<Self, ErrorCode> {
+        if profile_epoch == 0 || started_at_utc_ms < 0 {
+            return Err(ErrorCode::InvalidInput);
+        }
         let started = Instant::now();
         let client_nonce = hantong_platform::random_nonce()?;
         // Validate the public key before retaining it. No private key material
         // enters this module.
-        let key = ClientSigningKey::open(key_name).map_err(|_| ErrorCode::AuthRequired)?;
         let public = key.public_key().map_err(|_| ErrorCode::AuthRequired)?;
         let client_context = hantong_platform::current_peer_context()?;
         let client_key_hash = sha256(&public)?;

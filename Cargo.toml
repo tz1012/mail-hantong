@@ -4,6 +4,7 @@ members = [
     "crates/hantong-platform",
     "crates/hantong-domain",
     "crates/hantong-approval",
+    "crates/hantong-approval-windows",
     "crates/hantong-policy",
     "crates/hantong-application",
     "crates/hantong-outbox",

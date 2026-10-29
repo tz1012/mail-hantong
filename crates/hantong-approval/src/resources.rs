@@ -1,0 +1,136 @@
+//! Compiled, fixed UI text. Server/mail content is never a resource key.
+use hantong_domain::config::Language;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd)]
+pub enum TextKey {
+    Title,
+    Introduction,
+    Client,
+    ClientValue,
+    Profile,
+    ProfileValue,
+    Access,
+    ReadOnly,
+    RateLimit,
+    RateLimitValue,
+    Accounts,
+    NoAccounts,
+    Tools,
+    AccountsListTool,
+    ServerFingerprint,
+    ExpiresAt,
+    Verify,
+    Cancel,
+    Deny,
+    Language,
+    English,
+    Korean,
+    Theme,
+    Light,
+    Dark,
+    System,
+    HighContrast,
+    AwaitingPaint,
+    Reviewing,
+    Verifying,
+    Closed,
+    Expired,
+    Unavailable,
+    VerificationRequired,
+    ScopeNotice,
+    Footer,
+}
+impl TextKey {
+    pub const ALL: &'static [Self] = &[
+        Self::Title,
+        Self::Introduction,
+        Self::Client,
+        Self::ClientValue,
+        Self::Profile,
+        Self::ProfileValue,
+        Self::Access,
+        Self::ReadOnly,
+        Self::RateLimit,
+        Self::RateLimitValue,
+        Self::Accounts,
+        Self::NoAccounts,
+        Self::Tools,
+        Self::AccountsListTool,
+        Self::ServerFingerprint,
+        Self::ExpiresAt,
+        Self::Verify,
+        Self::Cancel,
+        Self::Deny,
+        Self::Language,
+        Self::English,
+        Self::Korean,
+        Self::Theme,
+        Self::Light,
+        Self::Dark,
+        Self::System,
+        Self::HighContrast,
+        Self::AwaitingPaint,
+        Self::Reviewing,
+        Self::Verifying,
+        Self::Closed,
+        Self::Expired,
+        Self::Unavailable,
+        Self::VerificationRequired,
+        Self::ScopeNotice,
+        Self::Footer,
+    ];
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Title => "title",
+            Self::Introduction => "introduction",
+            Self::Client => "client",
+            Self::ClientValue => "client_value",
+            Self::Profile => "profile",
+            Self::ProfileValue => "profile_value",
+            Self::Access => "access",
+            Self::ReadOnly => "read_only",
+            Self::RateLimit => "rate_limit",
+            Self::RateLimitValue => "rate_limit_value",
+            Self::Accounts => "accounts",
+            Self::NoAccounts => "no_accounts",
+            Self::Tools => "tools",
+            Self::AccountsListTool => "accounts_list_tool",
+            Self::ServerFingerprint => "server_fingerprint",
+            Self::ExpiresAt => "expires_at",
+            Self::Verify => "verify",
+            Self::Cancel => "cancel",
+            Self::Deny => "deny",
+            Self::Language => "language",
+            Self::English => "english",
+            Self::Korean => "korean",
+            Self::Theme => "theme",
+            Self::Light => "light",
+            Self::Dark => "dark",
+            Self::System => "system",
+            Self::HighContrast => "high_contrast",
+            Self::AwaitingPaint => "awaiting_paint",
+            Self::Reviewing => "reviewing",
+            Self::Verifying => "verifying",
+            Self::Closed => "closed",
+            Self::Expired => "expired",
+            Self::Unavailable => "unavailable",
+            Self::VerificationRequired => "verification_required",
+            Self::ScopeNotice => "scope_notice",
+            Self::Footer => "footer",
+        }
+    }
+}
+pub fn text(language: Language, key: TextKey) -> &'static str {
+    let source = match language {
+        Language::En => include_str!("../resources/en.txt"),
+        Language::Ko => include_str!("../resources/ko.txt"),
+    };
+    source
+        .lines()
+        .find_map(|line| {
+            line.split_once('=')
+                .filter(|(name, _)| *name == key.as_str())
+                .map(|(_, value)| value)
+        })
+        .expect("validated registration UI resource")
+}

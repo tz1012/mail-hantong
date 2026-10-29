@@ -35,6 +35,7 @@ mod tests {
             let directories = AppDirectories {
                 data: root.join("data"),
                 secrets: root.join("keys"),
+                profiles: root.join("profiles"),
             };
             Self { root, directories }
         }

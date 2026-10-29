@@ -10,6 +10,8 @@ mod execution_adapter;
 #[cfg(windows)]
 mod identity;
 #[cfg(windows)]
+mod registration;
+#[cfg(windows)]
 mod storage;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -90,15 +92,22 @@ fn start() -> Result<(), ErrorCode> {
             event(EventKind::CoreStopping);
             Ok(())
         };
-        hantong_ipc_server::authenticated_wire::serve_until(
+        let (registration, registration_worker) =
+            registration::coordinator(&store, &server_identity);
+        let server = hantong_ipc_server::authenticated_wire::serve_until_with_registration(
             shutdown,
             || event(EventKind::CoreTransportReady),
             &server_identity,
             server_instance,
             |id| execution_adapter::load_registration(&store, id),
             |session, request| execution_adapter::execute(&store, session, request),
-        )
-        .await?;
+            |command| registration.command(command),
+        );
+        tokio::select! {
+            biased;
+            result=registration_worker.run()=>{result?;return Err(ErrorCode::InternalError);},
+            result=server=>result?,
+        }
         event(EventKind::CoreStopped);
         Ok(())
     })

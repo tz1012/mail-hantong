@@ -10,6 +10,7 @@ M0-01 구현 기준. 기존 논리 모듈을 아래 Rust package로 대응시킨
 | Core.Application | `crates/hantong-application` | 공통 도구 실행 경로 |
 | Core.Policy | `crates/hantong-policy` | 권한·정책 판단 — 사람 검토 필요 |
 | Core.Approval | `crates/hantong-approval` | 승인 결속·소비 — 사람 검토 필요 |
+| Native approval issuer | `crates/hantong-approval-windows` | Core 전용 HWND·Windows Hello 일회 결과·공개 프로필 발행; CLI/MCP/platform 의존 금지 — 사람 검토 필요 |
 | Core.Outbox | `crates/hantong-outbox` | 발송 원장·재시도 — 사람 검토 필요 |
 | Store | `crates/hantong-store` | 로컬 DB·검색·캐시. `hantong-secrets`가 제공하는 키 경계와 내부 연결 콜백만 사용하며 원시 키를 반환하지 않음 |
 | Secrets | `crates/hantong-secrets` | OS 비밀 저장·자격증명 사용 — 사람 검토 필요 |

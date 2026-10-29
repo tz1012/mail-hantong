@@ -6,6 +6,7 @@ use crate::{
     auth_wire, decode_request,
 };
 use hantong_contracts::ErrorCode;
+use hantong_contracts::registration::{RegistrationCommand, RegistrationReceipt};
 use hantong_platform::{LocalPipeConnection, ServerSigningKey};
 use serde_json::{Value, json};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -123,7 +124,7 @@ where
 /// Routes only bootstrap requests before authentication. The authenticated
 /// executor is reachable exclusively through a successful connection proof.
 pub async fn dispatch_connection<L, E>(
-    mut connection: LocalPipeConnection<'_>,
+    connection: LocalPipeConnection<'_>,
     server_key: &ServerSigningKey,
     instance: [u8; 32],
     lookup: &mut L,
@@ -132,6 +133,32 @@ pub async fn dispatch_connection<L, E>(
 where
     L: FnMut(&[u8; 16]) -> Result<Option<RegisteredClient>, ErrorCode>,
     E: FnMut(&mut AuthenticatedConnection<'_>, &RpcRequest) -> Result<Value, ErrorCode>,
+{
+    dispatch_connection_with_registration(
+        connection,
+        server_key,
+        instance,
+        lookup,
+        execute,
+        &mut |_| Err(ErrorCode::ClientNotRegistered),
+    )
+    .await
+}
+
+/// Registration callback receives only a parsed fixed request/status command.
+/// It cannot intercept authenticated mail or manufacture an auth session.
+pub async fn dispatch_connection_with_registration<L, E, C>(
+    mut connection: LocalPipeConnection<'_>,
+    server_key: &ServerSigningKey,
+    instance: [u8; 32],
+    lookup: &mut L,
+    execute: &mut E,
+    registration: &mut C,
+) -> Result<(), ErrorCode>
+where
+    L: FnMut(&[u8; 16]) -> Result<Option<RegisteredClient>, ErrorCode>,
+    E: FnMut(&mut AuthenticatedConnection<'_>, &RpcRequest) -> Result<Value, ErrorCode>,
+    C: FnMut(RegistrationCommand) -> Result<RegistrationReceipt, ErrorCode>,
 {
     let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
     let request = tokio::time::timeout_at(deadline, read_request(&mut connection))
@@ -152,7 +179,11 @@ where
     } else if request.method.starts_with("auth.") {
         Err(ErrorCode::InvalidInput)
     } else {
-        let response = crate::bootstrap::response(request);
+        let response = if request.method.starts_with("registration.") {
+            crate::registration_wire::response(&request, registration)
+        } else {
+            crate::bootstrap::response(request)
+        };
         tokio::time::timeout_at(deadline, send_response(&mut connection, response, deadline))
             .await
             .map_err(|_| ErrorCode::CoreUnavailable)?
@@ -166,14 +197,42 @@ pub async fn serve_until<F, R, L, E>(
     on_ready: R,
     server_key: &ServerSigningKey,
     instance: [u8; 32],
-    mut lookup: L,
-    mut execute: E,
+    lookup: L,
+    execute: E,
 ) -> Result<(), ErrorCode>
 where
     F: std::future::Future<Output = Result<(), ErrorCode>>,
     R: FnOnce(),
     L: FnMut(&[u8; 16]) -> Result<Option<RegisteredClient>, ErrorCode>,
     E: FnMut(&mut AuthenticatedConnection<'_>, &RpcRequest) -> Result<Value, ErrorCode>,
+{
+    serve_until_with_registration(
+        shutdown,
+        on_ready,
+        server_key,
+        instance,
+        lookup,
+        execute,
+        |_| Err(ErrorCode::ClientNotRegistered),
+    )
+    .await
+}
+
+pub async fn serve_until_with_registration<F, R, L, E, C>(
+    shutdown: F,
+    on_ready: R,
+    server_key: &ServerSigningKey,
+    instance: [u8; 32],
+    mut lookup: L,
+    mut execute: E,
+    mut registration: C,
+) -> Result<(), ErrorCode>
+where
+    F: std::future::Future<Output = Result<(), ErrorCode>>,
+    R: FnOnce(),
+    L: FnMut(&[u8; 16]) -> Result<Option<RegisteredClient>, ErrorCode>,
+    E: FnMut(&mut AuthenticatedConnection<'_>, &RpcRequest) -> Result<Value, ErrorCode>,
+    C: FnMut(RegistrationCommand) -> Result<RegistrationReceipt, ErrorCode>,
 {
     let mut listener = hantong_platform::LocalPipeServer::bind()?;
     tokio::pin!(shutdown);
@@ -191,7 +250,7 @@ where
         tokio::select! {
             biased;
             result=&mut shutdown => return result,
-            result=dispatch_connection(connection,server_key,instance,&mut lookup,&mut execute) => {
+            result=dispatch_connection_with_registration(connection,server_key,instance,&mut lookup,&mut execute,&mut registration) => {
                 if result == Err(ErrorCode::InternalError) { return result; }
             },
         }

@@ -9,6 +9,7 @@ pub mod auth_wire;
 #[cfg(windows)]
 pub mod authenticated_wire;
 pub mod bootstrap;
+pub mod registration_wire;
 
 use hantong_contracts::ErrorCode;
 use serde::Deserializer;

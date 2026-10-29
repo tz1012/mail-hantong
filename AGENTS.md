@@ -114,6 +114,8 @@ docs/security/            위협 모델, 불변 조건
 docs/contracts/           계약 (변경 절차는 §7)
 ```
 
+위 논리 경로의 현재 Rust 대응은 `crates/hantong-policy`, `hantong-approval`, `hantong-approval-windows`, `hantong-secrets`, `hantong-outbox`, `hantong-platform`, IPC 인증 모듈, Store 등록 전이, `apps/mail-hantong-core/src/registration.rs`다. 디렉터리 이름이 달라졌다고 사람 보안 검토 경계가 해제되지 않는다.
+
 ## 7. 계약과 결정 변경
 
 - `docs/contracts/`의 파일은 인터페이스의 단일 기준이다. 코드가 계약과 다르면 코드가 틀린 것이다.

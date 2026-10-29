@@ -25,8 +25,15 @@ fn main() {
         "protected",
         "help_language",
         "client_not_registered",
+        "client_verified",
         "invalid_input",
         "generic_error",
+        "registration_pending",
+        "registration_denied",
+        "registration_expired",
+        "registration_provisioning",
+        "registration_ready",
+        "registration_request_id",
     ] {
         assert!(en.contains(key), "missing required resource key: {key}");
     }

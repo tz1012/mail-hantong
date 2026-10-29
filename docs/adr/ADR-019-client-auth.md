@@ -13,3 +13,9 @@
 필수 검증: 동일 사용자 이름/TTY 위장, 다른 사용자 접속, 원격 pipe 접속, 서버 이름 선점, 다른 연결의 challenge 재사용, 응답 재생·만료·서명 변조, 등록/프로필 철회, 계정 범위 확대, 미등록 정보 노출. 실제 CNG 서명과 OS transport를 함께 시험하기 전에는 mock 인증 통과를 제품 검증으로 기록하지 않는다.
 
 플랫폼 FFI는 전용 좁은 모듈에 두고 반환하는 것은 SID·공개 키·서명·불투명 키/연결 핸들뿐이다. DPAPI 평문은 Secrets 밖으로 반환하지 않는다. 플랫폼 전송 인터페이스 M0-10을 M1-02 전에 구현한다.
+
+## 2026-10-30 기본 CLI 등록 연결
+
+기본 CLI 등록은 사람이 확인하는 Core 소유 창에서만 결정한다. CLI의 registration.request/status는 권한/키/pin 입력을 받지 않는다. 요청 snapshot/현재 로그온/시각에 결속한 native 결과를 Core가 한 번 소비한 뒤 approved+provisioning 저장, 고정 로컬 공개 프로필 발행, active CAS 순서를 지킨다. 재시작은 기존 CNG 키를 열어 같은 공개값을 검증하며 키가 없으면 자동 재생성하지 않는다.
+
+공개 key selector는 registration ID의 domain-separated SHA-256으로 복구 가능하게 정하지만 개인 키는 CNG가 무작위 생성한다. 공개 프로필 자체는 권한 증거가 아니며 매 연결 서버 상호 인증과 현재 Store grant를 검증한다. 서버 키 회전·기본 등록 교체·철회 후 재등록은 아직 제공하지 않는다. 자세한 계약은 `client-registration.md`, `client-profile.md`, `registration-store.md`에 있다.

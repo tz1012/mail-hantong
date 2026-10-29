@@ -13,7 +13,9 @@ mod accounts;
 mod audit;
 mod config;
 pub mod mail_connection;
+mod registration_activation;
 mod registrations;
+pub use registration_activation::{CliRegistrationStage, DEFAULT_CLI_LABEL};
 mod server_identity;
 pub use registrations::{
     ClientKind, RegistrationRecord, RegistrationRequest, RegistrationRequestState,

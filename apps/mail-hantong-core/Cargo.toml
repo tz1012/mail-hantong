@@ -15,10 +15,13 @@ path = "src/main.rs"
 
 [dependencies]
 hantong-application = { path = "../../crates/hantong-application" }
+hantong-approval = { path = "../../crates/hantong-approval" }
+hantong-approval-windows = { path = "../../crates/hantong-approval-windows" }
+hantong-domain = { path = "../../crates/hantong-domain" }
  hantong-ipc-client = { path = "../../crates/hantong-ipc-client" }
 hantong-contracts = { path = "../../crates/hantong-contracts" }
 hantong-ipc-server = { path = "../../crates/hantong-ipc-server" }
 hantong-platform = { path = "../../crates/hantong-platform" }
 hantong-store = { path = "../../crates/hantong-store" }
-tokio = { version = "1.54.1", features = ["rt", "net", "time", "signal", "macros"] }
+tokio = { version = "1.54.1", features = ["rt", "net", "time", "signal", "macros", "sync"] }
 serde_json = "1.0.154"

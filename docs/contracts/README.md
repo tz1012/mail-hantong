@@ -25,6 +25,7 @@
 | `client-authentication.md` | 서버 pin·OS context·nonce와 단일 응답 | Windows 양측 서명·wire 검증, 등록 UI/프로필 배포 미연결 |
 | `auth-wire.md` | bounded JSON handshake·한 연결 한 도구 요청·bootstrap 분기 | 실제 Windows pair 검증, Core 등록 조회/기본 거부 실행기 연결 |
 | `registration-store.md`, `migrations/` | v1→v2 이전·서버 신원·클라이언트 등록 저장 | 구현·검증 중, 사람 승인 활성화 전 |
+| `client-registration.md`, `registration-review.md`, `client-profile.md` | 기본 CLI 요청/상태·신뢰 창·공개 프로필과 중단 복구 | 구현·통합 검증 진행, 실제 Hello/사람 검토 전 |
 | `audit.md` | DB v3 감사 시작/불변 결과·용량·페이지·미확정 기록 | 저장 API 대상 시험 통과, 공통 실행기/효과 연결 전 |
 | `tool-validation.md` | 공통 envelope와 계정 조회/발송 의도 입력 검증 | 순수 검증 구현 중, 실제 실행·승인과 별개 |
 | `execution.md` | 인증 재검증·감사·전체 범위·정책·읽기 실행 순서 | coordinator·Core/wire adapter 연결, 정책 기본 거부·사람 검토 필요 |

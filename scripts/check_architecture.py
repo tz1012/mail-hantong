@@ -10,19 +10,20 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 PACKAGES = {
-    "hantong-contracts", "hantong-platform", "hantong-domain", "hantong-policy", "hantong-approval",
+    "hantong-contracts", "hantong-platform", "hantong-domain", "hantong-policy", "hantong-approval", "hantong-approval-windows",
     "hantong-application", "hantong-outbox", "hantong-ipc-client", "hantong-ipc-server",
     "hantong-store", "hantong-secrets", "hantong-adapters", "hantong-cli", "mail-hantong-core",
 }
 TEST_SUPPORT = "hantong-test-support"
 CLIENTS = {"hantong-cli"}
-FORBIDDEN_CLIENT = {"hantong-store", "hantong-secrets", "hantong-adapters", "hantong-ipc-server", "hantong-outbox"}
+FORBIDDEN_CLIENT = {"hantong-store", "hantong-secrets", "hantong-adapters", "hantong-ipc-server", "hantong-outbox", "hantong-approval-windows"}
 ALLOWED = {
     "hantong-contracts": set(),
     "hantong-platform": {"hantong-contracts"},
     "hantong-domain": set(),
     "hantong-policy": {"hantong-contracts", "hantong-domain", "hantong-approval"},
     "hantong-approval": {"hantong-contracts", "hantong-domain"},
+    "hantong-approval-windows": {"hantong-contracts", "hantong-domain", "hantong-approval", "hantong-platform"},
     "hantong-application": {"hantong-contracts", "hantong-domain", "hantong-policy", "hantong-approval", "hantong-outbox"},
     "hantong-outbox": {"hantong-contracts", "hantong-domain"},
     "hantong-ipc-client": {"hantong-contracts", "hantong-platform"},

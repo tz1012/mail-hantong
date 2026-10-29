@@ -46,3 +46,7 @@ OS peer 검사 전에 전송 계층이 고정 preface byte `0x01`을 읽는다. 
 응답은 같은 길이 프레임 안의 JSON-RPC `{jsonrpc,id,result}` 또는 `{jsonrpc,id,error:{code,message}}`다. code는 오류 계약의 문자열이고 message는 고정 영어 오류 코드다. 정상 파싱된 요청의 id만 응답에 반영한다. 프레임/파싱 실패는 응답 없이 연결을 닫아 유효하지 않은 id를 반사하지 않는다. 한 접속은 요청/응답 한 쌍 후 닫으며 수신·처리·응답을 포함해 5초 timeout을 적용한다. CLI의 `hantong core status`는 이 최소 응답만 읽는다. timeout·손상 응답·접속 불가는 원문 없이 `CORE_UNAVAILABLE`로 보고한다. 보호된 메일 명령은 계속 거부한다.
 
 현재 CLI bootstrap의 자체 거부 시험은 OS transport나 등록 프로토콜의 검증이 아니다. M1-02에서 ACL·CNG·프레임·철회·부정 호출을 실제 Windows 환경에서 시험한다. 테스트용 등록 fixture는 제품 생성자나 feature 우회로 남기지 않는다.
+
+## 2026-10-30 등록 제출·상태 확장
+
+위 bootstrap 초기 구현에 `client-registration.md`의 두 메서드를 추가한다. 요청은 고정 default CLI 등록만 제출하며 계정/도구/승인/키/pin 필드를 받지 않는다. 반환하는 ID/진행 상태는 인증 증거가 아니다. 발급은 코어 소유 신뢰 창, 파일 발행은 Core 전용 경계에만 있고 CLI/MCP에는 승인 발급 API가 없다.

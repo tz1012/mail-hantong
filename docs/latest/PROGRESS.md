@@ -9,9 +9,9 @@
 | 항목 | 상태와 근거 |
 | --- | --- |
 | 기준 자료 | 사용자 승인으로 채택한 [Markdown 기준 요건](../requirements/README.md): 요건 170개·1단계 P0 144개·문장별 AC ID 341개. 작업 카드 정의 151개는 보존한다. |
-| 현재 카드 | **M2-01 연결 및 M2-02 기능 탐지 진행 중**. 독립 endpoint·DB v4 CAS/관측·DPAPI 결속 자격 증명과 IMAP/SMTP TLS/AUTH probe를 구현했다. M1의 CNG·인증 wire·감사·공통 실행 경로는 연결됐으며 정책은 기본 거부다. 등록 UI/프로필 배포·공통 정책 연결·사람 보안 검토는 남아 있다. |
-| 최신 검증 | **435개 통과**(문서 29·빌드 도구 61·Rust 345). 전체 build/test/fmt/Clippy·의존/문서/추적 검사 및 Linux x86_64·macOS arm64 교차 Clippy 통과. 2026-10-30 IMAP snapshot의 로그·hash는 아래 마지막 기록에 있다. 실제 Mac 실행·전체 기능 완료를 뜻하지 않는다. |
-| 제품 구현 | Rust workspace·영/한 CLI·Windows 코어/최소 IPC·DPAPI·SQLCipher·설정 검증·구조화 로그·가짜 공급자·CI/의존 검사·추적 도구 구현. 보호된 메일 명령은 계속 거부한다. 실제 메일 연동·인증 등록·GUI·설치 패키지는 미완료다. |
+| 현재 카드 | **M1-02/M1-06·M6-02 등록 연결의 자동 검증 완료, 사람 검토 필요**. 기본 CLI 등록 요청·Windows 신뢰 창·Hello 결속·provisioning/active·보호 프로필 배포·중단 복구·인증 확인을 연결했다. 다음은 M1-09 정책과 등록된 CLI 계정 목록 조회다. |
+| 최신 검증 | **553개 통과**(문서 29·빌드 도구 62·Rust 462). 전체 build/test/fmt/Clippy·의존/문서/추적 검사 및 Linux x86_64·macOS arm64 교차 Clippy 통과. 2026-10-30 등록 snapshot의 로그·hash는 아래 기록에 있다. 실제 Mac 실행·전체 기능 완료를 뜻하지 않는다. |
+| 제품 구현 | Rust workspace·영/한 CLI·Windows 코어/IPC·DPAPI·SQLCipher·설정 검증·감사·기본 등록/프로필·IMAP/SMTP TLS/AUTH probe·CI/추적 도구 구현. 메일 도구는 정책 기본 거부 상태다. 실제 메일 수신·전체 GUI·설치 패키지는 미완료다. |
 | GitHub | 로컬 Git main 저장소를 초기화해 개발 기준선을 기록한다. 공개 저장소 주소·remote·릴리스·패키지 ID는 아직 없음. 빌드 산출물·실행 데이터·에이전트 상태는 제외한다. |
 | 새 사용자 요청 | 진행 상황을 이 문서에 누적하고, GitHub에서 명령어로 설치 및 개발을 시작할 수 있는 경로를 마련한다. 상세 범위는 [공개와 설치 계획](DISTRIBUTION.md)에 기록한다. |
 | 문서 관리 방식 | Markdown을 개발 기준으로 갱신하고 기존 Word는 보관한다. 최신 사용자 지시 “제작 완료까지 일단 묻지말고 진행해”에 따라 일반 구현 판단은 기록하며 연속 진행한다. |
@@ -19,7 +19,7 @@
 | 런타임 결정 | **코어·CLI Rust 확정** — 2026-10-29 사용자 선택, [ADR-001](../adr/ADR-001-core-runtime.md). 비교 실험에서 .NET은 프로세스 시작, Rust는 메모리에 유리했고 검색은 혼재했다. [실측 보고서](RUNTIME-BENCHMARK.md)는 보존하며 제품의 1초 목표는 아직 검증 전이다. |
 | Mac 지원 방향 | 사용자 승인으로 정식 후속 목표에 포함했다. Windows 우선 출시 후 Mac 코어·CLI·최소 승인 도우미부터 제공하고 전체 GUI를 후속 제공한다. 구체적인 단계·일정·패키지는 미정이며 현재 제품은 미구현이다. |
 | 공개 사용 정책 | **[LICENSE Version 1.0](../../LICENSE) 정식 채택** — 개인·회사 내부 업무용 사용, 수정본 비공개 및 원본·수정본 무료 재배포 허용. 프로그램 판매·유료 제공 금지. 고지 유지·수정 표시·보증과 책임 조항 포함. 저작권자는 **Andrew Cho**, 웹사이트 **https://tzt.kr**, 연락처 **andrew@tzt.kr**이다. [한국어 안내](LICENSING.md), [ADR-016](../adr/ADR-016-license.md). |
-| 다음 제품 작업 | IMAP/SMTP probe를 설정·관측 서비스에 연결하고 등록 승인 화면/프로필 배포를 구현한다. probe는 가짜 TLS 서버+실제 DPAPI로 검증됐고 실제 계정/공통 UI·IPC에는 아직 연결하지 않았다. |
+| 다음 제품 작업 | 등록된 CLI의 계정 목록 조회를 공통 정책·호출 한도·감사에 연결한다. 이어 IMAP/SMTP probe를 설정·관측 서비스에 연결한다. 실제 계정 설정·수신 UI는 아직 남아 있다. |
 
 ## 기록 규칙
 
@@ -495,3 +495,27 @@ private IMAP response gate는 초기 13개 실패 후 13개 통과했다. CRLF·
 최종 `scripts/check_all.py`: **435개**(문서 29·빌드 도구 61·Rust 345), build/fmt/Clippy/아키텍처/기준 문서/추적 검사 통과. 로그 `target/imap-broker-full-check.log`, SHA-256 `8D4A8D7EADC4773904ADC5E0AB2158DACA16A4330FB0CB9F6583347AE29D5009`, source hash `7a0279d2d9a9b05ce65d39194b74b82790a4eff4037e2733c747875ae4551d81`. Linux x86_64·macOS arm64 workspace/all-target 교차 Clippy도 통과(`target/imap-broker-linux-check.log`, `target/imap-broker-macos-check.log`). 실제 Mac 실행이 아니다. 검사 후 제품 CNG 키는 기존 서버 1개이며 inventory hash `3B692D49F1D08F7D3442806CF17694CDC02AF36B44839930FC18EB9C83CE9D4D`로 유지됐다. 실제 계정·메일·Windows Hello는 사용하지 않았다.
 
 상태: M2-01/02 진행 중, Secrets/계약은 **[사람 검토 필요]**. 전체 제품 AC 완료는 여전히 0개이며 UI·등록 프로필·공통 정책·실제 메일 수신을 다음 작업으로 연결한다.
+
+## 2026-10-30 CLI 기본 등록·신뢰 창·프로필 연결 (진행 중)
+
+**범위:** M1-02/M1-06의 미등록 거부 경계에 M6-02/INST-04 등록 절차의 최소 연결을 구현한다. 일반 기술 선택·계약 정리는 사용자 연속 개발 위임을 따르며 사람 보안 검토 완료로 간주하지 않는다.
+
+**현재 변경:** 순수 등록 review 모델과 영/한 36개 리소스·라이트/다크/시스템/고대비 presentation, Core 전용 Windows 발급 crate, 요청/로그온/시각 결속 일회 결과, default 공개 프로필 codec/보호 loader, 등록 ID로 복구 가능한 CNG selector, Store approved+provisioning/active CAS/deny/read helpers를 추가했다. `hantong clients register`와 `clients status <request_id>`는 요청·진행 조회만 제공한다. 코어는 bounded UI queue와 기존 인증 wire를 함께 실행한다. 파일 publisher와 전체 연결 검증은 진행 중이다.
+
+**지금까지 확인한 부분 검사:** review 15개, native/binding 10개, profile codec 12개, profile loader 14개, platform 키/경로 기존 포함 31개, Store 전이 기존 포함 85개, IPC client/server 기존 포함 63개가 각 대상 실행에서 통과했다. 이후 편집으로 이 숫자들을 합쳐 전체 통과로 표시하지 않는다. 최신 전체 검증 기준선은 위 435개 snapshot이며 현재 소스의 전체 검사는 아직 하지 않았다. 소유 모듈 별 red→green과 Clippy 로그는 `target/registration-*.log`, `target/profile-*.log`, `target/native-*.log`에 기록한다.
+
+**검토에서 수정 중인 사항:** Win32 resize 중 mutable borrow와 동기 paint 충돌, foreground가 아닌 창에서 Hello 시작, 고대비 색상 변화 재적용, 취소 뒤 terminal Close 순서를 보완했다. binding 불일치는 ScopeDenied로 분리하여 사람이 누른 Deny만 denied로 저장한다. handler 등록 실패·OS 비응답 시 최대 5초 cleanup 후 terminal 정리를 보장하지 못하는 한계는 registration-review 계약에 명시했다.
+
+**남은 검증:** publisher의 ACL·handle rename·기존 파일 보존, 중단 복구/코어 연결 독립 검토, workspace 전체/교차 검사와 추적표 갱신. 실제 Hello, 실제 사용자 프로필 등록, 메일 로그인/발송, GUI 시각·접근성 검증은 실행하지 않았다. 제품 완료·보안 사람 검토 완료·공개 배포 완료가 아니다.
+
+### 등록 연결 최종 자동 검증 snapshot
+
+위 진행 중 항목의 파일 배포·복구·전체 검사를 마쳤다. 보호된 Known Folder 경로와 모든 상위 handle을 유지하며 기존 ACL을 변경하지 않는다. 새 파일은 제한된 ACL로 create-new하고 flush 후 열린 handle로 rename한다. 동일 프로필만 재사용하며 다른 파일은 보존하고 CONFLICT를 반환한다. 파일 handle은 Store active CAS까지 유지한다. loader 15개·publisher 13개 시험이 통과했다. 완전한 전원 장애 내구성을 주장하지 않는다.
+
+독립 검토에서 발견한 키 생성 직후 중단 문제를 보완했다. 먼저 저장된 요청 ID에서 등록 ID와 키 선택자를 도출하고, bounded orphan 목록과 등록 링크 검사를 통해 연결되지 않은 정확한 키만 정리한다. 커밋/조회가 불확실하면 키를 보존한다. 정리 실패는 재생성을 차단하며 원래 stage 오류와 정리 오류를 별도로 진단한다. 시작 목록 오류는 시작 실패로, 개별 복구 오류는 안정 코드로 남긴다. Store 91개·Core 27개 시험과 독립 재검토를 마쳤다. 아직 배포되지 않은 default 등록을 처음 도입한 변경이며 과거 무작위 등록 ID 데이터의 호환성을 약속하지 않는다.
+
+`hantong clients verify`는 고정 프로필과 기존 CNG 키·서버 pin으로 상호 인증한 뒤 연결을 닫는다. 프로필/키를 자동 생성하지 않는다. CLI·MCP에 승인 발급 기능을 추가하지 않았다. 계정 목록 도구의 정책은 아직 기본 거부이며 다음 작업에서 연결한다.
+
+`scripts/check_all.py` 종료 코드 **0**: **553개**(문서 29·빌드 도구 62·Rust 462), build/fmt/Clippy·아키텍처·불변 요건·추적 검사 통과. 로그 `target/registration-final-full-check.log`, SHA-256 `E1BB43E383FE5EC1C0459F22F489FF085AB7A64575682D2D1794777708D6AF53`, source hash `69a2de2aaa456c45389c1a7bc88d338eba1268de6404b054d1d7a8d8172991b8`. Linux x86_64/macOS arm64 all-target Clippy도 종료 코드 0이다(`target/registration-final-linux-check.log`, `target/registration-final-macos-check.log`). 교차 검사에서 Windows 전용 응답 helper의 cfg 누락을 수정한 뒤 전체 검사를 다시 실행했다.
+
+검사 뒤 제품 CNG 키는 기존 서버 **1개**, names hash `3B692D49F1D08F7D3442806CF17694CDC02AF36B44839930FC18EB9C83CE9D4D`로 유지됐다. 실제 사용자 프로필 등록·Hello·외부 계정·메일을 실행하지 않았다. 실제 화면/접근성·OS Hello와 **[사람 검토 필요]** 상태는 유지한다. 전체 제품 AC 완료 표시는 계속 0개다. 다음은 등록된 CLI 계정 목록의 정책·호출 한도·엄격한 응답 검증 연결이다.

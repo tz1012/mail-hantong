@@ -33,3 +33,38 @@ singleton `server_identity`는 OS CNG의 공개 선택자 key_id(32 bytes), 상�
 Store의 공개 키 읽기는 길이/header를 검증한 비밀이 아닌 metadata를 반환한다. 실제 P-256 좌표와 pinned key의 검증은 platform CNG import와 IPC `RegisteredClient` 생성자가 수행한다. Store metadata 객체를 그대로 인증 principal로 취급하지 않는다.
 
 승인 도우미는 신뢰된 서버 키를 공개 프로필에 고정하고 기존 클라이언트 키 선택자·등록 ID·epoch·요청 상한을 원자적으로 배포한다. CLI의 unauthenticated readiness나 TOFU로 pin을 만들지 않는다. 공개 프로필의 경로/형식과 helper 확인 계약은 별도 정의한다. software CNG·파일 ACL은 같은 사용자 악성코드 격리의 증거가 아니다.
+
+## 2026-10-30 default CLI 등록 전이 추가
+
+이 절은 위의 “승인·활성화 API 없음” 상태를 다음 한정된 영속 API로 확장한다. 발급 UI는 [registration-review.md](registration-review.md), 파일 배포는 [client-profile.md](client-profile.md)를 따른다. Store는 OS 사람 확인기를 갖지 않고 bool/Verified/임의 승인 채널을 입력받지 않는다. 신뢰 Core coordinator가 일회성 token과 현재 snapshot을 검증한 후에만 이 API를 호출한다. CLI/MCP는 Store에 의존하거나 직접 호출할 수 없다.
+
+고정 기본 프로필 표시명은 `hantong CLI (default)`다. 초기 grant는 kind=cli, tool_ids=[mail.accounts.list], read_only=true, requests_per_minute=60, channel=approval_helper다. 같은 표시명의 기존 CLI 등록이 provisioning/active/suspended/revoked 중 어느 상태로든 있으면 새 기본 등록을 거부한다. 철회 후 재등록/프로필 교체는 별도 복구 UI 계약 전까지 자동 수행하지 않는다.
+
+`CliRegistrationStage::new(expected_request, registration_id, client_public_key, expected_server_public_key_hash)`는 private 필드의 입력 자료를 만든다. 예상 요청은 유효한 pending CLI 요청·고정 표시명·고정 도구여야 한다. 요청/등록 ID와 서버 hash는 0 금지, request version은 증가 가능한 양수, account 목록은 최대 128개다. 이 입력 객체는 사람 승인 증거가 아니다.
+
+`stage_cli_registration(&stage)`는 client public key의 실제 CNG P-256 점을 확인하고 BEGIN IMMEDIATE 안에서 다음을 수행한다.
+
+stage 전 등록 ID가 플랫폼 `registration_id_for_request(expected_request.request_id)`의 결과와 같은지 검사한다. 일치하지 않으면 INVALID_INPUT이다. 이미 저장된 요청 ID가 키 selector의 내구성 있는 예약이며 새 DDL은 필요하지 않다. `create_registration_request`도 전부 0인 요청 ID를 INVALID_INPUT으로 거부한다.
+
+- current pending request의 모든 공개 metadata(request ID/version/kind/label/scope/생성/만료)가 expected_request와 일치하는지 다시 읽고 검사한다.
+- Store UTC가 생성 이상·만료 미만인지, active 서버 신원의 public-key hash가 예상값과 같은지, 허용 계정이 모두 실제 accounts 행에 있는지 확인한다. 빈 scope는 0개 grant다.
+- 중복 registration ID/request/public key/default 프로필, 상태·버전·scope 변경, 계정 소실, 잘못된 서버 pin을 거부한다. 불일치는 CONFLICT, 없는 요청/계정은 NOT_FOUND, 만료/시계 역행은 APPROVAL_EXPIRED다. 손상된 저장 metadata와 DB 실패는 INTERNAL_ERROR다.
+- pending 요청을 approved로 바꾸고 Store UTC/고정 channel을 기록하며 요청 version을 증가시킨다. 같은 트랜잭션에서 provisioning 등록, epoch=1/version=1, 고정 정책, 정확한 계정/도구 grant를 넣는다. 오류면 전체를 rollback한다. active 등록은 만들지 않는다.
+
+`activate_cli_registration(registration_id, expected_version, expected_server_public_key_hash)`은 Core가 공개 프로필을 성공적으로 발행/대조한 후 호출한다. provisioning 상태와 정확한 양수 CAS version, 고정 기본 프로필 정책, 원본 approved 요청/정확한 grant/계정 일관성, 현재 active 서버 pin 일치, Store UTC가 승인/마지막 갱신 이후인지 검증한다. active로 바꾸며 version만 증가시키고 epoch/grant는 유지한다. 이미 active/suspended/revoked거나 버전이 다르면 CONFLICT다. 이 API의 존재 자체가 파일 발행 증거는 아니며 Core가 순서를 강제한다.
+
+`deny_cli_registration_request(request_id, expected_version)`은 명시적인 UI Deny에만 사용한다. 현재 pending 기본 CLI 요청, 버전과 유효 시각을 확인한 뒤 denied/channel/time/version을 원자적으로 바꾼다. 닫기/취소에는 호출하지 않는다. denied를 다시 승인하는 전이는 없다.
+
+`load_registration_by_request(request_id)`는 기존 validated snapshot 읽기와 같은 기준을 사용한다. `list_provisioning_registrations(limit)`는 1..128 입력만 받고 LIMIT limit+1로 읽어 초과 시 QUOTA_EXCEEDED로 거부하며, 모든 반환 행을 검증한다. `list_registrable_account_ids()`는 정렬된 실제 ID를 최대 129개 읽어 128개 초과/손상 시 오류를 반환하고, 빈 DB는 빈 목록이다. 이것은 Core의 사용자 검토 snapshot 구성용이며 외부 열거 API가 아니다.
+
+현재 DB v4의 기존 테이블/상태를 사용하므로 이 전이 추가는 DDL migration을 만들지 않는다. 실패 rollback, stale/expired/wrong-scope/deleted-account, duplicate ID/key/default profile, wrong pin, invalid public point, activation 순서/CAS, denial terminal, bounded recovery 조회를 합성 fixture로 검증한다. 실제 등록/Windows Hello를 자동 실행하지 않는다.
+
+### Core의 기본 프로필·pending 조회
+
+`load_default_cli_registration()`은 고정 표시명과 cli 종류의 모든 상태를 대상으로 최대 2개 ID를 읽고 validated snapshot으로 반환한다. 2개가 있으면 CONFLICT이며 임의로 하나를 선택하지 않는다. `load_pending_default_cli_request()`는 Store UTC에 아직 만료되지 않은 동일 기본 pending 요청을 최대 2개 읽는다. 중복은 CONFLICT, 생성 시각이 미래이면 APPROVAL_EXPIRED, 손상된 저장 metadata는 INTERNAL_ERROR다. 정상적으로 만료된 과거 pending 요청은 새로운 요청을 영구 차단하지 않으며, 조회 자체는 TTL·상태를 변경하지 않는다. 두 조회는 Core 내부 중복 방지·복구용이며 외부 등록부 열거 API가 아니다.
+
+### 미등록 키의 제한된 복구 조회
+
+`list_orphan_cli_registration_requests()`는 고정 기본 CLI 요청을 LIMIT 1025로 읽고 1,024개 초과 시 QUOTA_EXCEEDED를 반환한다. 요청·연결된 등록을 같은 snapshot에서 검증하고 등록이 없는 pending/denied/expired 요청만 반환한다. approved인데 등록이 없거나 ID/정책/scope가 손상되면 INTERNAL_ERROR, 기본 등록이 중복되거나 서로 다른 요청의 유도 등록 ID가 충돌하면 CONFLICT다. 생성 시각이 현재 Store UTC보다 미래이면 APPROVAL_EXPIRED로 멈춘다. 조회는 요청을 삭제하거나 결정을 변경하지 않는다.
+
+`registration_key_is_linked(request_id, public_key)`는 같은 제한된 예약 목록을 검증하고 유도 등록 ID·요청 ID·공개 키 중 하나라도 연결된 등록이 있으면 true를 반환한다. 일치 후보는 유일 제약에 따른 최대 3개와 초과 탐지 1개만 읽어 모두 검증한다. false는 검증된 snapshot에 연결이 없다는 데이터일 뿐 임의 키 삭제 권한이 아니다. Core만 정확한 요청 유도 selector를 열어 얻은 공개 키로 호출하며, Store 조회부터 삭제까지 동일한 직렬 실행 구간을 유지한다. 조회 실패를 false로 바꾸거나 key namespace를 열거하지 않는다.

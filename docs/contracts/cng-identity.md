@@ -11,3 +11,15 @@
 코어 서버 신원은 `ServerSigningKey`의 `mail-hantong-server-` + 32바이트 식별자 hex 네임스페이스를 사용한다. 클라이언트 키 API는 이 이름을 열 수 없고, 서버 API는 클라이언트 네임스페이스를 열 수 없다. 서버 식별자는 먼저 암호화 DB의 `creating` 행에 기록한 뒤 `create(id)`를 호출하고 공개키를 검증해 `active`로 전환해야 한다. 기존 이름은 `CONFLICT`, 없는 이름의 `open(id)`는 `NOT_FOUND`이며 자동으로 다른 서버 키를 만들지 않는다.
 
 공식 근거: [NCryptOpenKey](https://learn.microsoft.com/en-us/windows/win32/api/ncrypt/nf-ncrypt-ncryptopenkey), [NCryptCreatePersistedKey](https://learn.microsoft.com/en-us/windows/win32/api/ncrypt/nf-ncrypt-ncryptcreatepersistedkey), [NCryptSignHash](https://learn.microsoft.com/en-us/windows/win32/api/ncrypt/nf-ncrypt-ncryptsignhash), [BCryptVerifySignature](https://learn.microsoft.com/en-us/windows/win32/api/bcrypt/nf-bcrypt-bcryptverifysignature), [BCRYPT_ECCKEY_BLOB](https://learn.microsoft.com/en-us/windows/win32/api/bcrypt/ns-bcrypt-bcrypt_ecckey_blob).
+
+## default CLI 등록의 결정적 공개 선택자
+
+등록 복구용 `client_key_id_for_registration(registration_id)`는 0이 아닌 16-byte 등록 ID에 대해 SHA-256(`mail-hantong/client-registration-key/v1\0` + 등록 ID)를 반환한다. 공개 ID 도출이며 개인 키를 ID에서 생성하는 방식이 아니다. 개인 키는 여전히 OS KSP가 새로 생성한다. `ClientSigningKey::create_for_registration(id)`는 이 32-byte ID의 기존 client namespace에 create-new하며, 이미 있으면 CONFLICT다. `open_for_registration(id)`는 같은 이름만 열고 누락 시 NOT_FOUND이며 자동 생성하지 않는다.
+
+일반 CNG primitive의 무작위 선택자 `create()` API는 유지한다. default CLI 등록은 이번 미배포 변경에서 처음 도입하며, 요청에서 도출한 등록 ID만 사용한다. 이는 과거 무작위 ID 기반 default 등록 데이터의 호환성이나 마이그레이션을 보장한다는 뜻이 아니다. default profile loader는 registration_id에서 도출한 key_id와 파일의 client_key_id를 비교한다. Core는 해당 등록 행의 공개 키와 KSP 공개 키까지 비교한다. 결정적 이름 자체가 등록 승인이나 신뢰를 만들지 않는다. provisioning 복구에서 공개 키에 대응하는 키 이름을 찾기 위해 전체 KSP를 열거할 필요가 없다. 키 생성 후 Store stage 실패 시 Core는 등록 링크가 없음을 검증한 경우에만 정확한 키를 제거한다. 커밋 결과나 링크 조회가 불확실하면 키를 보존한다.
+
+## 요청 기반 등록 ID reservation
+
+기본 CLI 등록 ID는 `SHA256("mail-hantong/registration-id/v1\0" || request_id[32])[0..16]`이다. 문자열은 위 ASCII 바이트와 마지막 NUL을 포함한다. request_id가 전부 0이면 INVALID_INPUT이고 결과 16 bytes가 전부 0이면 INTERNAL_ERROR다. 요청을 먼저 영속 저장하므로 키 생성 직후 중단돼도 등록 ID와 기존 client key selector를 다시 계산할 수 있다. 실제 개인 키는 여전히 CNG가 생성한다. 등록 ID·key selector는 공개 식별자이며 비밀·권한·승인 증거가 아니다.
+
+정확한 orphan 정리와 등록 링크 확인은 `client-registration.md`·`registration-store.md`를 따른다. namespace 전체 삭제·이름 추측·승인 없는 active 전환은 허용하지 않는다. 고정 시험 벡터: request_id가 0x01 32개이면 registration_id는 `39341cd37c2deeae8b293084b8a73cae`다.

@@ -117,6 +117,9 @@ impl Store {
         display_label: &str,
         scope: &RequestedScope,
     ) -> Result<RegistrationRequest, ErrorCode> {
+        if request_id == [0; 32] {
+            return Err(ErrorCode::InvalidInput);
+        }
         validate_label(display_label)?;
         #[cfg(not(windows))]
         {
@@ -344,7 +347,7 @@ fn parse_scope(accounts: &str, tools: &str) -> rusqlite::Result<RequestedScope> 
 }
 
 #[cfg(windows)]
-fn read_request(
+pub(super) fn read_request(
     connection: &rusqlite::Connection,
     id: &[u8; 32],
 ) -> rusqlite::Result<Option<RegistrationRequest>> {

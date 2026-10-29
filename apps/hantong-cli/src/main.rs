@@ -1,6 +1,9 @@
 #![forbid(unsafe_code)]
 
 use hantong_contracts::ErrorCode;
+use hantong_contracts::registration::{
+    RegistrationCommand, RegistrationProgress, RegistrationReceipt,
+};
 use std::env;
 use std::io::{self, Write};
 
@@ -69,6 +72,45 @@ fn error_json(code: ErrorCode, lang: Lang) -> String {
 }
 
 fn run(args: impl IntoIterator<Item = String>) -> i32 {
+    run_with_boundaries(
+        args,
+        hantong_ipc_client::registration::exchange,
+        verify_profile,
+    )
+}
+
+#[cfg(windows)]
+fn verify_profile() -> Result<(), ErrorCode> {
+    hantong_ipc_client::verify_default()
+}
+#[cfg(not(windows))]
+fn verify_profile() -> Result<(), ErrorCode> {
+    Err(ErrorCode::CapabilityUnsupported)
+}
+
+#[cfg(test)]
+fn run_with_registration(
+    args: impl IntoIterator<Item = String>,
+    registration: impl FnMut(RegistrationCommand) -> Result<RegistrationReceipt, ErrorCode>,
+) -> i32 {
+    run_with_boundaries(args, registration, || {
+        panic!("registration test must not verify a profile")
+    })
+}
+
+fn verification_output(lang: Lang, json: bool) -> String {
+    if json {
+        "{\"schema_version\":1,\"ok\":true,\"items\":[{\"profile\":\"default\",\"authenticated\":true}],\"next_cursor\":null,\"account_results\":[],\"completeness\":\"complete\",\"warnings\":[],\"observed_at\":null}".to_owned()
+    } else {
+        resource(lang, "client_verified").to_owned()
+    }
+}
+
+fn run_with_boundaries(
+    args: impl IntoIterator<Item = String>,
+    mut registration: impl FnMut(RegistrationCommand) -> Result<RegistrationReceipt, ErrorCode>,
+    mut verification: impl FnMut() -> Result<(), ErrorCode>,
+) -> i32 {
     let mut lang = Lang::En;
     let mut json = false;
     let mut want_help = false;
@@ -85,11 +127,9 @@ fn run(args: impl IntoIterator<Item = String>) -> i32 {
             "--json" => json = true,
             "--no-input" => {}
             "--client" => {
-                if it
-                    .next()
-                    .as_deref()
-                    .is_none_or(|value| value.starts_with('-'))
-                {
+                if it.next().as_deref().is_none_or(|value| {
+                    hantong_ipc_client::profile::ProfileSelector::parse(value).is_err()
+                }) {
                     return emit_error(ErrorCode::InvalidInput, lang, json);
                 }
             }
@@ -113,6 +153,28 @@ fn run(args: impl IntoIterator<Item = String>) -> i32 {
         println!("hantong {}", env!("CARGO_PKG_VERSION"));
         return 0;
     }
+    if matches!(command.as_slice(), [a,b] if a == "clients" && b == "verify") {
+        return match verification() {
+            Ok(()) => {
+                println!("{}", verification_output(lang, json));
+                0
+            }
+            Err(error) => emit_error(error, lang, json),
+        };
+    }
+    match registration_command(&command) {
+        Ok(Some(value)) => {
+            return match registration(value) {
+                Ok(receipt) => {
+                    print_registration(&receipt, lang, json);
+                    0
+                }
+                Err(code) => emit_error(code, lang, json),
+            };
+        }
+        Err(code) => return emit_error(code, lang, json),
+        Ok(None) => {}
+    }
     if matches!(command.as_slice(), [a, b] if a == "core" && b == "status") {
         return match hantong_ipc_client::core_status() {
             Ok(status) if json => {
@@ -131,6 +193,47 @@ fn run(args: impl IntoIterator<Item = String>) -> i32 {
         emit_error(ErrorCode::ClientNotRegistered, lang, json)
     } else {
         emit_error(ErrorCode::InvalidInput, lang, json)
+    }
+}
+
+fn registration_command(command: &[String]) -> Result<Option<RegistrationCommand>, ErrorCode> {
+    match command {
+        [a, b] if a == "clients" && b == "register" => Ok(Some(RegistrationCommand::Request)),
+        [a, b, id] if a == "clients" && b == "status" => {
+            let id = hantong_contracts::wire_hex::decode_fixed::<32>(id)?;
+            if id == [0; 32] {
+                return Err(ErrorCode::InvalidInput);
+            }
+            Ok(Some(RegistrationCommand::Status(id)))
+        }
+        [a, ..] if a == "clients" => Err(ErrorCode::InvalidInput),
+        _ => Ok(None),
+    }
+}
+
+fn print_registration(receipt: &RegistrationReceipt, lang: Lang, json: bool) {
+    let id = hantong_contracts::wire_hex::encode(receipt.request_id());
+    if json {
+        println!(
+            "{{\"schema_version\":1,\"ok\":true,\"items\":[{{\"request_id\":\"{}\",\"expires_at_utc_ms\":{},\"state\":\"{}\"}}],\"next_cursor\":null,\"account_results\":[],\"completeness\":\"complete\",\"warnings\":[],\"observed_at\":null}}",
+            id,
+            receipt.expires_at_utc_ms(),
+            receipt.state().as_str()
+        );
+    } else {
+        let key = match receipt.state() {
+            RegistrationProgress::Pending => "registration_pending",
+            RegistrationProgress::Denied => "registration_denied",
+            RegistrationProgress::Expired => "registration_expired",
+            RegistrationProgress::Provisioning => "registration_provisioning",
+            RegistrationProgress::Ready => "registration_ready",
+        };
+        println!(
+            "{}\n{}: {}",
+            resource(lang, key),
+            resource(lang, "registration_request_id"),
+            id
+        );
     }
 }
 
@@ -157,6 +260,119 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn cli15_verify_calls_only_injected_authentication_and_never_prompts() {
+        for args in [
+            vec!["clients", "verify"],
+            vec!["--no-input", "--client", "default", "clients", "verify"],
+            vec!["--lang", "ko", "--json", "clients", "verify", "--no-input"],
+        ] {
+            let calls = std::cell::Cell::new(0);
+            assert_eq!(
+                run_with_boundaries(
+                    args.into_iter().map(String::from),
+                    |_| panic!("verification must not request registration"),
+                    || {
+                        calls.set(calls.get() + 1);
+                        Ok(())
+                    }
+                ),
+                0
+            );
+            assert_eq!(calls.get(), 1);
+        }
+    }
+    #[test]
+    fn cli15_verify_preserves_errors_and_rejects_arbitrary_selectors() {
+        for error in [
+            ErrorCode::ClientNotRegistered,
+            ErrorCode::AuthRequired,
+            ErrorCode::ScopeDenied,
+            ErrorCode::CapabilityUnsupported,
+        ] {
+            assert_eq!(
+                run_with_boundaries(
+                    ["--no-input", "--json", "clients", "verify"].map(String::from),
+                    |_| panic!("must not register"),
+                    || Err(error)
+                ),
+                error.exit_code()
+            );
+        }
+        for args in [
+            vec!["--client", "admin", "clients", "verify"],
+            vec!["--client", "../default", "clients", "verify"],
+            vec!["--client", "D:/default.json", "clients", "verify"],
+            vec!["clients", "verify", "yes"],
+            vec!["clients", "verify", "--approve"],
+        ] {
+            assert_eq!(
+                run_with_boundaries(
+                    args.into_iter().map(String::from),
+                    |_| panic!("invalid input reached registration"),
+                    || panic!("invalid input reached verification")
+                ),
+                2
+            );
+        }
+    }
+    #[test]
+    fn cli02_verify_json_is_fixed_and_language_neutral_without_identity_details() {
+        let expected = "{\"schema_version\":1,\"ok\":true,\"items\":[{\"profile\":\"default\",\"authenticated\":true}],\"next_cursor\":null,\"account_results\":[],\"completeness\":\"complete\",\"warnings\":[],\"observed_at\":null}";
+        assert_eq!(verification_output(Lang::En, true), expected);
+        assert_eq!(verification_output(Lang::Ko, true), expected);
+        assert_eq!(
+            verification_output(Lang::En, false),
+            "Default client profile authenticated."
+        );
+        assert_eq!(
+            verification_output(Lang::Ko, false),
+            "기본 클라이언트 프로필 인증을 확인했습니다."
+        );
+    }
+    #[test]
+    fn cli15_registration_commands_request_only_and_never_accept_approval() {
+        let calls = std::cell::Cell::new(0);
+        let code = run_with_registration(
+            [
+                "--lang",
+                "en",
+                "--no-input",
+                "--client",
+                "default",
+                "clients",
+                "register",
+            ]
+            .map(String::from),
+            |command| {
+                assert_eq!(command, RegistrationCommand::Request);
+                calls.set(calls.get() + 1);
+                Err(ErrorCode::HumanStepRequired)
+            },
+        );
+        assert_eq!(code, 24);
+        assert_eq!(calls.get(), 1);
+        let id = hantong_contracts::wire_hex::encode(&[1; 32]);
+        let code = run_with_registration(["clients", "status", &id].map(String::from), |command| {
+            assert_eq!(command, RegistrationCommand::Status([1; 32]));
+            Err(ErrorCode::NotFound)
+        });
+        assert_eq!(code, 16);
+        for args in [
+            vec!["clients", "approve"],
+            vec!["clients", "register", "yes"],
+            vec!["clients", "status", "bad"],
+            vec!["--client", "../default", "clients", "register"],
+            vec!["--client", "custom", "clients", "register"],
+        ] {
+            assert_eq!(
+                run_with_registration(args.into_iter().map(String::from), |_| panic!(
+                    "invalid input reached registration"
+                )),
+                2
+            );
+        }
+    }
     #[test]
     fn cli16_error_codes_are_unique_and_stable() {
         let names: Vec<_> = ErrorCode::ALL.iter().map(|c| c.as_str()).collect();

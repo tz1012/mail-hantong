@@ -9,8 +9,14 @@ mod auth;
 pub use auth::PendingClientAuthentication;
 #[cfg(windows)]
 pub mod authenticated_wire;
+#[cfg(windows)]
+mod trusted_profile;
+#[cfg(windows)]
+pub use trusted_profile::{AuthenticatedDefaultProfile, authenticate_default, verify_default};
 
 pub mod auth_wire;
+pub mod profile;
+pub mod registration;
 
 use hantong_contracts::ErrorCode;
 use serde::{Deserialize, Serialize};

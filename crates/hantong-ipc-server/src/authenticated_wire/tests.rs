@@ -301,6 +301,80 @@ pub(crate) async fn run_fixture_cases() {
         };
         tokio::join!(server, client);
     }
+    for (method, params, expected, expected_calls) in [
+        (
+            "registration.request",
+            json!({"protocol_version":1}),
+            "pending",
+            1,
+        ),
+        (
+            "registration.status",
+            json!({"protocol_version":1,"request_id":wire_hex::encode(&[3;32])}),
+            "pending",
+            1,
+        ),
+        (
+            "registration.request",
+            json!({"protocol_version":1,"approved":true}),
+            "INVALID_INPUT",
+            0,
+        ),
+        (
+            "registration.activate",
+            json!({"protocol_version":1}),
+            "INVALID_INPUT",
+            0,
+        ),
+        ("mail.accounts.list", json!({}), "CLIENT_NOT_REGISTERED", 0),
+    ] {
+        let server = async {
+            let connection = listener.accept().await.unwrap();
+            let calls = Cell::new(0);
+            let result = dispatch_connection_with_registration(
+                connection,
+                server_key,
+                instance,
+                &mut |_| panic!("registration cannot enter authentication lookup"),
+                &mut |_, _| panic!("registration cannot enter protected executor"),
+                &mut |command| {
+                    calls.set(calls.get() + 1);
+                    if method == "registration.status" {
+                        assert_eq!(command, RegistrationCommand::Status([3; 32]));
+                    } else {
+                        assert_eq!(command, RegistrationCommand::Request);
+                    }
+                    RegistrationReceipt::new(
+                        [3; 32],
+                        123,
+                        hantong_contracts::registration::RegistrationProgress::Pending,
+                    )
+                },
+            )
+            .await;
+            assert_eq!(result, Ok(()));
+            assert_eq!(calls.get(), expected_calls);
+        };
+        let client = async {
+            let mut pipe = connect().await.unwrap();
+            send(
+                &mut pipe,
+                json!({"jsonrpc":"2.0","id":"registration","method":method,"params":params}),
+            )
+            .await;
+            let response = receive(&mut pipe).await;
+            assert_eq!(response["id"], "registration");
+            if expected_calls == 1 {
+                assert_eq!(response["result"]["state"], expected);
+                assert_eq!(response["result"].as_object().unwrap().len(), 4);
+            } else {
+                assert_eq!(response["error"]["code"], expected);
+            }
+            pipe.write_u8(6).await.unwrap();
+            pipe.flush().await.unwrap();
+        };
+        tokio::join!(server, client);
+    }
 }
 
 async fn send<W: tokio::io::AsyncWrite + Unpin>(pipe: &mut W, value: Value) {

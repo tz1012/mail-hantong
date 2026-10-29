@@ -15,6 +15,7 @@ def metadata(edges):
         "hantong-contracts", "hantong-platform", "hantong-domain", "hantong-policy", "hantong-approval",
         "hantong-application", "hantong-outbox", "hantong-ipc-client", "hantong-ipc-server",
         "hantong-store", "hantong-secrets", "hantong-adapters", "hantong-cli", "mail-hantong-core",
+        "hantong-approval-windows",
     }
     packages = []
     for name in names:
@@ -28,6 +29,22 @@ def metadata(edges):
 
 
 class ArchitectureTests(unittest.TestCase):
+    def test_INST04_only_core_may_reach_native_approval_issuer(self):
+        self.assertEqual(check_architecture.validate_metadata(metadata([
+            ("mail-hantong-core", "hantong-approval-windows", "normal", None),
+            ("hantong-approval-windows", "hantong-approval", "normal", None),
+            ("hantong-approval-windows", "hantong-platform", "normal", None),
+        ])), [])
+        for caller in ("hantong-cli", "hantong-ipc-client", "hantong-platform", "hantong-store", "hantong-approval"):
+            errors = check_architecture.validate_metadata(metadata([
+                (caller, "hantong-approval-windows", "normal", None),
+                ("hantong-cli", "hantong-ipc-client", "normal", None),
+                ("hantong-ipc-client", "hantong-platform", "normal", None),
+            ]))
+            self.assertTrue(any("forbidden dependency" in error and caller in error for error in errors))
+            if caller in ("hantong-cli", "hantong-ipc-client", "hantong-platform"):
+                self.assertTrue(any("transitive client dependency" in error and "hantong-approval-windows" in error for error in errors))
+
     def test_M003_accepts_declared_scaffold_graph(self):
         self.assertEqual(check_architecture.validate_metadata(metadata([])), [])
 

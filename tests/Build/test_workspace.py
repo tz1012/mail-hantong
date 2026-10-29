@@ -10,6 +10,7 @@ EXPECTED_PACKAGES = {
     "hantong-platform",
     "hantong-domain",
     "hantong-approval",
+    "hantong-approval-windows",
     "hantong-policy",
     "hantong-application",
     "hantong-outbox",

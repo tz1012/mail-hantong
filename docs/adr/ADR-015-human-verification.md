@@ -56,3 +56,9 @@ Stage 1 보호 승인 UI의 지원선은 Windows 11 build 22000 이상이다. �
 Rust 1.95 Windows MSVC에서 check/fmt/all-target Clippy를 통과했다. 실제 Hello/window/COM 초기화는 실행하지 않았으며 HWND 소유권·STA message pump·취소 경합·신뢰 review snapshot 결속은 미구현이다. 제품 의존성과 UI 구현은 해당 계약과 함께 후속 연결한다.
 
 근거: [정확한 windows metadata](https://crates.io/api/v1/crates/windows/0.62.2), [생성 interop source](https://docs.rs/crate/windows/0.62.2/source/src/Windows/Win32/System/WinRT/mod.rs), [IAsyncOperation API](https://docs.rs/windows-future/0.3.2/windows_future/struct.IAsyncOperation.html), [Microsoft HWND consent API](https://learn.microsoft.com/en-us/windows/win32/api/userconsentverifierinterop/nf-userconsentverifierinterop-iuserconsentverifierinterop-requestverificationforwindowasync).
+
+## 2026-10-30 제품 등록 창 연결
+
+`hantong-approval-windows`를 Core만 의존 가능한 발급 경계로 추가했다. `windows =0.62.2`, `windows-future =0.3.2`, 기존 `windows-sys =0.61.2`의 필요한 Win32/WinRT 기능만 사용한다. 순수 review/resources는 `hantong-approval`에 있고 CLI/MCP/platform에는 native 발급 의존을 허용하지 않는다.
+
+현재 제품 구현은 기본 read-only CLI 등록 snapshot에 한정한다. 이는 메일 발송 승인 기능의 완료가 아니다. 상세 상태·일회 결과·취소/cleanup 한계는 `registration-review.md`, 등록 저장·파일 발행·복구 순서는 `client-registration.md`와 `client-profile.md`를 따른다. 최신 부분 검사와 전체 검사 여부는 `docs/latest/PROGRESS.md`에 기록한다. 실제 Hello·접근성·시각 검증·사람 보안 검토는 남아 있다.

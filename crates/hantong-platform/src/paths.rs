@@ -10,6 +10,7 @@ use std::path::{Component, Path, Prefix};
 pub struct AppDirectories {
     pub data: PathBuf,
     pub secrets: PathBuf,
+    pub profiles: PathBuf,
 }
 
 impl fmt::Debug for AppDirectories {
@@ -17,6 +18,7 @@ impl fmt::Debug for AppDirectories {
         f.debug_struct("AppDirectories")
             .field("data", &"<redacted>")
             .field("secrets", &"<redacted>")
+            .field("profiles", &"<redacted>")
             .finish()
     }
 }
@@ -42,6 +44,7 @@ fn compose(base: PathBuf) -> Result<AppDirectories, ErrorCode> {
     Ok(AppDirectories {
         data: product.join("data"),
         secrets: product.join("secrets"),
+        profiles: product.join("profiles"),
     })
 }
 
@@ -121,6 +124,10 @@ mod tests {
             directories.secrets.parent().unwrap().join("data")
         );
         assert_eq!(directories.data.parent(), directories.secrets.parent());
+        assert_eq!(
+            directories.profiles,
+            directories.data.parent().unwrap().join("profiles")
+        );
         let debug = format!("{directories:?}");
         assert!(!debug.contains("fixture"));
     }

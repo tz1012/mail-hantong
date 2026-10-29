@@ -8,3 +8,7 @@ publish = false
 
 [lints]
 workspace = true
+
+[dependencies]
+hantong-contracts = { path = "../hantong-contracts" }
+hantong-domain = { path = "../hantong-domain" }

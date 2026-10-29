@@ -13,10 +13,28 @@ fn cli(args: &[&str]) -> std::process::Output {
 fn cli16_help_uses_english_by_default_and_korean_after_all_flags() {
     let en = cli(&["--help"]);
     assert!(String::from_utf8_lossy(&en.stdout).contains("Usage:"));
+    assert!(String::from_utf8_lossy(&en.stdout).contains("clients verify"));
     let ko = cli(&["--help", "--lang", "ko"]);
     assert!(String::from_utf8_lossy(&ko.stdout).contains("사용법:"));
     let ko2 = cli(&["--lang", "ko", "--help"]);
     assert!(String::from_utf8_lossy(&ko2.stdout).contains("사용법:"));
+}
+
+#[test]
+fn cli15_verify_rejects_paths_before_loading_any_profile() {
+    for selector in ["other", "../default", "D:/fixture/default.json"] {
+        let output = cli(&[
+            "--json",
+            "--no-input",
+            "--client",
+            selector,
+            "clients",
+            "verify",
+        ]);
+        assert_eq!(output.status.code(), Some(2));
+        assert!(String::from_utf8_lossy(&output.stdout).contains("\"code\":\"INVALID_INPUT\""));
+        assert!(output.stderr.is_empty());
+    }
 }
 
 #[test]
@@ -90,7 +108,9 @@ fn cli04_no_input_does_not_wait_or_echo_untrusted_input() {
 #[test]
 fn cli15_client_name_cannot_authenticate_and_unknown_options_are_invalid() {
     let spoof = cli(&["--client", "admin", "accounts", "list"]);
-    assert_eq!(spoof.status.code(), Some(22));
+    assert_eq!(spoof.status.code(), Some(2));
+    let unregistered = cli(&["--client", "default", "accounts", "list"]);
+    assert_eq!(unregistered.status.code(), Some(22));
     let unknown = cli(&["--mystery"]);
     assert_eq!(unknown.status.code(), Some(2));
     let missing = cli(&["--client", "--json", "accounts", "list"]);
