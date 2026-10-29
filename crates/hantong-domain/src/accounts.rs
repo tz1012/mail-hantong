@@ -101,13 +101,7 @@ impl AccountSummary {
         if let Some(value) = &self.display_name {
             valid_display(value, 128, 512)?;
         }
-        if let Some(value) = &self.color
-            && (value.len() != 7
-                || !value.starts_with('#')
-                || !value[1..].bytes().all(|b| b.is_ascii_hexdigit()))
-        {
-            return Err(AccountDisplayError::InvalidInput);
-        }
+        valid_color(self.color.as_deref())?;
         if let Some(values) = &self.capabilities {
             if values.len() > 128 || values.windows(2).any(|pair| pair[0] >= pair[1]) {
                 return Err(AccountDisplayError::InvalidInput);
@@ -166,14 +160,25 @@ impl AccountSnapshot {
     }
 }
 
-fn valid_id(value: &str) -> bool {
+pub(crate) fn valid_id(value: &str) -> bool {
     !value.is_empty()
         && value.len() <= 128
         && value
             .bytes()
             .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-'))
 }
-fn valid_display(
+pub(crate) fn valid_color(value: Option<&str>) -> Result<(), AccountDisplayError> {
+    if let Some(value) = value
+        && (value.len() != 7
+            || !value.starts_with('#')
+            || !value.as_bytes()[1..].iter().all(u8::is_ascii_hexdigit))
+    {
+        return Err(AccountDisplayError::InvalidInput);
+    }
+    Ok(())
+}
+
+pub(crate) fn valid_display(
     value: &str,
     max_chars: usize,
     max_bytes: usize,

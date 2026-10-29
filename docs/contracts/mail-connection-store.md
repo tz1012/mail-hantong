@@ -6,6 +6,8 @@
 
 Store는 기존 `provider=imap` 계정의 IMAP/SMTP endpoint를 각각 저장한다. 계정 없음은 NOT_FOUND, 다른 provider는 CAPABILITY_UNSUPPORTED다. 계정 생성·삭제·제공자 자동 추정·기존 accounts.settings_version 변경은 없다. SMTP 단독 생성은 CONFLICT이며 IMAP 설정이 먼저 있어야 한다. 기존 설정 삭제는 이 계약 범위 밖이다.
 
+새 IMAP 계정과 최초 endpoint를 함께 만드는 전이는 [계정 생성 계약](account-provisioning.md)을 따른다. 이 계약의 기존 endpoint 변경 API와는 별도 hash domain을 사용한다.
+
 `put_imap_connection(account_id, endpoint, mutation)`과 `put_smtp_connection(...)`은 검증된 Domain endpoint와 MailMutation을 받는다. mutation은 operation_id·idempotency_key(각 ASCII 영숫자/밑줄/하이픈 1..128 bytes), expected_version(0..i64::MAX-1), payload_hash([u8;32])다. 후보 endpoint.settings_version은 expected_version+1이어야 한다. 잘못된 값/해시는 INVALID_INPUT이다. 이 입력은 사용자 권한·승인 증거가 아니며 향후 공통 서비스가 인증/정책을 먼저 검사한다.
 
 `load_mail_connection(account_id)`는 같은 읽기 snapshot에서 IMAP과 선택적 SMTP를 읽는다. 기존 imap 계정에 설정이 없으면 None, SMTP만 있거나 저장 필드가 Domain 경계를 벗어나면 INTERNAL_ERROR다. secret·공급자 주체·다른 계정은 읽지 않는다. 결과의 Debug와 오류에는 host/login/ID/SQL을 넣지 않는다.

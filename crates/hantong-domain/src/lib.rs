@@ -2,6 +2,7 @@
 
 //! Provider-neutral configuration and bounded time-zone interpretation.
 
+pub mod account_provisioning;
 pub mod accounts;
 pub mod config;
 pub mod mail_connection;

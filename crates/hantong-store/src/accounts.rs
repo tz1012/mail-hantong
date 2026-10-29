@@ -77,7 +77,7 @@ impl Store {
 }
 
 #[cfg(windows)]
-fn read_account(
+pub(super) fn read_account(
     row: &rusqlite::Row<'_>,
     include_capabilities: bool,
 ) -> rusqlite::Result<AccountSummary> {

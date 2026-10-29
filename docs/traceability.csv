@@ -1,5 +1,5 @@
 criterion_id,requirement_id,source_acceptance,priority,source_stage,stage_applicability,configuration,provider,card,card_status,test_id,test_kind,environment,result,evidence,reviewer,approved_scope
-ACC-01-AC01,ACC-01,"시험 구성인 5계정을 동시에 연결하며, 한 계정의 인증 실패가 다른 계정의 조회·동기화를 막지 않는다.",P0,1,review_required,unmapped,unmapped,M3-10,M3-10:not_started,,,,unimplemented,,,
+ACC-01-AC01,ACC-01,"시험 구성인 5계정을 동시에 연결하며, 한 계정의 인증 실패가 다른 계정의 조회·동기화를 막지 않는다.",P0,1,review_required,unmapped,unmapped,M3-10,M3-10:in_progress,,,,unimplemented,,,
 ACC-02-AC01,ACC-02,"잘못된 state, 만료된 로그인 요청, 중복 콜백은 거부된다. 앱에 포함되는 공개 클라이언트 값은 비밀로 간주하지 않는다.",P0,1,review_required,unmapped,unmapped,M3-01,M3-01:not_started,,,,unimplemented,,,
 ACC-02-AC02,ACC-02,"잘못된 state, 만료된 로그인 요청, 중복 콜백은 거부된다. 앱에 포함되는 공개 클라이언트 값은 비밀로 간주하지 않는다.",P0,1,review_required,unmapped,unmapped,M3-01,M3-01:not_started,,,,unimplemented,,,
 ACC-03-AC01,ACC-03,같은 계정을 다시 연결하면 중복 여부를 안내한다. 안정적 식별자가 없는 범용 서버는 서버·로그인 ID와 사용자 확인으로 재연결을 판별한다. 계정 A의 토큰으로 B의 메일이나 작업을 처리하는 시험은 전부 차단된다.,P0,1,review_required,unmapped,unmapped,M3-07,M3-07:not_started,,,,unimplemented,,,

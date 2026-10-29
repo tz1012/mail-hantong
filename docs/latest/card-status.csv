@@ -25,7 +25,7 @@ M1-10,진단 내보내기,in_progress,에이전트,M1-07,../contracts/diagnostic
 M1-12,CLI 영어 리소스와 도움말,in_progress,에이전트,M1-06,../../apps/hantong-cli/resources; ../../apps/hantong-cli/build.rs,,,영어 기본·한국어 리소스·빌드 검사 구현; 저장된 cli.language 설정 연동 남음
 M1-11,코어 자동 시작과 수명 관리,in_progress,에이전트,M1-01,../contracts/core-lifecycle.md; ../adr/ADR-021-core-lifecycle.md; ../../crates/hantong-platform/src/windows_autostart.rs; ../../crates/hantong-application/src/lifecycle.rs,,,격리 HKCU 등록/해제/소유 충돌 시험8개·재시작 예산4개 통과; 실제 supervisor/설치/알림/유지보수 연결 남음
 M1-99,다음 마일스톤 계획 갱신,not_started,사람,M1 나머지 전부,,,,
-M2-01,IMAP·SMTP 계정 설정 모델,in_progress,에이전트,"M1-04, M1-03, ADR-006",../contracts/mail-connection.md; ../contracts/mail-connection-store.md; ../adr/ADR-006-mail-libraries.md; ../../crates/hantong-domain/src/mail_connection.rs,,,독립 endpoint·v4 CAS/관측·결속 자격 증명·IMAP/SMTP TLS/AUTH 구현; Secrets 89개 대상 검사 통과; 435개 전체검사 및 Linux/macOS 교차 Clippy 통과; 계정 생성/설정 화면·공통 정책·사람 검토 남음
+M2-01,IMAP·SMTP 계정 설정 모델,in_progress,에이전트,"M1-04, M1-03, ADR-006",../contracts/mail-connection.md; ../contracts/mail-connection-store.md; ../adr/ADR-006-mail-libraries.md; ../../crates/hantong-domain/src/mail_connection.rs; ../contracts/account-provisioning.md; ../../crates/hantong-store/src/account_provisioning.rs,,,독립 endpoint·v4 CAS/관측·결속 자격 증명·IMAP/SMTP TLS/AUTH·새 계정 원자 저장 전이 구현; Domain 25·Store 109개 및 603개 전체/cross 검사 통과; 보호 입력/설정 UI·사람 검토 남음
 M2-02,CAPABILITY 탐지,in_progress,에이전트,M2-01,,,,인증 후 IMAP CAPABILITY snapshot 구현; rev1/rev2 모드·미지원 기능 대상 시험 통과; SMTP 확장·공통 ProviderCapabilities·대체 경로/UI 남음
 M2-03,폴더 동기화와 특수 폴더,not_started,에이전트,M2-02,,,,
 M2-04,UID 증분 동기화,not_started,에이전트,M2-03,,,,
@@ -44,7 +44,7 @@ M3-06,어댑터 계약 테스트 공통화,not_started,에이전트,"M3-04, M3-0
 M3-07,계정 격리,not_started,사람,M3-06,,,,
 M3-08,요청 예산과 백오프,not_started,에이전트,M3-04,,,,
 M3-09,통합 검색 문법과 explain,not_started,에이전트,"M2-08, M3-06",,,,
-M3-10,계정 관리 기본,not_started,에이전트,M3-07,,,,
+M3-10,계정 관리 기본,in_progress,에이전트,M3-07,PROGRESS.md; ../contracts/account-provisioning.md,,,M2-01 계정 생성 선행 공백에 ACC-01 새 IMAP account/endpoint 원자 저장 전이 우선 통합; 603개 전체/cross 검증. 카드 정의/선행 변경 없음; 추가 UI·재인증·해제·편집·5계정 실제 연결 미완료
 M3-11,조직 정책 오류 처리,not_started,에이전트,M3-03,,,,
 M3-99,다음 마일스톤 계획 갱신,not_started,사람,M3 나머지 전부,,,,
 M4-01,작업 원장과 lease,not_started,사람,M3-06,,,,

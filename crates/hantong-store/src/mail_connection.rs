@@ -203,7 +203,7 @@ fn valid_id(s: &str) -> bool {
         && s.bytes()
             .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-'))
 }
-fn input_account(s: &str) -> Result<(), ErrorCode> {
+pub(super) fn input_account(s: &str) -> Result<(), ErrorCode> {
     if valid_id(s) {
         Ok(())
     } else {
@@ -348,7 +348,7 @@ impl Store {
         }
     }
     #[cfg(windows)]
-    fn mail_transaction<T>(
+    pub(super) fn mail_transaction<T>(
         &self,
         behavior: TransactionBehavior,
         operation: impl FnOnce(&Transaction<'_>) -> Result<T, ErrorCode>,
@@ -376,7 +376,7 @@ fn text(row: &rusqlite::Row<'_>, index: usize, max: usize) -> rusqlite::Result<S
     Ok(value.to_owned())
 }
 #[cfg(windows)]
-fn check_account(tx: &Transaction<'_>, account: &str) -> Result<(), ErrorCode> {
+pub(super) fn check_account(tx: &Transaction<'_>, account: &str) -> Result<(), ErrorCode> {
     match db(tx
         .query_row(
             "SELECT provider FROM accounts WHERE account_id=?1",
@@ -393,13 +393,13 @@ fn check_account(tx: &Transaction<'_>, account: &str) -> Result<(), ErrorCode> {
     }
 }
 #[cfg(windows)]
-struct StoredEndpoint {
+pub(super) struct StoredEndpoint {
     version: u64,
     updated: i64,
-    json: serde_json::Value,
+    pub(super) json: serde_json::Value,
 }
 #[cfg(windows)]
-fn read_endpoint(
+pub(super) fn read_endpoint(
     tx: &Transaction<'_>,
     account: &str,
     kind: MailEndpointKind,
@@ -427,7 +427,7 @@ fn read_endpoint(
     }))
 }
 #[cfg(windows)]
-fn read_observation(
+pub(super) fn read_observation(
     tx: &Transaction<'_>,
     account: &str,
     kind: MailEndpointKind,
@@ -449,7 +449,7 @@ fn read_observation(
     }))
 }
 #[cfg(windows)]
-fn replay(
+pub(super) fn replay(
     tx: &Transaction<'_>,
     account: &str,
     kind: MailEndpointKind,

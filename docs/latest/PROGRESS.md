@@ -9,8 +9,8 @@
 | 항목 | 상태와 근거 |
 | --- | --- |
 | 기준 자료 | 사용자 승인으로 채택한 [Markdown 기준 요건](../requirements/README.md): 요건 170개·1단계 P0 144개·문장별 AC ID 341개. 작업 카드 정의 151개는 보존한다. |
-| 현재 카드 | **M1-06/M1-09 등록된 CLI 계정 읽기의 자동 검증 완료, 사람 검토 필요**. 인증·최신 권한·등록별 호출 한도·감사를 통과한 계정 목록을 영/한·JSON으로 출력한다. 다음은 새 IMAP 계정 생성/설정의 저장 전이다. |
-| 최신 검증 | **581개 통과**(문서 29·빌드 도구 62·Rust 490). 전체 build/test/fmt/Clippy·의존/문서/추적 검사 및 Linux x86_64·macOS arm64 교차 Clippy 통과. 2026-10-30 계정 읽기 snapshot의 로그·hash는 아래 기록에 있다. 실제 Mac 실행·전체 기능 완료를 뜻하지 않는다. |
+| 현재 카드 | **M2-01/ACC-01 새 IMAP 계정 저장 전이 자동 검증 완료, 사람 검토 필요**. 다음은 Secrets 소유 보호 입력과 네이티브 설정/확인 화면 연결이다. |
+| 최신 검증 | **603개 통과**(문서 29·빌드 도구 62·Rust 512). 전체 build/test/fmt/Clippy·의존/문서/추적 검사 및 Linux x86_64·macOS arm64 교차 Clippy 통과. 2026-10-30 새 IMAP 계정 저장 snapshot의 로그·hash는 아래 기록에 있다. 실제 Mac 실행·전체 기능 완료를 뜻하지 않는다. |
 | 제품 구현 | Rust workspace·영/한 CLI·Windows 코어/IPC·DPAPI·SQLCipher·설정 검증·감사·기본 등록/프로필·권한이 있는 계정 목록 조회·IMAP/SMTP TLS/AUTH probe·CI/추적 도구 구현. 발송은 차단하며 계정 생성 UI·실제 메일 수신·전체 GUI·설치 패키지는 미완료다. |
 | GitHub | 로컬 Git main 저장소를 초기화해 개발 기준선을 기록한다. 공개 저장소 주소·remote·릴리스·패키지 ID는 아직 없음. 빌드 산출물·실행 데이터·에이전트 상태는 제외한다. |
 | 새 사용자 요청 | 진행 상황을 이 문서에 누적하고, GitHub에서 명령어로 설치 및 개발을 시작할 수 있는 경로를 마련한다. 상세 범위는 [공개와 설치 계획](DISTRIBUTION.md)에 기록한다. |
@@ -541,3 +541,23 @@ private IMAP response gate는 초기 13개 실패 후 13개 통과했다. CRLF·
 검사 뒤 정상 CNG 서버 키 1개와 names hash `3B692D49F1D08F7D3442806CF17694CDC02AF36B44839930FC18EB9C83CE9D4D`를 확인했다. 실제 사용자 등록·Hello·메일 로그인/발송은 실행하지 않았다. 정책·보안 계약은 **[사람 검토 필요]**이며 전체 제품 AC 완료는 0개다. 새 설치에서는 아직 계정 생성 화면이 없어 전체 설정 과정이 완성되지 않았다.
 
 다음 개발의 병목은 새 accounts 행과 endpoint/비밀 저장의 중단 복구다. 현재 M2-01 설정 API는 기존 계정을 요구하지만 실제 추가는 계획상 ACC-01/M3-10에 있다. 카드 정의를 임의 변경하지 않고 이 선행 공백을 기록하며 필요한 저장 전이부터 구현한다. 기존 빈 scope 등록에 새 계정을 자동 허용하지 않고 별도의 사람 검토와 profile epoch 갱신으로 연결한다.
+
+계정 읽기 변경은 로컬 커밋 `74664e5`에 기록했다. 외부 push/공개/릴리스는 실행하지 않았다.
+
+## 2026-10-30 새 IMAP 계정 저장 전이 (진행 중)
+
+[account-provisioning 계약](../contracts/account-provisioning.md)을 작성했다. 기존 v4 operation 원장의 hash domain을 분리해 account+endpoint+원장을 원자 생성하고, exact replay는 고정 1/1 버전 receipt만 반환한다. 최초 표시명/번호 같은 변경 가능 snapshot은 replay하지 않는다. 동일 host/login은 신규 생성에서 거부하고 자동 합치기나 기존 계정 변경을 하지 않는다. DB migration·새 외부 패키지는 필요하지 않다.
+
+Domain `NewImapAccountDraft`는 ID·표시명·색상만 갖고 login을 이메일/제공자 식별자로 추정하지 않는다. 기존 표시값 검증을 재사용했다. 대상 4개 실패를 확인한 뒤 Domain 전체 **25개**와 Clippy 통과(`target/account-draft-red.log`, `target/account-draft-green.log`, `target/account-draft-clippy.log`). Store stage/첫 probe 결과 원자 전이는 별도 구현 중이며 새 변경 전체 검증 전이다. 직전 **581개 snapshot**을 현재 새 기능의 전체 검증으로 해석하지 않는다.
+
+이 단계는 M2-01의 실제 사용 가능 연결을 위한 account-provisioning 선행 통합이다. ACC-01/M3-10의 재인증·해제·표시 편집·5계정 연결 완료를 주장하지 않는다. 보호 입력 창·실제 로그인·기존 CLI 권한 갱신은 후속 연결이다.
+
+### 새 계정 저장 전이 최종 자동 검증 snapshot
+
+계정+endpoint+operation의 원자 생성, 고정 1/1 receipt 재처리, 첫 probe 다섯 결과의 account/endpoint/observation CAS를 구현했다. 중복 검사는 모든 기존 IMAP endpoint를 한 행씩 canonical/Domain 검증하며, 일치 이후의 손상 행도 검사한다. 계정 수 제한은 추가하지 않았다. 기존 계정·SMTP·식별자·권한을 보존한다. stage replay의 연결 대상 누락/손상과 중복 검사 보완은 실패 회귀로 확인했다.
+
+신규 Domain 4개·Store 18개가 추가됐다. Store 전체 **109개**, Domain **25개**와 각 Clippy 통과. 독립 재검토에서 HIGH/MEDIUM 결함은 발견되지 않았다. 이 결과를 사람 보안 승인으로 기록하지 않는다.
+
+`scripts/check_all.py` 종료 코드 **0**: **603개**(문서 29·빌드 도구 62·Rust 512), 전체 build/test/fmt/Clippy·아키텍처·기준 문서·추적 검사 통과. 로그 `target/account-provision-full-check.log`, SHA-256 `CD9E232BF17D86D27F6E508F3B2F39FEE0EC874C47374EABEB5D9DF9791A7D7C`, source hash `381000af9b8afd2743adb5ebdfbf3e69e5feef58d2931baa5328e955ab1d09a9`. Linux x86_64/macOS arm64 all-target Clippy도 종료 코드 0이다(`target/account-provision-linux-check.log`, `target/account-provision-macos-check.log`). 실제 Mac 실행은 아니다.
+
+검사 뒤 CNG 서버 키 **1개**, names hash `3B692D49F1D08F7D3442806CF17694CDC02AF36B44839930FC18EB9C83CE9D4D`가 유지됐다. 실제 사용자 프로필·Hello·계정 로그인·메일 발송은 실행하지 않았다. 계약은 **[사람 검토 필요]**, 전체 제품 AC 완료는 **0개**다. 현재 결과는 저장 전이이며 설정 UI와 실제 로그인 성공을 뜻하지 않는다. 다음은 Secrets 소유 password EDIT와 불투명 pending credential을 네이티브 설정/사람 확인 흐름에 연결한다.

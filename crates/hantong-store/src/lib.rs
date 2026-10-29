@@ -9,6 +9,7 @@
 use hantong_contracts::ErrorCode;
 use std::fmt;
 
+pub mod account_provisioning;
 mod accounts;
 mod audit;
 mod config;
