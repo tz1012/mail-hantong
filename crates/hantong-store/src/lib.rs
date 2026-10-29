@@ -13,6 +13,7 @@ pub mod account_provisioning;
 mod accounts;
 mod audit;
 mod config;
+pub mod imap_setup;
 pub mod mail_connection;
 mod registration_activation;
 mod registrations;
@@ -25,7 +26,7 @@ pub use registrations::{
 pub use server_identity::ServerIdentity;
 
 #[cfg(windows)]
-const CURRENT_SCHEMA_VERSION: u32 = 4;
+const CURRENT_SCHEMA_VERSION: u32 = 5;
 #[cfg(windows)]
 const DATABASE_FORMAT: &str = "mail-hantong";
 #[cfg(windows)]
@@ -34,6 +35,8 @@ const MAX_SETTING_KEY_BYTES: usize = 128;
 const MAX_SETTING_JSON_BYTES: usize = 64 * 1024;
 #[cfg(windows)]
 const SCHEMA: &str = include_str!("../../../docs/contracts/db-schema.sql");
+#[cfg(windows)]
+const SCHEMA_V4: &str = include_str!("../../../docs/contracts/migrations/schema-v4.sql");
 #[cfg(windows)]
 const SCHEMA_V1: &str = include_str!("../../../docs/contracts/migrations/schema-v1.sql");
 #[cfg(windows)]
@@ -46,6 +49,8 @@ const MIGRATION_V2_TO_V3: &str = include_str!("../../../docs/contracts/migration
 const SCHEMA_V3: &str = include_str!("../../../docs/contracts/migrations/schema-v3.sql");
 #[cfg(windows)]
 const MIGRATION_V3_TO_V4: &str = include_str!("../../../docs/contracts/migrations/003-to-004.sql");
+#[cfg(windows)]
+const MIGRATION_V4_TO_V5: &str = include_str!("../../../docs/contracts/migrations/004-to-005.sql");
 
 #[derive(Clone, Eq, PartialEq)]
 pub(crate) struct Setting {
@@ -81,7 +86,7 @@ impl fmt::Debug for Store {
 }
 
 impl Store {
-    /// Opens the fixed encrypted database, initializes a fresh v4 schema, or
+    /// Opens the fixed encrypted database, initializes a fresh v5 schema, or
     /// advances validated schemas one version at a time after each backup.
     pub fn open(
         data_root: impl AsRef<std::path::Path>,
@@ -224,6 +229,7 @@ impl Store {
                 (1, _) => Ok(SchemaState::V1),
                 (2, _) => Ok(SchemaState::V2),
                 (3, _) => Ok(SchemaState::V3),
+                (4, _) => Ok(SchemaState::V4),
                 (CURRENT_SCHEMA_VERSION, _) => Ok(SchemaState::Current),
                 _ => Ok(SchemaState::Unsupported),
             }
@@ -234,16 +240,23 @@ impl Store {
                 self.with_connection(|connection| validate_schema(connection, SCHEMA_V1, 1))?;
                 self.migrate_v1_to_v2()?;
                 self.migrate_v2_to_v3()?;
-                self.migrate_v3_to_v4()
+                self.migrate_v3_to_v4()?;
+                self.migrate_v4_to_v5()
             }
             SchemaState::V2 => {
                 self.with_connection(|connection| validate_schema(connection, SCHEMA_V2, 2))?;
                 self.migrate_v2_to_v3()?;
-                self.migrate_v3_to_v4()
+                self.migrate_v3_to_v4()?;
+                self.migrate_v4_to_v5()
             }
             SchemaState::V3 => {
                 self.with_connection(|connection| validate_schema(connection, SCHEMA_V3, 3))?;
-                self.migrate_v3_to_v4()
+                self.migrate_v3_to_v4()?;
+                self.migrate_v4_to_v5()
+            }
+            SchemaState::V4 => {
+                self.with_connection(|connection| validate_schema(connection, SCHEMA_V4, 4))?;
+                self.migrate_v4_to_v5()
             }
             SchemaState::Current => self.with_connection(|connection| {
                 validate_schema(connection, SCHEMA, CURRENT_SCHEMA_VERSION)
@@ -269,8 +282,15 @@ impl Store {
 
     #[cfg(windows)]
     fn migrate_v3_to_v4(&self) -> Result<(), ErrorCode> {
-        self.migrate_with_backup(3, CURRENT_SCHEMA_VERSION, SCHEMA, |connection| {
+        self.migrate_with_backup(3, 4, SCHEMA_V4, |connection| {
             connection.execute_batch(MIGRATION_V3_TO_V4)
+        })
+    }
+
+    #[cfg(windows)]
+    fn migrate_v4_to_v5(&self) -> Result<(), ErrorCode> {
+        self.migrate_with_backup(4, 5, SCHEMA, |connection| {
+            connection.execute_batch(MIGRATION_V4_TO_V5)
         })
     }
 
@@ -356,6 +376,7 @@ enum SchemaState {
     V1,
     V2,
     V3,
+    V4,
     Newer,
     Unsupported,
     Corrupt,
@@ -451,6 +472,9 @@ fn validate_schema(
         {
             return Err(rusqlite::Error::InvalidQuery);
         }
+    }
+    if schema_version >= 5 {
+        crate::imap_setup::validate_journal(connection)?;
     }
     Ok(())
 }
@@ -569,6 +593,47 @@ mod tests {
             }).unwrap();
         }
 
+        fn seed_v4(&self) {
+            let keyed = KeyedConnection::open(self.0.join("data"), self.0.join("keys")).unwrap();
+            keyed.with_connection(|connection| {
+                let transaction = rusqlite::Transaction::new_unchecked(
+                    connection,
+                    rusqlite::TransactionBehavior::Immediate,
+                )?;
+                transaction.execute_batch(SCHEMA_V4)?;
+                transaction.execute(
+                    "INSERT INTO app_metadata(singleton,database_format,schema_version,created_at_utc_ms,updated_at_utc_ms) VALUES(1,'mail-hantong',4,1,4)",
+                    [],
+                )?;
+                transaction.pragma_update(None, "user_version", 4)?;
+                transaction.execute(
+                    "INSERT INTO settings(setting_key,value_json,version,updated_at_utc_ms) VALUES('migration.fixture','{\"v\":4}',1,2)",
+                    [],
+                )?;
+                transaction.execute(
+                    "INSERT INTO accounts(account_id,provider,account_number,status,capabilities,granted_scopes,settings_version) VALUES('v4-account','imap',1,'connecting','[]','[]',1)",
+                    [],
+                )?;
+                transaction.execute(
+                    "INSERT INTO mail_connection_settings(account_id,endpoint_kind,settings_version,host,port,tls,login_name,authentication,updated_at_utc_ms) VALUES('v4-account','imap',1,'imap.example',993,'implicit_tls','user','app_password',3)",
+                    [],
+                )?;
+                transaction.execute(
+                    "INSERT INTO mail_connection_settings(account_id,endpoint_kind,settings_version,host,port,tls,login_name,authentication,updated_at_utc_ms) VALUES('v4-account','smtp',2,'smtp.example',587,'starttls_required','user','app_password',4)",
+                    [],
+                )?;
+                transaction.execute(
+                    "INSERT INTO mail_connection_observations(account_id,endpoint_kind,observed_settings_version,observation_version,state,observed_at_utc_ms) VALUES('v4-account','imap',1,1,'ready',5)",
+                    [],
+                )?;
+                transaction.execute(
+                    "INSERT INTO mail_connection_operations(operation_id,account_id,idempotency_key,endpoint_kind,payload_hash,expected_version,result_version,completed_at_utc_ms) VALUES('v4-operation','v4-account','v4-idempotency','smtp',?1,2,3,6)",
+                    [vec![6u8; 32]],
+                )?;
+                transaction.commit()
+            }).unwrap();
+        }
+
         fn seed_populated_v3(&self) {
             self.seed_v3();
             let keyed = self.keyed();
@@ -619,7 +684,7 @@ mod tests {
                     |row| row.get::<_, i64>(0)
                 ))
                 .unwrap(),
-            4
+            5
         );
         assert_eq!(
             keyed
@@ -629,7 +694,7 @@ mod tests {
                     |row| row.get::<_, i64>(0)
                 ))
                 .unwrap(),
-            15
+            17
         );
     }
 
@@ -667,7 +732,7 @@ mod tests {
                     |c| c.pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0))
                 )
                 .unwrap(),
-            4
+            5
         );
         assert_eq!(
             store
@@ -694,7 +759,7 @@ mod tests {
                     |c| c.pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0))
                 )
                 .unwrap(),
-            4
+            5
         );
         assert_eq!(store.with_connection(|c| c.query_row("SELECT retained_executions,retained_account_refs FROM audit_capacity WHERE singleton=1", [], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?)))).unwrap(), (0, 0));
     }
@@ -743,7 +808,7 @@ mod tests {
                     |c| c.pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0))
                 )
                 .unwrap(),
-            4
+            5
         );
         assert_eq!(
             store
@@ -831,7 +896,7 @@ mod tests {
             connection: fixture.keyed(),
         };
         assert_eq!(
-            store.migrate_with_backup(3, 4, SCHEMA, |connection| {
+            store.migrate_with_backup(3, 4, SCHEMA_V4, |connection| {
                 connection.execute_batch(MIGRATION_V3_TO_V4)?;
                 connection.execute_batch("CREATE TABLE unwanted_v4(x)")
             }),
@@ -934,7 +999,7 @@ mod tests {
                     |c| c.pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0))
                 )
                 .unwrap(),
-            4
+            5
         );
         assert_eq!(
             store
@@ -1291,5 +1356,138 @@ mod tests {
         let debug = format!("{setting:?}");
         assert!(!debug.contains("sentinel-setting-value"));
         assert!(!debug.contains("secret.setting"));
+    }
+
+    #[test]
+    fn setup01_v4_migrates_to_v5_preserving_setup_rows_and_writes_v4_backup() {
+        let fixture = Fixture::new();
+        fixture.seed_v4();
+        fn rows(
+            connection: &rusqlite::Connection,
+        ) -> rusqlite::Result<Vec<Vec<Vec<rusqlite::types::Value>>>> {
+            let mut snapshots = Vec::new();
+            for table in [
+                "settings",
+                "accounts",
+                "mail_connection_settings",
+                "mail_connection_observations",
+                "mail_connection_operations",
+            ] {
+                let mut statement =
+                    connection.prepare(&format!("SELECT * FROM {table} ORDER BY rowid"))?;
+                let columns = statement.column_count();
+                let table_rows = statement.query_map([], |row| {
+                    (0..columns)
+                        .map(|index| row.get(index))
+                        .collect::<rusqlite::Result<Vec<rusqlite::types::Value>>>()
+                })?;
+                snapshots.push(table_rows.collect::<rusqlite::Result<Vec<_>>>()?);
+            }
+            Ok(snapshots)
+        }
+        let before = fixture.keyed().with_connection(rows).unwrap();
+        let store = fixture.open().unwrap();
+        assert_eq!(before, store.with_connection(rows).unwrap());
+        assert_eq!(
+            store
+                .with_connection(
+                    |c| c.pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0))
+                )
+                .unwrap(),
+            5
+        );
+        assert!(fixture.0.join("data/backup-before-v4.db").is_file());
+    }
+
+    #[test]
+    fn setup01_v4_backup_conflict_preserves_source_and_does_not_start_v5() {
+        let fixture = Fixture::new();
+        fixture.seed_v4();
+        let path = fixture.0.join("data/backup-before-v4.db");
+        fs::write(&path, b"preserved-v4-backup").unwrap();
+        let source = fs::read(fixture.0.join("data/mail-hantong.db")).unwrap();
+        assert!(matches!(fixture.open(), Err(ErrorCode::Conflict)));
+        assert_eq!(fs::read(&path).unwrap(), b"preserved-v4-backup");
+        assert_eq!(
+            fs::read(fixture.0.join("data/mail-hantong.db")).unwrap(),
+            source
+        );
+        let keyed = fixture.keyed();
+        assert_eq!(
+            keyed
+                .with_connection(
+                    |c| c.pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0))
+                )
+                .unwrap(),
+            4
+        );
+    }
+
+    #[test]
+    fn setup01_malformed_v4_is_rejected_before_backup() {
+        let fixture = Fixture::new();
+        fixture.seed_v4();
+        fixture
+            .keyed()
+            .with_connection(|c| c.execute_batch("DROP INDEX accounts_number_idx"))
+            .unwrap();
+        assert!(matches!(fixture.open(), Err(ErrorCode::InternalError)));
+        assert!(!fixture.0.join("data/backup-before-v4.db").exists());
+    }
+
+    #[test]
+    fn setup01_v5_migration_rollback_preserves_v4_and_verified_backup() {
+        let fixture = Fixture::new();
+        fixture.seed_v4();
+        let store = Store {
+            connection: fixture.keyed(),
+        };
+        assert_eq!(
+            store.migrate_with_backup(4, 5, SCHEMA, |connection| {
+                connection.execute_batch(MIGRATION_V4_TO_V5)?;
+                connection.execute_batch("CREATE TABLE unwanted_v5(x)")?;
+                Ok(())
+            }),
+            Err(ErrorCode::InternalError)
+        );
+        assert_eq!(
+            store
+                .with_connection(
+                    |c| c.pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0))
+                )
+                .unwrap(),
+            4
+        );
+        assert!(fixture.0.join("data/backup-before-v4.db").is_file());
+        assert_eq!(
+            store
+                .with_connection(|c| c.query_row(
+                    "SELECT count(*) FROM sqlite_master WHERE name='unwanted_v5'",
+                    [],
+                    |r| r.get::<_, i64>(0)
+                ))
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            store
+                .with_connection(|c| c.query_row(
+                    "SELECT count(*) FROM sqlite_master WHERE name IN ('imap_setup_requests','imap_setup_events')",
+                    [],
+                    |r| r.get::<_, i64>(0)
+                ))
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            store
+                .with_connection(|c| c.query_row(
+                    "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='mail_connection_operations'",
+                    [],
+                    |r| r.get::<_, i64>(0)
+                ))
+                .unwrap(),
+            1
+        );
     }
 }

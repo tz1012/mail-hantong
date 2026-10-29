@@ -1,6 +1,6 @@
 # 암호화 데이터베이스 계약 v1
 
-상태: M1-04 구현 기준, **사람 보안 검토 필요**. 코어의 암호화 저장소 연결은 구현됐으며 메일 API 활성화와는 별개다. `SEC-01`, `SEC-02`와 [ADR-004](../adr/ADR-004-encrypted-storage.md)를 함께 적용한다.
+상태: M1-04 구현 기준 및 v5 설정 저널 확장, **사람 보안 검토 필요**. 코어의 암호화 저장소 연결은 구현됐으며 메일 API 활성화와는 별개다. `SEC-01`, `SEC-02`와 [ADR-004](../adr/ADR-004-encrypted-storage.md)를 함께 적용한다.
 
 ## 소유권과 공개 경계
 
@@ -29,7 +29,7 @@ DB 위치·파일명·백업 위치는 설치 구성에서 결정한 상수다. 
 
 ## 초기 물리 스키마 범위
 
-M1-04의 v1은 `app_metadata`, `settings`, `accounts` 세 테이블로 시작했다. v2는 [서버 신원·등록 저장 계약](registration-store.md)의 5개 테이블, v3는 [감사 기록 계약](audit.md)의 bounded append-only 감사 테이블을 추가했다. 현재 v4는 [메일 연결 설정 저장](mail-connection-store.md)의 endpoint 설정·관측·중복 방지 테이블을 추가한다. 지원하는 이전은 v1→v2→v3→v4 순서의 migration ladder이며 각 단계의 검증된 백업 이력은 그대로 보존한다. Message, Thread, Folder, Tag, Draft, Outbox, Approval, ScheduledSend 등은 해당 기능 카드에서 별도 마이그레이션한다. `accounts`에는 토큰·비밀번호·키를 넣지 않고 Secrets 참조만 후속 계약으로 연결한다.
+M1-04의 v1은 `app_metadata`, `settings`, `accounts` 세 테이블로 시작했다. v2는 [서버 신원·등록 저장 계약](registration-store.md)의 5개 테이블, v3는 [감사 기록 계약](audit.md)의 bounded append-only 감사 테이블을 추가했다. v4는 [메일 연결 설정 저장](mail-connection-store.md)의 endpoint 설정·관측·중복 방지 테이블, v5는 [설정 저널](imap-setup-journal.md)의 신규 요청·효과 이력 두 테이블을 추가한다. 지원하는 이전은 v1→v2→v3→v4→v5 순서의 migration ladder이며 각 단계의 검증된 백업 이력은 그대로 보존한다. Message, Thread, Folder, Tag, Draft, Outbox, Approval, ScheduledSend 등은 해당 기능 카드에서 별도 마이그레이션한다. `accounts`에는 토큰·비밀번호·키를 넣지 않고 Secrets 참조만 후속 계약으로 연결한다.
 
 `app_metadata`는 singleton 1행, `database_format='mail-hantong'`, 양의 `schema_version`, UTC epoch milliseconds를 가진다. 초기화 코드는 암호화 연결 검증 후 bound parameter로 이 행을 삽입한다. `settings`는 key/value JSON과 `version>=1`을 저장한다. 설정 변경은 `UPDATE ... WHERE setting_key=? AND version=?`의 CAS로만 수행하며 영향 행이 0이면 `CONFLICT`이고 기존 값을 보존한다. `accounts`는 기준 모델의 `account_id`, `provider`, `provider_subject`, `primary_address`, `display_name`, `color`, `account_number`, `status`, `capabilities`, `granted_scopes`, `settings_version`을 저장한다. provider는 `gmail|graph|imap|archive`만 허용하고, archive 계정은 동기화·발송하지 않는다. 배열 필드는 표준 JSON 배열이어야 하며 `provider_subject`가 있는 경우 공급자·주체 조합은 계정 내에서 유일해야 한다.
 
@@ -44,7 +44,7 @@ SQLite online backup API로 같은 키의 암호화 목적지를 만들고 재�
 - 빈 `cipher_version`, plaintext SQLite, 잘못된 키와 손상 DB가 모두 같은 비공개 오류로 실패하고 재생성·fallback하지 않음.
 - raw key 32바이트가 Secrets 내부에서만 정확히 67바이트로 변환되고 모든 버퍼가 지워짐.
 - 기존 DB의 키 누락, 루트·조상·leaf reparse, 조상 교체가 변경 없이 거부됨.
-- 신규 v4와 v1→v2→v3→v4 이전, metadata/user_version 일치, pragma 설정, settings CAS, account·감사·메일 설정 제약이 통과함.
+- 신규 v5와 v1→v2→v3→v4→v5 이전, metadata/user_version 일치, pragma 설정, settings CAS, account·감사·메일 설정·setup 이력 제약이 통과함.
 - 백업 실패 전 원본 무변경, migration 실패 rollback, 검증된 백업·키 보존, newer version 변경 없음.
 - 오류·로그·Debug에 키·SQL·경로·설정값·계정값·메일 원문이 없음.
 

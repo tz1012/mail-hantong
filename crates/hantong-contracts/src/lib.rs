@@ -5,6 +5,7 @@
 pub mod audit;
 pub mod auth;
 pub mod client;
+pub mod imap_setup;
 pub mod platform;
 pub mod registration;
 pub mod wire_hex;

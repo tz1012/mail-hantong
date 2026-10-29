@@ -132,85 +132,7 @@ impl Store {
         #[cfg(windows)]
         {
             self.mail_transaction(TransactionBehavior::Immediate, |tx| {
-                let receipt = StagedImapAccount {
-                    account_id: draft.account_id().to_owned(),
-                    account_version: 1,
-                    imap_version: 1,
-                };
-                if replay(tx, draft.account_id(), MailEndpointKind::Imap, mutation)?.is_some() {
-                    read_state(tx, draft.account_id()).map_err(|_| ErrorCode::InternalError)?;
-                    return Ok(receipt);
-                }
-                let existing: bool = db(tx.query_row(
-                    "SELECT EXISTS(SELECT 1 FROM accounts WHERE account_id=?1)",
-                    [draft.account_id()],
-                    |row| row.get(0),
-                ))?;
-                let duplicate = has_matching_imap_endpoint(tx, endpoint)?;
-                if existing || duplicate {
-                    return Err(ErrorCode::Conflict);
-                }
-                let operations: i64 = db(tx.query_row(
-                    "SELECT count(*) FROM mail_connection_operations",
-                    [],
-                    |row| row.get(0),
-                ))?;
-                if operations >= 100000 {
-                    return Err(ErrorCode::QuotaExceeded);
-                }
-                let maximum: Option<i64> = db(tx.query_row(
-                    "SELECT max(account_number) FROM accounts",
-                    [],
-                    |row| row.get(0),
-                ))?;
-                if maximum.is_some_and(|value| value <= 0) {
-                    return Err(ErrorCode::InternalError);
-                }
-                let number = maximum
-                    .unwrap_or(0)
-                    .checked_add(1)
-                    .ok_or(ErrorCode::Conflict)?;
-                let now = db(crate::utc_millis())?;
-                db(tx.execute(
-                    "INSERT INTO accounts(account_id,provider,provider_subject,primary_address,display_name,color,account_number,status,capabilities,granted_scopes,settings_version) VALUES(?1,'imap',NULL,NULL,?2,?3,?4,'connecting','[]','[]',1)",
-                    params![
-                        draft.account_id(),
-                        draft.display_name(),
-                        draft.color(),
-                        number,
-                    ],
-                ))?;
-                let tls = match endpoint.tls() {
-                    TlsMode::ImplicitTls => "implicit_tls",
-                    TlsMode::StarttlsRequired => "starttls_required",
-                };
-                let auth = match endpoint.authentication() {
-                    Authentication::AppPassword => "app_password",
-                    Authentication::Oauth2 => "oauth2",
-                };
-                db(tx.execute(
-                    "INSERT INTO mail_connection_settings(account_id,endpoint_kind,settings_version,host,port,tls,login_name,authentication,updated_at_utc_ms) VALUES(?1,'imap',1,?2,?3,?4,?5,?6,?7)",
-                    params![
-                        draft.account_id(),
-                        endpoint.host(),
-                        endpoint.port(),
-                        tls,
-                        endpoint.login_name(),
-                        auth,
-                        now,
-                    ],
-                ))?;
-                db(tx.execute(
-                    "INSERT INTO mail_connection_operations(operation_id,account_id,idempotency_key,endpoint_kind,payload_hash,expected_version,result_version,completed_at_utc_ms) VALUES(?1,?2,?3,'imap',?4,0,1,?5)",
-                    params![
-                        mutation.operation_id(),
-                        draft.account_id(),
-                        mutation.idempotency_key(),
-                        mutation.payload_hash().as_slice(),
-                        now,
-                    ],
-                ))?;
-                Ok(receipt)
+                stage_account(tx, draft, endpoint, mutation, db(crate::utc_millis())?)
             })
         }
     }
@@ -240,58 +162,15 @@ impl Store {
         #[cfg(windows)]
         {
             self.mail_transaction(TransactionBehavior::Immediate, |tx| {
-                let current = read_state(tx, account_id)?;
-                if current.status != AccountStatus::Connecting
-                    || current.account_version != expected_account_version
-                    || current.endpoint.settings_version() != expected_endpoint_version
-                    || current.observation.as_ref().map_or(0, |value| value.observation_version)
-                        != expected_observation_version
-                {
-                    return Err(ErrorCode::Conflict);
-                }
-                let now = db(crate::utc_millis())?;
-                if current.observation.as_ref().is_some_and(|value| now < value.observed_at_utc_ms) {
-                    return Err(ErrorCode::InternalError);
-                }
-                let (status, observed, capabilities) = match outcome {
-                    InitialImapProbeOutcome::Ready(values) => ("ready", "ready", values.as_slice()),
-                    InitialImapProbeOutcome::AuthRequired => ("reauth_required", "auth_required", &[][..]),
-                    InitialImapProbeOutcome::TlsFailed => ("error", "tls_failed", &[][..]),
-                    InitialImapProbeOutcome::Offline => ("offline", "offline", &[][..]),
-                    InitialImapProbeOutcome::Error => ("error", "error", &[][..]),
-                };
-                let capabilities = serde_json::to_string(capabilities)
-                    .map_err(|_| ErrorCode::InternalError)?;
-                let next_account = expected_account_version + 1;
-                let next_observation = expected_observation_version + 1;
-                let changed = db(tx.execute(
-                    "UPDATE accounts SET status=?2,capabilities=?3,settings_version=?4 WHERE account_id=?1 AND provider='imap' AND status='connecting' AND settings_version=?5",
-                    params![
-                        account_id,
-                        status,
-                        capabilities,
-                        next_account as i64,
-                        expected_account_version as i64,
-                    ],
-                ))?;
-                if changed != 1 {
-                    return Err(ErrorCode::Conflict);
-                }
-                db(tx.execute(
-                    "INSERT INTO mail_connection_observations(account_id,endpoint_kind,observed_settings_version,observation_version,state,observed_at_utc_ms) VALUES(?1,'imap',?2,?3,?4,?5) ON CONFLICT(account_id,endpoint_kind) DO UPDATE SET observed_settings_version=excluded.observed_settings_version,observation_version=excluded.observation_version,state=excluded.state,observed_at_utc_ms=excluded.observed_at_utc_ms",
-                    params![
-                        account_id,
-                        expected_endpoint_version as i64,
-                        next_observation as i64,
-                        observed,
-                        now,
-                    ],
-                ))?;
-                Ok(InitialImapProbeReceipt {
-                    account_version: next_account,
-                    endpoint_version: expected_endpoint_version,
-                    observation_version: next_observation,
-                })
+                finish_probe(
+                    tx,
+                    account_id,
+                    expected_account_version,
+                    expected_endpoint_version,
+                    expected_observation_version,
+                    outcome,
+                    db(crate::utc_millis())?,
+                )
             })
         }
     }
@@ -314,7 +193,164 @@ impl Store {
     }
 }
 
-fn validate_capabilities(values: &[String]) -> Result<(), ErrorCode> {
+#[cfg(windows)]
+pub(super) fn stage_account(
+    tx: &Transaction<'_>,
+    draft: &NewImapAccountDraft,
+    endpoint: &ImapEndpointConfig,
+    mutation: &MailMutation,
+    now: i64,
+) -> Result<StagedImapAccount, ErrorCode> {
+    let receipt = StagedImapAccount {
+        account_id: draft.account_id().to_owned(),
+        account_version: 1,
+        imap_version: 1,
+    };
+    if replay(tx, draft.account_id(), MailEndpointKind::Imap, mutation)?.is_some() {
+        read_state(tx, draft.account_id()).map_err(|_| ErrorCode::InternalError)?;
+        return Ok(receipt);
+    }
+    let existing: bool = db(tx.query_row(
+        "SELECT EXISTS(SELECT 1 FROM accounts WHERE account_id=?1)",
+        [draft.account_id()],
+        |row| row.get(0),
+    ))?;
+    let duplicate = has_matching_imap_endpoint(tx, endpoint)?;
+    if existing || duplicate {
+        return Err(ErrorCode::Conflict);
+    }
+    let operations: i64 = db(tx.query_row(
+        "SELECT count(*) FROM mail_connection_operations",
+        [],
+        |row| row.get(0),
+    ))?;
+    if operations >= 100000 {
+        return Err(ErrorCode::QuotaExceeded);
+    }
+    let maximum: Option<i64> = db(tx.query_row(
+        "SELECT max(account_number) FROM accounts",
+        [],
+        |row| row.get(0),
+    ))?;
+    if maximum.is_some_and(|value| value <= 0) {
+        return Err(ErrorCode::InternalError);
+    }
+    let number = maximum
+        .unwrap_or(0)
+        .checked_add(1)
+        .ok_or(ErrorCode::Conflict)?;
+    db(tx.execute(
+        "INSERT INTO accounts(account_id,provider,provider_subject,primary_address,display_name,color,account_number,status,capabilities,granted_scopes,settings_version) VALUES(?1,'imap',NULL,NULL,?2,?3,?4,'connecting','[]','[]',1)",
+        params![
+            draft.account_id(),
+            draft.display_name(),
+            draft.color(),
+            number,
+        ],
+    ))?;
+    let tls = match endpoint.tls() {
+        TlsMode::ImplicitTls => "implicit_tls",
+        TlsMode::StarttlsRequired => "starttls_required",
+    };
+    let auth = match endpoint.authentication() {
+        Authentication::AppPassword => "app_password",
+        Authentication::Oauth2 => "oauth2",
+    };
+    db(tx.execute(
+        "INSERT INTO mail_connection_settings(account_id,endpoint_kind,settings_version,host,port,tls,login_name,authentication,updated_at_utc_ms) VALUES(?1,'imap',1,?2,?3,?4,?5,?6,?7)",
+        params![
+            draft.account_id(),
+            endpoint.host(),
+            endpoint.port(),
+            tls,
+            endpoint.login_name(),
+            auth,
+            now,
+        ],
+    ))?;
+    db(tx.execute(
+        "INSERT INTO mail_connection_operations(operation_id,account_id,idempotency_key,endpoint_kind,payload_hash,expected_version,result_version,completed_at_utc_ms) VALUES(?1,?2,?3,'imap',?4,0,1,?5)",
+        params![
+            mutation.operation_id(),
+            draft.account_id(),
+            mutation.idempotency_key(),
+            mutation.payload_hash().as_slice(),
+            now,
+        ],
+    ))?;
+    Ok(receipt)
+}
+
+#[cfg(windows)]
+pub(super) fn finish_probe(
+    tx: &Transaction<'_>,
+    account_id: &str,
+    expected_account_version: u64,
+    expected_endpoint_version: u64,
+    expected_observation_version: u64,
+    outcome: &InitialImapProbeOutcome,
+    now: i64,
+) -> Result<InitialImapProbeReceipt, ErrorCode> {
+    let current = read_state(tx, account_id)?;
+    if current.status != AccountStatus::Connecting
+        || current.account_version != expected_account_version
+        || current.endpoint.settings_version() != expected_endpoint_version
+        || current
+            .observation
+            .as_ref()
+            .map_or(0, |value| value.observation_version)
+            != expected_observation_version
+    {
+        return Err(ErrorCode::Conflict);
+    }
+    if current
+        .observation
+        .as_ref()
+        .is_some_and(|value| now < value.observed_at_utc_ms)
+    {
+        return Err(ErrorCode::InternalError);
+    }
+    let (status, observed, capabilities) = match outcome {
+        InitialImapProbeOutcome::Ready(values) => ("ready", "ready", values.as_slice()),
+        InitialImapProbeOutcome::AuthRequired => ("reauth_required", "auth_required", &[][..]),
+        InitialImapProbeOutcome::TlsFailed => ("error", "tls_failed", &[][..]),
+        InitialImapProbeOutcome::Offline => ("offline", "offline", &[][..]),
+        InitialImapProbeOutcome::Error => ("error", "error", &[][..]),
+    };
+    let capabilities = serde_json::to_string(capabilities).map_err(|_| ErrorCode::InternalError)?;
+    let next_account = expected_account_version + 1;
+    let next_observation = expected_observation_version + 1;
+    let changed = db(tx.execute(
+        "UPDATE accounts SET status=?2,capabilities=?3,settings_version=?4 WHERE account_id=?1 AND provider='imap' AND status='connecting' AND settings_version=?5",
+        params![
+            account_id,
+            status,
+            capabilities,
+            next_account as i64,
+            expected_account_version as i64,
+        ],
+    ))?;
+    if changed != 1 {
+        return Err(ErrorCode::Conflict);
+    }
+    db(tx.execute(
+        "INSERT INTO mail_connection_observations(account_id,endpoint_kind,observed_settings_version,observation_version,state,observed_at_utc_ms) VALUES(?1,'imap',?2,?3,?4,?5) ON CONFLICT(account_id,endpoint_kind) DO UPDATE SET observed_settings_version=excluded.observed_settings_version,observation_version=excluded.observation_version,state=excluded.state,observed_at_utc_ms=excluded.observed_at_utc_ms",
+        params![
+            account_id,
+            expected_endpoint_version as i64,
+            next_observation as i64,
+            observed,
+            now,
+        ],
+    ))?;
+    Ok(InitialImapProbeReceipt {
+        account_version: next_account,
+        endpoint_version: expected_endpoint_version,
+        observation_version: next_observation,
+    })
+}
+
+pub(super) fn validate_capabilities(values: &[String]) -> Result<(), ErrorCode> {
     const KNOWN: [&str; 6] = [
         "imap.condstore",
         "imap.idle",
@@ -375,7 +411,10 @@ fn read_imap_endpoint(
 }
 
 #[cfg(windows)]
-fn read_state(tx: &Transaction<'_>, account_id: &str) -> Result<ImapProvisioningState, ErrorCode> {
+pub(super) fn read_state(
+    tx: &Transaction<'_>,
+    account_id: &str,
+) -> Result<ImapProvisioningState, ErrorCode> {
     check_account(tx, account_id)?;
     let (status, version, capabilities) = db(tx.query_row(
         "SELECT account_id,provider,primary_address,display_name,color,account_number,status,capabilities,settings_version FROM accounts WHERE account_id=?1",

@@ -1,0 +1,40 @@
+# 신규 IMAP 설정 요청·진행 조회 v1
+
+상태: SETUP-01/SETUP-06·INST-05의 Core/CLI 연결 준비 계약, **사람 검토 필요**. codec 구현만으로 외부 실행을 활성화하지 않는다. [설정 저널](imap-setup-journal.md)과 native 확인·Core 효과 순서의 통합 검증 뒤 기존 로컬 pipe에 연결한다.
+
+## 요청과 형식
+
+기존 OS 동일 사용자/로그온 검증, 엄격한 JSON-RPC 중복 필드 거부, 5초 I/O timeout, 응답 ACK를 재사용한다. 설정 요청/응답 frame은 16KiB다. 현재 인증용 최초 frame 상한 128KiB와 구분하며 dispatcher는 원본 설정 frame 길이를 callback 전에 검사해야 한다. Value 재직렬화 길이만으로 원래 공백을 포함한 한도를 검사했다고 주장하지 않는다. 새 계정 연결은 아직 등록된 CLI scope가 없을 수 있으므로 별도 bootstrap 작업이다. mail/auth 도구로 위장하지 않으며 등록과 설정이 같은 단일 UI 작업 queue/gate를 사용한다.
+
+| 메서드 | params의 필수 전체 필드 |
+| --- | --- |
+| `setup.imap.request` | protocol_version=1, display_name(string 또는 null), color(string 또는 null), host(string), port(정수), tls(`implicit_tls` 또는 `starttls_required`), login_name(string) |
+| `setup.imap.status` | protocol_version=1, request_id(0이 아닌 32-byte lowercase hex) |
+
+account ID, operation/idempotency ID, 설정 version, hash, authentication은 Core가 정한다. 이 경로의 인증은 app_password로 고정한다. password/token/secret, approved, scope, endpoint version, 임의 경로 등 추가 필드는 INVALID_INPUT이다. CLI 인자·stdin·환경변수로 비밀을 받지 않는다. null/누락/중복/알 수 없는 필드, object 대신 배열, float/bool 정수, 잘못된 enum을 거부한다. 다른 protocol 정수는 VERSION_MISMATCH다. `setup.imap.complete/approve/execute`는 사람 확인을 대체하지 못하고 HUMAN_STEP_REQUIRED로 거부하며 callback을 호출하지 않는다. 아직 구현하지 않은 resume/reset 메서드는 INVALID_INPUT이며 성공을 가장하지 않는다.
+
+전송 DTO는 target의 byte/문자 한도를 먼저 검사한다. display_name은 선택값, 존재하면 1..128문자/512 UTF-8 bytes이고 공백만·제어 문자를 거부한다. color는 선택 `#RRGGBB`. host 1..253 ASCII bytes, 공백·제어 문자 금지. port=1..65535, login=1..320문자/1280 bytes, 공백만·제어 문자 금지이며 정상 앞뒤 공백은 trim하지 않는다. DNS/IP 정규화와 실제 endpoint 유효성은 Core가 Domain의 기존 검증을 다시 적용한다. host를 임의 URL/명령으로 실행하지 않는다. DTO는 데이터이며 Debug에서 target을 숨긴다.
+
+## 응답
+
+성공 result는 `protocol_version:1`, `request_id`, 양의 i64 `expires_at_utc_ms`, `state`, `next_action` 다섯 필드만 포함한다. 모든 필드는 필수다. account/endpoint/login/operation/hash/nonce/Hello 결과/비밀은 반환하지 않는다. request와 status 응답은 인증 또는 승인 증거가 아니다. status는 요청 ID를 정확히 대조한다.
+
+| state | 허용 next_action |
+| --- | --- |
+| pending | helper_required |
+| connecting | wait |
+| ready | client_registration_required 또는 profile_scope_review_required |
+| auth_required, tls_failed, offline | resume_required |
+| error | resume_required 또는 new_request_required |
+| denied, cancelled, expired | new_request_required |
+| interrupted | resume_required |
+
+`helper_required`는 사람이 native 확인 화면에서 이어갈 차례이며 완료 표시가 아니다. 실행 중인 job이 없는데 진행 중처럼 wait를 반환하지 않는다. 시작 뒤 중단된 작업은 interrupted/resume_required로 표시하며 이 slice에서는 자동 재접속하거나 resume 성공을 반환하지 않는다. ready여도 기존 CLI scope를 자동 확장하지 않으며 별도 등록/범위 검토를 안내한다. 일반 오류 envelope는 기존 안정 code와 같은 고정 message만 포함한다. 내부 원문이나 extra data는 반환하지 않는다.
+
+client decoder는 원본 bytes의 strict map visitor로 envelope/result/error의 중복·알 수 없는 필드·필수 누락·positional array·모순되는 state/action·잘못된 ID/버전/시각을 거부한다. result와 error를 동시에 받거나 RPC ID/status request ID가 다르면 CORE_UNAVAILABLE다. 정상 안정 오류 code만 그대로 반환한다. 16KiB 초과/빈/trailing data/잘못된 UTF-8은 거부한다.
+
+## Core 연결 순서와 검증
+
+Core는 Domain 검증 후 자체 난수 ID와 stage hash로 저널 request를 만들고 단일 native queue에 넣는다. 요청/조회 I/O는 사람 확인을 기다리지 않는다. native plan/review request ID·대상·nonce를 결속하고 Verified 결과를 소비한 후 journal stage → credential 시작 commit → Secrets 저장 → 반환 commit → probe 시작 commit → Secrets 일회 probe → account/observation/journal 결과 commit 순서다. 어느 경계의 오류도 다음 효과 실행으로 바꾸지 않는다. status는 조회와 만료된 review의 제한된 종료만 가능하며 UI/credential/network를 실행하지 않는다.
+
+codec 시험은 정상 roundtrip과 중복/누락/unknown/타입/경계/권한 필드, callback 0, 응답 privacy·상태/행동 조합·target Debug 마스킹을 검사한다. 기존 등록 codec/인증/mail 동작을 유지한다. 실제 pipe routing·단일 UI queue·Core 효과 순서·CLI 영/한 출력은 이후 통합 시험으로 구분하며, 실제 사용자 계정/Hello/메일은 개발 시험에 사용하지 않는다.

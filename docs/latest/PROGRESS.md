@@ -9,8 +9,8 @@
 | 항목 | 상태와 근거 |
 | --- | --- |
 | 기준 자료 | 사용자 승인으로 채택한 [Markdown 기준 요건](../requirements/README.md): 요건 170개·1단계 P0 144개·문장별 AC ID 341개. 작업 카드 정의 151개는 보존한다. |
-| 현재 카드 | **M2-01/INST-05 보호 입력·새 계정 확인 자동 검증 완료, 보안 사람 검토 전**. 다음은 SETUP-01 전용 요청/효과 저널과 Core 연결이다. |
-| 최신 검증 | **637개 통과**(문서 29·빌드 도구 63·Rust 545). 전체 build/test/fmt/Clippy·의존/문서/추적 검사 및 Linux x86_64·macOS arm64 교차 Clippy 통과. 2026-10-30 보호 입력·설정 확인 snapshot의 로그·hash는 아래 기록에 있다. 실제 Mac 실행·전체 기능 완료를 뜻하지 않는다. |
+| 현재 카드 | **M9-01/SETUP-01 Core·CLI 설정 연결 진행**. DB v5 설정 저널·이전·준비 codec의 전체 검증을 마쳤고 같은 UI 대기열과 실행 경계를 연결한다. |
+| 최신 검증 | **675개 통과**(문서 29·빌드 도구 63·Rust 583). 전체 build/test/fmt/Clippy·의존/문서/추적 검사 및 Linux x86_64·macOS arm64 교차 Clippy 통과. 2026-10-30 설정 저널·준비 codec snapshot의 로그·hash는 아래 기록에 있다. 실제 Mac 실행·전체 기능 완료를 뜻하지 않는다. |
 | 제품 구현 | Rust workspace·영/한 CLI·Windows 코어/IPC·DPAPI·SQLCipher·설정 검증·감사·기본 등록/프로필·권한이 있는 계정 목록 조회·IMAP/SMTP TLS/AUTH probe·CI/추적 도구 구현. 발송은 차단하며 계정 생성 UI·실제 메일 수신·전체 GUI·설치 패키지는 미완료다. |
 | GitHub | 로컬 Git main 저장소를 초기화해 개발 기준선을 기록한다. 공개 저장소 주소·remote·릴리스·패키지 ID는 아직 없음. 빌드 산출물·실행 데이터·에이전트 상태는 제외한다. |
 | 새 사용자 요청 | 진행 상황을 이 문서에 누적하고, GitHub에서 명령어로 설치 및 개발을 시작할 수 있는 경로를 마련한다. 상세 범위는 [공개와 설치 계획](DISTRIBUTION.md)에 기록한다. |
@@ -586,3 +586,20 @@ Secrets 보호 입력은 실제 숨김 Win32 fixture 14개와 순수 경계 4개
 검사 뒤 CNG 제품 키는 기존 서버 **1개**, names hash `3B692D49F1D08F7D3442806CF17694CDC02AF36B44839930FC18EB9C83CE9D4D`로 유지됐다. 새 제3자 package/version은 없다. 실제 사용자 창·Hello·비밀번호·계정 로그인·메일 발송은 실행하지 않았다. Secrets/승인/계약은 **[사람 검토 필요]**, 보이는 창·IME·접근성은 수동 검증 전이고 전체 제품 AC 완료는 **0개**다. 현재 UI primitive는 아직 CLI/Core 설정 실행 경로에 노출하지 않았다.
 
 M5-06의 보호 입력 선행 부분을 진행 중으로 기록한다. 카드 정의와 선행은 보존하고 SMTP 입력·CLI/Core 종단·수동 검토가 남았음을 표시한다. 다음은 v4 보존 → v5 setup request/event 저널 → Core·CLI 연결 순서다.
+
+## 2026-10-30 신규 IMAP 설정 요청·효과 저널 (진행 중)
+
+보호 입력·설정 확인은 로컬 커밋 `48c9162`로 기록했다. [setup 저널 계약](../contracts/imap-setup-journal.md)을 먼저 정하고 v4 DDL을 보존했다. v5는 신규 요청과 이벤트만 추가하며 기존 계정에 가짜 확인 이력을 만들지 않는다. request/account stage/event 및 첫 probe/account/observation/event를 각각 원자 commit하고, credential 저장과 probe 시작 기록은 외부 효과보다 먼저 commit한다. 시작 기록 재호출은 성공으로 재전달하지 않는다.
+
+이번 slice는 신규 요청 단일 시도·조회·중단 위치 보존이다. 기존 계정 reset/명시 resume와 공개 CLI/Core 활성화는 저장 경계를 검증한 다음 구현한다. 시작 시 기록을 검증할 뿐 비밀을 덮어쓰거나 서버에 자동 접속하지 않는다. 과거 **637개 snapshot은 직전 커밋의 증거**이며 v5 진행 중 변경의 전체 통과를 뜻하지 않는다. 관련 카드 정의/선행·기준 요건은 유지하고 마법사 선행 부분만 개발한다.
+
+
+### 설정 저널·준비 codec 최종 자동 검증 snapshot
+
+v4 DDL을 고정하고 v5 요청/이벤트 테이블을 추가했다. 이전은 실제 설정·계정·endpoint·observation·operation 값 보존, 백업 충돌/손상 거부, 변경 뒤 스키마 검증 실패의 rollback을 검사한다. 초기 저널 행동 시험 14개는 stub에서 실패한 뒤 통과했다. 기존 operation ID 충돌과 stage 시각 연결을 보완했으며, 시작 이벤트의 중복 CAS는 성공을 재전달하지 않는다. 독립 검토에서 추가 HIGH/MEDIUM 결함은 발견되지 않았다.
+
+Contracts/client/server의 요청·조회 codec과 등록/설정 공용 dispatcher를 준비했다. 실제 pipe/Core/CLI는 아직 이 신규 메서드를 실행하지 않는다. 원본 frame 한도·callback 가족/요청 ID 일치·권한 주입 거부·strict object·상태/다음 행동·오류 구분을 검사한다. root가 유효한 전체 positional array와 오류 코드 단정으로 시험을 강화했다. dispatcher는 stub에서 5개 실패를 확인한 뒤 5개 통과했다.
+
+`scripts/check_all.py` 종료 코드 **0**: **675개**(문서 29·빌드 도구 63·Rust 583), build/test/fmt/Clippy·아키텍처·기준 문서·추적 검사 통과. 로그 `target/setup-journal-full-check.log`, SHA-256 `95A4E621EB4822DD42156BF0853B2312778EA799C7B7612AC3CAB4162E2CB6D8`, source hash `1aee6f912cc08159d9ffda59ba6da2f6c344a736038dfffb5ec1e9195b324793`. Linux x86_64/macOS arm64 all-target Clippy도 종료 코드 0이다(`target/setup-journal-linux-check.log`, `target/setup-journal-macos-check.log`). 실제 Mac 실행은 아니다.
+
+검사 뒤 제품 CNG 키 **1개**, names hash `3B692D49F1D08F7D3442806CF17694CDC02AF36B44839930FC18EB9C83CE9D4D`가 유지됐다. 실제 사용자 DB 이전·프로필 등록·Hello·계정 로그인·메일은 실행하지 않았다. 계약/보안은 **[사람 검토 필요]**, 전체 제품 AC 완료는 계속 **0개**다. M9-01은 선행 저널 구현으로 진행 중이며 카드 정의/선행은 보존했다. 다음은 Core와 CLI 연결 및 중단된 설정의 명시 재개다.

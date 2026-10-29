@@ -15,6 +15,7 @@ pub use trusted_profile::{AuthenticatedDefaultProfile, authenticate_default, ver
 
 pub mod accounts;
 pub mod auth_wire;
+pub mod imap_setup;
 pub mod profile;
 pub mod registration;
 
