@@ -99,6 +99,8 @@ enum Scenario {
     NoAuth,
     Login,
     Oauth,
+    UnknownExtension,
+    PreTlsOnlyFeature,
     RejectAuth,
     BadAuthCode,
     RejectQuit,
@@ -142,7 +144,9 @@ async fn conversation<S: AsyncRead + AsyncWrite + Unpin>(
         Scenario::NoAuth => b"250-fixture\r\n250 SIZE 1024\r\n",
         Scenario::Login => b"250-fixture\r\n250 AUTH LOGIN\r\n",
         Scenario::Oauth => b"250-fixture\r\n250 AUTH XOAUTH2\r\n",
-        _ => b"250-fixture\r\n250 AUTH PLAIN LOGIN XOAUTH2\r\n",
+        Scenario::UnknownExtension => b"250-fixture\r\n250-X-PRIVATE-RAW\r\n250-8BITMIME\r\n250-SMTPUTF8\r\n250 AUTH PLAIN LOGIN XOAUTH2\r\n",
+        Scenario::PreTlsOnlyFeature => b"250-fixture\r\n250-SMTPUTF8\r\n250 AUTH PLAIN\r\n",
+        _ => b"250-fixture\r\n250-8BITMIME\r\n250-SMTPUTF8\r\n250 AUTH PLAIN LOGIN XOAUTH2\r\n",
     };
     reader.get_mut().write_all(caps).await?;
     let auth = command(&mut reader, &log).await?;
@@ -202,6 +206,8 @@ async fn server(
         );
         let caps: &[u8] = if mode == Scenario::NoStarttls {
             b"250 AUTH PLAIN\r\n"
+        } else if mode == Scenario::PreTlsOnlyFeature {
+            b"250-STARTTLS\r\n250-8BITMIME\r\n250 AUTH PLAIN\r\n"
         } else {
             b"250-STARTTLS\r\n250 AUTH PLAIN\r\n"
         };
@@ -315,7 +321,20 @@ async fn run(
 async fn ext03_m201_tls_modes_verify_before_bound_unseal_and_auth() {
     for tls in [TlsMode::ImplicitTls, TlsMode::StarttlsRequired] {
         let out = run(tls, Scenario::Good, "localhost", true, Some(1)).await;
-        assert_eq!(out.result.unwrap().settings_version(), 1);
+        let receipt = out.result.unwrap();
+        assert_eq!(receipt.settings_version(), 1);
+        assert_eq!(
+            receipt.capabilities().to_ids(),
+            [
+                "smtp.8bitmime",
+                "smtp.auth.login",
+                "smtp.auth.plain",
+                "smtp.auth.xoauth2",
+                "smtp.smtputf8"
+            ]
+        );
+        assert_eq!(receipt.authenticated_mechanism(), SmtpAuthMechanism::Plain);
+        assert!(!format!("{receipt:?}").contains("fixture"));
         assert_eq!(out.accesses, 1);
         let expected: Vec<&[u8]> = if tls == TlsMode::ImplicitTls {
             vec![
@@ -391,7 +410,13 @@ async fn sec01_m201_bound_envelope_and_mechanism_checked_before_auth() {
 async fn ext01_m201_login_and_xoauth2_use_one_selected_mechanism() {
     for mode in [Scenario::Login, Scenario::Oauth] {
         let out = run(TlsMode::ImplicitTls, mode, "localhost", true, Some(1)).await;
-        assert!(out.result.is_ok());
+        let receipt = out.result.unwrap();
+        let expected = if mode == Scenario::Login {
+            SmtpAuthMechanism::Login
+        } else {
+            SmtpAuthMechanism::Xoauth2
+        };
+        assert_eq!(receipt.authenticated_mechanism(), expected);
         assert_eq!(out.accesses, 1);
         assert_eq!(
             out.transcript
@@ -401,6 +426,50 @@ async fn ext01_m201_login_and_xoauth2_use_one_selected_mechanism() {
             1
         );
     }
+}
+
+#[tokio::test]
+async fn ext05_m202_unknown_server_extensions_are_not_exposed() {
+    let out = run(
+        TlsMode::ImplicitTls,
+        Scenario::UnknownExtension,
+        "localhost",
+        true,
+        Some(1),
+    )
+    .await;
+    let receipt = out.result.unwrap();
+    assert_eq!(
+        receipt.capabilities().to_ids(),
+        [
+            "smtp.8bitmime",
+            "smtp.auth.login",
+            "smtp.auth.plain",
+            "smtp.auth.xoauth2",
+            "smtp.smtputf8"
+        ]
+    );
+    let debug = format!("{receipt:?}");
+    assert!(!debug.contains("PRIVATE"));
+    assert!(!debug.contains("RAW"));
+}
+
+#[tokio::test]
+async fn ext05_m202_pre_tls_only_feature_is_not_carried_into_receipt() {
+    let out = run(
+        TlsMode::StarttlsRequired,
+        Scenario::PreTlsOnlyFeature,
+        "localhost",
+        true,
+        Some(1),
+    )
+    .await;
+    let receipt = out.result.unwrap();
+    assert_eq!(
+        receipt.capabilities().to_ids(),
+        ["smtp.auth.plain", "smtp.smtputf8"]
+    );
+    assert!(!receipt.capabilities().eight_bit_mime());
 }
 #[tokio::test]
 async fn ext03_m201_auth_and_quit_responses_must_have_exact_success_codes() {

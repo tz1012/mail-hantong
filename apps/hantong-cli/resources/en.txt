@@ -1,5 +1,13 @@
 usage=Usage: hantong [--lang en|ko] [--json] [--no-input] <command>
 commands=Commands: core status, clients register, clients status <request_id>, clients verify, clients refresh, clients refresh-status <refresh_id>, setup imap request, setup imap status <request_id>, setup imap resume <request_id>, accounts list, send execute, approvals get
+folder_name=Folder
+folder_refresh_submitted=Folder refresh submitted.
+folder_refresh_status=Folder refresh status received.
+folder_refresh_execution_id=Execution ID
+folder_refresh_state=State
+folder_refresh_generation=Generation
+folder_refresh_error=Error
+folder_refresh_result=Result
 core_status=Core status: transport is available; mail is not ready; client is not authenticated.
 core_unavailable=The core is unavailable.
 capability_unsupported=This capability is not supported on this operating system.

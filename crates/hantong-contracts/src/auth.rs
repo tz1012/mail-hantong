@@ -542,3 +542,43 @@ mod tests {
         assert!(!debug.contains("S-1-5"));
     }
 }
+
+/// The initial default CLI grant remains deliberately minimal.
+pub fn default_cli_legacy_tools() -> Vec<String> {
+    vec!["mail.accounts.list".into()]
+}
+
+/// Exact read-only tool set presented by an explicit native scope upgrade.
+pub fn default_cli_folder_tools() -> Vec<String> {
+    vec![
+        "mail.accounts.list".into(),
+        "mail.folders.list".into(),
+        "mail.folders.refresh".into(),
+    ]
+}
+
+/// Validates the canonical order as well as membership; never widens scope.
+pub fn is_supported_default_cli_toolset(tools: &[String]) -> bool {
+    tools == default_cli_legacy_tools() || tools == default_cli_folder_tools()
+}
+
+#[cfg(test)]
+mod default_toolset_tests {
+    use super::*;
+    #[test]
+    fn cli15_default_toolsets_reject_partial_duplicate_and_send_grants() {
+        assert!(is_supported_default_cli_toolset(&default_cli_legacy_tools()));
+        assert!(is_supported_default_cli_toolset(&default_cli_folder_tools()));
+        for tools in [
+            vec![],
+            vec!["mail.folders.list".into()],
+            vec!["mail.accounts.list".into(), "mail.send.execute".into()],
+            vec!["mail.accounts.list".into(), "mail.accounts.list".into()],
+        ] {
+            assert!(!is_supported_default_cli_toolset(&tools));
+        }
+        let mut reversed = default_cli_folder_tools();
+        reversed.reverse();
+        assert!(!is_supported_default_cli_toolset(&reversed));
+    }
+}

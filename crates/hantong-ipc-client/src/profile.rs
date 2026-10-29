@@ -1,10 +1,13 @@
 //! Parsed public profile data, never evidence of trust or human authorization.
-use hantong_contracts::{ErrorCode, auth::RequestedScope, wire_hex};
+use hantong_contracts::{
+    ErrorCode,
+    auth::{RequestedScope, default_cli_legacy_tools, is_supported_default_cli_toolset},
+    wire_hex,
+};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
 pub const MAX_PROFILE_BYTES: usize = 32 * 1024;
-const TOOL: &str = "mail.accounts.list";
 const PUBLIC_KEY_HEADER: &[u8; 8] = b"ECS1\x20\0\0\0";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -64,6 +67,23 @@ impl ParsedClientProfile {
         profile_epoch: u64,
         account_ids: Vec<String>,
     ) -> Result<Self, ErrorCode> {
+        Self::new_with_scope(
+            registration_id,
+            client_key_id,
+            client_public_key,
+            server_public_key,
+            profile_epoch,
+            RequestedScope::new(account_ids, default_cli_legacy_tools())?,
+        )
+    }
+    pub fn new_with_scope(
+        registration_id: [u8; 16],
+        client_key_id: [u8; 32],
+        client_public_key: [u8; 72],
+        server_public_key: [u8; 72],
+        profile_epoch: u64,
+        scope: RequestedScope,
+    ) -> Result<Self, ErrorCode> {
         if registration_id == [0; 16]
             || client_key_id == [0; 32]
             || !(1..=i64::MAX as u64).contains(&profile_epoch)
@@ -72,7 +92,9 @@ impl ParsedClientProfile {
         {
             return Err(ErrorCode::InvalidInput);
         }
-        let scope = RequestedScope::new(account_ids, vec![TOOL.to_owned()])?;
+        if !is_supported_default_cli_toolset(scope.tools()) {
+            return Err(ErrorCode::InvalidInput);
+        }
         Ok(Self {
             registration_id,
             client_key_id,
@@ -100,18 +122,17 @@ impl ParsedClientProfile {
             || ProfileSelector::parse(&value.profile).is_err()
             || !value.read_only
             || value.requests_per_minute != 60
-            || value.tool_ids.len() != 1
-            || value.tool_ids[0] != TOOL
+            || !is_supported_default_cli_toolset(&value.tool_ids)
         {
             return Err(ErrorCode::InvalidInput);
         }
-        Self::new(
+        Self::new_with_scope(
             wire_hex::decode_fixed(&value.registration_id)?,
             wire_hex::decode_fixed(&value.client_key_id)?,
             wire_hex::decode_fixed(&value.client_public_key)?,
             wire_hex::decode_fixed(&value.server_public_key)?,
             value.profile_epoch,
-            value.account_ids,
+            RequestedScope::new(value.account_ids, value.tool_ids)?,
         )
     }
     /// Deterministic public-data encoding; publishing it is a separate operation.
@@ -221,6 +242,27 @@ mod tests {
         let again = ParsedClientProfile::from_json(&bytes).unwrap();
         assert_eq!(profile, again);
         assert_eq!(bytes, again.to_json().unwrap());
+    }
+    #[test]
+    fn cli15_profile_roundtrip_accepts_only_canonical_folder_scope() {
+        let mut input = value();
+        input["tool_ids"] = json!([
+            "mail.accounts.list",
+            "mail.folders.list",
+            "mail.folders.refresh"
+        ]);
+        let profile = parse(&input).unwrap();
+        assert_eq!(
+            profile.scope().tools(),
+            &[
+                "mail.accounts.list",
+                "mail.folders.list",
+                "mail.folders.refresh"
+            ]
+        );
+        let mut partial = input;
+        partial["tool_ids"] = json!(["mail.accounts.list", "mail.folders.list"]);
+        invalid(&partial);
     }
     #[test]
     fn acc03_profile_empty_scope_means_no_accounts() {

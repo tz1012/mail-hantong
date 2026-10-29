@@ -1,3 +1,25 @@
+# 기본 CLI 계정·도구 범위 갱신 v2
+
+상태: 2026-10-30 v9 폴더 도구 활성화 선행 계약, **사람 검토 필요**. 아래 v2 절은 v1의 계정만 갱신/도구 고정 부분을 대체한다. 그 외 TTL·phase·stage/publish/activate·파일 보호·중단 복구 규칙은 유지한다.
+
+## v2 공통 인터페이스와 의미
+
+`hantong_contracts::auth::{default_cli_legacy_tools,default_cli_folder_tools,is_supported_default_cli_toolset}`을 단일 도구 목록 기준으로 사용한다. legacy는 정확히 `["mail.accounts.list"]`, folder는 정렬된 `["mail.accounts.list","mail.folders.list","mail.folders.refresh"]`다. 최초 등록은 legacy로 유지한다. 명시 `hantong clients refresh`만 현재 등록 가능한 계정과 folder 도구를 native 확인으로 요청한다. 기존 사용자에게 자동 grant·자동 확인을 추가하지 않는다. v1 profile의 구조는 그대로이며 tool_ids는 이 두 정확한 집합만 허용한다. partial/arbitrary/send 도구나 folder→legacy downgrade는 거부한다.
+
+v8 DDL을 보존하고 v9 migration이 `client_scope_refreshes`만 재구축한다. 기존 열/행/ID/hash/시각/phase는 보존하며 `hash_version=1`, `base_tools_json`과 `target_tools_json`은 canonical legacy 배열로 보강한다. 새 열은 NOT NULL이고 이 legacy 기본값을 유지한다. hash_version은 1 또는 2다. 양쪽 tools는 두 canonical JSON 중 하나이며 v1은 둘 다 legacy와 서로 다른 계정 목록이어야 한다. v2는 전체 계정+도구 범위가 달라야 하고 downgrade를 금지한다. 기존 unique indexes와 FK·수치/phase 제약은 보존한다.
+
+새 row는 hash_version2다. `mail-hantong.cli-scope-refresh.v2\0` 뒤에 v1과 동일한 identity/version/epoch/key/pin/time 및 old/target accounts encoding을 넣은 뒤 old tools, target tools를 각각 count(u32BE), 각 ASCII 문자열 length(u32BE)+bytes로 덧붙여 SHA-256한다. v1은 기존 domain/encoding/hash를 그대로 검증한다. v2와 v1을 추정하지 않고 저장 hash_version에 따라 엄격히 검증한다. 과거 성공 이력의 계정뿐 아니라 도구도 다음 base와 연결되어야 한다.
+
+`CliScopeRefresh`는 target_scope() 및 target_tools()를 제공하고 target_accounts()는 유지한다. `create_cli_scope_refresh_with_scope(refresh_id, RequestedScope, expected_server_public_key_hash)`를 추가한다. 기존 accounts-only create는 legacy 범위를 만드는 호환 wrapper로 유지하되 downgrade를 허용하지 않는다. 실제 Core의 새 요청은 with_scope와 folder 목록을 사용한다. stage는 기존 accounts/tools grant를 모두 유지하며 epoch를 올려 비활성화한다. activate는 두 grant 표를 target_scope와 정확히 같게 원자 교체한다. 도구 INSERT 실패도 전부 rollback한다.
+
+`ScopeRefreshReview::new_with_tools`는 기존 new 인자 중 old/target accounts 다음에 old/target tools를 받는다(등록 ID는 기존 16 bytes). new는 legacy wrapper다. 전체 snapshot Eq에 tools를 포함하고 영/한 summary는 old/target 도구 전체를 표시한다. 같은 accounts라도 tools가 다르면 유효하며 완전히 같은 scope만 거부한다. native opaque proof는 기존 전체 snapshot 결속을 재사용한다. v1 pending/staged의 명시 재개/복구는 기존 legacy 결정을 보존하고 새 권한으로 바꾸지 않는다.
+
+`ParsedClientProfile::new_with_scope`는 기존 new의 accounts 대신 RequestedScope를 받는다. new는 legacy wrapper이고 schema_version1 유지. strict parser는 두 정확한 정렬 toolset만 허용한다. `AuthenticatedDefaultProfile`은 전체 scope를 보존하고 scope()/tools() 및 기존 accounts() getter를 제공한다. Core는 이전 프로필을 base.scope, 새 프로필을 target_scope로 만들어 재개 때도 동일 bytes를 발행한다.
+
+시험은 v1 history/hash 보존, tool-only upgrade, no-op/downgrade/arbitrary 거부, stage의 old grants 유지, 두 grant 표 활성화와 rollback, 전체 이력 결속, 영/한 도구 표시/변조, legacy/folder 프로필 strict decode, Core 중단 복구와 최초등록 legacy 보존을 포함한다. 실제 사용자 profile/Hello/계정은 사용하지 않는다.
+
+---
+
 # 기본 CLI 계정 범위 갱신 v1
 
 상태: M6-02/CLI-15·MCP-03·SEC-03의 한정된 후속 구현 계약, **사람 검토 필요**. 2026-10-30 연속 개발 위임에 따라 작성한다. 최초 등록·IMAP 설정은 기존 계약을 유지한다. 이 범위는 default CLI의 읽기 전용 `mail.accounts.list` 계정 목록만 갱신한다. 도구·쓰기 권한·키·서버 pin·철회 복구는 추가하지 않는다.

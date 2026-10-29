@@ -1,4 +1,4 @@
--- mail-hantong encrypted schema v8
+-- mail-hantong encrypted schema v9
 -- This file is consumed only after SQLCipher keying and connection checks.
 -- It never creates a plaintext fallback database.
 -- Connection policy pragmas are applied by KeyedConnection before this DDL
@@ -262,7 +262,7 @@ CREATE TABLE client_scope_refreshes (
     base_profile_epoch INTEGER NOT NULL CHECK (base_profile_epoch BETWEEN 1 AND 9223372036854775806),
     target_profile_epoch INTEGER NOT NULL CHECK (target_profile_epoch=base_profile_epoch+1),
     base_accounts_json TEXT NOT NULL CHECK (json_valid(base_accounts_json) AND json_type(base_accounts_json)='array' AND json_array_length(base_accounts_json)<=128),
-    target_accounts_json TEXT NOT NULL CHECK (json_valid(target_accounts_json) AND json_type(target_accounts_json)='array' AND json_array_length(target_accounts_json)<=128 AND target_accounts_json<>base_accounts_json),
+    target_accounts_json TEXT NOT NULL CHECK (json_valid(target_accounts_json) AND json_type(target_accounts_json)='array' AND json_array_length(target_accounts_json)<=128),
     client_public_key_hash BLOB NOT NULL CHECK (length(client_public_key_hash)=32 AND client_public_key_hash<>zeroblob(32)),
     server_public_key_hash BLOB NOT NULL CHECK (length(server_public_key_hash)=32 AND server_public_key_hash<>zeroblob(32)),
     payload_hash BLOB NOT NULL CHECK (length(payload_hash)=32 AND payload_hash<>zeroblob(32)),
@@ -273,6 +273,12 @@ CREATE TABLE client_scope_refreshes (
     updated_at_utc_ms INTEGER NOT NULL CHECK (updated_at_utc_ms>=created_at_utc_ms),
     decided_at_utc_ms INTEGER,
     activated_at_utc_ms INTEGER,
+    hash_version INTEGER NOT NULL DEFAULT 1 CHECK (hash_version IN (1,2)),
+    base_tools_json TEXT NOT NULL DEFAULT '["mail.accounts.list"]' CHECK (base_tools_json IN ('["mail.accounts.list"]','["mail.accounts.list","mail.folders.list","mail.folders.refresh"]')),
+    target_tools_json TEXT NOT NULL DEFAULT '["mail.accounts.list"]' CHECK (target_tools_json IN ('["mail.accounts.list"]','["mail.accounts.list","mail.folders.list","mail.folders.refresh"]')),
+    CHECK (base_accounts_json<>target_accounts_json OR base_tools_json<>target_tools_json),
+    CHECK (hash_version=2 OR (base_tools_json='["mail.accounts.list"]' AND target_tools_json='["mail.accounts.list"]')),
+    CHECK (base_tools_json='["mail.accounts.list"]' OR target_tools_json='["mail.accounts.list","mail.folders.list","mail.folders.refresh"]'),
     CHECK (
         (phase='pending' AND version=1 AND updated_at_utc_ms=created_at_utc_ms AND decided_at_utc_ms IS NULL AND activated_at_utc_ms IS NULL)
         OR (phase IN ('staged','denied') AND version=2 AND decided_at_utc_ms IS NOT NULL AND decided_at_utc_ms>=created_at_utc_ms AND decided_at_utc_ms<expires_at_utc_ms AND updated_at_utc_ms=decided_at_utc_ms AND activated_at_utc_ms IS NULL)

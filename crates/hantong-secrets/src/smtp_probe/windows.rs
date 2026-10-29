@@ -1,11 +1,14 @@
 use super::*;
 use crate::mail_transport::{BoundedAsyncStream, LettreTokioStream, StarttlsReadGate};
-use hantong_domain::mail_connection::{Authentication, TlsMode};
+use hantong_domain::{
+    mail_connection::{Authentication, TlsMode},
+    smtp_capabilities::{SmtpAuthMechanism, SmtpCapabilities, SmtpFeature},
+};
 use lettre::transport::smtp::{
     authentication::{Credentials, Mechanism},
     client::{AsyncSmtpConnection, TlsParameters},
     commands::Quit,
-    extension::ClientId,
+    extension::{ClientId, Extension, ServerInfo},
 };
 use rustls::{ClientConfig, pki_types::ServerName};
 use rustls_platform_verifier::BuilderVerifierExt;
@@ -172,6 +175,7 @@ where
     validate_account(source.account).map_err(|_| MailProbeError::InvalidAccount)?;
     let VerifiedSmtpConnection(mut connection) =
         verified_connection(source.endpoint, stream, peer, tls).await?;
+    let capabilities = map_capabilities(connection.server_info());
     let candidates: &[Mechanism] = match source.endpoint.authentication() {
         Authentication::AppPassword => &[Mechanism::Plain, Mechanism::Login],
         Authentication::Oauth2 => &[Mechanism::Xoauth2],
@@ -181,6 +185,11 @@ where
         .copied()
         .find(|m| connection.server_info().supports_auth_mechanism(*m))
         .ok_or(MailProbeError::MechanismUnsupported)?;
+    let authenticated_mechanism = match mechanism {
+        Mechanism::Plain => SmtpAuthMechanism::Plain,
+        Mechanism::Login => SmtpAuthMechanism::Login,
+        Mechanism::Xoauth2 => SmtpAuthMechanism::Xoauth2,
+    };
     let auth = {
         let secret = source.credential()?;
         let credentials = Credentials::new(
@@ -208,5 +217,27 @@ where
     }
     Ok(SmtpProbeReceipt {
         settings_version: source.endpoint.settings_version(),
+        capabilities,
+        authenticated_mechanism,
     })
+}
+
+fn map_capabilities(info: &ServerInfo) -> SmtpCapabilities {
+    let mut features = Vec::new();
+    if info.supports_feature(Extension::EightBitMime) {
+        features.push(SmtpFeature::EightBitMime);
+    }
+    if info.supports_auth_mechanism(Mechanism::Login) {
+        features.push(SmtpFeature::AuthLogin);
+    }
+    if info.supports_auth_mechanism(Mechanism::Plain) {
+        features.push(SmtpFeature::AuthPlain);
+    }
+    if info.supports_auth_mechanism(Mechanism::Xoauth2) {
+        features.push(SmtpFeature::AuthXoauth2);
+    }
+    if info.supports_feature(Extension::SmtpUtfEight) {
+        features.push(SmtpFeature::SmtpUtf8);
+    }
+    SmtpCapabilities::from_features(features)
 }

@@ -8,6 +8,7 @@ pub mod capabilities;
 pub mod config;
 pub mod mail_connection;
 pub mod mailboxes;
+pub mod smtp_capabilities;
 pub(crate) mod timezone;
 
 #[cfg(test)]

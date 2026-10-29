@@ -1,10 +1,10 @@
-# SMTP 일회성 연결 검사 v1
+# SMTP 일회성 연결 검사 v2
 
 상태: 2026-10-30 M2-01 구현 기준, EXT-01·EXT-03·SEC-01. 연속 개발 위임으로 작성하며 사람 보안 검토는 별도다. GUI·IPC·정책 허용과 연결하기 전의 Secrets 내부 서비스다.
 
 ## 공개 경계
 
-`SecretStore::probe_smtp(account_id, &SmtpEndpointConfig)`는 비동기 일회성 연결 검사다. 성공하면 입력 settings_version만 담은 `SmtpProbeReceipt`를 반환한다. 실제 서버 응답, 주소, 자격 증명, socket, connection/session, 임의 command, callback은 반환하거나 받지 않는다. 발송·승인 권한을 만들지 않는다. MAIL/RCPT/DATA와 메시지 제출은 구현하지 않는다. IMAP은 별도 후속 서비스다.
+`SecretStore::probe_smtp(account_id, &SmtpEndpointConfig)`는 비동기 일회성 연결 검사다. 성공하면 입력 settings_version, 고정 `SmtpCapabilities`, 실제 선택되어 성공한 `SmtpAuthMechanism`을 담은 `SmtpProbeReceipt`를 반환한다. 실제 서버 응답, 주소, 자격 증명, socket, connection/session, 임의 command, callback은 반환하거나 받지 않는다. 발송·승인 권한을 만들지 않는다. MAIL/RCPT/DATA와 메시지 제출은 구현하지 않는다. IMAP은 별도 후속 서비스다.
 
 Windows의 고정 OS 신뢰 검증기를 사용한다. 테스트 CA·임의 transport·timeout·credential loader를 caller가 주입하는 제품 API는 없다. 다른 OS는 현재 UnsupportedPlatform이다. 신뢰 UI와 공통 정책을 거치는 Core 연결은 후속이며 이 메서드의 존재만으로 CLI/MCP에서 사용할 수 없다.
 
@@ -34,3 +34,9 @@ DPAPI·자체 plaintext buffer는 폐기 때 지운다. Lettre Credentials와 SA
 ## 검증
 
 제품과 동일한 private 실행 함수를 in-memory Duplex + Rustls 공개 test CA로 검사한다. 테스트 전용 transport/CA seam은 private이고 `cfg(test)`에서만 호출한다. Windows DPAPI fixture로 실제 envelope를 만들며 marker는 실제 unseal 진입 시 측정한다. 정상 두 TLS 방식·인증서/hostname 실패·STARTTLS 미지원/거절·malformed TLS·무한/대형 응답·deadline·미지원 AUTH·stale envelope·AUTH 실패의 무재시도·QUIT 실패·정확한 command 순서·발송 command 부재를 확인한다. 실제 인터넷/메일 계정은 사용하지 않는다.
+
+## SMTP 기능 관측 (M2-02/EXT-05)
+
+receipt의 `capabilities()`와 `authenticated_mechanism()`은 [서버 기능 계약](provider-capabilities.md)의 Domain 타입을 반환한다. 기능의 원천은 TLS가 완료된 뒤의 EHLO이며 AUTH 이전 관측이다. STARTTLS 이전 EHLO는 포함하지 않는다. implicit TLS도 보호된 연결의 EHLO만 사용한다. AUTH 후 EHLO를 추가하지 않으며 AUTH235와 QUIT221까지 성공해야 receipt를 반환한다. 인증 방식은 app_password의 PLAIN 우선/LOGIN 차선 또는 oauth2의 XOAUTH2 중 실제 선택한 하나다. 기능 광고와 실제 선택 결과는 구별한다.
+
+Secrets private 함수가 Lettre ServerInfo를 고정 enum으로 옮긴다. 서버 name/banner, 알 수 없는 extension, raw EHLO/응답은 반환·저장·Debug/로그에 포함하지 않는다. STARTTLS는 연결 수립 방식이므로 최종 기능 목록에 포함하지 않는다. Store의 IMAP accounts.capabilities에 SMTP ID를 섞지 않으며 Core/persistence 연결은 별도 계약으로 진행한다. 이 관측은 MAIL/RCPT/DATA나 발송 권한을 추가하지 않는다. 기존 모든 TLS·deadline·비밀 접근 순서·무재시도 경계를 유지한다.

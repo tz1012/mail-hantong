@@ -1,6 +1,7 @@
 //! One-shot SMTP diagnostics; no mail submission or public transport access.
 use crate::{SecretError, SecretStore, validate_account};
 use hantong_domain::mail_connection::SmtpEndpointConfig;
+pub use hantong_domain::smtp_capabilities::{SmtpAuthMechanism, SmtpCapabilities};
 use std::fmt;
 
 #[cfg(all(windows, test))]
@@ -40,10 +41,18 @@ impl std::error::Error for MailProbeError {}
 #[derive(Debug, Eq, PartialEq)]
 pub struct SmtpProbeReceipt {
     settings_version: u64,
+    capabilities: SmtpCapabilities,
+    authenticated_mechanism: SmtpAuthMechanism,
 }
 impl SmtpProbeReceipt {
     pub fn settings_version(&self) -> u64 {
         self.settings_version
+    }
+    pub fn capabilities(&self) -> &SmtpCapabilities {
+        &self.capabilities
+    }
+    pub fn authenticated_mechanism(&self) -> SmtpAuthMechanism {
+        self.authenticated_mechanism
     }
 }
 

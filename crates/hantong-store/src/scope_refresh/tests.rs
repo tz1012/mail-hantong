@@ -63,6 +63,15 @@ impl Fixture {
             )
             .unwrap()
     }
+    fn create_scope(&self, id: u8, accounts: &[&str], tools: Vec<String>) -> CliScopeRefresh {
+        self.store()
+            .create_cli_scope_refresh_with_scope(
+                [id; 32],
+                RequestedScope::new(accounts.iter().map(|v| (*v).into()).collect(), tools).unwrap(),
+                pin(),
+            )
+            .unwrap()
+    }
     fn reopen(&mut self) {
         drop(self.store.take());
         self.store = Some(Store::open(self.root.join("data"), self.root.join("keys")).unwrap());
@@ -128,7 +137,11 @@ fn snapshot(f: &Fixture) -> Vec<Vec<Vec<rusqlite::types::Value>>> {
 }
 fn independent_hash(r: &CliScopeRefresh) -> [u8; 32] {
     let b = &r.base_registration;
-    let mut bytes = b"mail-hantong.cli-scope-refresh.v1\0".to_vec();
+    let mut bytes = if r.hash_version == 1 {
+        b"mail-hantong.cli-scope-refresh.v1\0".to_vec()
+    } else {
+        b"mail-hantong.cli-scope-refresh.v2\0".to_vec()
+    };
     bytes.extend_from_slice(&r.refresh_id);
     bytes.extend_from_slice(&b.registration_id);
     bytes.extend_from_slice(&b.request_id);
@@ -143,6 +156,15 @@ fn independent_hash(r: &CliScopeRefresh) -> [u8; 32] {
         for value in values {
             bytes.extend_from_slice(&(value.len() as u32).to_be_bytes());
             bytes.extend_from_slice(value.as_bytes());
+        }
+    }
+    if r.hash_version == 2 {
+        for values in [b.scope.tools(), r.target_tools.as_slice()] {
+            bytes.extend_from_slice(&(values.len() as u32).to_be_bytes());
+            for value in values {
+                bytes.extend_from_slice(&(value.len() as u32).to_be_bytes());
+                bytes.extend_from_slice(value.as_bytes());
+            }
         }
     }
     hantong_platform::sha256(&bytes).unwrap()
@@ -194,6 +216,145 @@ fn cli15_refresh_pending_is_data_only_and_hash_is_exact() {
     assert!(
         !format!("{:?}", f.store().load_cli_scope_refresh([2; 32])).contains(DEFAULT_CLI_LABEL)
     );
+}
+
+#[test]
+fn cli15_refresh_folder_tool_upgrade_binds_scope_and_replaces_tools_atomically() {
+    let f = Fixture::new();
+    let pending = f.create_scope(
+        9,
+        &["a"],
+        hantong_contracts::auth::default_cli_folder_tools(),
+    );
+    assert_eq!(
+        pending.base_registration().scope.tools(),
+        &["mail.accounts.list"]
+    );
+    assert_eq!(
+        pending.target_tools(),
+        hantong_contracts::auth::default_cli_folder_tools()
+    );
+    assert_eq!(
+        pending.target_scope().tools(),
+        hantong_contracts::auth::default_cli_folder_tools()
+    );
+    let staged = f.store().stage_cli_scope_refresh(&pending).unwrap();
+    assert_eq!(
+        f.store()
+            .load_default_cli_registration()
+            .unwrap()
+            .unwrap()
+            .scope
+            .tools(),
+        &["mail.accounts.list"]
+    );
+    let active = f.store().activate_cli_scope_refresh(&staged).unwrap();
+    assert_eq!(
+        active.scope.tools(),
+        hantong_contracts::auth::default_cli_folder_tools().as_slice()
+    );
+    f.store()
+        .with_connection(|c| {
+            let mut stmt =
+                c.prepare("SELECT tool_id FROM client_registration_tools ORDER BY tool_id")?;
+            let tools: Vec<String> = stmt
+                .query_map([], |row| row.get(0))?
+                .collect::<rusqlite::Result<_>>()?;
+            assert_eq!(tools, hantong_contracts::auth::default_cli_folder_tools());
+            Ok(())
+        })
+        .unwrap();
+}
+
+#[test]
+fn cli15_refresh_rejects_folder_downgrade_noop_and_tampered_tool_history() {
+    let f = Fixture::new();
+    let pending = f.create_scope(
+        10,
+        &["a"],
+        hantong_contracts::auth::default_cli_folder_tools(),
+    );
+    assert_eq!(
+        f.store()
+            .create_cli_scope_refresh_with_scope([11; 32], pending.target_scope(), pin()),
+        Err(ErrorCode::Conflict)
+    );
+    let staged = f.store().stage_cli_scope_refresh(&pending).unwrap();
+    f.store().activate_cli_scope_refresh(&staged).unwrap();
+    assert_eq!(
+        f.store()
+            .create_cli_scope_refresh([12; 32], vec!["a".into()], pin()),
+        Err(ErrorCode::Conflict)
+    );
+    sql(
+        &f,
+        "PRAGMA ignore_check_constraints=ON; UPDATE client_scope_refreshes SET target_tools_json='[\"mail.accounts.list\"]'",
+    );
+    assert_eq!(
+        f.store().load_cli_scope_refresh([10; 32]),
+        Err(ErrorCode::InternalError)
+    );
+    let f = Fixture::new();
+    let pending = f.create_scope(
+        13,
+        &["a"],
+        hantong_contracts::auth::default_cli_folder_tools(),
+    );
+    sql(
+        &f,
+        "PRAGMA ignore_check_constraints=ON; UPDATE client_scope_refreshes SET hash_version=1",
+    );
+    assert_eq!(
+        f.store().load_cli_scope_refresh(*pending.refresh_id()),
+        Err(ErrorCode::InternalError)
+    );
+}
+
+#[test]
+fn cli15_refresh_tool_grant_insert_failure_rolls_back_everything() {
+    let f = Fixture::new();
+    let pending = f.create_scope(
+        14,
+        &["a"],
+        hantong_contracts::auth::default_cli_folder_tools(),
+    );
+    let staged = f.store().stage_cli_scope_refresh(&pending).unwrap();
+    sql(
+        &f,
+        "CREATE TRIGGER fail_tool_insert BEFORE INSERT ON client_registration_tools BEGIN SELECT RAISE(ABORT,'synthetic'); END;",
+    );
+    let before = snapshot(&f);
+    assert_eq!(
+        f.store().activate_cli_scope_refresh(&staged),
+        Err(ErrorCode::InternalError)
+    );
+    assert_eq!(snapshot(&f), before);
+}
+
+#[test]
+fn cli15_refresh_folder_history_chains_without_rewriting_prior_scope() {
+    let f = Fixture::new();
+    let first = f.create_scope(
+        15,
+        &["a", "b"],
+        hantong_contracts::auth::default_cli_folder_tools(),
+    );
+    let first = f.store().stage_cli_scope_refresh(&first).unwrap();
+    let first = f.store().activate_cli_scope_refresh(&first).unwrap();
+    assert_eq!(first.profile_epoch, 2);
+    let second = f.create_scope(
+        16,
+        &["c"],
+        hantong_contracts::auth::default_cli_folder_tools(),
+    );
+    let second = f.store().stage_cli_scope_refresh(&second).unwrap();
+    f.store().activate_cli_scope_refresh(&second).unwrap();
+    let old = f.store().load_cli_scope_refresh([15; 32]).unwrap().unwrap();
+    assert_eq!(
+        old.target_tools(),
+        hantong_contracts::auth::default_cli_folder_tools()
+    );
+    assert_eq!(old.target_accounts(), &["a".to_string(), "b".to_string()]);
 }
 #[test]
 fn cli15_refresh_stage_and_activate_preserve_original_request_key_and_old_grants_until_commit() {
@@ -568,8 +729,8 @@ fn insert_snapshot(
     row: &CliScopeRefresh,
 ) -> rusqlite::Result<()> {
     connection.execute(
-        "INSERT INTO client_scope_refreshes VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17)",
-        params![row.refresh_id.as_slice(),row.base_registration.registration_id.as_slice(),row.base_registration.version as i64,row.base_registration.profile_epoch as i64,row.target_profile_epoch() as i64,serde_json::to_string(row.base_registration.scope.accounts()).unwrap(),serde_json::to_string(&row.target_accounts).unwrap(),row.client_public_key_hash.as_slice(),row.server_public_key_hash.as_slice(),row.payload_hash.as_slice(),match row.phase {ScopeRefreshPhase::Pending=>"pending",ScopeRefreshPhase::Staged=>"staged",ScopeRefreshPhase::Active=>"active",ScopeRefreshPhase::Denied=>"denied",ScopeRefreshPhase::Expired=>"expired"},row.version as i64,row.created_at_utc_ms,row.expires_at_utc_ms,row.updated_at_utc_ms,row.decided_at_utc_ms,row.activated_at_utc_ms],
+        "INSERT INTO client_scope_refreshes VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20)",
+        params![row.refresh_id.as_slice(),row.base_registration.registration_id.as_slice(),row.base_registration.version as i64,row.base_registration.profile_epoch as i64,row.target_profile_epoch() as i64,serde_json::to_string(row.base_registration.scope.accounts()).unwrap(),serde_json::to_string(&row.target_accounts).unwrap(),row.client_public_key_hash.as_slice(),row.server_public_key_hash.as_slice(),row.payload_hash.as_slice(),match row.phase {ScopeRefreshPhase::Pending=>"pending",ScopeRefreshPhase::Staged=>"staged",ScopeRefreshPhase::Active=>"active",ScopeRefreshPhase::Denied=>"denied",ScopeRefreshPhase::Expired=>"expired"},row.version as i64,row.created_at_utc_ms,row.expires_at_utc_ms,row.updated_at_utc_ms,row.decided_at_utc_ms,row.activated_at_utc_ms,i64::from(row.hash_version),serde_json::to_string(row.base_registration.scope.tools()).unwrap(),serde_json::to_string(&row.target_tools).unwrap()],
     )?;
     Ok(())
 }
@@ -757,4 +918,130 @@ fn cli15_refresh_valid_hash_cannot_replace_successful_scope_history() {
         f.store().load_registration(f.registration.registration_id),
         Err(ErrorCode::InternalError)
     );
+}
+
+#[test]
+fn sec03_scope_v2_rejects_unreviewed_tool_grants_at_initial_and_staged_epochs() {
+    for staged in [false, true] {
+        let f = Fixture::new();
+        if staged {
+            let p = f.create(91, &["b"]);
+            f.store().stage_cli_scope_refresh(&p).unwrap();
+        }
+        f.store().with_connection(|c| {
+            for tool in ["mail.folders.list","mail.folders.refresh"] {
+                c.execute("INSERT INTO client_registration_tools(registration_id,tool_id) VALUES(?1,?2)",params![f.registration.registration_id.as_slice(),tool])?;
+            }
+            Ok(())
+        }).unwrap();
+        assert_eq!(
+            f.store().load_registration(f.registration.registration_id),
+            Err(ErrorCode::InternalError)
+        );
+    }
+}
+
+#[test]
+fn cli15_v8_real_legacy_history_migrates_without_rehash_or_scope_change() {
+    for phase in [
+        ScopeRefreshPhase::Pending,
+        ScopeRefreshPhase::Staged,
+        ScopeRefreshPhase::Active,
+    ] {
+        let mut f = Fixture::new();
+        let mut old = f.create(92, &["b"]);
+        old.hash_version = 1;
+        old.payload_hash = independent_hash(&old);
+        f.store()
+            .with_connection(|c| {
+                c.execute(
+                    "UPDATE client_scope_refreshes SET hash_version=1,payload_hash=?1",
+                    [old.payload_hash.as_slice()],
+                )?;
+                Ok(())
+            })
+            .unwrap();
+        if phase != ScopeRefreshPhase::Pending {
+            old = f.store().stage_cli_scope_refresh(&old).unwrap();
+        }
+        if phase == ScopeRefreshPhase::Active {
+            f.store().activate_cli_scope_refresh(&old).unwrap();
+            old = f.store().load_cli_scope_refresh([92; 32]).unwrap().unwrap();
+        }
+        let before = f
+            .store()
+            .load_registration(f.registration.registration_id)
+            .unwrap();
+        restore_v8_scope_schema(&f);
+        f.reopen();
+        assert_eq!(
+            f.store().load_cli_scope_refresh([92; 32]).unwrap(),
+            Some(old.clone())
+        );
+        assert_eq!(
+            f.store()
+                .load_registration(f.registration.registration_id)
+                .unwrap(),
+            before
+        );
+        assert!(f.root.join("data/backup-before-v8.db").is_file());
+        if phase == ScopeRefreshPhase::Active {
+            let next = f.create_scope(
+                93,
+                &["b"],
+                hantong_contracts::auth::default_cli_folder_tools(),
+            );
+            assert_eq!(next.hash_version, 2);
+            let next = f.store().stage_cli_scope_refresh(&next).unwrap();
+            f.store().activate_cli_scope_refresh(&next).unwrap();
+            assert_eq!(
+                f.store().load_cli_scope_refresh([92; 32]).unwrap(),
+                Some(old)
+            );
+        }
+    }
+}
+
+fn restore_v8_scope_schema(f: &Fixture) {
+    f.store().with_connection(|c| {
+            let tx=rusqlite::Transaction::new_unchecked(c,rusqlite::TransactionBehavior::Immediate)?;
+            let columns="refresh_id,registration_id,base_registration_version,base_profile_epoch,target_profile_epoch,base_accounts_json,target_accounts_json,client_public_key_hash,server_public_key_hash,payload_hash,phase,version,created_at_utc_ms,expires_at_utc_ms,updated_at_utc_ms,decided_at_utc_ms,activated_at_utc_ms";
+            tx.execute_batch(&format!("CREATE TEMP TABLE saved_v1 AS SELECT {columns} FROM client_scope_refreshes; DROP TABLE client_scope_refreshes;"))?;
+            let schema=include_str!("../../../../docs/contracts/migrations/schema-v8.sql");
+            let start=schema.find("CREATE TABLE client_scope_refreshes (").unwrap();
+            let end=schema[start..].find("-- Folder observations only;").unwrap()+start;
+            tx.execute_batch(&schema[start..end])?;
+            tx.execute_batch(&format!("INSERT INTO client_scope_refreshes ({columns}) SELECT {columns} FROM saved_v1; DROP TABLE saved_v1; UPDATE app_metadata SET schema_version=8; PRAGMA user_version=8;"))?;
+            tx.commit()
+        }).unwrap();
+}
+
+#[test]
+fn sec03_v8_legacy_invalid_provenance_is_rejected_before_backup_or_migration() {
+    for fault in 0..4 {
+        let mut f = Fixture::new();
+        let mut old = f.create(94, &["b"]);
+        old.hash_version = 1;
+        if fault == 0 {
+            old.base_registration.scope = scope(&["c"]);
+        }
+        old.payload_hash = independent_hash(&old);
+        f.store().with_connection(|c| {
+            c.execute("UPDATE client_scope_refreshes SET hash_version=1,base_accounts_json=?1,payload_hash=?2",params![serde_json::to_string(old.base_registration.scope.accounts()).unwrap(),old.payload_hash.as_slice()])?;
+            match fault {
+                1=>{c.execute("INSERT INTO client_registration_tools(registration_id,tool_id) VALUES(?1,'mail.folders.list')",[f.registration.registration_id.as_slice()])?;},
+                2=>{c.execute("UPDATE client_registrations SET display_label='nondefault'",[])?;},
+                3=>{c.execute("UPDATE client_scope_refreshes SET payload_hash=?1",[[99_u8;32].as_slice()])?;},
+                _=>{}
+            }
+            Ok(())
+        }).unwrap();
+        restore_v8_scope_schema(&f);
+        drop(f.store.take());
+        assert!(matches!(
+            Store::open(f.root.join("data"), f.root.join("keys")),
+            Err(ErrorCode::InternalError)
+        ));
+        assert!(!f.root.join("data/backup-before-v8.db").exists());
+    }
 }

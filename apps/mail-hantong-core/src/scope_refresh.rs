@@ -1,7 +1,7 @@
 //! Core-only scope refresh. Stored snapshots and CLI requests are not approvals.
 use hantong_approval::ScopeRefreshReview;
-use hantong_contracts::ErrorCode;
 use hantong_contracts::scope_refresh::{ScopeRefreshProgress, ScopeRefreshReceipt};
+use hantong_contracts::{ErrorCode, auth::RequestedScope};
 use hantong_ipc_client::profile::ParsedClientProfile;
 use hantong_platform::{ClientSigningKey, ServerSigningKey};
 use hantong_store::{
@@ -27,15 +27,20 @@ pub(super) fn prepare(
             .ok_or(ErrorCode::NotFound)?;
         if &current != pending.base_registration()
             || store.list_registrable_account_ids()? != pending.target_accounts()
+            || (pending.target_tools() != hantong_contracts::auth::default_cli_folder_tools()
+                && pending.target_tools() != hantong_contracts::auth::default_cli_legacy_tools())
             || &pin != pending.server_public_key_hash()
         {
             return Err(ErrorCode::Conflict);
         }
         return Ok(pending);
     }
-    store.create_cli_scope_refresh(
+    store.create_cli_scope_refresh_with_scope(
         hantong_platform::random_nonce()?,
-        store.list_registrable_account_ids()?,
+        RequestedScope::new(
+            store.list_registrable_account_ids()?,
+            hantong_contracts::auth::default_cli_folder_tools(),
+        )?,
         pin,
     )
 }
@@ -112,7 +117,7 @@ fn review_snapshot(r: &CliScopeRefresh) -> Result<ScopeRefreshReview, ErrorCode>
         return Err(ErrorCode::Conflict);
     }
     let b = r.base_registration();
-    ScopeRefreshReview::new(
+    ScopeRefreshReview::new_with_tools(
         *r.refresh_id(),
         r.version(),
         b.registration_id,
@@ -123,6 +128,8 @@ fn review_snapshot(r: &CliScopeRefresh) -> Result<ScopeRefreshReview, ErrorCode>
         *r.server_public_key_hash(),
         b.scope.accounts().to_vec(),
         r.target_accounts().to_vec(),
+        b.scope.tools().to_vec(),
+        r.target_tools().to_vec(),
         r.created_at_utc_ms(),
         r.expires_at_utc_ms(),
     )
@@ -133,22 +140,22 @@ fn profiles(r: &CliScopeRefresh, server: [u8; 72]) -> Result<(Vec<u8>, Vec<u8>),
         return Err(ErrorCode::Conflict);
     }
     let key_id = hantong_platform::client_key_id_for_registration(b.registration_id)?;
-    let old = ParsedClientProfile::new(
+    let old = ParsedClientProfile::new_with_scope(
         b.registration_id,
         key_id,
         b.public_key,
         server,
         b.profile_epoch,
-        b.scope.accounts().to_vec(),
+        b.scope.clone(),
     )?
     .to_json()?;
-    let new = ParsedClientProfile::new(
+    let new = ParsedClientProfile::new_with_scope(
         b.registration_id,
         key_id,
         b.public_key,
         server,
         r.target_profile_epoch(),
-        r.target_accounts().to_vec(),
+        r.target_scope(),
     )?
     .to_json()?;
     Ok((old, new))

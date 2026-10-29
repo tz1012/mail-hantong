@@ -1,6 +1,7 @@
 //! Default CLI scope history is stored data, never proof of user presence.
 use crate::{RegistrationRecord, Store};
 use hantong_contracts::ErrorCode;
+use hantong_contracts::auth::{RequestedScope, default_cli_legacy_tools};
 use std::fmt;
 #[cfg(windows)]
 mod storage;
@@ -19,8 +20,10 @@ pub enum ScopeRefreshPhase {
 #[derive(Clone, Eq, PartialEq)]
 pub struct CliScopeRefresh {
     refresh_id: [u8; 32],
+    hash_version: u8,
     base_registration: RegistrationRecord,
     target_accounts: Vec<String>,
+    target_tools: Vec<String>,
     client_public_key_hash: [u8; 32],
     server_public_key_hash: [u8; 32],
     payload_hash: [u8; 32],
@@ -46,6 +49,13 @@ impl CliScopeRefresh {
     }
     pub fn target_accounts(&self) -> &[String] {
         &self.target_accounts
+    }
+    pub fn target_tools(&self) -> &[String] {
+        &self.target_tools
+    }
+    pub fn target_scope(&self) -> RequestedScope {
+        RequestedScope::new(self.target_accounts.clone(), self.target_tools.clone())
+            .expect("validated scope")
     }
     pub fn target_profile_epoch(&self) -> u64 {
         self.base_registration.profile_epoch + 1
@@ -88,10 +98,26 @@ impl Store {
         target_accounts: Vec<String>,
         expected_server_public_key_hash: [u8; 32],
     ) -> Result<CliScopeRefresh, ErrorCode> {
-        if refresh_id == [0; 32] || expected_server_public_key_hash == [0; 32] {
+        validate_accounts(&target_accounts)?;
+        self.create_cli_scope_refresh_with_scope(
+            refresh_id,
+            RequestedScope::new(target_accounts, default_cli_legacy_tools())?,
+            expected_server_public_key_hash,
+        )
+    }
+    pub fn create_cli_scope_refresh_with_scope(
+        &self,
+        refresh_id: [u8; 32],
+        target_scope: RequestedScope,
+        expected_server_public_key_hash: [u8; 32],
+    ) -> Result<CliScopeRefresh, ErrorCode> {
+        if refresh_id == [0; 32]
+            || expected_server_public_key_hash == [0; 32]
+            || !hantong_contracts::auth::is_supported_default_cli_toolset(target_scope.tools())
+        {
             return Err(ErrorCode::InvalidInput);
         }
-        validate_accounts(&target_accounts)?;
+        validate_accounts(target_scope.accounts())?;
         #[cfg(not(windows))]
         {
             Err(ErrorCode::CapabilityUnsupported)
@@ -102,7 +128,7 @@ impl Store {
                 create(
                     tx,
                     refresh_id,
-                    target_accounts,
+                    target_scope,
                     expected_server_public_key_hash,
                 )
             })
@@ -206,6 +232,10 @@ impl Store {
             })
         }
     }
+}
+#[cfg(windows)]
+pub(crate) fn validate_history_v8(connection: &rusqlite::Connection) -> rusqlite::Result<()> {
+    storage::validate_history_v8(connection)
 }
 #[cfg(windows)]
 pub(crate) fn validate_history(connection: &rusqlite::Connection) -> rusqlite::Result<()> {

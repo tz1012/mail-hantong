@@ -17,7 +17,7 @@
 | `mail.accounts.list.schema.json` | 명시된 계정 프로필 조회 | 초안, 활성화 전 |
 | `mail.send.execute.schema.json` | 승인 결속 발송 의도 접수 | 초안, 활성화 전 |
 | `logical-data-model.md` | 27개 논리 엔터티와 키·보안 경계 | 초안, 활성화 전 |
-| `database.md`, `db-schema.sql`, `migrations/` | 암호화 DB 키 경계·v1→v8 백업과 마이그레이션 | v8 폴더 관측 저장 포함, 구현·검증 진행, 사람 검토 필요 |
+| `database.md`, `db-schema.sql`, `migrations/` | 암호화 DB 키 경계·v1→v9 백업과 마이그레이션 | v8 폴더 관측 저장 포함, 구현·검증 진행, 사람 검토 필요 |
 | `query-language.md` | 검색 문법·계정 범위·기간·완전성 | 초안, 활성화 전 |
 | `config.md`, `config.schema.json` | 언어·테마·시간대와 보호 설정·CAS | 도메인·암호화 저장·코어 시작 연결 검증, 인증된 설정 IPC 미연결 |
 | `app-paths.md` | OS Known Folder와 고정 데이터/키 경로 | Windows 구현·시작 연결 검증 |
@@ -45,6 +45,7 @@
 | `provider-capabilities.md` | IMAP 기능의 공통 타입·고정 ID·엄격한 저장 변환 | Domain/Secrets/Store/Core 연결, SMTP·제공자 전체 기능 후속 |
 | `imap-folder-discovery.md` | 별도 bounded LIST·wire 이름·특수 폴더 후보 | 내부 읽기 경계 검증 중, DB·Core 도구 연결 전, 사람 검토 필요 |
 | `imap-folder-store.md` | v8 catalog·operation 원자 교체·endpoint CAS·strict codec | 저장/이전 검증 중, Core·공개 도구 연결 전, 사람 검토 필요 |
+| `imap-folder-tools.md` | 명시 폴더 list/refresh·세대 cursor·CLI/receipt 계약 | client 구현 진행, Core 연결 전, 사람 검토 필요 |
 | `core-lifecycle.md` | 고정 HKCU 자동 시작 값·충돌 보존·재시작 예산 | 격리 registry/상태 시험, 설치·supervisor 연결 전 |
 | `diagnostic-export.md` | 선택한 비민감 진단 항목의 미리보기/내보내기 값 | 순수 직렬화 검증, 실제 수집·UI·파일 쓰기 미연결 |
 

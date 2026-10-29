@@ -1,5 +1,13 @@
 usage=사용법: hantong [--lang en|ko] [--json] [--no-input] <명령>
 commands=명령: core status, clients register, clients status <request_id>, clients verify, clients refresh, clients refresh-status <refresh_id>, setup imap request, setup imap status <request_id>, setup imap resume <request_id>, accounts list, send execute, approvals get
+folder_name=폴더
+folder_refresh_submitted=폴더 갱신을 요청했습니다.
+folder_refresh_status=폴더 갱신 상태를 받았습니다.
+folder_refresh_execution_id=실행 ID
+folder_refresh_state=상태
+folder_refresh_generation=세대
+folder_refresh_error=오류
+folder_refresh_result=결과
 core_status=코어 상태: 전송 가능, 메일 준비 안 됨, 클라이언트 미인증.
 core_unavailable=코어를 사용할 수 없습니다.
 capability_unsupported=이 운영 체제에서는 이 기능을 지원하지 않습니다.

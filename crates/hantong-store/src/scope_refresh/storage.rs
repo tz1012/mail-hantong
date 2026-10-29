@@ -3,7 +3,9 @@ use crate::{
     ClientKind, DEFAULT_CLI_LABEL, RegistrationRequestState, RegistrationState,
     registrations::{blob_column, read_registration_bare, read_request, text_column},
 };
-use hantong_contracts::auth::RequestedScope;
+use hantong_contracts::auth::{
+    RequestedScope, default_cli_legacy_tools, is_supported_default_cli_toolset,
+};
 use rusqlite::{Connection, OptionalExtension, Row, Transaction, params};
 use std::collections::BTreeMap;
 
@@ -41,7 +43,16 @@ fn phase_parse(value: &str) -> rusqlite::Result<ScopeRefreshPhase> {
 }
 fn hash_payload(value: &CliScopeRefresh) -> Result<[u8; 32], ErrorCode> {
     let base = &value.base_registration;
-    let mut bytes = b"mail-hantong.cli-scope-refresh.v1\0".to_vec();
+    let v2 = match value.hash_version {
+        1 => false,
+        2 => true,
+        _ => return Err(ErrorCode::InternalError),
+    };
+    let mut bytes = if v2 {
+        b"mail-hantong.cli-scope-refresh.v2\0".to_vec()
+    } else {
+        b"mail-hantong.cli-scope-refresh.v1\0".to_vec()
+    };
     bytes.extend_from_slice(&value.refresh_id);
     bytes.extend_from_slice(&base.registration_id);
     bytes.extend_from_slice(&base.request_id);
@@ -56,6 +67,15 @@ fn hash_payload(value: &CliScopeRefresh) -> Result<[u8; 32], ErrorCode> {
         for account in accounts {
             bytes.extend_from_slice(&(account.len() as u32).to_be_bytes());
             bytes.extend_from_slice(account.as_bytes());
+        }
+    }
+    if v2 {
+        for tools in [base.scope.tools(), value.target_tools.as_slice()] {
+            bytes.extend_from_slice(&(tools.len() as u32).to_be_bytes());
+            for tool in tools {
+                bytes.extend_from_slice(&(tool.len() as u32).to_be_bytes());
+                bytes.extend_from_slice(tool.as_bytes());
+            }
         }
     }
     hantong_platform::sha256(&bytes).map_err(|_| ErrorCode::InternalError)
@@ -88,12 +108,31 @@ fn read_row(
     let updated: i64 = row.get(14)?;
     let decided: Option<i64> = row.get(15)?;
     let activated: Option<i64> = row.get(16)?;
+    let hash_version: i64 = row.get(17)?;
+    let base_tools: Vec<String> = serde_json::from_str(text_column(row, 18, 1024)?)
+        .map_err(|_| rusqlite::Error::InvalidQuery)?;
+    let target_tools: Vec<String> = serde_json::from_str(text_column(row, 19, 1024)?)
+        .map_err(|_| rusqlite::Error::InvalidQuery)?;
+    if !is_supported_default_cli_toolset(&base_tools)
+        || !is_supported_default_cli_toolset(&target_tools)
+        || !matches!(hash_version, 1 | 2)
+        || (hash_version == 1
+            && (base_tools != default_cli_legacy_tools()
+                || target_tools != default_cli_legacy_tools()))
+        || (base_tools != default_cli_legacy_tools() && target_tools == default_cli_legacy_tools())
+        || serde_json::to_string(&base_tools).map_err(|_| rusqlite::Error::InvalidQuery)?
+            != text_column(row, 18, 1024)?
+        || serde_json::to_string(&target_tools).map_err(|_| rusqlite::Error::InvalidQuery)?
+            != text_column(row, 19, 1024)?
+    {
+        return invalid();
+    }
     if id == [0; 32]
         || registration_id != current.registration_id
         || !(2..=i64::MAX - 2).contains(&base_version)
         || !(1..i64::MAX).contains(&epoch)
         || target_epoch != epoch + 1
-        || old == target
+        || (old == target && base_tools == target_tools)
         || key_hash != *client_hash
         || server == [0; 32]
         || payload == [0; 32]
@@ -131,12 +170,13 @@ fn read_row(
     base.state = RegistrationState::Active;
     base.version = base_version as u64;
     base.profile_epoch = epoch as u64;
-    base.scope = RequestedScope::new(old, vec!["mail.accounts.list".into()])
-        .map_err(|_| rusqlite::Error::InvalidQuery)?;
+    base.scope = RequestedScope::new(old, base_tools).map_err(|_| rusqlite::Error::InvalidQuery)?;
     let value = CliScopeRefresh {
         refresh_id: id,
+        hash_version: hash_version as u8,
         base_registration: base,
         target_accounts: target,
+        target_tools,
         client_public_key_hash: key_hash,
         server_public_key_hash: server,
         payload_hash: payload,
@@ -154,6 +194,12 @@ fn read_row(
     Ok(value)
 }
 pub(super) fn context(connection: &Connection) -> Result<Option<Context>, ErrorCode> {
+    context_with_layout(connection, false)
+}
+fn context_with_layout(
+    connection: &Connection,
+    legacy: bool,
+) -> Result<Option<Context>, ErrorCode> {
     let count: i64 = db(connection.query_row(
         "SELECT count(*) FROM (SELECT refresh_id FROM client_scope_refreshes LIMIT 1025)",
         [],
@@ -184,8 +230,9 @@ pub(super) fn context(connection: &Connection) -> Result<Option<Context>, ErrorC
     if original.state != RegistrationRequestState::Approved
         || original.client_kind != ClientKind::Cli
         || original.display_label != DEFAULT_CLI_LABEL
-        || original.scope.tools() != ["mail.accounts.list"]
-        || registration.scope.tools() != ["mail.accounts.list"]
+        || original.scope.tools() != default_cli_legacy_tools()
+        || !is_supported_default_cli_toolset(registration.scope.tools())
+        || (legacy && registration.scope.tools() != default_cli_legacy_tools())
         || !registration.read_only
         || registration.requests_per_minute != 60
         || registration.approved_channel != "approval_helper"
@@ -206,42 +253,46 @@ pub(super) fn context(connection: &Connection) -> Result<Option<Context>, ErrorC
         |row| Ok((row.get(0)?, row.get(1)?)),
     ))?;
     let mut stmt = db(connection.prepare(
-        "SELECT refresh_id,registration_id,base_registration_version,base_profile_epoch,target_profile_epoch,base_accounts_json,target_accounts_json,client_public_key_hash,server_public_key_hash,payload_hash,phase,version,created_at_utc_ms,expires_at_utc_ms,updated_at_utc_ms,decided_at_utc_ms,activated_at_utc_ms FROM client_scope_refreshes ORDER BY target_profile_epoch,refresh_id LIMIT 1025",
+        if legacy { "SELECT refresh_id,registration_id,base_registration_version,base_profile_epoch,target_profile_epoch,base_accounts_json,target_accounts_json,client_public_key_hash,server_public_key_hash,payload_hash,phase,version,created_at_utc_ms,expires_at_utc_ms,updated_at_utc_ms,decided_at_utc_ms,activated_at_utc_ms,1,'[\"mail.accounts.list\"]','[\"mail.accounts.list\"]' FROM client_scope_refreshes ORDER BY target_profile_epoch,refresh_id LIMIT 1025" } else { "SELECT refresh_id,registration_id,base_registration_version,base_profile_epoch,target_profile_epoch,base_accounts_json,target_accounts_json,client_public_key_hash,server_public_key_hash,payload_hash,phase,version,created_at_utc_ms,expires_at_utc_ms,updated_at_utc_ms,decided_at_utc_ms,activated_at_utc_ms,hash_version,base_tools_json,target_tools_json FROM client_scope_refreshes ORDER BY target_profile_epoch,refresh_id LIMIT 1025" },
     ))?;
     let rows: Vec<CliScopeRefresh> =
         db(db(stmt.query_map([], |row| read_row(row, &registration, &key_hash)))?.collect())?;
     if rows.len() > LIMIT {
         return Err(ErrorCode::QuotaExceeded);
     }
-    validate_provenance(
-        &registration,
-        &rows,
-        original.scope.accounts(),
-        approved,
-        updated,
-    )?;
+    validate_provenance(&registration, &rows, &original.scope, approved, updated)?;
     Ok(Some(Context {
         registration,
         rows,
         updated,
     }))
 }
+
+/// Reads the pre-v9 ledger layout without attempting to access the v9 columns.
+/// The migration validator uses this before rebuilding the table, so the old
+/// payload hash and legacy tool snapshot are checked exactly as stored.
+pub(super) fn validate_history_v8(connection: &Connection) -> rusqlite::Result<()> {
+    context_with_layout(connection, true)
+        .map(|_| ())
+        .map_err(|_| rusqlite::Error::InvalidQuery)
+}
+
 struct Authorized {
-    accounts: Vec<String>,
+    scope: RequestedScope,
     version: Option<u64>,
     at: i64,
 }
 fn validate_provenance(
     current: &RegistrationRecord,
     rows: &[CliScopeRefresh],
-    original: &[String],
+    original: &RequestedScope,
     approved: i64,
     updated: i64,
 ) -> Result<(), ErrorCode> {
     let mut authorized = BTreeMap::from([(
         1,
         Authorized {
-            accounts: original.to_vec(),
+            scope: original.clone(),
             version: None,
             at: approved,
         },
@@ -265,7 +316,7 @@ fn validate_provenance(
             .insert(
                 latest,
                 Authorized {
-                    accounts: row.target_accounts.clone(),
+                    scope: row.target_scope(),
                     version: Some(row.base_registration.version + 2),
                     at: row.activated_at_utc_ms.ok_or(ErrorCode::InternalError)?,
                 },
@@ -314,7 +365,7 @@ fn validate_provenance(
         let base = &staged.base_registration;
         let decision = staged.decided_at_utc_ms.ok_or(ErrorCode::InternalError)?;
         if current.profile_epoch != staged.target_profile_epoch()
-            || current.scope.accounts() != base.scope.accounts()
+            || current.scope != base.scope
             || if terminal {
                 current.version < base.version + 1 || updated < decision
             } else {
@@ -328,7 +379,7 @@ fn validate_provenance(
     } else {
         let authority = authorized.get(&latest).ok_or(ErrorCode::InternalError)?;
         if current.profile_epoch != latest
-            || current.scope.accounts() != authority.accounts
+            || current.scope != authority.scope
             || updated < authority.at
         {
             return Err(ErrorCode::InternalError);
@@ -360,7 +411,7 @@ fn validate_provenance(
     Ok(())
 }
 fn check_base(row: &CliScopeRefresh, authorized: &Authorized) -> Result<(), ErrorCode> {
-    if row.base_registration.scope.accounts() != authorized.accounts
+    if row.base_registration.scope != authorized.scope
         || row.created_at_utc_ms < authorized.at
         || authorized
             .version
@@ -445,13 +496,16 @@ fn accounts_exist(connection: &Connection, accounts: &[String]) -> Result<(), Er
 pub(super) fn create(
     tx: &Transaction<'_>,
     id: [u8; 32],
-    target: Vec<String>,
+    target_scope: RequestedScope,
     pin: [u8; 32],
 ) -> Result<CliScopeRefresh, ErrorCode> {
     let context = context(tx)?.ok_or(ErrorCode::NotFound)?;
     let base = context.registration;
     if base.state != RegistrationState::Active
-        || target == base.scope.accounts()
+        || (target_scope.accounts() == base.scope.accounts()
+            && target_scope.tools() == base.scope.tools())
+        || (base.scope.tools() != default_cli_legacy_tools()
+            && target_scope.tools() == default_cli_legacy_tools())
         || base.version > i64::MAX as u64 - 2
         || base.profile_epoch >= i64::MAX as u64
         || context.rows.iter().any(|r| {
@@ -472,7 +526,7 @@ pub(super) fn create(
     {
         return Err(ErrorCode::Conflict);
     }
-    accounts_exist(tx, &target)?;
+    accounts_exist(tx, target_scope.accounts())?;
     if context.rows.len() >= LIMIT {
         return Err(ErrorCode::QuotaExceeded);
     }
@@ -482,10 +536,12 @@ pub(super) fn create(
     }
     let mut value = CliScopeRefresh {
         refresh_id: id,
+        hash_version: 2,
         client_public_key_hash: hantong_platform::sha256(&base.public_key)
             .map_err(|_| ErrorCode::InternalError)?,
         base_registration: base,
-        target_accounts: target,
+        target_accounts: target_scope.accounts().to_vec(),
+        target_tools: target_scope.tools().to_vec(),
         server_public_key_hash: pin,
         payload_hash: [0; 32],
         phase: ScopeRefreshPhase::Pending,
@@ -501,8 +557,12 @@ pub(super) fn create(
         .map_err(|_| ErrorCode::InternalError)?;
     let target =
         serde_json::to_string(&value.target_accounts).map_err(|_| ErrorCode::InternalError)?;
+    let old_tools = serde_json::to_string(value.base_registration.scope.tools())
+        .map_err(|_| ErrorCode::InternalError)?;
+    let target_tools =
+        serde_json::to_string(&value.target_tools).map_err(|_| ErrorCode::InternalError)?;
     db(tx.execute(
-        "INSERT INTO client_scope_refreshes(refresh_id,registration_id,base_registration_version,base_profile_epoch,target_profile_epoch,base_accounts_json,target_accounts_json,client_public_key_hash,server_public_key_hash,payload_hash,phase,version,created_at_utc_ms,expires_at_utc_ms,updated_at_utc_ms,decided_at_utc_ms,activated_at_utc_ms) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,'pending',1,?11,?12,?11,NULL,NULL)",
+        "INSERT INTO client_scope_refreshes(refresh_id,registration_id,base_registration_version,base_profile_epoch,target_profile_epoch,base_accounts_json,target_accounts_json,client_public_key_hash,server_public_key_hash,payload_hash,phase,version,created_at_utc_ms,expires_at_utc_ms,updated_at_utc_ms,decided_at_utc_ms,activated_at_utc_ms,hash_version,base_tools_json,target_tools_json) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,'pending',1,?11,?12,?11,NULL,NULL,?13,?14,?15)",
         params![
             id.as_slice(),
             value.base_registration.registration_id.as_slice(),
@@ -516,6 +576,9 @@ pub(super) fn create(
             value.payload_hash.as_slice(),
             now,
             value.expires_at_utc_ms,
+            i64::from(value.hash_version),
+            old_tools,
+            target_tools,
         ],
     ))?;
     load(tx, id)?.ok_or(ErrorCode::InternalError)
@@ -640,6 +703,16 @@ pub(super) fn activate(
         db(tx.execute(
             "INSERT INTO client_registration_accounts(registration_id,account_id) VALUES(?1,?2)",
             params![staged.registration_id.as_slice(), account],
+        ))?;
+    }
+    db(tx.execute(
+        "DELETE FROM client_registration_tools WHERE registration_id=?1",
+        [staged.registration_id.as_slice()],
+    ))?;
+    for tool in &expected.target_tools {
+        db(tx.execute(
+            "INSERT INTO client_registration_tools(registration_id,tool_id) VALUES(?1,?2)",
+            params![staged.registration_id.as_slice(), tool],
         ))?;
     }
     let changed = db(tx.execute(

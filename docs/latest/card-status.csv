@@ -25,9 +25,9 @@ M1-10,진단 내보내기,in_progress,에이전트,M1-07,../contracts/diagnostic
 M1-12,CLI 영어 리소스와 도움말,in_progress,에이전트,M1-06,../../apps/hantong-cli/resources; ../../apps/hantong-cli/build.rs,,,영어 기본·한국어 리소스·빌드 검사 구현; 저장된 cli.language 설정 연동 남음
 M1-11,코어 자동 시작과 수명 관리,in_progress,에이전트,M1-01,../contracts/core-lifecycle.md; ../adr/ADR-021-core-lifecycle.md; ../../crates/hantong-platform/src/windows_autostart.rs; ../../crates/hantong-application/src/lifecycle.rs,,,격리 HKCU 등록/해제/소유 충돌 시험8개·재시작 예산4개 통과; 실제 supervisor/설치/알림/유지보수 연결 남음
 M1-99,다음 마일스톤 계획 갱신,not_started,사람,M1 나머지 전부,,,,
-M2-01,IMAP·SMTP 계정 설정 모델,in_progress,에이전트,"M1-04, M1-03, ADR-006",../contracts/mail-connection.md; ../contracts/mail-connection-store.md; ../adr/ADR-006-mail-libraries.md; ../../crates/hantong-domain/src/mail_connection.rs; ../contracts/account-provisioning.md; ../../crates/hantong-store/src/account_provisioning.rs; ../contracts/protected-mail-input.md; ../contracts/imap-setup-review.md,,,설정/새 계정 저장·IMAP/SMTP probe·Secrets 보호 입력/native 확인 구현; 637개 전체 및 교차 검사 통과. Core/CLI 설정 실행 연결·실계정·사람 검토 남음
-M2-02,CAPABILITY 탐지,in_progress,에이전트,M2-01,PROGRESS.md; ../contracts/provider-capabilities.md; ../../crates/hantong-domain/src/capabilities.rs,,,여섯 IMAP 기능 공통 타입과 probe/Store/Core 변환 연결; SMTP 확장·공통 제공자 전체 기능·대체 동작/UI 남음
-M2-03,폴더 동기화와 특수 폴더,in_progress,에이전트,M2-02,PROGRESS.md; ../contracts/imap-folder-discovery.md; ../../crates/hantong-domain/src/mailboxes.rs; ../../crates/hantong-adapters/src/imap_folders.rs; ../../crates/hantong-secrets/src/imap_probe/list_gate.rs; ../contracts/imap-folder-store.md; ../../crates/hantong-store/src/imap_catalog.rs,,,별도 bounded LIST·wire 이름/표시·특수 폴더 후보·v8 catalog 원자 저장 구현; Core 정책/권한·공개 도구·실제 제공자·사람 검토 남음
+M2-01,IMAP·SMTP 계정 설정 모델,in_progress,에이전트,"M1-04, M1-03, ADR-006",../contracts/mail-connection.md; ../contracts/mail-connection-store.md; ../adr/ADR-006-mail-libraries.md; ../../crates/hantong-domain/src/mail_connection.rs; ../contracts/account-provisioning.md; ../../crates/hantong-store/src/account_provisioning.rs; ../contracts/protected-mail-input.md; ../contracts/imap-setup-review.md,,,설정/새 계정 저장·IMAP/SMTP TLS/AUTH probe·보호 입력/native 확인·IMAP Core/CLI 설정/재개 연결 구현; SMTP 설정 제품 흐름·실제 제공자·사람 검토 남음
+M2-02,CAPABILITY 탐지,in_progress,에이전트,M2-01,PROGRESS.md; ../contracts/provider-capabilities.md; ../../crates/hantong-domain/src/capabilities.rs; ../../crates/hantong-domain/src/smtp_capabilities.rs,,,여섯 IMAP 기능 공통 타입과 probe/Store/Core 변환 및 SMTP post-TLS 기능 receipt 구현; SMTP 관측 저장·공통 제공자 전체 기능·대체 동작/UI 남음
+M2-03,폴더 동기화와 특수 폴더,in_progress,에이전트,M2-02,PROGRESS.md; ../contracts/imap-folder-discovery.md; ../../crates/hantong-domain/src/mailboxes.rs; ../../crates/hantong-adapters/src/imap_folders.rs; ../../crates/hantong-secrets/src/imap_probe/list_gate.rs; ../contracts/imap-folder-store.md; ../../crates/hantong-store/src/imap_catalog.rs; ../contracts/imap-folder-tools.md; ../../crates/hantong-ipc-client/src/folders.rs,,,bounded LIST·특수 폴더 후보·v8 catalog·폴더 client/CLI·v9 권한 갱신 구현; Core 폴더 dispatch/worker 통합·실제 제공자·사람 검토 남음
 M2-04,UID 증분 동기화,not_started,에이전트,M2-03,,,,
 M2-05,단계적 최초 동기화,not_started,에이전트,M2-04,,,,
 M2-06,IDLE와 폴링,not_started,에이전트,M2-04,,,,
@@ -81,7 +81,7 @@ M5-11,예약 큐와 예약 메일함,not_started,사람,"M4-08, M4-10, M4-11",,,
 M5-12,예약 수정·취소·승인,not_started,사람,"M5-02, M5-11",,,,
 M5-99,다음 마일스톤 계획 갱신,not_started,사람,"M5-01~06, M5-08~12",,,,
 M6-01,MCP 서버 골격,not_started,에이전트,"M1-02, ADR-009",,,,
-M6-02,클라이언트 등록·권한 프로필,in_progress,사람,"M6-01, M5-04, M1-02",../contracts/client-registration.md; ../contracts/registration-store.md; ../contracts/client-profile.md; PROGRESS.md; ../contracts/client-scope-refresh.md; ../../apps/mail-hantong-core/src/scope_refresh.rs; ../../crates/hantong-store/src/scope_refresh.rs,,,기본 CLI 등록 및 같은 ID/key/pin을 보존하는 새 계정 범위 확인·v7 이력·중단 복구 구현; MCP·선택적 도구/프로필 편집·철회 UI·사람 검토 남음
+M6-02,클라이언트 등록·권한 프로필,in_progress,사람,"M6-01, M5-04, M1-02",../contracts/client-registration.md; ../contracts/registration-store.md; ../contracts/client-profile.md; PROGRESS.md; ../contracts/client-scope-refresh.md; ../../apps/mail-hantong-core/src/scope_refresh.rs; ../../crates/hantong-store/src/scope_refresh.rs,,,기본 CLI 등록·계정/도구 명시 확인·v9 이력·동일 ID/key/pin/중단 복구 구현; MCP·선택적 도구/프로필 편집·철회 UI·사람 검토 남음
 M6-03,읽기 도구 노출,not_started,에이전트,M6-02,,,,
 M6-04,토큰 효율 응답,not_started,에이전트,M6-03,,,,
 M6-05,untrusted_content 분리,not_started,사람,M6-03,,,,

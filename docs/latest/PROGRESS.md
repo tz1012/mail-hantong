@@ -10,7 +10,7 @@
 | --- | --- |
 | 기준 자료 | 사용자 승인으로 채택한 [Markdown 기준 요건](../requirements/README.md): 요건 170개·1단계 P0 144개·문장별 AC ID 341개. 작업 카드 정의 151개는 보존한다. |
 | 현재 카드 | **M2-02 IMAP 공통 기능·M2-03 폴더 탐색**. 읽기 전용 LIST·특수 폴더 매핑·v8 폴더 관측 저장의 자동 검증 완료. SMTP 기능·폴더 권한·CLI·Core 연결을 병렬 진행한다. |
-| 최신 검증 | **825개 통과**(문서 29·빌드 도구 63·Rust 733). 전체 build/test/fmt/Clippy·의존/문서/추적 검사 통과. Linux x86_64·macOS arm64 교차 Clippy도 통과했으며 이후 변경은 Windows 시험의 불필요 참조 두 곳 제거뿐이다. 2026-10-30 v8 snapshot의 로그·hash와 이전 실패 기록은 아래에 있다. 실제 Mac 실행·전체 기능 완료를 뜻하지 않는다. |
+| 최신 검증 | **864개 통과**(문서 29·빌드 도구 63·Rust 772). 전체 build/test/fmt/Clippy·의존/문서/추적 검사와 같은 소스의 Linux x86_64·macOS arm64 교차 Clippy 통과. 아래 SMTP·v9 권한·폴더 client snapshot에 로그·hash가 있다. 실제 Mac 실행·전체 기능 완료를 뜻하지 않는다. |
 | 제품 구현 | Rust workspace·영/한 CLI·Windows 코어/IPC·DPAPI·SQLCipher·설정 검증·감사·기본 등록/프로필·권한이 있는 계정 목록 조회·IMAP/SMTP TLS/AUTH probe·CI/추적 도구 구현. 신규 IMAP 설정·명시 재개와 기본 CLI 계정 범위 갱신의 보호 확인·중단 복구를 연결했다. 발송은 차단하며 실제 메일 수신·전체 GUI·설치 패키지는 미완료다. |
 | GitHub | 로컬 Git main 저장소를 초기화해 개발 기준선을 기록한다. 공개 저장소 주소·remote·릴리스·패키지 ID는 아직 없음. 빌드 산출물·실행 데이터·에이전트 상태는 제외한다. |
 | 새 사용자 요청 | 진행 상황을 이 문서에 누적하고, GitHub에서 명령어로 설치 및 개발을 시작할 수 있는 경로를 마련한다. 상세 범위는 [공개와 설치 계획](DISTRIBUTION.md)에 기록한다. |
@@ -741,3 +741,26 @@ Domain canonical codec과 Store 원자 교체를 연결했다. 잘못된 provide
 `scripts/check_all.py` 종료 코드 **0**: **825개**(문서 29·빌드 도구 63·Rust 733). 로그 `target/imap-catalog-final-full-check.log`, SHA-256 `9473F9DC90ABF3854496314A697DFDBA11D81ABF7BE75D3978CA3FCCA15D60F1`, source hash `c532d7e02b0200afe1ab02c6e6894197015076e8a8485ca8cecaca8f86131c43`. 전체 build/test/fmt/Clippy·문서·추적·아키텍처 검사 통과. 앞선 전체 검사는 시험 helper의 Clippy needless borrow 두 곳에서 실패했고 수정 후 전체를 재실행했다. Domain codec·Store 손상·migration의 RED→GREEN 로그는 `target/imap-catalog-*`에 남겼다.
 
 Linux x86_64/macOS arm64 all-target Clippy 종료 코드 0(`target/imap-catalog-linux-check.log`, `target/imap-catalog-macos-check.log`). 그 뒤 변경은 Windows 전용 시험의 불필요한 참조 제거다. 실제 Mac 실행은 아니다. CNG 제품 키 1개와 names hash `3B692D49F1D08F7D3442806CF17694CDC02AF36B44839930FC18EB9C83CE9D4D` 유지. 실제 사용자 DB·프로필·Hello·계정·메일은 사용하지 않았다. **[사람 검토 필요]**, 전체 제품 AC 완료 0개를 유지한다.
+
+## 2026-10-30 적극적 병렬 구현 — SMTP·권한·폴더 CLI (진행 중)
+
+v8 저장 기준선은 `52d19f6`으로 보존했다. 공통 계약을 먼저 작성하고 SMTP 기능·폴더 권한/프로필·폴더 client/CLI를 세 담당자가 나눠 구현했다. root는 v9 DB 이전과 통합을 맡았다. SMTP는 별도 담당자 검토에서 HIGH/MEDIUM 지적이 없었으며, 시험 누락을 root가 확인해 pre/post TLS 차이·LOGIN/XOAUTH2·unknown extension 검증을 보강 중이다.
+
+권한 lane의 초기 native 검사는 raw Cargo가 검증된 Perl 경로를 설정하지 않아 실패했다. root가 `scripts/cargo_native.py`로 다시 실행했으며 이 실패를 환경상의 영구 차단으로 처리하지 않았다. 교차 검토에서 tool-only 변경 거부, 계정만 비교하는 provenance, hash version 추정, legacy reader의 빈 DB 거부를 발견했다. 실제 grant 변조를 허용하는 RED 시험(`target/folder-scope-authority-red.log`)을 재현하고 전체 RequestedScope 결속과 explicit hash_version으로 수정했다.
+
+`target/folder-scope-store-green.log`의 scope 관련 **34개 통과**에는 v8→v9 백업/rollback, 실제 v1 pending·staged·active 이력을 원래 hash 그대로 이전하고 뒤에 v2 권한을 연결하는 시험이 포함된다. 승인/Windows 도우미/Core targeted 검사도 통과했지만 Core의 기존 fixture가 legacy 권한만 사용하는 누락을 발견해 다른 담당자가 folder grant와 recovery를 추가 검증 중이다. 전체 회귀와 소스 hash 고정은 아직 전이며 최신 완결 검증은 위의 825개 기준선이다.
+
+folder client/CLI는 strict 요청·cursor·receipt·영/한 명령을 구현했으나 공통 Application/Core의 실제 폴더 dispatch는 다음 통합 단계다. 새 grant가 있다고 실제 폴더 기능 완료로 표시하지 않는다. 각 lane의 자체 보고를 그대로 완료로 채택하지 않고 실제 diff·시험 실행 개수·다른 담당자의 검토를 대조한다. 모든 계약/보안 영역은 **[사람 검토 필요]**이며 전체 제품 AC 완료는 아직 0개다.
+
+
+### SMTP·v9 권한·폴더 client 최종 자동 검증 snapshot
+
+SMTP 5개 고정 기능과 실제 AUTH 선택을 post-TLS EHLO에 결속했다. STARTTLS 이전에만 광고된 기능·unknown extension의 미노출, LOGIN/XOAUTH2를 포함한 SMTP 대상 12개가 통과했다. v9는 기존 v1 범위 갱신 이력의 hash·행을 보존하고 도구 집합까지 명시 결속한다. grant 변조·legacy DB 손상·hash version·tool-only 변경·재개 프로필을 교차 검토했다.
+
+folder client의 수동 JSON scanner에서 escaped duplicate key 검사를 우회하는 결함을 RED로 재현한 뒤 bounded serde visitor로 교체했다. 잘못된 UTC 날짜·세대 범위·cursor 순서·상태 execution ID·계정/tool 권한을 거부하고, 22개 안정적 오류 응답·깊은 JSON·프레임 상한·intent SHA 벡터를 검증했다. CLI는 가짜 callback을 주입하며 실제 프로필/Core에 접근하지 않는다. setup 명령에 폴더 옵션이 섞여 무시되는 결함도 RED→GREEN으로 수정했다.
+
+첫 전체 검사(`target/parallel-wave-full-check.log`)는 새 복구 시험에서 서로 다른 임시 계정의 프로필 바이트를 같다고 비교하여 실패했다. 동일한 작업을 publish 후 중단하고 recover하는 시험으로 바로잡았다. base/target의 계정과 도구 전체도 비교한다. 제품 검증을 완화하거나 실패 시험을 제외하지 않았다.
+
+`scripts/check_all.py` 종료 코드 **0**: **864개**(문서 29·빌드 도구 63·Rust 772). 로그 `target/parallel-wave-final-full-check.log`, SHA-256 `377A0D8734128969B7C15437E000D55FC86D113ECEC2E5EA91AD174DC20C5EB2`, source hash `fa51dab59a3586aba2a75a3133cf2e0cd2ae47ba03af51fbbb1d7ecc9d10a507`. 같은 소스의 Linux x86_64/macOS arm64 all-target Clippy 종료 코드 0(`target/parallel-wave-final-linux-check.log`, `target/parallel-wave-final-macos-check.log`). 실제 Mac 실행은 아니다.
+
+CNG 제품 키 1개와 names hash `3B692D49F1D08F7D3442806CF17694CDC02AF36B44839930FC18EB9C83CE9D4D` 유지. 실제 사용자 DB·프로필·Hello·계정·메일은 사용하지 않았다. 공개 폴더 요청은 아직 Application/Core dispatch가 연결되지 않아 제품 사용 완료로 표시하지 않는다. **[사람 검토 필요]**, 전체 제품 AC 완료 0개를 유지한다. 다음 묶음은 v10 작업 이력·공통 admission·Core worker를 통한 폴더 기능 연결이다.

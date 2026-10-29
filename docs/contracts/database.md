@@ -1,6 +1,6 @@
 # 암호화 데이터베이스 계약 v1
 
-상태: M1-04 구현 기준 및 v7 범위 갱신 이력 확장, **사람 보안 검토 필요**. 코어의 암호화 저장소 연결은 구현됐으며 메일 API 활성화와는 별개다. `SEC-01`, `SEC-02`와 [ADR-004](../adr/ADR-004-encrypted-storage.md)를 함께 적용한다.
+상태: M1-04 구현 기준 및 v9 계정·도구 범위 갱신 이력 확장, **사람 보안 검토 필요**. 코어의 암호화 저장소 연결은 구현됐으며 메일 API 활성화와는 별개다. `SEC-01`, `SEC-02`와 [ADR-004](../adr/ADR-004-encrypted-storage.md)를 함께 적용한다.
 
 ## 소유권과 공개 경계
 
@@ -29,7 +29,7 @@ DB 위치·파일명·백업 위치는 설치 구성에서 결정한 상수다. 
 
 ## 초기 물리 스키마 범위
 
-M1-04의 v1은 `app_metadata`, `settings`, `accounts` 세 테이블로 시작했다. v2는 [서버 신원·등록 저장 계약](registration-store.md)의 5개 테이블, v3는 [감사 기록 계약](audit.md)의 bounded append-only 감사 테이블을 추가했다. v4는 [메일 연결 설정 저장](mail-connection-store.md)의 endpoint 설정·관측·중복 방지 테이블, v5는 [설정 저널](imap-setup-journal.md)의 신규 요청·효과 이력 두 테이블을 추가했고, v6는 [명시 재개](imap-setup-resume.md)의 부모·자식 연결과 버전 결속을 추가했다. v7은 [클라이언트 범위 갱신 계약](client-scope-refresh.md)의 전용 `client_scope_refreshes` 이력 표를 추가했다. v8은 [IMAP 폴더 관측 저장](imap-folder-store.md)의 catalog·operation 두 표를 추가한다. 지원하는 이전은 v1→v2→v3→v4→v5→v6→v7→v8 순서의 migration ladder이며 각 단계의 검증된 백업 이력은 그대로 보존한다. 최초 등록 request/key/pin은 보존하고 범위 갱신만 v7 전용 이력으로 기록한다. Message, Thread, Folder, Tag, Draft, Outbox, Approval, ScheduledSend 등은 해당 기능 카드에서 별도 마이그레이션한다. `accounts`에는 토큰·비밀번호·키를 넣지 않고 Secrets 참조만 후속 계약으로 연결한다.
+M1-04의 v1은 `app_metadata`, `settings`, `accounts` 세 테이블로 시작했다. v2는 [서버 신원·등록 저장 계약](registration-store.md)의 5개 테이블, v3는 [감사 기록 계약](audit.md)의 bounded append-only 감사 테이블을 추가했다. v4는 [메일 연결 설정 저장](mail-connection-store.md)의 endpoint 설정·관측·중복 방지 테이블, v5는 [설정 저널](imap-setup-journal.md)의 신규 요청·효과 이력 두 테이블을 추가했고, v6는 [명시 재개](imap-setup-resume.md)의 부모·자식 연결과 버전 결속을 추가했다. v7은 [클라이언트 범위 갱신 계약](client-scope-refresh.md)의 전용 `client_scope_refreshes` 이력 표를 추가했다. v8은 [IMAP 폴더 관측 저장](imap-folder-store.md)의 catalog·operation 두 표를 추가한다. 지원하는 이전은 v1→v2→v3→v4→v5→v6→v7→v8→v9 순서의 migration ladder이며 각 단계의 검증된 백업 이력은 그대로 보존한다. 최초 등록 request/key/pin은 보존하고 범위 갱신만 v7 전용 이력으로 기록한다. Message, Thread, Folder, Tag, Draft, Outbox, Approval, ScheduledSend 등은 해당 기능 카드에서 별도 마이그레이션한다. `accounts`에는 토큰·비밀번호·키를 넣지 않고 Secrets 참조만 후속 계약으로 연결한다.
 
 `app_metadata`는 singleton 1행, `database_format='mail-hantong'`, 양의 `schema_version`, UTC epoch milliseconds를 가진다. 초기화 코드는 암호화 연결 검증 후 bound parameter로 이 행을 삽입한다. `settings`는 key/value JSON과 `version>=1`을 저장한다. 설정 변경은 `UPDATE ... WHERE setting_key=? AND version=?`의 CAS로만 수행하며 영향 행이 0이면 `CONFLICT`이고 기존 값을 보존한다. `accounts`는 기준 모델의 `account_id`, `provider`, `provider_subject`, `primary_address`, `display_name`, `color`, `account_number`, `status`, `capabilities`, `granted_scopes`, `settings_version`을 저장한다. provider는 `gmail|graph|imap|archive`만 허용하고, archive 계정은 동기화·발송하지 않는다. 배열 필드는 표준 JSON 배열이어야 하며 `provider_subject`가 있는 경우 공급자·주체 조합은 계정 내에서 유일해야 한다.
 
@@ -49,3 +49,7 @@ SQLite online backup API로 같은 키의 암호화 목적지를 만들고 재�
 - 오류·로그·Debug에 키·SQL·경로·설정값·계정값·메일 원문이 없음.
 
 이 계약은 DB 연결·스키마 경계만 정의한다. 발송 승인, 계정 등록, 공급자 동기화, 검색 엔진과 인증 세션은 각 계약을 통과해야 한다.
+
+## v9 계정·도구 범위 이력
+
+v8 DDL은 `migrations/schema-v8.sql`로 보존한다. 8→9는 [범위 갱신 v2](client-scope-refresh.md)에 따라 기존 ledger를 재구축하며 모든 v1 행의 원래 값/hash를 보존하고 명시 legacy 도구와 hash_version1을 추가한다. v7/v8은 전용 legacy reader로 검증한 후 이전한다. 새 fresh/schema9 reader는 v1·v2 hash/history를 구분하고 전체 계정/도구 범위를 검증한다. 실패/백업 충돌은 기존 자료를 보존한다. 현재 변경의 검증은 진행 중이다.

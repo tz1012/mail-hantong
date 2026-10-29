@@ -92,6 +92,16 @@ impl Fixture {
             )
             .unwrap()
     }
+    fn pending_with_scope(&self, tools: Vec<String>) -> CliScopeRefresh {
+        self.store
+            .create_cli_scope_refresh_with_scope(
+                [10; 32],
+                RequestedScope::new(self.store.list_registrable_account_ids().unwrap(), tools)
+                    .unwrap(),
+                hantong_platform::sha256(&public()).unwrap(),
+            )
+            .unwrap()
+    }
 }
 struct Fake<'a> {
     store: &'a Store,
@@ -101,6 +111,7 @@ struct Fake<'a> {
     wrong_key: bool,
     held: std::rc::Rc<Cell<bool>>,
     diagnostics: RefCell<Vec<ErrorCode>>,
+    published: RefCell<Option<(Vec<u8>, Vec<u8>)>>,
 }
 struct Publication(std::rc::Rc<Cell<bool>>);
 impl Drop for Publication {
@@ -118,6 +129,7 @@ impl<'a> Fake<'a> {
             wrong_key: false,
             held: std::rc::Rc::new(Cell::new(false)),
             diagnostics: RefCell::new(vec![]),
+            published: RefCell::new(None),
         }
     }
     fn hit(&self, name: &'static str) -> Result<(), ErrorCode> {
@@ -165,12 +177,16 @@ impl Effects for Fake<'_> {
         assert_eq!(row.phase(), ScopeRefreshPhase::Staged);
         let a = ParsedClientProfile::from_json(old)?;
         let b = ParsedClientProfile::from_json(new)?;
+        self.published
+            .borrow_mut()
+            .replace((old.to_vec(), new.to_vec()));
         assert_eq!(a.registration_id(), b.registration_id());
         assert_eq!(a.client_public_key(), b.client_public_key());
         assert_eq!(a.client_key_id(), b.client_key_id());
         assert_eq!(a.server_public_key(), b.server_public_key());
         assert_eq!(a.profile_epoch() + 1, b.profile_epoch());
-        assert_eq!(b.scope().accounts(), row.target_accounts());
+        assert_eq!(a.scope(), &row.base_registration().scope);
+        assert_eq!(b.scope(), &row.target_scope());
         self.held.set(true);
         Ok(Publication(self.held.clone()))
     }
@@ -195,6 +211,51 @@ impl Effects for Fake<'_> {
     fn report(&self, e: ErrorCode) {
         self.diagnostics.borrow_mut().push(e);
     }
+}
+
+#[test]
+fn cli15_folder_scope_refresh_activates_full_scope_and_recovery_reuses_same_profile_bytes() {
+    let fixture = Fixture::new();
+    let tools = hantong_contracts::auth::default_cli_folder_tools();
+    let r = fixture.pending_with_scope(tools.clone());
+    assert_eq!(r.target_scope().tools(), tools.as_slice());
+    let mut f = Fake::new(&fixture.store);
+    f.fail = Some("activate");
+    assert_eq!(
+        commit_consumed_review(&f, &r, &review_snapshot(&r).unwrap()),
+        Err(ErrorCode::InternalError)
+    );
+    let bytes = f.published.borrow().clone().expect("publish bytes");
+    let staged = fixture
+        .store
+        .load_cli_scope_refresh(*r.refresh_id())
+        .unwrap()
+        .unwrap();
+    assert_eq!(staged.phase(), ScopeRefreshPhase::Staged);
+    assert_eq!(
+        fixture
+            .store
+            .load_default_cli_registration()
+            .unwrap()
+            .unwrap()
+            .scope,
+        r.base_registration().scope
+    );
+    let f = Fake::new(&fixture.store);
+    assert_eq!(recover_staged(&f, &staged), Ok(()));
+    let recovered = f
+        .published
+        .borrow()
+        .clone()
+        .expect("recovery publish bytes");
+    assert_eq!(recovered, bytes);
+    let active = fixture
+        .store
+        .load_default_cli_registration()
+        .unwrap()
+        .unwrap();
+    assert_eq!(active.scope.tools(), tools.as_slice());
+    assert_eq!(active.scope.accounts(), r.target_scope().accounts());
 }
 #[test]
 fn cli15_scope_refresh_orders_stage_publish_activate_then_cleanup_without_new_identity() {

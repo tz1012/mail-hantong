@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 
 use hantong_contracts::ErrorCode;
+use hantong_contracts::folders::FolderListRequest;
 use hantong_contracts::imap_setup::{
     ImapSetupCommand, ImapSetupInput, ImapSetupReceipt, ImapSetupTls,
 };
@@ -20,6 +21,22 @@ const KO_RESOURCES: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/re
 enum Lang {
     En,
     Ko,
+}
+
+enum FolderAction {
+    List(FolderListRequest),
+    Refresh {
+        account: String,
+        operation: String,
+        idempotency_key: String,
+        generation: u64,
+    },
+    Status(hantong_contracts::folders::FolderRefreshStatusRequest),
+}
+
+enum FolderActionResult {
+    Page(hantong_ipc_client::folders::FolderPage),
+    Refresh(hantong_ipc_client::folders::FolderRefreshReceipt),
 }
 
 fn json_escape(value: &str) -> String {
@@ -78,14 +95,41 @@ fn error_json(code: ErrorCode, lang: Lang) -> String {
 }
 
 fn run(args: impl IntoIterator<Item = String>) -> i32 {
-    run_with_boundaries_and_scope(
+    run_with_boundaries_and_scope_with_folders(
         args,
         hantong_ipc_client::registration::exchange,
         verify_profile,
         hantong_ipc_client::accounts::list_default_accounts,
         hantong_ipc_client::imap_setup::exchange,
         hantong_ipc_client::scope_refresh::exchange,
+        real_folder_action,
     )
+}
+
+fn real_folder_action(action: FolderAction) -> Result<FolderActionResult, ErrorCode> {
+    match action {
+        FolderAction::List(request) => {
+            hantong_ipc_client::folders::list_default_folders(request).map(FolderActionResult::Page)
+        }
+        FolderAction::Refresh {
+            account,
+            operation,
+            idempotency_key,
+            generation,
+        } => {
+            let request = hantong_ipc_client::folders::prepare_refresh_request(
+                &account,
+                &operation,
+                &idempotency_key,
+                generation,
+            )?;
+            hantong_ipc_client::folders::refresh_default(request).map(FolderActionResult::Refresh)
+        }
+        FolderAction::Status(request) => {
+            hantong_ipc_client::folders::refresh_status_default(request)
+                .map(FolderActionResult::Refresh)
+        }
+    }
 }
 
 #[cfg(windows)]
@@ -259,7 +303,46 @@ fn run_with_boundaries_and_scope_for_test(
     )
 }
 
+#[cfg(test)]
 fn run_with_boundaries_and_scope(
+    args: impl IntoIterator<Item = String>,
+    registration: impl FnMut(RegistrationCommand) -> Result<RegistrationReceipt, ErrorCode>,
+    verification: impl FnMut() -> Result<(), ErrorCode>,
+    account_list: impl FnMut(
+        bool,
+    )
+        -> Result<hantong_ipc_client::accounts::AccountListResponse, ErrorCode>,
+    setup: impl FnMut(ImapSetupCommand) -> Result<ImapSetupReceipt, ErrorCode>,
+    scope_refresh: impl FnMut(ScopeRefreshCommand) -> Result<ScopeRefreshReceipt, ErrorCode>,
+) -> i32 {
+    run_with_boundaries_and_scope_with_folders(
+        args,
+        registration,
+        verification,
+        account_list,
+        setup,
+        scope_refresh,
+        |_| Err(ErrorCode::CapabilityUnsupported),
+    )
+}
+
+#[cfg(test)]
+fn run_with_boundaries_and_folders(
+    args: impl IntoIterator<Item = String>,
+    folder_action: impl FnMut(FolderAction) -> Result<FolderActionResult, ErrorCode>,
+) -> i32 {
+    run_with_boundaries_and_scope_with_folders(
+        args,
+        |_| panic!("registration must not run"),
+        || panic!("verification must not run"),
+        |_| panic!("account list must not run"),
+        |_| panic!("setup must not run"),
+        |_| panic!("scope refresh must not run"),
+        folder_action,
+    )
+}
+
+fn run_with_boundaries_and_scope_with_folders(
     args: impl IntoIterator<Item = String>,
     mut registration: impl FnMut(RegistrationCommand) -> Result<RegistrationReceipt, ErrorCode>,
     mut verification: impl FnMut() -> Result<(), ErrorCode>,
@@ -269,26 +352,60 @@ fn run_with_boundaries_and_scope(
         -> Result<hantong_ipc_client::accounts::AccountListResponse, ErrorCode>,
     mut setup: impl FnMut(ImapSetupCommand) -> Result<ImapSetupReceipt, ErrorCode>,
     mut scope_refresh: impl FnMut(ScopeRefreshCommand) -> Result<ScopeRefreshReceipt, ErrorCode>,
+    mut folder_action: impl FnMut(FolderAction) -> Result<FolderActionResult, ErrorCode>,
 ) -> i32 {
     let mut lang = Lang::En;
     let mut json = false;
     let mut include_capabilities = false;
+    let mut seen_lang = false;
+    let mut seen_json = false;
+    let mut seen_no_input = false;
+    let mut seen_include_capabilities = false;
+    let mut seen_client = false;
     let mut want_help = false;
     let mut want_version = false;
     let mut command: Vec<String> = Vec::new();
     let mut setup_options: Vec<(String, String)> = Vec::new();
+    let mut folder_options: Vec<(String, String)> = Vec::new();
     let mut it = args.into_iter();
     while let Some(arg) = it.next() {
         match arg.as_str() {
-            "--lang" => match it.next().as_deref() {
-                Some("en") => lang = Lang::En,
-                Some("ko") => lang = Lang::Ko,
-                _ => return emit_error(ErrorCode::InvalidInput, lang, json),
-            },
-            "--json" => json = true,
-            "--include-capabilities" => include_capabilities = true,
-            "--no-input" => {}
+            "--lang" => {
+                if seen_lang {
+                    return emit_error(ErrorCode::InvalidInput, lang, json);
+                }
+                seen_lang = true;
+                match it.next().as_deref() {
+                    Some("en") => lang = Lang::En,
+                    Some("ko") => lang = Lang::Ko,
+                    _ => return emit_error(ErrorCode::InvalidInput, lang, json),
+                }
+            }
+            "--json" => {
+                if seen_json {
+                    return emit_error(ErrorCode::InvalidInput, lang, json);
+                }
+                seen_json = true;
+                json = true;
+            }
+            "--include-capabilities" => {
+                if seen_include_capabilities {
+                    return emit_error(ErrorCode::InvalidInput, lang, json);
+                }
+                seen_include_capabilities = true;
+                include_capabilities = true;
+            }
+            "--no-input" => {
+                if seen_no_input {
+                    return emit_error(ErrorCode::InvalidInput, lang, json);
+                }
+                seen_no_input = true;
+            }
             "--client" => {
+                if seen_client {
+                    return emit_error(ErrorCode::InvalidInput, lang, json);
+                }
+                seen_client = true;
                 if it.next().as_deref().is_none_or(|value| {
                     hantong_ipc_client::profile::ProfileSelector::parse(value).is_err()
                 }) {
@@ -301,10 +418,28 @@ fn run_with_boundaries_and_scope(
                 };
                 setup_options.push((arg, value));
             }
+            "--account"
+            | "--limit"
+            | "--cursor"
+            | "--expected-generation"
+            | "--operation-id"
+            | "--idempotency-key"
+            | "--execution-id" => {
+                let Some(value) = it.next() else {
+                    return emit_error(ErrorCode::InvalidInput, lang, json);
+                };
+                folder_options.push((arg, value));
+            }
             "--help" | "-h" if command.is_empty() => {
+                if want_help {
+                    return emit_error(ErrorCode::InvalidInput, lang, json);
+                }
                 want_help = true;
             }
             "--version" | "-V" if command.is_empty() => {
+                if want_version {
+                    return emit_error(ErrorCode::InvalidInput, lang, json);
+                }
                 want_version = true;
             }
             value if value.starts_with('-') => {
@@ -325,6 +460,9 @@ fn run_with_boundaries_and_scope(
     if (want_help || want_version) && !command.is_empty() {
         return emit_error(ErrorCode::InvalidInput, lang, json);
     }
+    if !folder_options.is_empty() && command.first().map(String::as_str) != Some("folders") {
+        return emit_error(ErrorCode::InvalidInput, lang, json);
+    }
     if let Some(command) = parse_setup_command(&command, &setup_options) {
         return match command {
             Ok(Some(value)) => match setup(value) {
@@ -340,6 +478,9 @@ fn run_with_boundaries_and_scope(
     }
     if !setup_options.is_empty() {
         return emit_error(ErrorCode::InvalidInput, lang, json);
+    }
+    if !folder_options.is_empty() || command.first().is_some_and(|v| v == "folders") {
+        return run_folder_command(&command, &folder_options, lang, json, &mut folder_action);
     }
     if want_help && command.is_empty() {
         println!("{}", help(lang));
@@ -412,6 +553,191 @@ fn run_with_boundaries_and_scope(
     } else {
         emit_error(ErrorCode::InvalidInput, lang, json)
     }
+}
+
+fn run_folder_command(
+    command: &[String],
+    options: &[(String, String)],
+    lang: Lang,
+    json: bool,
+    folder_action: &mut impl FnMut(FolderAction) -> Result<FolderActionResult, ErrorCode>,
+) -> i32 {
+    let valid = matches!(command, [a,b] if a == "folders" && (b == "list" || b == "refresh" || b == "refresh-status"));
+    if !valid {
+        return emit_error(ErrorCode::InvalidInput, lang, json);
+    }
+    let mut values = std::collections::BTreeMap::new();
+    for (key, value) in options {
+        if values.insert(key.as_str(), value.as_str()).is_some() {
+            return emit_error(ErrorCode::InvalidInput, lang, json);
+        }
+    }
+    let Some(account) = values.get("--account") else {
+        return emit_error(ErrorCode::InvalidInput, lang, json);
+    };
+    if command[1] == "list" {
+        let limit = match values.get("--limit") {
+            None => None,
+            Some(v) => match v.parse::<u32>() {
+                Ok(value) => Some(value),
+                Err(_) => return emit_error(ErrorCode::InvalidInput, lang, json),
+            },
+        };
+        let cursor = match values.get("--cursor") {
+            None => None,
+            Some(v) => match hantong_contracts::folders::FolderCursor::parse(v) {
+                Ok(c) => Some(c),
+                Err(e) => return emit_error(e, lang, json),
+            },
+        };
+        if values
+            .keys()
+            .any(|k| !matches!(*k, "--account" | "--limit" | "--cursor"))
+        {
+            return emit_error(ErrorCode::InvalidInput, lang, json);
+        }
+        let request = match FolderListRequest::new(account, limit, cursor) {
+            Ok(v) => v,
+            Err(e) => return emit_error(e, lang, json),
+        };
+        return match folder_action(FolderAction::List(request)) {
+            Ok(FolderActionResult::Page(page)) => {
+                if json {
+                    println!("{}", page.to_json());
+                } else {
+                    print!("{}", folder_page_human(&page, lang));
+                }
+                0
+            }
+            Ok(FolderActionResult::Refresh(_)) => emit_error(ErrorCode::InternalError, lang, json),
+            Err(e) => emit_error(e, lang, json),
+        };
+    }
+    if command[1] == "refresh" {
+        if values.keys().any(|k| {
+            !matches!(
+                *k,
+                "--account" | "--expected-generation" | "--operation-id" | "--idempotency-key"
+            )
+        }) {
+            return emit_error(ErrorCode::InvalidInput, lang, json);
+        }
+        let generation = match values
+            .get("--expected-generation")
+            .and_then(|v| v.parse::<u64>().ok())
+        {
+            Some(v) => v,
+            None => return emit_error(ErrorCode::InvalidInput, lang, json),
+        };
+        let Some(operation) = values.get("--operation-id") else {
+            return emit_error(ErrorCode::InvalidInput, lang, json);
+        };
+        let Some(key) = values.get("--idempotency-key") else {
+            return emit_error(ErrorCode::InvalidInput, lang, json);
+        };
+        if generation >= i64::MAX as u64 {
+            return emit_error(ErrorCode::InvalidInput, lang, json);
+        }
+        if !valid_folder_id(operation) || !valid_folder_id(key) {
+            return emit_error(ErrorCode::InvalidInput, lang, json);
+        }
+        return match folder_action(FolderAction::Refresh {
+            account: (*account).to_owned(),
+            operation: (*operation).to_owned(),
+            idempotency_key: (*key).to_owned(),
+            generation,
+        }) {
+            Ok(FolderActionResult::Refresh(receipt)) => {
+                if json {
+                    println!("{}", receipt.to_json());
+                } else {
+                    print!("{}", folder_refresh_human(&receipt, lang));
+                }
+                0
+            }
+            Ok(FolderActionResult::Page(_)) => emit_error(ErrorCode::InternalError, lang, json),
+            Err(e) => emit_error(e, lang, json),
+        };
+    }
+    if command[1] == "refresh-status" {
+        if values
+            .keys()
+            .any(|k| !matches!(*k, "--account" | "--execution-id"))
+        {
+            return emit_error(ErrorCode::InvalidInput, lang, json);
+        }
+        let Some(execution) = values.get("--execution-id") else {
+            return emit_error(ErrorCode::InvalidInput, lang, json);
+        };
+        let id = match hantong_contracts::wire_hex::decode_fixed::<32>(execution) {
+            Ok(v) if v != [0; 32] => v,
+            _ => return emit_error(ErrorCode::InvalidInput, lang, json),
+        };
+        let request = match hantong_contracts::folders::FolderRefreshStatusRequest::new(account, id)
+        {
+            Ok(v) => v,
+            Err(e) => return emit_error(e, lang, json),
+        };
+        return match folder_action(FolderAction::Status(request)) {
+            Ok(FolderActionResult::Refresh(receipt)) => {
+                if json {
+                    println!("{}", receipt.to_json());
+                } else {
+                    print!("{}", folder_refresh_human(&receipt, lang));
+                }
+                0
+            }
+            Ok(FolderActionResult::Page(_)) => emit_error(ErrorCode::InternalError, lang, json),
+            Err(e) => emit_error(e, lang, json),
+        };
+    }
+    emit_error(ErrorCode::InvalidInput, lang, json)
+}
+
+fn valid_folder_id(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 128
+        && value
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-'))
+}
+
+fn folder_page_human(page: &hantong_ipc_client::folders::FolderPage, lang: Lang) -> String {
+    page.items()
+        .iter()
+        .map(|item| {
+            format!(
+                "{}: {}\n",
+                resource(lang, "folder_name"),
+                safe_human(item.value()["display_name"].as_str().unwrap_or(""))
+            )
+        })
+        .collect()
+}
+
+fn folder_refresh_human(
+    receipt: &hantong_ipc_client::folders::FolderRefreshReceipt,
+    lang: Lang,
+) -> String {
+    let value = receipt.value();
+    let execution = value["execution_id"].as_str().unwrap_or("");
+    let state = value["state"].as_str().unwrap_or("");
+    let generation = value["generation"]
+        .as_u64()
+        .map(|v| v.to_string())
+        .unwrap_or_else(|| "-".to_owned());
+    let error = value["error_code"].as_str().unwrap_or("-");
+    format!(
+        "{}: {}\n{}: {}\n{}: {}\n{}: {}\n",
+        resource(lang, "folder_refresh_execution_id"),
+        safe_human(execution),
+        resource(lang, "folder_refresh_state"),
+        safe_human(state),
+        resource(lang, "folder_refresh_generation"),
+        generation,
+        resource(lang, "folder_refresh_error"),
+        safe_human(error),
+    )
 }
 
 fn registration_command(command: &[String]) -> Result<Option<RegistrationCommand>, ErrorCode> {
@@ -1186,5 +1512,239 @@ mod tests {
         assert_eq!(en, ko);
         assert!(en.contains("\"schema_version\":1"));
         assert!(en.contains("\"completeness\":\"complete\""));
+    }
+
+    #[test]
+    fn m203_folder_cli_rejects_missing_or_duplicate_options_before_auth() {
+        for args in [
+            vec!["folders", "list"],
+            vec!["folders", "list", "--account", "a", "--account", "b"],
+            vec!["folders", "refresh", "--account", "a"],
+            vec!["folders", "refresh-status", "--account", "a"],
+            vec!["--json", "--json", "folders", "list", "--account", "a"],
+            vec![
+                "--lang",
+                "en",
+                "--lang",
+                "ko",
+                "folders",
+                "list",
+                "--account",
+                "a",
+            ],
+            vec![
+                "--no-input",
+                "--no-input",
+                "folders",
+                "list",
+                "--account",
+                "a",
+            ],
+            vec![
+                "folders",
+                "refresh",
+                "--account",
+                "a",
+                "--expected-generation",
+                "nope",
+                "--operation-id",
+                "op",
+                "--idempotency-key",
+                "key",
+            ],
+            vec![
+                "folders",
+                "refresh",
+                "--account",
+                "a",
+                "--expected-generation",
+                "9223372036854775807",
+                "--operation-id",
+                "op",
+                "--idempotency-key",
+                "key",
+            ],
+            vec![
+                "folders",
+                "refresh-status",
+                "--account",
+                "a",
+                "--execution-id",
+                "ABC",
+            ],
+        ] {
+            let calls = std::cell::Cell::new(0);
+            let code = run_with_boundaries_and_folders(args.into_iter().map(String::from), |_| {
+                calls.set(calls.get() + 1);
+                Err(ErrorCode::InternalError)
+            });
+            assert_eq!(code, ErrorCode::InvalidInput.exit_code());
+            assert_eq!(calls.get(), 0);
+        }
+    }
+
+    #[test]
+    fn m203_folder_options_are_rejected_before_non_folder_callbacks() {
+        let id = hantong_contracts::wire_hex::encode(&[7u8; 32]);
+        let setups = std::cell::Cell::new(0);
+        let code = run_with_boundaries_and_setup(
+            ["setup", "imap", "status", id.as_str(), "--account", "acct"].map(String::from),
+            |_| panic!("registration must not run"),
+            || panic!("verification must not run"),
+            |_| panic!("accounts must not run"),
+            |_| {
+                setups.set(setups.get() + 1);
+                Err(ErrorCode::InternalError)
+            },
+        );
+        assert_eq!(code, ErrorCode::InvalidInput.exit_code());
+        assert_eq!(setups.get(), 0);
+
+        for command in [
+            vec!["clients", "status", id.as_str()],
+            vec!["core", "status"],
+        ] {
+            let code = run_with_boundaries_and_folders(
+                command
+                    .into_iter()
+                    .chain(["--account", "acct"])
+                    .map(String::from),
+                |_| panic!("folder callback must not run"),
+            );
+            assert_eq!(code, ErrorCode::InvalidInput.exit_code());
+        }
+    }
+
+    #[test]
+    fn m203_folder_cli_accepts_explicit_list_shape_through_fake_callback() {
+        let calls = std::cell::Cell::new(0);
+        let code = run_with_boundaries_and_folders(
+            [
+                "--json",
+                "folders",
+                "list",
+                "--account",
+                "acct",
+                "--limit",
+                "2",
+            ]
+            .map(String::from),
+            |action| {
+                calls.set(calls.get() + 1);
+                assert!(
+                    matches!(action, FolderAction::List(ref request) if request.account_id() == "acct" && request.limit() == 2)
+                );
+                Err(ErrorCode::CapabilityUnsupported)
+            },
+        );
+        assert_eq!(code, ErrorCode::CapabilityUnsupported.exit_code());
+        assert_eq!(calls.get(), 1);
+    }
+
+    #[test]
+    fn m203_folder_cli_rejects_malformed_limit_before_folder_callback() {
+        let calls = std::cell::Cell::new(0);
+        let code = run_with_boundaries_and_folders(
+            ["folders", "list", "--account", "acct", "--limit", "nope"].map(String::from),
+            |_| {
+                calls.set(calls.get() + 1);
+                Err(ErrorCode::InternalError)
+            },
+        );
+        assert_eq!(code, ErrorCode::InvalidInput.exit_code());
+        assert_eq!(calls.get(), 0);
+    }
+
+    #[test]
+    fn m203_folder_cli_valid_list_uses_fake_callback_and_localized_safe_outputs() {
+        let raw = br#"{"jsonrpc":"2.0","id":"r","result":{"schema_version":1,"ok":true,"items":[{"wire_hex":"00","display_name":"Inbox\u202eevil","encoding":"utf8","delimiter":"/","no_select":false,"non_existent":false,"children":"has_no_children","roles":[]}],"next_cursor":null,"account_results":[{"account_id":"acct","status":"complete","items":[{"wire_hex":"00","display_name":"Inbox\u202eevil","encoding":"utf8","delimiter":"/","no_select":false,"non_existent":false,"children":"has_no_children","roles":[]}]}],"completeness":"complete","warnings":[],"observed_at":"2026-10-30T00:00:00.000Z","metadata":{"source":"local_store","cached":true,"account_id":"acct","generation":1,"account_version":1,"endpoint_version":1,"binding_current":true,"special_use_complete":false}}}"#;
+        let page = hantong_ipc_client::folders::parse_folder_page(
+            raw,
+            "r",
+            &FolderListRequest::new("acct", Some(2), None).unwrap(),
+        )
+        .unwrap();
+        let calls = std::cell::Cell::new(0);
+        let code = run_with_boundaries_and_folders(
+            [
+                "--json",
+                "folders",
+                "list",
+                "--account",
+                "acct",
+                "--limit",
+                "2",
+            ]
+            .map(String::from),
+            |action| {
+                calls.set(calls.get() + 1);
+                assert!(matches!(action, FolderAction::List(ref request) if request.limit() == 2));
+                Ok(FolderActionResult::Page(page.clone()))
+            },
+        );
+        assert_eq!(code, 0);
+        assert_eq!(calls.get(), 1);
+        assert!(folder_page_human(&page, Lang::En).contains("\\u{202e}"));
+        assert!(folder_page_human(&page, Lang::Ko).contains("폴더"));
+        assert_eq!(page.to_json(), page.to_json());
+    }
+
+    #[test]
+    fn m203_folder_cli_valid_refresh_and_status_use_fake_callback_and_render_receipt_fields() {
+        let raw = br#"{"jsonrpc":"2.0","id":"r","result":{"schema_version":1,"ok":true,"account_id":"acct","execution_id":"0000000000000000000000000000000000000000000000000000000000000001","state":"succeeded","generation":9,"error_code":null}}"#;
+        let receipt = hantong_ipc_client::folders::parse_refresh_receipt(raw, "r", "acct").unwrap();
+        let calls = std::cell::RefCell::new(Vec::new());
+        let code = run_with_boundaries_and_folders(
+            [
+                "folders",
+                "refresh",
+                "--account",
+                "acct",
+                "--expected-generation",
+                "3",
+                "--operation-id",
+                "op",
+                "--idempotency-key",
+                "key",
+            ]
+            .map(String::from),
+            |action| {
+                calls.borrow_mut().push(action);
+                Ok(FolderActionResult::Refresh(receipt.clone()))
+            },
+        );
+        assert_eq!(code, 0);
+        assert_eq!(calls.borrow().len(), 1);
+        assert!(
+            matches!(&calls.borrow()[0], FolderAction::Refresh { account, generation, .. } if account == "acct" && *generation == 3)
+        );
+        let human = folder_refresh_human(&receipt, Lang::En);
+        assert!(
+            human.contains("Execution ID")
+                && human.contains("succeeded")
+                && human.contains("Generation")
+        );
+
+        let failed_raw = br#"{"jsonrpc":"2.0","id":"r","result":{"schema_version":1,"ok":true,"account_id":"acct","execution_id":"0000000000000000000000000000000000000000000000000000000000000001","state":"failed","generation":null,"error_code":"OFFLINE"}}"#;
+        let failed =
+            hantong_ipc_client::folders::parse_refresh_receipt(failed_raw, "r", "acct").unwrap();
+        let failed_human = folder_refresh_human(&failed, Lang::En);
+        assert!(failed_human.contains("failed") && failed_human.contains("OFFLINE"));
+        assert!(!failed_human.contains("submitted"));
+
+        let code = run_with_boundaries_and_folders(
+            [
+                "--json",
+                "folders",
+                "refresh-status",
+                "--account",
+                "acct",
+                "--execution-id",
+                "0000000000000000000000000000000000000000000000000000000000000001",
+            ]
+            .map(String::from),
+            |_| Ok(FolderActionResult::Refresh(receipt.clone())),
+        );
+        assert_eq!(code, 0);
     }
 }

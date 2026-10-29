@@ -216,7 +216,7 @@ fn valid_optional_display(
     }
     Ok(())
 }
-fn valid_timestamp(value: &str) -> bool {
+pub(crate) fn valid_timestamp(value: &str) -> bool {
     let b = value.as_bytes();
     if !(b.len() == 20 || (22..=24).contains(&b.len()))
         || b[4] != b'-'

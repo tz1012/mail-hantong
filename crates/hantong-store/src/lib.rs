@@ -30,7 +30,7 @@ pub use registrations::{
 pub use server_identity::ServerIdentity;
 
 #[cfg(windows)]
-const CURRENT_SCHEMA_VERSION: u32 = 8;
+const CURRENT_SCHEMA_VERSION: u32 = 9;
 #[cfg(windows)]
 const DATABASE_FORMAT: &str = "mail-hantong";
 #[cfg(windows)]
@@ -47,6 +47,10 @@ const SCHEMA_V5: &str = include_str!("../../../docs/contracts/migrations/schema-
 const SCHEMA_V6: &str = include_str!("../../../docs/contracts/migrations/schema-v6.sql");
 #[cfg(windows)]
 const SCHEMA_V7: &str = include_str!("../../../docs/contracts/migrations/schema-v7.sql");
+#[cfg(windows)]
+const SCHEMA_V8: &str = include_str!("../../../docs/contracts/migrations/schema-v8.sql");
+#[cfg(windows)]
+const MIGRATION_V8_TO_V9: &str = include_str!("../../../docs/contracts/migrations/008-to-009.sql");
 #[cfg(windows)]
 const MIGRATION_V7_TO_V8: &str = include_str!("../../../docs/contracts/migrations/007-to-008.sql");
 #[cfg(windows)]
@@ -249,6 +253,7 @@ impl Store {
                 (5, _) => Ok(SchemaState::V5),
                 (6, _) => Ok(SchemaState::V6),
                 (7, _) => Ok(SchemaState::V7),
+                (8, _) => Ok(SchemaState::V8),
                 (CURRENT_SCHEMA_VERSION, _) => Ok(SchemaState::Current),
                 _ => Ok(SchemaState::Unsupported),
             }
@@ -263,7 +268,8 @@ impl Store {
                 self.migrate_v4_to_v5()?;
                 self.migrate_v5_to_v6()?;
                 self.migrate_v6_to_v7()?;
-                self.migrate_v7_to_v8()
+                self.migrate_v7_to_v8()?;
+                self.migrate_v8_to_v9()
             }
             SchemaState::V2 => {
                 self.with_connection(|connection| validate_schema(connection, SCHEMA_V2, 2))?;
@@ -272,7 +278,8 @@ impl Store {
                 self.migrate_v4_to_v5()?;
                 self.migrate_v5_to_v6()?;
                 self.migrate_v6_to_v7()?;
-                self.migrate_v7_to_v8()
+                self.migrate_v7_to_v8()?;
+                self.migrate_v8_to_v9()
             }
             SchemaState::V3 => {
                 self.with_connection(|connection| validate_schema(connection, SCHEMA_V3, 3))?;
@@ -280,29 +287,38 @@ impl Store {
                 self.migrate_v4_to_v5()?;
                 self.migrate_v5_to_v6()?;
                 self.migrate_v6_to_v7()?;
-                self.migrate_v7_to_v8()
+                self.migrate_v7_to_v8()?;
+                self.migrate_v8_to_v9()
             }
             SchemaState::V4 => {
                 self.with_connection(|connection| validate_schema(connection, SCHEMA_V4, 4))?;
                 self.migrate_v4_to_v5()?;
                 self.migrate_v5_to_v6()?;
                 self.migrate_v6_to_v7()?;
-                self.migrate_v7_to_v8()
+                self.migrate_v7_to_v8()?;
+                self.migrate_v8_to_v9()
             }
             SchemaState::V5 => {
                 self.with_connection(|connection| validate_schema(connection, SCHEMA_V5, 5))?;
                 self.migrate_v5_to_v6()?;
                 self.migrate_v6_to_v7()?;
-                self.migrate_v7_to_v8()
+                self.migrate_v7_to_v8()?;
+                self.migrate_v8_to_v9()
             }
             SchemaState::V6 => {
                 self.with_connection(|connection| validate_schema(connection, SCHEMA_V6, 6))?;
                 self.migrate_v6_to_v7()?;
-                self.migrate_v7_to_v8()
+                self.migrate_v7_to_v8()?;
+                self.migrate_v8_to_v9()
             }
             SchemaState::V7 => {
                 self.with_connection(|connection| validate_schema(connection, SCHEMA_V7, 7))?;
-                self.migrate_v7_to_v8()
+                self.migrate_v7_to_v8()?;
+                self.migrate_v8_to_v9()
+            }
+            SchemaState::V8 => {
+                self.with_connection(|connection| validate_schema(connection, SCHEMA_V8, 8))?;
+                self.migrate_v8_to_v9()
             }
             SchemaState::Current => self.with_connection(|connection| {
                 validate_schema(connection, SCHEMA, CURRENT_SCHEMA_VERSION)
@@ -356,8 +372,15 @@ impl Store {
 
     #[cfg(windows)]
     fn migrate_v7_to_v8(&self) -> Result<(), ErrorCode> {
-        self.migrate_with_backup(7, 8, SCHEMA, |connection| {
+        self.migrate_with_backup(7, 8, SCHEMA_V8, |connection| {
             connection.execute_batch(MIGRATION_V7_TO_V8)
+        })
+    }
+
+    #[cfg(windows)]
+    fn migrate_v8_to_v9(&self) -> Result<(), ErrorCode> {
+        self.migrate_with_backup(8, 9, SCHEMA, |connection| {
+            connection.execute_batch(MIGRATION_V8_TO_V9)
         })
     }
 
@@ -447,6 +470,7 @@ enum SchemaState {
     V5,
     V6,
     V7,
+    V8,
     Newer,
     Unsupported,
     Corrupt,
@@ -548,7 +572,9 @@ fn validate_schema(
     } else if schema_version >= 6 {
         crate::imap_setup::validate_journal(connection)?;
     }
-    if schema_version >= 7 {
+    if matches!(schema_version, 7 | 8) {
+        crate::scope_refresh::validate_history_v8(connection)?;
+    } else if schema_version >= 9 {
         crate::scope_refresh::validate_history(connection)?;
     }
     Ok(())
@@ -2054,6 +2080,75 @@ mod tests {
         assert!(matches!(f.open(), Err(ErrorCode::InternalError)));
         assert!(!f.0.join("data/backup-before-v6.db").exists());
     }
+    fn seed_v8_scope_fixture(f: &Fixture) {
+        seed_v7_catalog_fixture(f);
+        let store = Store {
+            connection: f.keyed(),
+        };
+        store
+            .migrate_with_backup(
+                7,
+                8,
+                include_str!("../../../docs/contracts/migrations/schema-v8.sql"),
+                |c| c.execute_batch(MIGRATION_V7_TO_V8),
+            )
+            .unwrap();
+    }
+    #[test]
+    fn cli15_v8_scope_migration_preserves_legacy_columns_and_adds_explicit_tools() {
+        let f = Fixture::new();
+        seed_v8_scope_fixture(&f);
+        let before = f.keyed().with_connection(v7_catalog_rows).unwrap();
+        let store = f.open().unwrap();
+        assert_eq!(before, store.with_connection(v7_catalog_rows).unwrap());
+        store.with_connection(|c| {
+            assert_eq!(c.pragma_query_value(None,"user_version",|r|r.get::<_,i64>(0))?,9);
+            assert_eq!(c.query_row("SELECT count(*) FROM pragma_table_info('client_scope_refreshes') WHERE name IN ('hash_version','base_tools_json','target_tools_json')",[],|r|r.get::<_,i64>(0))?,3);
+            Ok(())
+        }).unwrap();
+        assert!(f.0.join("data/backup-before-v8.db").is_file());
+    }
+    #[test]
+    fn cli15_v8_scope_backup_collision_preserves_source_bytes() {
+        let f = Fixture::new();
+        seed_v8_scope_fixture(&f);
+        let path = f.0.join("data/mail-hantong.db");
+        let before = fs::read(&path).unwrap();
+        let backup = f.0.join("data/backup-before-v8.db");
+        fs::write(&backup, b"preserve").unwrap();
+        assert!(matches!(f.open(), Err(ErrorCode::Conflict)));
+        assert_eq!(before, fs::read(path).unwrap());
+        assert_eq!(fs::read(backup).unwrap(), b"preserve");
+    }
+    #[test]
+    fn cli15_v8_scope_real_ddl_failure_rolls_back_original_schema_and_values() {
+        let f = Fixture::new();
+        seed_v8_scope_fixture(&f);
+        let before = f.keyed().with_connection(v7_catalog_rows).unwrap();
+        let store = Store {
+            connection: f.keyed(),
+        };
+        assert_eq!(
+            store.migrate_with_backup(8, 9, SCHEMA, |c| {
+                c.execute_batch(include_str!(
+                    "../../../docs/contracts/migrations/008-to-009.sql"
+                ))?;
+                c.execute_batch("CREATE TABLE unexpected_scope_v9(value)")
+            }),
+            Err(ErrorCode::InternalError)
+        );
+        assert_eq!(before, store.with_connection(v7_catalog_rows).unwrap());
+        store
+            .with_connection(|c| {
+                validate_schema(
+                    c,
+                    include_str!("../../../docs/contracts/migrations/schema-v8.sql"),
+                    8,
+                )
+            })
+            .unwrap();
+        assert!(f.0.join("data/backup-before-v8.db").is_file());
+    }
     fn seed_v7_catalog_fixture(fixture: &Fixture) {
         seed_v6_fixture(fixture);
         let store = Store {
@@ -2072,7 +2167,7 @@ mod tests {
         c: &rusqlite::Connection,
     ) -> rusqlite::Result<Vec<Vec<Vec<rusqlite::types::Value>>>> {
         let mut rows = v6_rows(c)?;
-        let mut query = c.prepare("SELECT * FROM client_scope_refreshes ORDER BY rowid")?;
+        let mut query = c.prepare("SELECT refresh_id,registration_id,base_registration_version,base_profile_epoch,target_profile_epoch,base_accounts_json,target_accounts_json,client_public_key_hash,server_public_key_hash,payload_hash,phase,version,created_at_utc_ms,expires_at_utc_ms,updated_at_utc_ms,decided_at_utc_ms,activated_at_utc_ms FROM client_scope_refreshes ORDER BY rowid")?;
         let columns = query.column_count();
         rows.push(
             query
@@ -2098,7 +2193,7 @@ mod tests {
                     |c| c.pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0))
                 )
                 .unwrap(),
-            8
+            i64::from(CURRENT_SCHEMA_VERSION)
         );
         assert_eq!(store.with_connection(|c|c.query_row("SELECT (SELECT count(*) FROM imap_mailbox_catalogs)+(SELECT count(*) FROM imap_mailbox_catalog_operations)",[],|r|r.get::<_,i64>(0))).unwrap(),0);
         assert!(f.0.join("data/backup-before-v7.db").is_file());
@@ -2124,7 +2219,7 @@ mod tests {
             connection: f.keyed(),
         };
         assert_eq!(
-            store.migrate_with_backup(7, 8, SCHEMA, |c| {
+            store.migrate_with_backup(7, 8, SCHEMA_V8, |c| {
                 c.execute_batch(include_str!(
                     "../../../docs/contracts/migrations/007-to-008.sql"
                 ))?;

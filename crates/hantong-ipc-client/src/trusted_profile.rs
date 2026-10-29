@@ -6,6 +6,7 @@ use crate::{
     profile::ParsedClientProfile,
 };
 use hantong_contracts::ErrorCode;
+use hantong_contracts::auth::RequestedScope;
 use hantong_platform::{
     ClientSigningKey, LoadedClientProfile, client_key_id_for_registration, validate_public_key,
 };
@@ -17,11 +18,18 @@ pub struct AuthenticatedDefaultProfile<S> {
     client: AuthenticatedClient<S>,
     loaded: LoadedClientProfile,
     accounts: Vec<String>,
+    scope: RequestedScope,
 }
 
 impl<S: AsyncRead + AsyncWrite + Unpin> AuthenticatedDefaultProfile<S> {
     pub fn accounts(&self) -> &[String] {
         &self.accounts
+    }
+    pub fn scope(&self) -> &RequestedScope {
+        &self.scope
+    }
+    pub fn tools(&self) -> &[String] {
+        self.scope.tools()
     }
     pub async fn exchange(
         self,
@@ -53,6 +61,7 @@ pub async fn authenticate_default()
         client,
         loaded,
         accounts: profile.scope().accounts().to_vec(),
+        scope: profile.scope().clone(),
     })
 }
 
@@ -203,6 +212,60 @@ mod tests {
                 .unwrap()
             );
         }
+    }
+
+    #[test]
+    fn cli15_trusted_profile_preserves_folder_scope_in_auth_transcript() {
+        let id = id();
+        let client = OwnedKey::registered(id);
+        let server = OwnedKey::random();
+        let scope = RequestedScope::new(
+            vec!["account_a".into()],
+            hantong_contracts::auth::default_cli_folder_tools(),
+        )
+        .unwrap();
+        let profile = ParsedClientProfile::new_with_scope(
+            id,
+            client_key_id_for_registration(id).unwrap(),
+            client.key().public_key().unwrap(),
+            server.key().public_key().unwrap(),
+            3,
+            scope.clone(),
+        )
+        .unwrap();
+        let pending = prepare_profile(&profile, 1000).unwrap();
+        assert_eq!(pending.requested_scope(), &scope);
+        assert_eq!(pending.requested_scope().tools(), scope.tools());
+        let context = current_peer_context().unwrap();
+        let challenge = AuthTranscript {
+            registration_id: id,
+            profile_epoch: 3,
+            issued_at_utc_ms: 1000,
+            expires_at_utc_ms: 31000,
+            server_instance_id: random_nonce().unwrap(),
+            server_nonce: random_nonce().unwrap(),
+            client_nonce: pending.client_nonce(),
+            server_key_hash: sha256(profile.server_public_key()).unwrap(),
+            client_key_hash: sha256(profile.client_public_key()).unwrap(),
+            server: context.clone(),
+            client: context,
+            scope: scope.clone(),
+        };
+        let signature = server
+            .key()
+            .sign(&challenge.encode(SignerRole::Server).unwrap())
+            .unwrap();
+        let response = pending
+            .respond(challenge.clone(), &signature, 1001)
+            .unwrap();
+        assert!(
+            verify_signature(
+                profile.client_public_key(),
+                &challenge.encode(SignerRole::Client).unwrap(),
+                &response,
+            )
+            .unwrap()
+        );
     }
 
     #[test]
