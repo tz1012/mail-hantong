@@ -333,6 +333,9 @@ dependencies = [
 [[package]]
 name = "hantong-adapters"
 version = "0.1.0"
+dependencies = [
+ "hantong-domain",
+]
 
 [[package]]
 name = "hantong-application"

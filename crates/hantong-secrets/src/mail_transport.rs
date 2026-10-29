@@ -91,8 +91,7 @@ impl<S> BoundedAsyncStream<S> {
         }
     }
 
-    #[cfg(test)]
-    fn with_limit(inner: S, limit: usize) -> Self {
+    pub(super) fn with_limit(inner: S, limit: usize) -> Self {
         Self {
             inner,
             remaining: limit,

@@ -324,20 +324,7 @@ fn probe_outcome(
     use hantong_secrets::MailProbeError as E;
     match result {
         Ok(receipt) if receipt.settings_version() == version => {
-            let c = receipt.capabilities();
-            let caps = [
-                ("imap.condstore", c.condstore()),
-                ("imap.idle", c.idle()),
-                ("imap.move", c.move_messages()),
-                ("imap.qresync", c.qresync()),
-                ("imap.special_use", c.special_use()),
-                ("imap.uidplus", c.uidplus()),
-            ]
-            .into_iter()
-            .filter(|(_, v)| *v)
-            .map(|(s, _)| s.to_owned())
-            .collect();
-            InitialImapProbeOutcome::Ready(caps)
+            InitialImapProbeOutcome::Ready(receipt.capabilities().to_ids())
         }
         Err(E::Authentication) => InitialImapProbeOutcome::AuthRequired,
         Err(E::Tls) => InitialImapProbeOutcome::TlsFailed,

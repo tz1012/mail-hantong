@@ -4,8 +4,10 @@
 
 pub mod account_provisioning;
 pub mod accounts;
+pub mod capabilities;
 pub mod config;
 pub mod mail_connection;
+pub mod mailboxes;
 pub(crate) mod timezone;
 
 #[cfg(test)]

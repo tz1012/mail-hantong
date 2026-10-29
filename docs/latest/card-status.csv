@@ -26,8 +26,8 @@ M1-12,CLI 영어 리소스와 도움말,in_progress,에이전트,M1-06,../../app
 M1-11,코어 자동 시작과 수명 관리,in_progress,에이전트,M1-01,../contracts/core-lifecycle.md; ../adr/ADR-021-core-lifecycle.md; ../../crates/hantong-platform/src/windows_autostart.rs; ../../crates/hantong-application/src/lifecycle.rs,,,격리 HKCU 등록/해제/소유 충돌 시험8개·재시작 예산4개 통과; 실제 supervisor/설치/알림/유지보수 연결 남음
 M1-99,다음 마일스톤 계획 갱신,not_started,사람,M1 나머지 전부,,,,
 M2-01,IMAP·SMTP 계정 설정 모델,in_progress,에이전트,"M1-04, M1-03, ADR-006",../contracts/mail-connection.md; ../contracts/mail-connection-store.md; ../adr/ADR-006-mail-libraries.md; ../../crates/hantong-domain/src/mail_connection.rs; ../contracts/account-provisioning.md; ../../crates/hantong-store/src/account_provisioning.rs; ../contracts/protected-mail-input.md; ../contracts/imap-setup-review.md,,,설정/새 계정 저장·IMAP/SMTP probe·Secrets 보호 입력/native 확인 구현; 637개 전체 및 교차 검사 통과. Core/CLI 설정 실행 연결·실계정·사람 검토 남음
-M2-02,CAPABILITY 탐지,in_progress,에이전트,M2-01,,,,인증 후 IMAP CAPABILITY snapshot 구현; rev1/rev2 모드·미지원 기능 대상 시험 통과; SMTP 확장·공통 ProviderCapabilities·대체 경로/UI 남음
-M2-03,폴더 동기화와 특수 폴더,not_started,에이전트,M2-02,,,,
+M2-02,CAPABILITY 탐지,in_progress,에이전트,M2-01,PROGRESS.md; ../contracts/provider-capabilities.md; ../../crates/hantong-domain/src/capabilities.rs,,,여섯 IMAP 기능 공통 타입과 probe/Store/Core 변환 연결; SMTP 확장·공통 제공자 전체 기능·대체 동작/UI 남음
+M2-03,폴더 동기화와 특수 폴더,in_progress,에이전트,M2-02,PROGRESS.md; ../contracts/imap-folder-discovery.md; ../../crates/hantong-domain/src/mailboxes.rs; ../../crates/hantong-adapters/src/imap_folders.rs; ../../crates/hantong-secrets/src/imap_probe/list_gate.rs,,,별도 bounded LIST·wire 이름/표시 분리·모호한 특수 폴더 거부 구현; DB 영속화·Core 정책 경로·공개 도구·사람 검토 남음
 M2-04,UID 증분 동기화,not_started,에이전트,M2-03,,,,
 M2-05,단계적 최초 동기화,not_started,에이전트,M2-04,,,,
 M2-06,IDLE와 폴링,not_started,에이전트,M2-04,,,,

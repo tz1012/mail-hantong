@@ -8,6 +8,8 @@
 
 ## 실행 순서
 
+폴더 목록은 별도 [IMAP 폴더 탐색](imap-folder-discovery.md) API로만 읽는다. 기존 probe는 LIST를 실행하지 않고 이전 수신 예산과 receipt를 유지한다. 두 경로의 여섯 IMAP 기능 값은 같은 [Domain 공통 타입](provider-capabilities.md)을 사용한다.
+
 1. 검증된 Domain endpoint와 유효한 account_id를 받는다. 전체 30초 안에서 DNS 및 최대 8개 주소의 TCP 연결을 순서대로 시도한다. 각 TCP 시도는 최대 8초다. 연결 후 TLS/인증 오류에는 재접속·다른 방식 재시도가 없다. OS resolver 작업 자체의 즉시 취소까지 보장하지 않는다.
 2. implicit TLS는 OS 신뢰·hostname 검증 후 OK greeting을 읽는다. STARTTLS는 OK greeting → 명시적 CAPABILITY → STARTTLS 광고 확인 → 고정 tag STARTTLS → 정확한 동일 tag OK → OS 신뢰·hostname 검증 순이다. PREAUTH는 자격 증명 확인을 생략하므로 거부한다. STARTTLS NO/BAD/잘못된 tag/미지원/실패에는 평문 폴백 없이 닫는다. 미리 읽은 bytes는 TLS 아래의 buffer에 남겨 TLS record로 검증한다.
 3. TLS 뒤 CAPABILITY를 새로 요청한다. IMAP4REV1 또는 IMAP4REV2와 사용할 인증 방식이 확인된 뒤에만 전체 endpoint/account/role/version에 결속된 DPAPI envelope를 해제한다. app_password는 AUTH=PLAIN 우선, 없으면 AUTH=LOGIN이다. oauth2는 AUTH=XOAUTH2만 사용하며 refresh/legacy/다른 role로 폴백하지 않는다.

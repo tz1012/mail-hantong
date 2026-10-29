@@ -351,21 +351,9 @@ pub(super) fn finish_probe(
 }
 
 pub(super) fn validate_capabilities(values: &[String]) -> Result<(), ErrorCode> {
-    const KNOWN: [&str; 6] = [
-        "imap.condstore",
-        "imap.idle",
-        "imap.move",
-        "imap.qresync",
-        "imap.special_use",
-        "imap.uidplus",
-    ];
-    if values.len() > KNOWN.len()
-        || values.windows(2).any(|pair| pair[0] >= pair[1])
-        || values.iter().any(|value| !KNOWN.contains(&value.as_str()))
-    {
-        return Err(ErrorCode::InternalError);
-    }
-    Ok(())
+    hantong_domain::capabilities::ImapCapabilities::from_ids(values)
+        .map(|_| ())
+        .map_err(|_| ErrorCode::InternalError)
 }
 
 #[cfg(windows)]

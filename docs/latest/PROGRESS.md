@@ -9,8 +9,8 @@
 | 항목 | 상태와 근거 |
 | --- | --- |
 | 기준 자료 | 사용자 승인으로 채택한 [Markdown 기준 요건](../requirements/README.md): 요건 170개·1단계 P0 144개·문장별 AC ID 341개. 작업 카드 정의 151개는 보존한다. |
-| 현재 카드 | **M2-02 서버 기능 공통 타입·M2-03 IMAP 폴더 탐색 준비**. 기본 CLI의 별도 사람 확인·계정 범위 갱신과 v7 중단 복구를 자동 검증하고 메일 수신의 선행 경계로 이어간다. |
-| 최신 검증 | **766개 통과**(문서 29·빌드 도구 63·Rust 674). 전체 build/test/fmt/Clippy·의존/문서/추적 검사 및 Linux x86_64·macOS arm64 교차 Clippy 통과. 2026-10-30 범위 갱신 snapshot의 로그·hash와 이전 일시 실패 기록은 아래에 있다. 실제 Mac 실행·전체 기능 완료를 뜻하지 않는다. |
+| 현재 카드 | **M2-02 IMAP 공통 기능·M2-03 폴더 탐색**. 읽기 전용 LIST와 특수 폴더 매핑의 자동 검증을 마치고, v8 폴더 관측 저장 계약으로 이어간다. |
+| 최신 검증 | **801개 통과**(문서 29·빌드 도구 63·Rust 709). 전체 build/test/fmt/Clippy·의존/문서/추적 검사 및 Linux x86_64·macOS arm64 교차 Clippy 통과. 2026-10-30 폴더 탐색 snapshot의 로그·hash와 이전 일시 실패 기록은 아래에 있다. 실제 Mac 실행·전체 기능 완료를 뜻하지 않는다. |
 | 제품 구현 | Rust workspace·영/한 CLI·Windows 코어/IPC·DPAPI·SQLCipher·설정 검증·감사·기본 등록/프로필·권한이 있는 계정 목록 조회·IMAP/SMTP TLS/AUTH probe·CI/추적 도구 구현. 신규 IMAP 설정·명시 재개와 기본 CLI 계정 범위 갱신의 보호 확인·중단 복구를 연결했다. 발송은 차단하며 실제 메일 수신·전체 GUI·설치 패키지는 미완료다. |
 | GitHub | 로컬 Git main 저장소를 초기화해 개발 기준선을 기록한다. 공개 저장소 주소·remote·릴리스·패키지 ID는 아직 없음. 빌드 산출물·실행 데이터·에이전트 상태는 제외한다. |
 | 새 사용자 요청 | 진행 상황을 이 문서에 누적하고, GitHub에서 명령어로 설치 및 개발을 시작할 수 있는 경로를 마련한다. 상세 범위는 [공개와 설치 계획](DISTRIBUTION.md)에 기록한다. |
@@ -19,7 +19,7 @@
 | 런타임 결정 | **코어·CLI Rust 확정** — 2026-10-29 사용자 선택, [ADR-001](../adr/ADR-001-core-runtime.md). 비교 실험에서 .NET은 프로세스 시작, Rust는 메모리에 유리했고 검색은 혼재했다. [실측 보고서](RUNTIME-BENCHMARK.md)는 보존하며 제품의 1초 목표는 아직 검증 전이다. |
 | Mac 지원 방향 | 사용자 승인으로 정식 후속 목표에 포함했다. Windows 우선 출시 후 Mac 코어·CLI·최소 승인 도우미부터 제공하고 전체 GUI를 후속 제공한다. 구체적인 단계·일정·패키지는 미정이며 현재 제품은 미구현이다. |
 | 공개 사용 정책 | **[LICENSE Version 1.0](../../LICENSE) 정식 채택** — 개인·회사 내부 업무용 사용, 수정본 비공개 및 원본·수정본 무료 재배포 허용. 프로그램 판매·유료 제공 금지. 고지 유지·수정 표시·보증과 책임 조항 포함. 저작권자는 **Andrew Cho**, 웹사이트 **https://tzt.kr**, 연락처 **andrew@tzt.kr**이다. [한국어 안내](LICENSING.md), [ADR-016](../adr/ADR-016-license.md). |
-| 다음 제품 작업 | 서버 기능 snapshot의 중복 매핑을 공통 타입으로 연결한 뒤 별도 읽기 전용 IMAP 폴더 탐색·특수 폴더 매핑을 구현한다. 실제 계정 로그인은 개발 중 자동 실행하지 않는다. |
+| 다음 제품 작업 | 폴더 snapshot의 계정/endpoint 결속·원자 교체·중복 적용 방지를 v8 Store에 구현한다. 기존 계정 ready나 UID/메일 데이터를 섞지 않으며 공개 도구와 Core 효과 연결은 별도 단계로 검증한다. |
 
 ## 기록 규칙
 
@@ -667,3 +667,25 @@ v7 전용 이력은 원래 등록 request/ID/key/pin/승인 metadata를 보존�
 `scripts/check_all.py` 종료 코드 **0**: **766개**(문서 29·빌드 도구 63·Rust 674). 전체 build/test/fmt/Clippy·아키텍처·요건 무결성·추적 검사 통과. 로그 `target/scope-refresh-verified-full-check.log`, SHA-256 `D05B60D965C39DD4C2F09D2DA38825EC2892A42A343FF534C5EFB3FFC910522B`, source hash `aff19bea5e8bc5f8f8363bb234a939d8c4d5fc18b69ebd238157f9ee56b8fecb`. Linux x86_64/macOS arm64 all-target Clippy 종료 코드 0(`target/scope-refresh-linux-check.log`, `target/scope-refresh-macos-check.log`). 실제 Mac 실행은 아니다.
 
 CNG 제품 키는 **1개**, names hash `3B692D49F1D08F7D3442806CF17694CDC02AF36B44839930FC18EB9C83CE9D4D`로 유지됐다. 실제 사용자 DB·Core·프로필·Hello·계정·메일은 실행하지 않았다. 외부 의존성 추가 없이 구현했고 카드 정의/선행·기준 요건을 보존했다. M6-02/M6-10은 MCP·선택적 도구/프로필 편집·철회 UI·전체 종단 검토가 남아 진행 중이다. 계약/보안은 **[사람 검토 필요]**이며 전체 제품 AC 완료는 **0개**다. 다음은 IMAP 서버 기능의 공통 표현과 별도 폴더 탐색 계약·읽기 경계다.
+
+
+## 2026-10-30 서버 기능 공통 타입·IMAP 폴더 탐색 (진행 중)
+
+기본 CLI 범위 갱신은 로컬 커밋 `8e9f1a1`로 보존했다. [서버 기능 계약](../contracts/provider-capabilities.md)과 [읽기 전용 폴더 탐색 계약](../contracts/imap-folder-discovery.md)을 먼저 작성했다. 기존 probe는 그대로 두고 Secrets 내부의 TLS/AUTH 뒤 고정 LIST만 실행하는 별도 경계를 준비한다. 서버 기능과 권한을 구분하고, INBOX 외 이름은 그대로 보존하며, 특수 폴더가 불명확하면 임의로 선택하지 않는다.
+
+공식 RFC와 고정 codec/types 소스에서 LIST 이름이 literal일 수 있음을 확인했다. 선언 길이를 body 전에 제한하고 전체 결과가 성공한 경우만 snapshot을 반환하도록 설계한다. 순수 Domain 이름/기능 모델·adapter 매핑은 별도 담당자가 시험부터 구현하고, Core/Secrets 연결은 root가 맡는다. 새 외부 의존성 없이 기존 내부 Domain edge만 사용한다. 폴더 DB 영속화·메일 수신·공개 도구는 후속이다. **766개 통과는 직전 커밋의 증거**이며 진행 중 변경 전체의 검증을 뜻하지 않는다. 계약/Secrets는 **[사람 검토 필요]**다.
+
+
+### 서버 기능·폴더 탐색 최종 자동 검증 snapshot
+
+IMAP 여섯 기능의 고정 ID와 엄격한 저장 변환을 Domain 한 타입으로 통합했다. 기존 Secrets 경로는 re-export하고 Store/Core의 중복 문자열 변환을 제거했다. Domain **36개**, adapter **2개**가 통과했다. 64개 기능 조합, 잘못된 권한 문자열, 긴 modified UTF-7·한글·emoji·surrogate·padding, INBOX 중복과 다른 wire 이름 보존, 모호한 특수 폴더 후보를 검사했다.
+
+Secrets의 별도 LIST는 기존 TLS/AUTH 뒤에서만 실행하고 완전한 목록·LOGOUT BYE+OK 확인 뒤 snapshot을 반환한다. 기존 probe 한도와 의미는 유지한다. Secrets **117개**, IMAP 전체 **48개**(LIST gate 13·discovery 9 포함)가 통과했다. 1,024개 목록·1,024-byte literal의 정상 경계와 초과, 2MiB 누적 plaintext, frame 폭주, TLS/AUTH 실패, 취소 시 연결 폐기, 잘못된 tag·중복 identity·불완전 LOGOUT을 검사했다.
+
+독립 검토에서 untagged NO/BAD 뒤 OK를 성공으로 처리하는 결함을 재현하고 고쳤다(`target/imap-discovery-status-red.log`, `target/imap-discovery-green.log`). 잘못된 `{4}x {4}` 선언이 body를 먼저 소비하는 결함도 RED→GREEN으로 고쳤다(`target/imap-list-header-red.log`, `target/imap-list-header-green.log`). 고정 codec 배포 소스는 완전한 literal frame을 직접 처리함을 확인하여 literal→quoted 변환을 삭제했다. 원본 frame을 strict raw 검증 후 codec으로 해석하며 이름·delimiter·속성을 대조한다. 이 변경 뒤 IMAP 48개가 통과했다(`target/imap-list-original-frame-green.log`). UTF-7의 u32 shift overflow라는 초기 검토 지적은 실제 반례가 없고 Rust 연산 의미와 일치하지 않아 철회됐다. 최종 독립 검토의 잔여 HIGH/MEDIUM 지적은 없으며 사람 검토를 대체하지 않는다.
+
+초기 discovery 시험의 고정 command 기대값은 typed builder의 실제 `LIST "" *`와 맞췄다. 1,024개 결과 fixture의 TLS flush 누락으로 생긴 timeout은 시험 서버에 flush를 추가하여 해결했다. 제품 deadline을 늘리거나 실패 시험을 제외하지 않았다.
+
+`scripts/check_all.py` 종료 코드 **0**: **801개**(문서 29·빌드 도구 63·Rust 709). 전체 build/test/fmt/Clippy·아키텍처·요건 무결성·추적 검사 통과. 로그 `target/imap-folders-full-check.log`, SHA-256 `9AE07955C36A94E4D1E06DE2B3CC877C13999A50BA0CB2E44EE667CBFE054B9B`, source hash `f068e857e55c37d45ee5b1f6e9263613a20d1285599842f3d633ee8a190b9e82`. Linux x86_64/macOS arm64 all-target Clippy 종료 코드 0(`target/imap-folders-linux-check.log`, `target/imap-folders-macos-check.log`). 실제 Mac 실행은 아니다.
+
+CNG 제품 키는 **1개**, names hash `3B692D49F1D08F7D3442806CF17694CDC02AF36B44839930FC18EB9C83CE9D4D`로 유지됐다. 실제 사용자 DB·Core·프로필·Hello·계정·메일을 실행하지 않았다. 추가한 Cargo edge는 기존 내부 Domain뿐이며 외부 패키지 버전 변경은 없다. M2-02/M2-03은 진행 중이고 전체 제품 AC 완료는 **0개**다. 폴더 DB·Core 정책 경로·공개 도구·실제 서버 상호 운용성이 남아 있으며 계약/Secrets는 **[사람 검토 필요]**다. 다음은 v7을 고정 보존하고 폴더 관측 catalog만 별도 원자 저장하는 v8 경계다.

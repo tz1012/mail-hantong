@@ -168,10 +168,19 @@ async fn cap_reply<S: AsyncRead + AsyncWrite + Unpin>(
     io.get_mut().write_all(format!("* CAPABILITY {revision} {auth}{initial}{starttls}{features}\r\n{tag} OK capabilities\r\n").as_bytes()).await
 }
 async fn server(
+    stream: DuplexStream,
+    implicit: bool,
+    mode: Mode,
+    log: Transcript,
+) -> io::Result<()> {
+    server_with_list(stream, implicit, mode, log, None).await
+}
+async fn server_with_list(
     mut stream: DuplexStream,
     implicit: bool,
     mode: Mode,
     log: Transcript,
+    list: Option<Vec<u8>>,
 ) -> io::Result<()> {
     if mode == Mode::Stall {
         tokio::time::sleep(Duration::from_secs(20)).await;
@@ -301,20 +310,41 @@ async fn server(
     }
     assert_eq!(cmd, b"h5 CAPABILITY\r\n");
     cap_reply(&mut wire, "h5", mode).await?;
-    let logout = read_command(&mut wire, &log).await?;
+    let mut logout = read_command(&mut wire, &log).await?;
     if mode == Mode::RejectPostAuthCapability {
         assert!(logout.is_empty());
         return Ok(());
     }
-    assert_eq!(logout, b"h6 LOGOUT\r\n");
+    let logout_tag = if let Some(list) = list {
+        if logout.is_empty() {
+            return Ok(());
+        }
+        assert_eq!(logout, b"h6 LIST \"\" *\r\n");
+        wire.get_mut().write_all(&list).await?;
+        wire.get_mut().flush().await?;
+        logout = read_command(&mut wire, &log).await?;
+        if logout.is_empty() {
+            return Ok(());
+        }
+        "h7"
+    } else {
+        "h6"
+    };
+    assert_eq!(logout, format!("{logout_tag} LOGOUT\r\n").as_bytes());
     wire.get_mut()
-        .write_all(if mode == Mode::MissingBye {
-            b"h6 OK bye\r\n"
-        } else {
-            b"* BYE fixture\r\nh6 OK bye\r\n"
-        })
+        .write_all(
+            if mode == Mode::MissingBye {
+                format!("{logout_tag} OK bye\r\n")
+            } else {
+                format!("* BYE fixture\r\n{logout_tag} OK bye\r\n")
+            }
+            .as_bytes(),
+        )
         .await
 }
+
+#[path = "discovery_tests.rs"]
+mod discovery;
 async fn run(
     implicit: bool,
     mode: Mode,

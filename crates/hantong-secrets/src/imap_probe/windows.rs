@@ -1,9 +1,14 @@
+use super::list_gate::{ListGate, ListReply, RawMailbox};
 use super::{
     gate::{GateMode, ReplyKind, StrictResponseGate},
     *,
 };
 use crate::{SensitiveBuffer, mail_transport::BoundedAsyncStream};
 use hantong_domain::mail_connection::{Authentication, TlsMode};
+use hantong_domain::mailboxes::{
+    ImapMailboxDescriptor, ImapMailboxName, ImapMailboxSnapshot, MailboxChildren, MailboxEncoding,
+    SpecialUseRole,
+};
 use io_imap::{
     codec::{AuthenticateDataCodec, CommandCodec, encode::Encoder},
     types::{
@@ -53,6 +58,26 @@ pub(super) async fn probe(
     account: &str,
     endpoint: &ImapEndpointConfig,
 ) -> Result<ImapProbeReceipt, MailProbeError> {
+    match connect(store, account, endpoint, ReadOperation::Probe).await? {
+        ReadReceipt::Probe(receipt) => Ok(receipt),
+        _ => Err(MailProbeError::Protocol),
+    }
+}
+#[derive(Clone, Copy)]
+enum ReadOperation {
+    Probe,
+    Mailboxes,
+}
+enum ReadReceipt {
+    Probe(ImapProbeReceipt),
+    Mailboxes(ImapMailboxSnapshot),
+}
+async fn connect(
+    store: &SecretStore,
+    account: &str,
+    endpoint: &ImapEndpointConfig,
+    operation: ReadOperation,
+) -> Result<ReadReceipt, MailProbeError> {
     with_deadline(async {
         let tls = Arc::new(
             ClientConfig::builder()
@@ -76,7 +101,7 @@ pub(super) async fn probe(
         stream
             .set_nodelay(true)
             .map_err(|_| MailProbeError::Connection)?;
-        run_connected(
+        run_operation(
             Source {
                 store,
                 account,
@@ -86,18 +111,63 @@ pub(super) async fn probe(
             },
             stream,
             tls,
+            operation,
         )
         .await
     })
     .await
 }
 
+pub(super) async fn discover(
+    store: &SecretStore,
+    account: &str,
+    endpoint: &ImapEndpointConfig,
+) -> Result<ImapMailboxSnapshot, MailProbeError> {
+    match connect(store, account, endpoint, ReadOperation::Mailboxes).await? {
+        ReadReceipt::Mailboxes(receipt) => Ok(receipt),
+        _ => Err(MailProbeError::Protocol),
+    }
+}
+
+#[cfg(test)]
+pub(super) async fn run_discovery_connected<S>(
+    source: Source<'_>,
+    stream: S,
+    tls: Arc<ClientConfig>,
+) -> Result<hantong_domain::mailboxes::ImapMailboxSnapshot, MailProbeError>
+where
+    S: AsyncRead + AsyncWrite + Send + Unpin + 'static,
+{
+    match run_operation(source, stream, tls, ReadOperation::Mailboxes).await? {
+        ReadReceipt::Mailboxes(receipt) => Ok(receipt),
+        _ => Err(MailProbeError::Protocol),
+    }
+}
+
 // No public/raw command/session API. All command constructors below are fixed.
 struct Protocol<S> {
     io: S,
     written: usize,
+    remaining: usize,
 }
 impl<S: AsyncRead + AsyncWrite + Unpin> Protocol<S> {
+    async fn byte(&mut self) -> Result<u8, MailProbeError> {
+        if self.remaining == 0 {
+            return Err(MailProbeError::Protocol);
+        }
+        let mut byte = [0];
+        if self
+            .io
+            .read(&mut byte)
+            .await
+            .map_err(|_| MailProbeError::Protocol)?
+            != 1
+        {
+            return Err(MailProbeError::Protocol);
+        }
+        self.remaining -= 1;
+        Ok(byte[0])
+    }
     async fn frame(
         &mut self,
         mode: GateMode,
@@ -110,16 +180,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Protocol<S> {
         *remaining -= 1;
         let mut gate = StrictResponseGate::new(mode, tag).map_err(|_| MailProbeError::Protocol)?;
         loop {
-            let mut byte = [0];
-            if self
-                .io
-                .read(&mut byte)
-                .await
-                .map_err(|_| MailProbeError::Protocol)?
-                == 0
-            {
-                return Err(MailProbeError::Protocol);
-            }
+            let byte = [self.byte().await?];
             let parsed = gate.feed(&byte).map_err(|_| MailProbeError::Protocol)?;
             if parsed.consumed != 1 {
                 return Err(MailProbeError::Protocol);
@@ -196,6 +257,47 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Protocol<S> {
             return Err(MailProbeError::Protocol);
         }
         Ok(caps)
+    }
+    async fn mailboxes(
+        &mut self,
+        encoding: MailboxEncoding,
+    ) -> Result<Vec<ImapMailboxDescriptor>, MailProbeError> {
+        self.command(
+            "h6",
+            CommandBody::list("", "*").map_err(|_| MailProbeError::Protocol)?,
+        )
+        .await?;
+        let mut mailboxes = Vec::new();
+        for _ in 0..1056 {
+            let mut gate =
+                ListGate::with_limit("h6", self.remaining).map_err(|_| MailProbeError::Protocol)?;
+            let reply = loop {
+                let feed = gate
+                    .feed(&[self.byte().await?])
+                    .map_err(|_| MailProbeError::Protocol)?;
+                if feed.consumed != 1 {
+                    return Err(MailProbeError::Protocol);
+                }
+                if let Some(reply) = feed.reply {
+                    break reply;
+                }
+            };
+            match reply {
+                ListReply::Mailbox(raw) => {
+                    if mailboxes.len() == 1024 {
+                        return Err(MailProbeError::Protocol);
+                    }
+                    mailboxes.push(descriptor(raw, encoding)?);
+                }
+                ListReply::Status(StatusKind::Ok) => {}
+                ListReply::Status(StatusKind::No | StatusKind::Bad) => {
+                    return Err(MailProbeError::Protocol);
+                }
+                ListReply::Tagged(StatusKind::Ok) => return Ok(mailboxes),
+                ListReply::Tagged(_) => return Err(MailProbeError::Protocol),
+            }
+        }
+        Err(MailProbeError::Protocol)
     }
     async fn challenge(
         &mut self,
@@ -280,20 +382,59 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Protocol<S> {
         Ok(())
     }
 }
+fn descriptor(
+    raw: RawMailbox,
+    encoding: MailboxEncoding,
+) -> Result<ImapMailboxDescriptor, MailProbeError> {
+    let has = |name: &str| raw.attributes.iter().any(|attr| attr == name);
+    let children = match (has("haschildren"), has("hasnochildren")) {
+        (true, false) => MailboxChildren::HasChildren,
+        (false, true) => MailboxChildren::HasNoChildren,
+        _ => MailboxChildren::Unknown,
+    };
+    let roles = [
+        ("all", SpecialUseRole::All),
+        ("archive", SpecialUseRole::Archive),
+        ("drafts", SpecialUseRole::Drafts),
+        ("flagged", SpecialUseRole::Flagged),
+        ("junk", SpecialUseRole::Junk),
+        ("sent", SpecialUseRole::Sent),
+        ("trash", SpecialUseRole::Trash),
+    ]
+    .into_iter()
+    .filter(|(name, _)| has(name))
+    .map(|(_, role)| role)
+    .collect();
+    ImapMailboxDescriptor::new(
+        ImapMailboxName::from_wire(&raw.name, encoding).map_err(|_| MailProbeError::Protocol)?,
+        raw.delimiter,
+        has("noselect"),
+        has("nonexistent"),
+        children,
+        roles,
+    )
+    .map_err(|_| MailProbeError::Protocol)
+}
 fn has(caps: &[String], name: &str) -> bool {
     caps.iter().any(|s| s == name)
 }
 fn snapshot(caps: &[String]) -> ImapCapabilities {
+    use hantong_domain::capabilities::ImapFeature;
     let rev2 = has(caps, "IMAP4REV2") && !has(caps, "IMAP4REV1");
-    ImapCapabilities {
-        idle: rev2 || has(caps, "IDLE"),
-        move_messages: rev2 || has(caps, "MOVE"),
-        uidplus: rev2 || has(caps, "UIDPLUS"),
-        condstore: has(caps, "CONDSTORE"),
-        qresync: has(caps, "QRESYNC"),
-        special_use: has(caps, "SPECIAL-USE"),
-    }
+    ImapCapabilities::from_features(
+        [
+            (ImapFeature::Idle, rev2 || has(caps, "IDLE")),
+            (ImapFeature::Move, rev2 || has(caps, "MOVE")),
+            (ImapFeature::Uidplus, rev2 || has(caps, "UIDPLUS")),
+            (ImapFeature::Condstore, has(caps, "CONDSTORE")),
+            (ImapFeature::Qresync, has(caps, "QRESYNC")),
+            (ImapFeature::SpecialUse, has(caps, "SPECIAL-USE")),
+        ]
+        .into_iter()
+        .filter_map(|(feature, enabled)| enabled.then_some(feature)),
+    )
 }
+#[cfg(test)]
 pub(super) async fn run_connected<S>(
     source: Source<'_>,
     stream: S,
@@ -302,11 +443,30 @@ pub(super) async fn run_connected<S>(
 where
     S: AsyncRead + AsyncWrite + Send + Unpin + 'static,
 {
+    match run_operation(source, stream, tls, ReadOperation::Probe).await? {
+        ReadReceipt::Probe(receipt) => Ok(receipt),
+        _ => Err(MailProbeError::Protocol),
+    }
+}
+async fn run_operation<S>(
+    source: Source<'_>,
+    stream: S,
+    tls: Arc<ClientConfig>,
+    operation: ReadOperation,
+) -> Result<ReadReceipt, MailProbeError>
+where
+    S: AsyncRead + AsyncWrite + Send + Unpin + 'static,
+{
     validate_account(source.account).map_err(|_| MailProbeError::InvalidAccount)?;
+    let (wire_limit, plaintext_limit) = match operation {
+        ReadOperation::Probe => (256 * 1024, 256 * 1024),
+        ReadOperation::Mailboxes => (4 * 1024 * 1024, 2 * 1024 * 1024),
+    };
     // Prefetch remains BELOW TLS, including bytes following STARTTLS OK.
     let mut plain = Protocol {
-        io: BufReader::new(BoundedAsyncStream::new(stream)),
+        io: BufReader::new(BoundedAsyncStream::with_limit(stream, wire_limit)),
         written: 0,
+        remaining: wire_limit,
     };
     if source.endpoint.tls() == TlsMode::StarttlsRequired {
         if !matches!(
@@ -330,8 +490,9 @@ where
         .await
         .map_err(|_| MailProbeError::Tls)?;
     let mut verified = Protocol {
-        io: BufReader::new(BoundedAsyncStream::new(secure)),
+        io: BufReader::new(BoundedAsyncStream::with_limit(secure, plaintext_limit)),
         written: plain.written,
+        remaining: plaintext_limit,
     };
     if source.endpoint.tls() == TlsMode::ImplicitTls
         && !matches!(
@@ -343,11 +504,36 @@ where
     }
     let caps = verified.capabilities("h3").await?;
     verified.authenticate(&source, &caps).await?;
-    let capabilities = snapshot(&verified.capabilities("h5").await?);
-    verified.command("h6", CommandBody::Logout).await?;
-    verified.finish(GateMode::Logout, "h6", &mut 32).await?;
-    Ok(ImapProbeReceipt {
-        settings_version: source.endpoint.settings_version(),
-        capabilities,
-    })
+    let caps = verified.capabilities("h5").await?;
+    let capabilities = snapshot(&caps);
+    let (receipt, logout_tag) = match operation {
+        ReadOperation::Probe => (
+            ReadReceipt::Probe(ImapProbeReceipt {
+                settings_version: source.endpoint.settings_version(),
+                capabilities,
+            }),
+            "h6",
+        ),
+        ReadOperation::Mailboxes => {
+            let encoding = if has(&caps, "IMAP4REV2") && !has(&caps, "IMAP4REV1") {
+                MailboxEncoding::Utf8
+            } else {
+                MailboxEncoding::ModifiedUtf7
+            };
+            let mailboxes = verified.mailboxes(encoding).await?;
+            let snapshot = ImapMailboxSnapshot::new(
+                source.account,
+                source.endpoint.settings_version(),
+                capabilities,
+                mailboxes,
+            )
+            .map_err(|_| MailProbeError::Protocol)?;
+            (ReadReceipt::Mailboxes(snapshot), "h7")
+        }
+    };
+    verified.command(logout_tag, CommandBody::Logout).await?;
+    verified
+        .finish(GateMode::Logout, logout_tag, &mut 32)
+        .await?;
+    Ok(receipt)
 }

@@ -59,3 +59,9 @@ AUTH 235와 QUIT 221을 직접 검사하며 다른 positive reply를 성공으�
 기능 snapshot은 인증 뒤 새 CAPABILITY만 사용한다. IMAP4REV2만 광고하면 기본 IDLE/MOVE/UIDPLUS를 반영하고, rev1과 rev2를 함께 광고하면 명시적 기능만 반영한다. SPECIAL-USE는 extended LIST 지원을 의미하며 실제 특수 폴더의 존재와 구분한다. AUTH 중 bounded status/CAPABILITY를 허용하되 기능·인증 방식은 바꾸지 않는다. SASL-IR은 명시적으로 광고된 경우만 사용하고 그 외에는 한정된 continuation 교환을 한다. 근거: [RFC 9051 CAPABILITY](https://www.rfc-editor.org/rfc/rfc9051.html#section-6.1.1), [Appendix E](https://www.rfc-editor.org/rfc/rfc9051.html#appendix-E), [AUTHENTICATE](https://www.rfc-editor.org/rfc/rfc9051.html#section-6.2.2), [RFC 4959](https://www.rfc-editor.org/rfc/rfc4959.html), [RFC 6154](https://www.rfc-editor.org/rfc/rfc6154.html#section-2).
 
 codec의 ASCII response text 및 좁은 응답 whitelist 때문에 모든 rev2/비표준 서버와 호환된다고 주장하지 않는다. 제품 호출자는 CA/transport/비밀 callback을 주입할 수 없으며 실제 OS 신뢰와 제공자 상호 운용성은 후속 검증이다. 독립 코드 검토에서 중대한 결함은 발견되지 않았으나 이는 사람 보안 검토가 아니다.
+
+## 2026-10-30 별도 폴더 탐색 경계
+
+기존 probe와 분리한 읽기 전용 LIST를 같은 private TLS/AUTH driver에 추가한다. 현재 typed builder는 기본 LIST만 제공하므로 확장 LIST 문자열을 직접 생성하지 않는다. 기능 광고와 특수 폴더 존재는 별개이며 역할 완전성은 false로 유지한다. 상세 상한·wire 이름 identity·UTF-7/UTF-8 표시·오류 시 전체 실패는 [폴더 탐색 계약](../contracts/imap-folder-discovery.md)에 고정한다.
+
+literal 길이·위치와 비재귀 응답 종류를 codec 진입 전에 검사하며, socket/session이나 임의 명령은 공개하지 않는다. Domain/adapter는 기존 내부 의존만 사용한다. 폴더 DB 적용·Core 정책 경로·공개 CLI/MCP·메일 본문 수신은 후속이며 현재 snapshot을 계정 ready나 승인 증거로 쓰지 않는다. 자동 시험은 격리된 DPAPI와 in-memory TLS만 사용하며 실제 서버 상호 운용성을 대신하지 않는다.
