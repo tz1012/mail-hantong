@@ -41,7 +41,7 @@ fn bounded_hash(row: &rusqlite::Row<'_>, index: usize) -> rusqlite::Result<Vec<u
 #[cfg(windows)]
 type CatalogRow = (i64, i64, Vec<u8>, i64, String, Vec<u8>, String, i64);
 #[cfg(windows)]
-type OperationRow = (
+pub(super) type OperationRow = (
     String,
     String,
     String,
@@ -180,11 +180,42 @@ fn sha256(bytes: &[u8]) -> Result<[u8; 32], ErrorCode> {
 }
 
 #[cfg(windows)]
-fn endpoint_hash(account: &str, endpoint: &ImapEndpointConfig) -> Result<[u8; 32], ErrorCode> {
+pub(super) fn endpoint_hash(
+    account: &str,
+    endpoint: &ImapEndpointConfig,
+) -> Result<[u8; 32], ErrorCode> {
     let mut bytes = b"mail-hantong.imap-catalog-endpoint.v1\0".to_vec();
     push_string(&mut bytes, account);
     bytes.extend_from_slice(&serde_json::to_vec(endpoint).map_err(|_| ErrorCode::InternalError)?);
     sha256(&bytes)
+}
+
+#[cfg(windows)]
+fn operation_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<OperationRow> {
+    Ok((
+        bounded_text(r, 0, 128)?,
+        bounded_text(r, 1, 128)?,
+        bounded_text(r, 2, 128)?,
+        r.get(3)?,
+        r.get(4)?,
+        bounded_hash(r, 5)?,
+        bounded_hash(r, 6)?,
+        r.get(7)?,
+        r.get(8)?,
+        bounded_hash(r, 9)?,
+        r.get(10)?,
+    ))
+}
+#[cfg(windows)]
+pub(super) fn read_operation(
+    c: &rusqlite::Connection,
+    id: &str,
+) -> Result<Option<OperationRow>, ErrorCode> {
+    let row=db(c.query_row("SELECT operation_id,account_id,idempotency_key,account_version,endpoint_version,endpoint_hash,snapshot_hash,expected_version,result_version,payload_hash,completed_at_utc_ms FROM imap_mailbox_catalog_operations WHERE operation_id=?1",[id],operation_row).optional())?;
+    if let Some(row) = &row {
+        validate_operation(row)?;
+    }
+    Ok(row)
 }
 
 #[cfg(windows)]
@@ -209,21 +240,7 @@ fn replay_catalog(
     ]))?;
     let mut result = None;
     while let Some(row) = db(rows.next())? {
-        let stored: OperationRow = db((|| {
-            Ok((
-                bounded_text(row, 0, 128)?,
-                bounded_text(row, 1, 128)?,
-                bounded_text(row, 2, 128)?,
-                row.get::<_, i64>(3)?,
-                row.get::<_, i64>(4)?,
-                bounded_hash(row, 5)?,
-                bounded_hash(row, 6)?,
-                row.get::<_, i64>(7)?,
-                row.get::<_, i64>(8)?,
-                bounded_hash(row, 9)?,
-                row.get::<_, i64>(10)?,
-            ))
-        })())?;
+        let stored = db(operation_row(row))?;
         validate_operation(&stored)?;
         let (op, stored_account, key, av, ev, eh, sh, expected, version, ph, _) = stored;
         if op != mutation.operation_id()
@@ -248,8 +265,8 @@ fn replay_catalog(
 }
 
 #[cfg(windows)]
-fn load_catalog(
-    tx: &Transaction<'_>,
+pub(super) fn load_catalog(
+    tx: &rusqlite::Connection,
     account: &str,
 ) -> Result<Option<StoredImapMailboxCatalog>, ErrorCode> {
     let row: Option<CatalogRow> = db(tx.query_row(
@@ -288,12 +305,7 @@ fn load_catalog(
     if snapshot.settings_version() != endpoint_version as u64 {
         return Err(ErrorCode::InternalError);
     }
-    let op: OperationRow = db(tx.query_row(
-        "SELECT operation_id,account_id,idempotency_key,account_version,endpoint_version,endpoint_hash,snapshot_hash,expected_version,result_version,payload_hash,completed_at_utc_ms FROM imap_mailbox_catalog_operations WHERE operation_id=?1",
-        [last_operation_id.as_str()],
-        |r| Ok((bounded_text(r,0,128)?,bounded_text(r,1,128)?,bounded_text(r,2,128)?,r.get(3)?,r.get(4)?,bounded_hash(r,5)?,bounded_hash(r,6)?,r.get(7)?,r.get(8)?,bounded_hash(r,9)?,r.get(10)?)),
-    ))?;
-    validate_operation(&op)?;
+    let op = read_operation(tx, &last_operation_id)?.ok_or(ErrorCode::InternalError)?;
     if op.0 != last_operation_id
         || op.1 != account
         || op.3 != account_version
@@ -366,6 +378,84 @@ fn load_catalog(
     }))
 }
 
+/// Only the direct API and the bound refresh completion may call this helper.
+/// The caller owns the transaction and has already resolved operation ownership.
+#[cfg(windows)]
+pub(super) fn apply_new_catalog(
+    tx: &Transaction<'_>,
+    expected_account_version: u64,
+    endpoint: &ImapEndpointConfig,
+    snapshot: &ImapMailboxSnapshot,
+    mutation: &crate::mail_connection::MailMutation,
+) -> Result<u64, ErrorCode> {
+    check_account(tx, snapshot.account_id())?;
+    let (account_version, status): (i64, String) = db(tx.query_row(
+        "SELECT settings_version,status FROM accounts WHERE account_id=?1",
+        [snapshot.account_id()],
+        |r| Ok((r.get(0)?, bounded_text(r, 1, 32)?)),
+    ))?;
+    if account_version <= 0 {
+        return Err(ErrorCode::InternalError);
+    }
+    let status = AccountStatus::parse(&status).map_err(|_| ErrorCode::InternalError)?;
+    if status != AccountStatus::Ready {
+        return Err(ErrorCode::Conflict);
+    }
+    if account_version as u64 != expected_account_version {
+        return Err(ErrorCode::Conflict);
+    }
+    let stored_endpoint = read_endpoint(tx, snapshot.account_id(), MailEndpointKind::Imap)?
+        .ok_or(ErrorCode::Conflict)?;
+    if stored_endpoint.json
+        != serde_json::to_value(endpoint).map_err(|_| ErrorCode::InternalError)?
+    {
+        return Err(ErrorCode::Conflict);
+    }
+    let endpoint_hash = endpoint_hash(snapshot.account_id(), endpoint)?;
+    let json = snapshot
+        .to_storage_json()
+        .map_err(|_| ErrorCode::InvalidInput)?;
+    let snapshot_hash = sha256(&json)?;
+    let count: i64 = db(tx.query_row(
+        "SELECT count(*) FROM imap_mailbox_catalog_operations",
+        [],
+        |r| r.get(0),
+    ))?;
+    if count >= 100_000 {
+        return Err(ErrorCode::QuotaExceeded);
+    }
+    let previous: Option<(i64, i64)> = db(tx
+        .query_row(
+            "SELECT generation,stored_at_utc_ms FROM imap_mailbox_catalogs WHERE account_id=?1",
+            [snapshot.account_id()],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .optional())?;
+    if previous.is_some() && load_catalog(tx, snapshot.account_id())?.is_none() {
+        return Err(ErrorCode::InternalError);
+    }
+    if previous
+        .as_ref()
+        .map_or(mutation.expected_version() != 0, |(generation, _)| {
+            *generation != mutation.expected_version() as i64
+        })
+    {
+        return Err(ErrorCode::Conflict);
+    }
+    let now = crate::utc_millis().map_err(|_| ErrorCode::InternalError)?;
+    if previous.as_ref().is_some_and(|(_, at)| now < *at) {
+        return Err(ErrorCode::InternalError);
+    }
+    let next = mutation
+        .expected_version()
+        .checked_add(1)
+        .ok_or(ErrorCode::Conflict)?;
+    db(tx.execute("INSERT INTO imap_mailbox_catalog_operations(operation_id,account_id,idempotency_key,account_version,endpoint_version,endpoint_hash,snapshot_hash,expected_version,result_version,payload_hash,completed_at_utc_ms) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)", params![mutation.operation_id(),snapshot.account_id(),mutation.idempotency_key(),expected_account_version as i64,endpoint.settings_version() as i64,endpoint_hash.as_slice(),snapshot_hash.as_slice(),mutation.expected_version() as i64,next as i64,mutation.payload_hash().as_slice(),now]))?;
+    let json_text = std::str::from_utf8(&json).map_err(|_| ErrorCode::InvalidInput)?;
+    db(tx.execute("INSERT INTO imap_mailbox_catalogs(account_id,account_version,endpoint_version,endpoint_hash,generation,snapshot_json,snapshot_hash,last_operation_id,stored_at_utc_ms) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9) ON CONFLICT(account_id) DO UPDATE SET account_version=excluded.account_version,endpoint_version=excluded.endpoint_version,endpoint_hash=excluded.endpoint_hash,generation=excluded.generation,snapshot_json=excluded.snapshot_json,snapshot_hash=excluded.snapshot_hash,last_operation_id=excluded.last_operation_id,stored_at_utc_ms=excluded.stored_at_utc_ms", params![snapshot.account_id(),expected_account_version as i64,endpoint.settings_version() as i64,endpoint_hash.as_slice(),next as i64,json_text,snapshot_hash.as_slice(),mutation.operation_id(),now]))?;
+    Ok(next)
+}
+
 impl crate::Store {
     pub fn replace_imap_mailbox_snapshot(
         &self,
@@ -394,31 +484,25 @@ impl crate::Store {
         #[cfg(windows)]
         {
             self.mail_transaction(TransactionBehavior::Immediate, |tx| {
-                if let Some(result) = replay_catalog(tx, snapshot.account_id(), endpoint, snapshot, expected_account_version, mutation)? { return Ok(result); }
-                check_account(tx, snapshot.account_id())?;
-                let (account_version, status): (i64, String) = db(tx.query_row(
-                    "SELECT settings_version,status FROM accounts WHERE account_id=?1", [snapshot.account_id()], |r| Ok((r.get(0)?, bounded_text(r,1,32)?))))?;
-                if account_version <= 0 { return Err(ErrorCode::InternalError); }
-                let status=AccountStatus::parse(&status).map_err(|_|ErrorCode::InternalError)?;
-                if status != AccountStatus::Ready { return Err(ErrorCode::Conflict); }
-                if account_version as u64 != expected_account_version { return Err(ErrorCode::Conflict); }
-                let stored_endpoint = read_endpoint(tx, snapshot.account_id(), MailEndpointKind::Imap)?.ok_or(ErrorCode::Conflict)?;
-                if stored_endpoint.json != serde_json::to_value(endpoint).map_err(|_| ErrorCode::InternalError)? { return Err(ErrorCode::Conflict); }
-                let endpoint_hash = endpoint_hash(snapshot.account_id(), endpoint)?;
-                let json = snapshot.to_storage_json().map_err(|_| ErrorCode::InvalidInput)?;
-                let snapshot_hash = sha256(&json)?;
-                let count: i64 = db(tx.query_row("SELECT count(*) FROM imap_mailbox_catalog_operations", [], |r| r.get(0)))?;
-                if count >= 100_000 { return Err(ErrorCode::QuotaExceeded); }
-                let previous: Option<(i64, i64)> = db(tx.query_row("SELECT generation,stored_at_utc_ms FROM imap_mailbox_catalogs WHERE account_id=?1", [snapshot.account_id()], |r| Ok((r.get(0)?, r.get(1)?))).optional())?;
-                if previous.is_some() && load_catalog(tx, snapshot.account_id())?.is_none() { return Err(ErrorCode::InternalError); }
-                if previous.as_ref().map_or(mutation.expected_version() != 0, |(generation, _)| *generation != mutation.expected_version() as i64) { return Err(ErrorCode::Conflict); }
-                let now = crate::utc_millis().map_err(|_| ErrorCode::InternalError)?;
-                if previous.as_ref().is_some_and(|(_, at)| now < *at) { return Err(ErrorCode::InternalError); }
-                let next = mutation.expected_version().checked_add(1).ok_or(ErrorCode::Conflict)?;
-                db(tx.execute("INSERT INTO imap_mailbox_catalog_operations(operation_id,account_id,idempotency_key,account_version,endpoint_version,endpoint_hash,snapshot_hash,expected_version,result_version,payload_hash,completed_at_utc_ms) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)", params![mutation.operation_id(),snapshot.account_id(),mutation.idempotency_key(),expected_account_version as i64,endpoint.settings_version() as i64,endpoint_hash.as_slice(),snapshot_hash.as_slice(),mutation.expected_version() as i64,next as i64,mutation.payload_hash().as_slice(),now]))?;
-                let json_text = std::str::from_utf8(&json).map_err(|_| ErrorCode::InvalidInput)?;
-                db(tx.execute("INSERT INTO imap_mailbox_catalogs(account_id,account_version,endpoint_version,endpoint_hash,generation,snapshot_json,snapshot_hash,last_operation_id,stored_at_utc_ms) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9) ON CONFLICT(account_id) DO UPDATE SET account_version=excluded.account_version,endpoint_version=excluded.endpoint_version,endpoint_hash=excluded.endpoint_hash,generation=excluded.generation,snapshot_json=excluded.snapshot_json,snapshot_hash=excluded.snapshot_hash,last_operation_id=excluded.last_operation_id,stored_at_utc_ms=excluded.stored_at_utc_ms", params![snapshot.account_id(),expected_account_version as i64,endpoint.settings_version() as i64,endpoint_hash.as_slice(),next as i64,json_text,snapshot_hash.as_slice(),mutation.operation_id(),now]))?;
-                Ok(next)
+                if crate::folder_refresh::operation_reserved(
+                    tx,
+                    snapshot.account_id(),
+                    mutation.operation_id(),
+                    mutation.idempotency_key(),
+                )? {
+                    return Err(ErrorCode::Conflict);
+                }
+                if let Some(result) = replay_catalog(
+                    tx,
+                    snapshot.account_id(),
+                    endpoint,
+                    snapshot,
+                    expected_account_version,
+                    mutation,
+                )? {
+                    return Ok(result);
+                }
+                apply_new_catalog(tx, expected_account_version, endpoint, snapshot, mutation)
             })
         }
     }

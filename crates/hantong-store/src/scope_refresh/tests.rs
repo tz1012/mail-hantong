@@ -1008,6 +1008,14 @@ fn restore_v8_scope_schema(f: &Fixture) {
             let columns="refresh_id,registration_id,base_registration_version,base_profile_epoch,target_profile_epoch,base_accounts_json,target_accounts_json,client_public_key_hash,server_public_key_hash,payload_hash,phase,version,created_at_utc_ms,expires_at_utc_ms,updated_at_utc_ms,decided_at_utc_ms,activated_at_utc_ms";
             tx.execute_batch(&format!("CREATE TEMP TABLE saved_v1 AS SELECT {columns} FROM client_scope_refreshes; DROP TABLE client_scope_refreshes;"))?;
             let schema=include_str!("../../../../docs/contracts/migrations/schema-v8.sql");
+            // This fixture has no audit jobs: restore the complete v8 audit DDL,
+            // rather than leaving v10 tables behind under an old version number.
+            assert_eq!(tx.query_row("SELECT count(*) FROM audit_starts",[],|r|r.get::<_,i64>(0))?,0);
+            assert_eq!(tx.query_row("SELECT count(*) FROM folder_refresh_requests",[],|r|r.get::<_,i64>(0))?,0);
+            tx.execute_batch("DROP TABLE folder_refresh_requests; DROP TABLE audit_terminals; DROP TABLE audit_start_accounts; DROP TABLE audit_starts;")?;
+            let audit_start=schema.find("CREATE TABLE audit_starts (").unwrap();
+            let audit_end=schema.find("-- Provider-neutral IMAP/SMTP").unwrap();
+            tx.execute_batch(&schema[audit_start..audit_end])?;
             let start=schema.find("CREATE TABLE client_scope_refreshes (").unwrap();
             let end=schema[start..].find("-- Folder observations only;").unwrap()+start;
             tx.execute_batch(&schema[start..end])?;

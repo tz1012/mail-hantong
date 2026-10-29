@@ -2,13 +2,30 @@
 
 use hantong_contracts::{ErrorCode, audit::AuditTerminal};
 
-use crate::{AccountsListRequest, ToolRequest};
+use crate::{AccountsListRequest, FolderRefreshAction, ToolRequest};
+use hantong_contracts::folders::{FolderListRequest, FolderRefreshStatusRequest};
 
 /// A bounded service result. The service owns the value and optional count;
 /// callers cannot manufacture an invalid count through this type.
 pub struct ReadResult<T> {
     value: T,
     count: Option<u64>,
+}
+
+pub enum AuditHandoff<T> {
+    Response(T),
+    Error(ErrorCode),
+}
+
+impl<T> AuditHandoff<T> {
+    /// The Store has durably taken ownership of the audit attempt.
+    pub fn response(value: T) -> Self {
+        Self::Response(value)
+    }
+    /// The Store has durably recorded a terminal admission outcome.
+    pub fn error(error: ErrorCode) -> Self {
+        Self::Error(error)
+    }
 }
 
 impl<T> ReadResult<T> {
@@ -37,6 +54,25 @@ pub trait ExecutionContext {
         &mut self,
         request: &AccountsListRequest,
     ) -> Result<ReadResult<Self::Output>, ErrorCode>;
+    fn read_folders(
+        &mut self,
+        _request: &FolderListRequest,
+    ) -> Result<ReadResult<Self::Output>, ErrorCode> {
+        Err(ErrorCode::CapabilityUnsupported)
+    }
+    fn read_folder_refresh_status(
+        &mut self,
+        _request: &FolderRefreshStatusRequest,
+    ) -> Result<ReadResult<Self::Output>, ErrorCode> {
+        Err(ErrorCode::CapabilityUnsupported)
+    }
+    fn request_folder_refresh(
+        &mut self,
+        _audit_id: [u8; 32],
+        _request: &hantong_contracts::folders::FolderRefreshRequest,
+    ) -> Result<AuditHandoff<Self::Output>, ErrorCode> {
+        Err(ErrorCode::CapabilityUnsupported)
+    }
     fn finish_audit(&mut self, id: [u8; 32], terminal: AuditTerminal) -> Result<(), ErrorCode>;
 }
 
@@ -65,6 +101,35 @@ pub fn execute_tool<C: ExecutionContext>(
                 Ok(value)
             }
             Err(error) => finish_failure(context, audit_id, error),
+        },
+        ToolRequest::FoldersList { request, .. } => match context.read_folders(&request) {
+            Ok(result) => {
+                let count = result.count();
+                let value = result.value;
+                finish_success(context, audit_id, count)?;
+                Ok(value)
+            }
+            Err(error) => finish_failure(context, audit_id, error),
+        },
+        ToolRequest::FoldersRefresh { action, .. } => match action {
+            FolderRefreshAction::Status(request) => {
+                match context.read_folder_refresh_status(&request) {
+                    Ok(result) => {
+                        let count = result.count();
+                        let value = result.value;
+                        finish_success(context, audit_id, count)?;
+                        Ok(value)
+                    }
+                    Err(error) => finish_failure(context, audit_id, error),
+                }
+            }
+            FolderRefreshAction::Request(request) => {
+                match context.request_folder_refresh(audit_id, &request) {
+                    Ok(AuditHandoff::Response(value)) => Ok(value),
+                    Ok(AuditHandoff::Error(error)) => Err(error),
+                    Err(error) => finish_failure(context, audit_id, error),
+                }
+            }
         },
         // The send contract deliberately has no service callback yet. An
         // approval_id in the input is not approval evidence.

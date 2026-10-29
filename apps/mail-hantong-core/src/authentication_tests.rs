@@ -11,6 +11,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
+#[path = "folder_integration_tests.rs"]
+mod folder_integration_tests;
 #[path = "read_policy_tests.rs"]
 mod read_policy_tests;
 
@@ -136,13 +138,23 @@ async fn m102_core_authentication_uses_real_pipe_and_consumes_one_tool_request()
         let store_fixture = StoreFixture::new();
         let store = Store::open(&store_fixture.data, &store_fixture.keys).unwrap();
         let mut read_policy = hantong_policy::ReadPolicy::new();
+        let (folder_handle, _folder_worker) = crate::folder_worker::coordinator_with_discovery(
+            &store,
+            crate::folder_worker::NoDiscovery,
+        );
         let server_task = async {
             let connection = listener.accept().await.unwrap();
             let mut lookup = |_id: &[u8; 16]| Ok(Some(registration.clone()));
             let mut execute =
                 |session: &mut hantong_ipc_server::auth::AuthenticatedConnection<'_>,
                  request: &hantong_ipc_server::RpcRequest| {
-                    crate::execution_adapter::execute(&store, &mut read_policy, session, request)
+                    crate::execution_adapter::execute(
+                        &store,
+                        &mut read_policy,
+                        &folder_handle,
+                        session,
+                        request,
+                    )
                 };
             let result =
                 dispatch_connection(connection, server_key, instance, &mut lookup, &mut execute)
@@ -180,6 +192,8 @@ async fn m102_core_authentication_uses_real_pipe_and_consumes_one_tool_request()
         };
         tokio::join!(server_task, client_task);
         assert!(store.list_audit_page(None, 100).unwrap().is_empty());
+        drop(folder_handle);
+        drop(_folder_worker);
         drop(store);
         drop(store_fixture);
 
@@ -298,6 +312,13 @@ async fn m102_core_authentication_uses_real_pipe_and_consumes_one_tool_request()
         }
         read_policy_tests::run_policy_scenarios(&mut listener, client_key, server_key, instance)
             .await;
+        folder_integration_tests::run_folder_scenarios(
+            &mut listener,
+            client_key,
+            server_key,
+            instance,
+        )
+        .await;
         drop(listener);
         // Fatal local state failures must leave the serving loop with the
         // original stable code; reconnect cannot hide corruption from core.

@@ -61,9 +61,16 @@ impl<'a> Harness<'a> {
                         fixture.mutate(change).unwrap();
                         *store.borrow_mut() = Some(fixture.open().unwrap());
                     }
+                    let borrowed = store.borrow();
+                    let current_store = borrowed.as_ref().unwrap();
+                    let (handle, _worker) = crate::folder_worker::coordinator_with_discovery(
+                        current_store,
+                        crate::folder_worker::NoDiscovery,
+                    );
                     crate::execution_adapter::execute(
-                        store.borrow().as_ref().unwrap(),
+                        current_store,
                         policy,
+                        &handle,
                         session,
                         request,
                     )

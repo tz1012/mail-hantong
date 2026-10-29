@@ -56,7 +56,7 @@ impl ReadPolicy {
         // A writable registration may still read; it gains no write path here.
         let _ = read_only;
         match tool {
-            AuditTool::AccountsList => Ok(()),
+            AuditTool::AccountsList | AuditTool::FoldersList | AuditTool::FoldersRefresh => Ok(()),
             AuditTool::SendExecute => Err(ErrorCode::PolicyBlocked),
         }
     }

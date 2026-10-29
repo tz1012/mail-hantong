@@ -103,23 +103,12 @@ impl Store {
         {
             self.with_connection(|connection| {
                 let tx = Transaction::new_unchecked(connection, TransactionBehavior::Immediate)?;
-                let Some(record) = read_audit(&tx, &execution_id)? else {
-                    return Ok(Err(ErrorCode::NotFound));
-                };
-                if record.completion().is_some() { return Ok(Err(ErrorCode::Conflict)); }
-                let now = crate::utc_millis()?;
-                if now < record.started_at_utc_ms() { return Err(rusqlite::Error::InvalidQuery); }
-                let count = terminal.result_count().map(i64::try_from).transpose()
-                    .map_err(|_| rusqlite::Error::InvalidQuery)?;
-                tx.execute(
-                    "INSERT INTO audit_terminals(execution_id,completed_at_utc_ms,result_kind,error_code,result_count)
-                     VALUES(?1,?2,?3,?4,?5)",
-                    rusqlite::params![execution_id.as_slice(), now,
-                        if terminal.is_success() { "returned_ok" } else { "returned_error" },
-                        terminal.error().map(ErrorCode::as_str), count],
-                )?;
-                tx.commit()?;
-                Ok(Ok(()))
+                let result =
+                    insert_audit_terminal_tx(&tx, execution_id, terminal, crate::utc_millis()?);
+                if result.is_ok() {
+                    tx.commit()?;
+                }
+                Ok(result)
             })?
         }
     }
@@ -183,7 +172,7 @@ impl Store {
 }
 
 #[cfg(windows)]
-fn read_audit(
+pub(super) fn read_audit(
     connection: &rusqlite::Connection,
     id: &[u8; 32],
 ) -> rusqlite::Result<Option<AuditRecord>> {
@@ -269,6 +258,32 @@ fn read_audit(
             .map(Some)
             .map_err(|_| rusqlite::Error::InvalidQuery),
     }
+}
+
+/// Shared transaction boundary for a job result and its immutable audit terminal.
+#[cfg(windows)]
+pub(super) fn insert_audit_terminal_tx(
+    tx: &rusqlite::Connection,
+    execution_id: [u8; 32],
+    terminal: AuditTerminal,
+    completed: i64,
+) -> Result<(), ErrorCode> {
+    let record = read_audit(tx, &execution_id)
+        .map_err(|_| ErrorCode::InternalError)?
+        .ok_or(ErrorCode::NotFound)?;
+    if record.completion().is_some() {
+        return Err(ErrorCode::Conflict);
+    }
+    if completed < record.started_at_utc_ms() {
+        return Err(ErrorCode::InternalError);
+    }
+    let count = terminal
+        .result_count()
+        .map(i64::try_from)
+        .transpose()
+        .map_err(|_| ErrorCode::InternalError)?;
+    tx.execute("INSERT INTO audit_terminals(execution_id,completed_at_utc_ms,result_kind,error_code,result_count) VALUES(?1,?2,?3,?4,?5)",rusqlite::params![execution_id.as_slice(),completed,if terminal.is_success(){"returned_ok"}else{"returned_error"},terminal.error().map(ErrorCode::as_str),count]).map_err(|_|ErrorCode::InternalError)?;
+    Ok(())
 }
 
 #[cfg(test)]

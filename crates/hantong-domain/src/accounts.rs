@@ -160,6 +160,17 @@ impl AccountSnapshot {
     }
 }
 
+/// Formats a positive UTC millisecond timestamp with the fixed millisecond
+/// precision required by tool result contracts.
+pub fn utc_millis_rfc3339(value: i64) -> Result<String, AccountDisplayError> {
+    if value <= 0 {
+        return Err(AccountDisplayError::InvalidInput);
+    }
+    jiff::Timestamp::from_millisecond(value)
+        .map(|timestamp| timestamp.strftime("%Y-%m-%dT%H:%M:%S%.3fZ").to_string())
+        .map_err(|_| AccountDisplayError::InvalidInput)
+}
+
 pub(crate) fn valid_id(value: &str) -> bool {
     !value.is_empty()
         && value.len() <= 128

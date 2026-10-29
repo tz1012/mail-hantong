@@ -12,6 +12,9 @@ struct Fake {
     fail_scope: Option<ErrorCode>,
     fail_policy: Option<ErrorCode>,
     read: Result<ReadResult<u32>, ErrorCode>,
+    folder_read: Result<ReadResult<u32>, ErrorCode>,
+    folder_status: Result<ReadResult<u32>, ErrorCode>,
+    handoff: Result<AuditHandoff<u32>, ErrorCode>,
     fail_finish: bool,
 }
 impl Fake {
@@ -27,6 +30,9 @@ impl Fake {
             fail_scope: None,
             fail_policy: None,
             read: Ok(ReadResult::new(7, Some(1)).unwrap()),
+            folder_read: Ok(ReadResult::new(8, Some(2)).unwrap()),
+            folder_status: Ok(ReadResult::new(9, Some(1)).unwrap()),
+            handoff: Ok(AuditHandoff::response(10)),
             fail_finish: false,
         }
     }
@@ -38,6 +44,15 @@ impl Fake {
     }
     fn accounts_many() -> serde_json::Value {
         json!({"schema_version":1,"request_id":"r","tool":"mail.accounts.list","params":{"account_ids":["a","b"]}})
+    }
+    fn folders_list() -> serde_json::Value {
+        json!({"schema_version":1,"request_id":"r","tool":"mail.folders.list","params":{"account_id":"a"}})
+    }
+    fn folders_request() -> serde_json::Value {
+        json!({"schema_version":1,"request_id":"r","tool":"mail.folders.refresh","params":{"action":"request","account_id":"a","operation_id":"o","idempotency_key":"i","expected_generation":0,"payload_hash":"00".repeat(32)}})
+    }
+    fn folders_status() -> serde_json::Value {
+        json!({"schema_version":1,"request_id":"r","tool":"mail.folders.refresh","params":{"action":"status","account_id":"a","execution_id":"01".repeat(32)}})
     }
 }
 impl ExecutionContext for Fake {
@@ -67,6 +82,28 @@ impl ExecutionContext for Fake {
     fn read_accounts(&mut self, _: &AccountsListRequest) -> Result<ReadResult<u32>, ErrorCode> {
         self.events.push("read");
         std::mem::replace(&mut self.read, Err(ErrorCode::InternalError))
+    }
+    fn read_folders(
+        &mut self,
+        _: &hantong_contracts::folders::FolderListRequest,
+    ) -> Result<ReadResult<u32>, ErrorCode> {
+        self.events.push("folder_read");
+        std::mem::replace(&mut self.folder_read, Err(ErrorCode::InternalError))
+    }
+    fn read_folder_refresh_status(
+        &mut self,
+        _: &hantong_contracts::folders::FolderRefreshStatusRequest,
+    ) -> Result<ReadResult<u32>, ErrorCode> {
+        self.events.push("folder_status");
+        std::mem::replace(&mut self.folder_status, Err(ErrorCode::InternalError))
+    }
+    fn request_folder_refresh(
+        &mut self,
+        _: [u8; 32],
+        _: &hantong_contracts::folders::FolderRefreshRequest,
+    ) -> Result<AuditHandoff<u32>, ErrorCode> {
+        self.events.push("handoff");
+        std::mem::replace(&mut self.handoff, Err(ErrorCode::InternalError))
     }
     fn finish_audit(&mut self, id: [u8; 32], terminal: AuditTerminal) -> Result<(), ErrorCode> {
         self.events.push(if terminal.is_success() {
@@ -272,4 +309,66 @@ fn m109_unknown_canonical_account_stops_before_scope_policy_and_service() {
     );
     assert_eq!(fake.events, ["revalidate", "begin"]);
     assert!(fake.terminals.is_empty());
+}
+
+#[test]
+fn m203_folder_handoff_owns_audit_and_list_status_finish_once() {
+    let mut fake = Fake::ok();
+    assert_eq!(
+        execute_tool(&mut fake, "mail.folders.refresh", &Fake::folders_request()),
+        Ok(10)
+    );
+    assert_eq!(
+        fake.events,
+        ["revalidate", "begin", "scope", "policy", "handoff"]
+    );
+    assert!(fake.terminals.is_empty());
+    let mut fake = Fake::ok();
+    assert_eq!(
+        execute_tool(&mut fake, "mail.folders.list", &Fake::folders_list()),
+        Ok(8)
+    );
+    assert_eq!(fake.terminals.len(), 1);
+    let mut fake = Fake::ok();
+    assert_eq!(
+        execute_tool(&mut fake, "mail.folders.refresh", &Fake::folders_status()),
+        Ok(9)
+    );
+    assert_eq!(fake.terminals.len(), 1);
+}
+
+#[test]
+fn m203_folder_handoff_error_is_terminal_owned_but_outer_error_finishes() {
+    let mut fake = Fake::ok();
+    fake.handoff = Ok(AuditHandoff::error(ErrorCode::RateLimited));
+    assert_eq!(
+        execute_tool(&mut fake, "mail.folders.refresh", &Fake::folders_request()),
+        Err(ErrorCode::RateLimited)
+    );
+    assert!(fake.terminals.is_empty());
+    let mut fake = Fake::ok();
+    fake.handoff = Err(ErrorCode::InternalError);
+    assert_eq!(
+        execute_tool(&mut fake, "mail.folders.refresh", &Fake::folders_request()),
+        Err(ErrorCode::InternalError)
+    );
+    assert_eq!(fake.terminals.len(), 1);
+}
+
+#[test]
+fn m203_folder_scope_and_policy_denials_never_call_folder_service() {
+    let mut fake = Fake::ok();
+    fake.fail_scope = Some(ErrorCode::ScopeDenied);
+    assert_eq!(
+        execute_tool(&mut fake, "mail.folders.list", &Fake::folders_list()),
+        Err(ErrorCode::ScopeDenied)
+    );
+    assert!(!fake.events.contains(&"folder_read"));
+    let mut fake = Fake::ok();
+    fake.fail_policy = Some(ErrorCode::PolicyBlocked);
+    assert_eq!(
+        execute_tool(&mut fake, "mail.folders.refresh", &Fake::folders_request()),
+        Err(ErrorCode::PolicyBlocked)
+    );
+    assert!(!fake.events.contains(&"handoff"));
 }

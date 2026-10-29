@@ -48,6 +48,10 @@ impl FolderListRequest {
     pub fn cursor(&self) -> Option<&FolderCursor> {
         self.cursor.as_ref()
     }
+    pub fn account_ids(&self) -> &[String] {
+        // The request owns exactly one explicitly named account.
+        std::slice::from_ref(&self.account_id)
+    }
 }
 
 #[derive(Clone, Eq, PartialEq)]
@@ -182,6 +186,9 @@ impl FolderRefreshRequest {
     pub fn payload_hash(&self) -> &str {
         &self.payload_hash
     }
+    pub fn account_ids(&self) -> &[String] {
+        std::slice::from_ref(&self.account_id)
+    }
     pub fn intent_bytes(&self) -> Vec<u8> {
         let mut out = b"mail-hantong.imap-folder-refresh-intent.v1\0".to_vec();
         for value in [&self.account_id, &self.operation_id, &self.idempotency_key] {
@@ -219,6 +226,86 @@ impl FolderRefreshStatusRequest {
     }
     pub fn execution_id(&self) -> &[u8; 32] {
         &self.execution_id
+    }
+    pub fn account_ids(&self) -> &[String] {
+        std::slice::from_ref(&self.account_id)
+    }
+}
+
+#[derive(Clone, Copy, Eq, PartialEq)]
+pub enum FolderRefreshState {
+    Unresolved,
+    Succeeded,
+    Failed,
+}
+
+impl fmt::Debug for FolderRefreshState {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("FolderRefreshState(<redacted>)")
+    }
+}
+
+#[derive(Clone, Eq, PartialEq)]
+pub struct FolderRefreshReceipt {
+    account_id: String,
+    execution_id: [u8; 32],
+    state: FolderRefreshState,
+    generation: Option<u64>,
+    error: Option<ErrorCode>,
+}
+
+impl fmt::Debug for FolderRefreshReceipt {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("FolderRefreshReceipt { <redacted> }")
+    }
+}
+
+impl FolderRefreshReceipt {
+    pub fn new(
+        account_id: &str,
+        execution_id: [u8; 32],
+        state: FolderRefreshState,
+        generation: Option<u64>,
+        error: Option<ErrorCode>,
+    ) -> Result<Self, ErrorCode> {
+        validate_account(account_id)?;
+        if execution_id == [0; 32] || generation.is_some_and(|v| v == 0 || v > i64::MAX as u64) {
+            return Err(ErrorCode::InvalidInput);
+        }
+        match state {
+            FolderRefreshState::Unresolved if generation.is_some() || error.is_some() => {
+                return Err(ErrorCode::InvalidInput);
+            }
+            FolderRefreshState::Succeeded if generation.is_none() || error.is_some() => {
+                return Err(ErrorCode::InvalidInput);
+            }
+            FolderRefreshState::Failed if generation.is_some() || error.is_none() => {
+                return Err(ErrorCode::InvalidInput);
+            }
+            _ => {}
+        }
+        Ok(Self {
+            account_id: account_id.to_owned(),
+            execution_id,
+            state,
+            generation,
+            error,
+        })
+    }
+    pub fn account_id(&self) -> &str {
+        &self.account_id
+    }
+    pub fn execution_id(&self) -> &[u8; 32] {
+        &self.execution_id
+    }
+    pub fn state(&self) -> FolderRefreshState {
+        self.state
+    }
+    pub fn generation(&self) -> Option<u64> {
+        self.generation
+    }
+    pub fn error(&self) -> Option<ErrorCode> {
+        self.error
     }
 }
 
@@ -269,6 +356,37 @@ mod tests {
         assert!(!format!("{r:?}").contains("acct"));
         assert!(
             FolderRefreshRequest::new("acct", "op", "key", i64::MAX as u64, &"00".repeat(32))
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn m203_refresh_receipt_state_fields_are_bound() {
+        let id = [1; 32];
+        assert!(
+            FolderRefreshReceipt::new("acct", id, FolderRefreshState::Unresolved, None, None)
+                .is_ok()
+        );
+        assert!(
+            FolderRefreshReceipt::new("acct", id, FolderRefreshState::Succeeded, Some(1), None)
+                .is_ok()
+        );
+        assert!(
+            FolderRefreshReceipt::new(
+                "acct",
+                id,
+                FolderRefreshState::Failed,
+                None,
+                Some(ErrorCode::Offline)
+            )
+            .is_ok()
+        );
+        assert!(
+            FolderRefreshReceipt::new("acct", id, FolderRefreshState::Succeeded, None, None)
+                .is_err()
+        );
+        assert!(
+            FolderRefreshReceipt::new("acct", id, FolderRefreshState::Unresolved, Some(1), None)
                 .is_err()
         );
     }

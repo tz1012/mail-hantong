@@ -8,6 +8,8 @@ mod authentication_tests;
 #[cfg(windows)]
 mod execution_adapter;
 #[cfg(windows)]
+mod folder_worker;
+#[cfg(windows)]
 mod identity;
 #[cfg(windows)]
 mod registration;
@@ -99,6 +101,8 @@ fn start() -> Result<(), ErrorCode> {
         };
         let (registration, registration_worker) =
             registration::coordinator(&store, &server_identity, &directories.secrets);
+        let (folder_worker_handle, folder_worker) =
+            folder_worker::coordinator_for_store(&store, &directories.secrets);
         let server = hantong_ipc_server::authenticated_wire::serve_until_with_setup(
             shutdown,
             || event(EventKind::CoreTransportReady),
@@ -106,13 +110,20 @@ fn start() -> Result<(), ErrorCode> {
             server_instance,
             |id| execution_adapter::load_registration(&store, id),
             |session, request| {
-                execution_adapter::execute(&store, &mut read_policy, session, request)
+                execution_adapter::execute(
+                    &store,
+                    &mut read_policy,
+                    &folder_worker_handle,
+                    session,
+                    request,
+                )
             },
             |command| registration.setup_command(command),
         );
         tokio::select! {
             biased;
             result=registration_worker.run()=>{result?;return Err(ErrorCode::InternalError);},
+            result=folder_worker.run()=>{result?;return Err(ErrorCode::InternalError);},
             result=server=>result?,
         }
         event(EventKind::CoreStopped);

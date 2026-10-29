@@ -11,18 +11,24 @@ const MAX_EPOCH: u64 = i64::MAX as u64;
 #[derive(Clone, Copy, Eq, PartialEq)]
 pub enum AuditTool {
     AccountsList,
+    FoldersList,
+    FoldersRefresh,
     SendExecute,
 }
 impl AuditTool {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::AccountsList => "mail.accounts.list",
+            Self::FoldersList => "mail.folders.list",
+            Self::FoldersRefresh => "mail.folders.refresh",
             Self::SendExecute => "mail.send.execute",
         }
     }
     pub fn parse(value: &str) -> Result<Self, ErrorCode> {
         match value {
             "mail.accounts.list" => Ok(Self::AccountsList),
+            "mail.folders.list" => Ok(Self::FoldersList),
+            "mail.folders.refresh" => Ok(Self::FoldersRefresh),
             "mail.send.execute" => Ok(Self::SendExecute),
             _ => Err(ErrorCode::InvalidInput),
         }

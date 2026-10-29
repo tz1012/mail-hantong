@@ -5,11 +5,13 @@
 //! it does not create identity or approval evidence.
 
 use hantong_application::{
-    AccountsListRequest, ExecutionContext, ReadResult, ToolRequest, render_account_list,
+    AccountsListRequest, AuditHandoff, ExecutionContext, ReadResult, ToolRequest,
+    render_account_list, render_folder_page, render_folder_refresh_receipt,
 };
 use hantong_contracts::{
     ErrorCode,
     audit::{AuditBegin, AuditTerminal},
+    folders::{FolderListRequest, FolderRefreshRequest, FolderRefreshStatusRequest},
 };
 use hantong_ipc_server::{
     RpcRequest,
@@ -24,6 +26,7 @@ pub(crate) struct CoreExecutionAdapter<'a, 'server> {
     connection: &'a mut AuthenticatedConnection<'server>,
     store: &'a Store,
     policy: &'a mut ReadPolicy,
+    folder_worker: &'a crate::folder_worker::FolderWorkerHandle<'a>,
 }
 
 pub(crate) fn load_registration(
@@ -39,10 +42,11 @@ pub(crate) fn load_registration(
 pub(crate) fn execute<'server>(
     store: &Store,
     policy: &mut ReadPolicy,
+    worker: &crate::folder_worker::FolderWorkerHandle<'_>,
     connection: &mut AuthenticatedConnection<'server>,
     request: &RpcRequest,
 ) -> Result<Value, ErrorCode> {
-    let mut adapter = CoreExecutionAdapter::new(connection, store, policy);
+    let mut adapter = CoreExecutionAdapter::new(connection, store, policy, worker);
     hantong_application::execute_tool(&mut adapter, &request.method, &request.params)
 }
 
@@ -51,11 +55,13 @@ impl<'a, 'server> CoreExecutionAdapter<'a, 'server> {
         connection: &'a mut AuthenticatedConnection<'server>,
         store: &'a Store,
         policy: &'a mut ReadPolicy,
+        folder_worker: &'a crate::folder_worker::FolderWorkerHandle<'a>,
     ) -> Self {
         Self {
             connection,
             store,
             policy,
+            folder_worker,
         }
     }
 
@@ -137,6 +143,53 @@ impl<'a, 'server> ExecutionContext for CoreExecutionAdapter<'a, 'server> {
             .store
             .list_account_summaries(request.account_ids(), request.include_capabilities())?;
         render_account_list(snapshot)
+    }
+
+    fn read_folders(
+        &mut self,
+        request: &FolderListRequest,
+    ) -> Result<ReadResult<Self::Output>, ErrorCode> {
+        let catalog = self
+            .store
+            .load_imap_mailbox_snapshot(request.account_id())?
+            .ok_or(ErrorCode::NotFound)?;
+        render_folder_page(
+            request,
+            catalog.generation(),
+            catalog.account_version(),
+            catalog.endpoint_version(),
+            catalog.stored_at_utc_ms(),
+            catalog.snapshot(),
+            catalog.binding_current(),
+        )
+    }
+
+    fn read_folder_refresh_status(
+        &mut self,
+        request: &FolderRefreshStatusRequest,
+    ) -> Result<ReadResult<Self::Output>, ErrorCode> {
+        let receipt = self
+            .store
+            .load_folder_refresh_receipt(*self.connection.registration_id(), request)?;
+        let value = render_folder_refresh_receipt(&receipt);
+        ReadResult::new(value, None)
+    }
+
+    fn request_folder_refresh(
+        &mut self,
+        audit_id: [u8; 32],
+        request: &FolderRefreshRequest,
+    ) -> Result<AuditHandoff<Self::Output>, ErrorCode> {
+        match self.folder_worker.admit(audit_id, request)? {
+            hantong_store::folder_refresh::FolderRefreshAdmission::Admitted(receipt)
+            | hantong_store::folder_refresh::FolderRefreshAdmission::Existing(receipt)
+            | hantong_store::folder_refresh::FolderRefreshAdmission::Failed(receipt) => Ok(
+                AuditHandoff::response(render_folder_refresh_receipt(&receipt)),
+            ),
+            hantong_store::folder_refresh::FolderRefreshAdmission::Rejected(error) => {
+                Ok(AuditHandoff::error(error))
+            }
+        }
     }
 
     fn finish_audit(&mut self, id: [u8; 32], terminal: AuditTerminal) -> Result<(), ErrorCode> {

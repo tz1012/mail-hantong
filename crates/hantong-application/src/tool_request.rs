@@ -4,14 +4,32 @@
 //! bounded IPC decoder. It performs no authentication, policy, approval, or
 //! provider work.
 
-use hantong_contracts::{ErrorCode, audit::AuditTool};
+use hantong_contracts::{
+    ErrorCode,
+    audit::AuditTool,
+    folders::{FolderCursor, FolderListRequest, FolderRefreshRequest, FolderRefreshStatusRequest},
+};
 use serde_json::{Map, Value};
 use std::{collections::BTreeSet, fmt};
 
 #[derive(Clone, Eq, PartialEq)]
 pub enum ToolRequest {
     AccountsList(AccountsListRequest),
+    FoldersList {
+        request_id: String,
+        request: FolderListRequest,
+    },
+    FoldersRefresh {
+        request_id: String,
+        action: FolderRefreshAction,
+    },
     SendExecute(SendExecuteRequest),
+}
+
+#[derive(Clone, Eq, PartialEq)]
+pub enum FolderRefreshAction {
+    Request(FolderRefreshRequest),
+    Status(FolderRefreshStatusRequest),
 }
 
 #[derive(Clone, Eq, PartialEq)]
@@ -37,6 +55,8 @@ impl fmt::Debug for ToolRequest {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::AccountsList(_) => f.write_str("ToolRequest::AccountsList(<redacted>)"),
+            Self::FoldersList { .. } => f.write_str("ToolRequest::FoldersList(<redacted>)"),
+            Self::FoldersRefresh { .. } => f.write_str("ToolRequest::FoldersRefresh(<redacted>)"),
             Self::SendExecute(_) => f.write_str("ToolRequest::SendExecute(<redacted>)"),
         }
     }
@@ -65,6 +85,14 @@ impl ToolRequest {
         let params = object(root.get("params").unwrap())?;
         match tool {
             "mail.accounts.list" => Ok(Self::AccountsList(parse_accounts(request_id, params)?)),
+            "mail.folders.list" => Ok(Self::FoldersList {
+                request_id,
+                request: parse_folder_list(params)?,
+            }),
+            "mail.folders.refresh" => Ok(Self::FoldersRefresh {
+                request_id,
+                action: parse_folder_refresh(params)?,
+            }),
             "mail.send.execute" => Ok(Self::SendExecute(parse_send(request_id, params)?)),
             _ => Err(ErrorCode::InvalidInput),
         }
@@ -84,6 +112,9 @@ impl ToolRequest {
     pub fn request_id(&self) -> &str {
         match self {
             Self::AccountsList(v) => &v.request_id,
+            Self::FoldersList { request_id, .. } | Self::FoldersRefresh { request_id, .. } => {
+                request_id
+            }
             Self::SendExecute(v) => &v.request_id,
         }
     }
@@ -91,6 +122,8 @@ impl ToolRequest {
     pub fn tool(&self) -> AuditTool {
         match self {
             Self::AccountsList(_) => AuditTool::AccountsList,
+            Self::FoldersList { .. } => AuditTool::FoldersList,
+            Self::FoldersRefresh { .. } => AuditTool::FoldersRefresh,
             Self::SendExecute(_) => AuditTool::SendExecute,
         }
     }
@@ -98,7 +131,27 @@ impl ToolRequest {
     pub fn account_ids(&self) -> &[String] {
         match self {
             Self::AccountsList(value) => value.account_ids(),
+            Self::FoldersList { request, .. } => request.account_ids(),
+            Self::FoldersRefresh { action, .. } => match action {
+                FolderRefreshAction::Request(value) => value.account_ids(),
+                FolderRefreshAction::Status(value) => value.account_ids(),
+            },
             Self::SendExecute(value) => std::slice::from_ref(&value.account_id),
+        }
+    }
+}
+
+impl ToolRequest {
+    pub fn folder_list(&self) -> Option<&FolderListRequest> {
+        match self {
+            Self::FoldersList { request, .. } => Some(request),
+            _ => None,
+        }
+    }
+    pub fn folder_refresh(&self) -> Option<&FolderRefreshAction> {
+        match self {
+            Self::FoldersRefresh { action, .. } => Some(action),
+            _ => None,
         }
     }
 }
@@ -264,6 +317,64 @@ fn parse_send(
         idempotency_key: id("idempotency_key")?,
     })
 }
+
+fn parse_folder_list(params: &Map<String, Value>) -> Result<FolderListRequest, ErrorCode> {
+    if params
+        .keys()
+        .any(|k| !matches!(k.as_str(), "account_id" | "limit" | "cursor"))
+    {
+        return Err(ErrorCode::InvalidInput);
+    }
+    let account = account_id(string(
+        params.get("account_id").ok_or(ErrorCode::InvalidInput)?,
+    )?)?;
+    let limit = match params.get("limit") {
+        Some(v) => Some(u32::try_from(integer(v)?).map_err(|_| ErrorCode::InvalidInput)?),
+        None => None,
+    };
+    let cursor = match params.get("cursor") {
+        Some(v) => Some(FolderCursor::parse(string(v)?)?),
+        None => None,
+    };
+    FolderListRequest::new(&account, limit, cursor)
+}
+
+fn parse_folder_refresh(params: &Map<String, Value>) -> Result<FolderRefreshAction, ErrorCode> {
+    let action = string(params.get("action").ok_or(ErrorCode::InvalidInput)?)?;
+    match action {
+        "request" => {
+            const KEYS: [&str; 6] = [
+                "action",
+                "account_id",
+                "operation_id",
+                "idempotency_key",
+                "expected_generation",
+                "payload_hash",
+            ];
+            exact_keys(params, &KEYS)?;
+            let account = account_id(string(params.get("account_id").unwrap())?)?;
+            let operation = bounded_id(string(params.get("operation_id").unwrap())?, 128)?;
+            let key = bounded_id(string(params.get("idempotency_key").unwrap())?, 128)?;
+            let generation = u64::try_from(integer(params.get("expected_generation").unwrap())?)
+                .map_err(|_| ErrorCode::InvalidInput)?;
+            let hash = string(params.get("payload_hash").unwrap())?;
+            Ok(FolderRefreshAction::Request(FolderRefreshRequest::new(
+                &account, &operation, &key, generation, hash,
+            )?))
+        }
+        "status" => {
+            const KEYS: [&str; 3] = ["action", "account_id", "execution_id"];
+            exact_keys(params, &KEYS)?;
+            let account = account_id(string(params.get("account_id").unwrap())?)?;
+            let encoded = string(params.get("execution_id").unwrap())?;
+            let execution_id = hantong_contracts::wire_hex::decode_fixed::<32>(encoded)?;
+            Ok(FolderRefreshAction::Status(
+                FolderRefreshStatusRequest::new(&account, execution_id)?,
+            ))
+        }
+        _ => Err(ErrorCode::InvalidInput),
+    }
+}
 fn hex(b: u8) -> u8 {
     match b {
         b'0'..=b'9' => b - b'0',
@@ -299,6 +410,48 @@ mod tests {
                 serde_json::json!({"account_ids":[]})
             ))
             .is_err()
+        );
+    }
+
+    #[test]
+    fn m203_folder_tools_parse_exact_actions_and_bind_method() {
+        let list = envelope(
+            "mail.folders.list",
+            serde_json::json!({"account_id":"a","limit":2}),
+        );
+        let ToolRequest::FoldersList { request, .. } =
+            ToolRequest::validate_method("mail.folders.list", &list).unwrap()
+        else {
+            panic!()
+        };
+        assert_eq!(request.account_id(), "a");
+        let refresh = envelope(
+            "mail.folders.refresh",
+            serde_json::json!({"action":"request","account_id":"a","operation_id":"op","idempotency_key":"key","expected_generation":0,"payload_hash":"00".repeat(32)}),
+        );
+        assert!(matches!(
+            ToolRequest::validate_method("mail.folders.refresh", &refresh).unwrap(),
+            ToolRequest::FoldersRefresh {
+                action: FolderRefreshAction::Request(_),
+                ..
+            }
+        ));
+        let status = envelope(
+            "mail.folders.refresh",
+            serde_json::json!({"action":"status","account_id":"a","execution_id":"01".repeat(32)}),
+        );
+        assert!(matches!(
+            ToolRequest::validate(&status).unwrap(),
+            ToolRequest::FoldersRefresh {
+                action: FolderRefreshAction::Status(_),
+                ..
+            }
+        ));
+        let mut invalid = list;
+        invalid["params"]["cursor"] = serde_json::Value::Null;
+        assert_eq!(
+            ToolRequest::validate(&invalid),
+            Err(ErrorCode::InvalidInput)
         );
     }
     #[test]

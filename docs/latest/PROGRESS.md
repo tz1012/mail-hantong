@@ -9,8 +9,8 @@
 | 항목 | 상태와 근거 |
 | --- | --- |
 | 기준 자료 | 사용자 승인으로 채택한 [Markdown 기준 요건](../requirements/README.md): 요건 170개·1단계 P0 144개·문장별 AC ID 341개. 작업 카드 정의 151개는 보존한다. |
-| 현재 카드 | **M2-02 IMAP 공통 기능·M2-03 폴더 탐색**. 읽기 전용 LIST·특수 폴더 매핑·v8 폴더 관측 저장의 자동 검증 완료. SMTP 기능·폴더 권한·CLI·Core 연결을 병렬 진행한다. |
-| 최신 검증 | **864개 통과**(문서 29·빌드 도구 63·Rust 772). 전체 build/test/fmt/Clippy·의존/문서/추적 검사와 같은 소스의 Linux x86_64·macOS arm64 교차 Clippy 통과. 아래 SMTP·v9 권한·폴더 client snapshot에 로그·hash가 있다. 실제 Mac 실행·전체 기능 완료를 뜻하지 않는다. |
+| 현재 카드 | **M2-03 폴더 공개 도구·v10 작업 원장**. Core worker·정책/감사·저장소·실제 IPC 연결과 전체 자동 회귀를 마쳤다. 다음 M2-04 UID 증분 동기화의 계약과 병렬 작업 경계를 준비한다. |
+| 최신 검증 | **892개 통과**(문서 29·빌드 도구 63·Rust 800). 전체 build/test/fmt/Clippy·의존/문서/추적 검사와 같은 소스의 Linux x86_64·macOS arm64 교차 Clippy 통과. 아래 폴더 v10 snapshot에 로그·hash가 있다. 실제 Mac 실행·전체 기능 완료를 뜻하지 않는다. |
 | 제품 구현 | Rust workspace·영/한 CLI·Windows 코어/IPC·DPAPI·SQLCipher·설정 검증·감사·기본 등록/프로필·권한이 있는 계정 목록 조회·IMAP/SMTP TLS/AUTH probe·CI/추적 도구 구현. 신규 IMAP 설정·명시 재개와 기본 CLI 계정 범위 갱신의 보호 확인·중단 복구를 연결했다. 발송은 차단하며 실제 메일 수신·전체 GUI·설치 패키지는 미완료다. |
 | GitHub | 로컬 Git main 저장소를 초기화해 개발 기준선을 기록한다. 공개 저장소 주소·remote·릴리스·패키지 ID는 아직 없음. 빌드 산출물·실행 데이터·에이전트 상태는 제외한다. |
 | 새 사용자 요청 | 진행 상황을 이 문서에 누적하고, GitHub에서 명령어로 설치 및 개발을 시작할 수 있는 경로를 마련한다. 상세 범위는 [공개와 설치 계획](DISTRIBUTION.md)에 기록한다. |
@@ -19,7 +19,7 @@
 | 런타임 결정 | **코어·CLI Rust 확정** — 2026-10-29 사용자 선택, [ADR-001](../adr/ADR-001-core-runtime.md). 비교 실험에서 .NET은 프로세스 시작, Rust는 메모리에 유리했고 검색은 혼재했다. [실측 보고서](RUNTIME-BENCHMARK.md)는 보존하며 제품의 1초 목표는 아직 검증 전이다. |
 | Mac 지원 방향 | 사용자 승인으로 정식 후속 목표에 포함했다. Windows 우선 출시 후 Mac 코어·CLI·최소 승인 도우미부터 제공하고 전체 GUI를 후속 제공한다. 구체적인 단계·일정·패키지는 미정이며 현재 제품은 미구현이다. |
 | 공개 사용 정책 | **[LICENSE Version 1.0](../../LICENSE) 정식 채택** — 개인·회사 내부 업무용 사용, 수정본 비공개 및 원본·수정본 무료 재배포 허용. 프로그램 판매·유료 제공 금지. 고지 유지·수정 표시·보증과 책임 조항 포함. 저작권자는 **Andrew Cho**, 웹사이트 **https://tzt.kr**, 연락처 **andrew@tzt.kr**이다. [한국어 안내](LICENSING.md), [ADR-016](../adr/ADR-016-license.md). |
-| 다음 제품 작업 | SMTP 기능·폴더 권한/프로필·폴더 CLI를 병렬 구현하고 Core worker와 연결한다. 공통 계약과 v9 migration은 root가 맡고 각 기능은 교차 검토 후 통합한다. |
+| 다음 제품 작업 | 폴더 v10의 전체 회귀를 고정한 뒤 M2-04 UID 증분 동기화의 공통 타입·원자 cursor 저장·IMAP transport를 분리한다. root가 계약과 통합을 소유하고 구현과 교차 검토를 분리한다. |
 
 ## 기능별 현재 상태
 
@@ -31,7 +31,7 @@
 | 암호화 DB·비밀 저장·등록·정책·감사·native 확인 | 기반 구현 | 격리 자동 검사 통과, 실제 Hello·사람 보안/화면 검토 필요 |
 | IMAP 계정 설정·재개·계정 조회·CLI 범위 갱신 | 구현 및 연결 | 가짜 제공자/실제 로컬 pipe 자동 검사 통과, 실제 사용자 계정 시험 전 |
 | IMAP/SMTP 연결 진단 | 내부 전송 경계 구현 | in-memory TLS/DPAPI 시험 통과, 제공자 상호 운용성 시험 전 |
-| 폴더 탐색·특수 폴더 후보·저장 | 탐색·v8 저장 구현 및 자동 검증 | 공개 CLI/GUI 도구·새 권한·Core 실행 연결 후속 |
+| 폴더 탐색·특수 폴더 후보·저장 | CLI 목록/갱신·권한·Core worker·v10 원장 연결 | 실제 IPC/가짜 제공자 자동 검사 통과, GUI·사용자 역할 지정·실제 제공자 검증 후속 |
 | 실제 메일 동기화·목록·본문·첨부·검색 | 후속 구현 | 사용자 종단 흐름 미완료 |
 | 작성·발송·예약 발송·임시보관·주소록 | 후속 구현 | 안전 승인/Outbox와 제품 종단 흐름 미완료 |
 | 태그·즐겨찾기·스팸·광고필터·자동화 | 후속 구현 | 1단계 필수 범위 유지, 제품 종단 흐름 미완료 |
@@ -764,3 +764,25 @@ folder client의 수동 JSON scanner에서 escaped duplicate key 검사를 우�
 `scripts/check_all.py` 종료 코드 **0**: **864개**(문서 29·빌드 도구 63·Rust 772). 로그 `target/parallel-wave-final-full-check.log`, SHA-256 `377A0D8734128969B7C15437E000D55FC86D113ECEC2E5EA91AD174DC20C5EB2`, source hash `fa51dab59a3586aba2a75a3133cf2e0cd2ae47ba03af51fbbb1d7ecc9d10a507`. 같은 소스의 Linux x86_64/macOS arm64 all-target Clippy 종료 코드 0(`target/parallel-wave-final-linux-check.log`, `target/parallel-wave-final-macos-check.log`). 실제 Mac 실행은 아니다.
 
 CNG 제품 키 1개와 names hash `3B692D49F1D08F7D3442806CF17694CDC02AF36B44839930FC18EB9C83CE9D4D` 유지. 실제 사용자 DB·프로필·Hello·계정·메일은 사용하지 않았다. 공개 폴더 요청은 아직 Application/Core dispatch가 연결되지 않아 제품 사용 완료로 표시하지 않는다. **[사람 검토 필요]**, 전체 제품 AC 완료 0개를 유지한다. 다음 묶음은 v10 작업 이력·공통 admission·Core worker를 통한 폴더 기능 연결이다.
+
+
+## 2026-10-30 폴더 공개 도구와 v10 작업 원장 (전체 검증 진행 중)
+
+직전 SMTP·v9 범위·CLI 묶음은 로컬 커밋 `d7f06c3`로 보존했다. 계약/페이지/Application, migration, Core worker를 병렬 배정했고, root가 Store 작업 전이와 공통 파일을 통합했다. 별도 담당자는 Store/Core 실패 경로를 독립 검토했다. 담당별 보고는 실제 소스와 검사 로그로 대조했으며 미완성 API 연결·미실행 빌드를 완료로 채택하지 않았다.
+
+`mail.folders.list`, `mail.folders.refresh` request/status를 기존 인증→감사 start→scope→policy 경로에 연결했다. 목록은 세대에 결속한 로컬 페이지이고 갱신은 capacity-one worker의 실제 channel permit을 먼저 예약한다. 접수·중복 receipt·queue full/closed는 v10 ledger와 audit에 결속하며, 성공 catalog/operation/job/audit를 한 트랜잭션으로 저장한다. 실행 전·중·commit 전 등록/계정/endpoint/세대를 검사하고 변경 시 네트워크 future를 폐기한다. 종료·조회·중복 요청은 미완료 작업을 자동 재실행하지 않는다.
+
+v9 DDL은 직전 커밋과 byte-normalized 대조로 고정했다. 9→10은 기존 audit parent/child·capacity·AUTOINCREMENT high-water를 보존한다. 첫 migration 검증에서 과거 8→9 단계에 현재 DDL을 사용한 문제, CREATE DDL 공백 불일치, 빈 aggregate가 만든 순번 중복/NULL과 빈 INSERT가 만든 불필요 seq=0을 발견해 수정했다. 6개 migration 시험이 통과했고 Store 전체에서 과거 schema fixture가 v10 표/DDL을 남긴 문제와 테이블 수 단언을 수정했다. Store **213개**(단위210·설정3)가 통과했다(`target/folder-v10-store-verified.log`).
+
+독립 검토는 과거 성공 job의 결과 hash 검증, 저장 operation 100,000건 quota의 terminal 처리, 성공 commit 오류 후 두 번째 실패 기록, CredentialMismatch 매핑을 지적했다. 회귀와 구현을 보완했고 Store job **11개**가 통과했다(`target/folder-job-review-green.log`). 최종 코드 재검토에서 잔여 HIGH/MEDIUM은 없었다. DB/검사 내부 오류와 불확실 commit은 worker/Core로 전파하며 unresolved 상태를 보존한다.
+
+실제 인증 pipe의 가짜 제공자 연결 시험은 목록 없음/계정 scope 거부, 갱신 receipt/조회, 중복 무효과, queue full, 2페이지 strict client 해석, 실행 중 catalog 변경으로 취소, 중단 후 status/replay 무재실행을 검증한다. 성공 commit 오류의 추가 Core 주입 시험은 열려 있는 Store에 다른 DB 연결을 열려다 정상적인 exclusive lock에 거부됐다(`target/folder-v10-core-final.log`). 이 잘못된 주입 방식을 제거했으며 제품 검사를 우회하는 hook은 넣지 않았다. 해당 오류의 저장 원자성은 Store 회귀, worker 전파는 코드 검토로 확인했고 end-to-end 오류 주입은 검증 공백으로 남긴다.
+
+현재 전체 build/test/fmt/Clippy와 교차 정적 검사를 진행한다. 위 **864개** 최신 전체 검증은 직전 커밋의 증거이며 v10 완료 증거로 사용하지 않는다. 실제 사용자 Core/DB/profile/Hello/계정/메일은 실행하지 않는다. 계약·정책·감사 변경은 **[사람 검토 필요]**이며 전체 제품 AC 완료는 **0개**다.
+
+
+### 폴더 v10 최종 자동 검증 snapshot
+
+`scripts/check_all.py` 종료 코드 **0**: **892개**(문서29·빌드 도구63·Rust800). Core **50개**, Store **213개**를 포함하여 전체 build/test/fmt/Clippy·아키텍처·기준 문서·추적 검사가 통과했다. 로그 `target/folder-v10-full-check.log`, SHA-256 `05005BFCDD8ADD5BD103D476FBAE9317CBB0DBCA49C8C7457DBF5AB8965BB237`, source hash `998a9125ee61725ca5b71a07b9ff441282648cf06daa258c79c2af897c27e999`. 같은 소스의 Linux x86_64/macOS arm64 all-target Clippy도 종료 코드 0(`target/folder-v10-linux-check.log`, `target/folder-v10-macos-check.log`)이다. 실제 Mac 실행 검증은 아니다.
+
+CNG 제품 키 **1개**, names hash `3B692D49F1D08F7D3442806CF17694CDC02AF36B44839930FC18EB9C83CE9D4D`로 유지됐다. 신규 의존성은 없다. 실제 사용자 Core/DB/profile/Hello/계정/메일은 실행하지 않았다. 계약·정책·감사 변경은 **[사람 검토 필요]**, 제품 전체 AC 완료는 **0개**다. 다음은 M2-04의 읽기 전용 UID 메타데이터 페이지·원자 cursor 저장이며, 기존 메시지 FLAGS/expunge 대조·UIDVALIDITY 재동기화·전체 메일 UI는 후속으로 구분한다.

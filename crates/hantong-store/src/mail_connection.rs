@@ -400,7 +400,7 @@ pub(super) struct StoredEndpoint {
 }
 #[cfg(windows)]
 pub(super) fn read_endpoint(
-    tx: &Transaction<'_>,
+    tx: &rusqlite::Connection,
     account: &str,
     kind: MailEndpointKind,
 ) -> Result<Option<StoredEndpoint>, ErrorCode> {

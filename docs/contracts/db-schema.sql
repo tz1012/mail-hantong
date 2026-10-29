@@ -120,7 +120,7 @@ CREATE TABLE audit_starts (
     profile_epoch INTEGER NOT NULL CHECK (profile_epoch >= 1),
     client_kind TEXT NOT NULL CHECK (client_kind IN ('cli', 'mcp', 'gui')),
     display_label TEXT NOT NULL CHECK (length(display_label) BETWEEN 1 AND 128 AND length(CAST(display_label AS BLOB)) <= 512),
-    tool_code TEXT NOT NULL CHECK (tool_code IN ('mail.accounts.list', 'mail.send.execute')),
+    tool_code TEXT NOT NULL CHECK (tool_code IN ('mail.accounts.list', 'mail.send.execute', 'mail.folders.list', 'mail.folders.refresh')),
     started_at_utc_ms INTEGER NOT NULL CHECK (started_at_utc_ms > 0)
 ) STRICT;
 
@@ -321,4 +321,35 @@ CREATE TABLE imap_mailbox_catalogs (
     snapshot_hash BLOB NOT NULL CHECK (length(snapshot_hash) = 32),
     last_operation_id TEXT NOT NULL REFERENCES imap_mailbox_catalog_operations(operation_id) ON DELETE RESTRICT CHECK (length(last_operation_id) BETWEEN 1 AND 128 AND length(CAST(last_operation_id AS BLOB)) = length(last_operation_id) AND last_operation_id NOT GLOB '*[^A-Za-z0-9_-]*'),
     stored_at_utc_ms INTEGER NOT NULL CHECK (stored_at_utc_ms > 0)
+) STRICT;
+
+-- Durable folder refresh admission. Network work is never resumed implicitly.
+CREATE TABLE folder_refresh_requests (
+    execution_id BLOB PRIMARY KEY REFERENCES audit_starts(execution_id) ON DELETE RESTRICT
+        CHECK (length(execution_id) = 32 AND execution_id <> zeroblob(32)),
+    operation_id TEXT NOT NULL UNIQUE CHECK (length(operation_id) BETWEEN 1 AND 128 AND length(CAST(operation_id AS BLOB)) = length(operation_id) AND operation_id NOT GLOB '*[^A-Za-z0-9_-]*'),
+    account_id TEXT NOT NULL REFERENCES accounts(account_id) ON DELETE RESTRICT
+        CHECK (length(account_id) BETWEEN 1 AND 128 AND length(CAST(account_id AS BLOB)) = length(account_id) AND account_id NOT GLOB '*[^A-Za-z0-9_-]*'),
+    idempotency_key TEXT NOT NULL CHECK (length(idempotency_key) BETWEEN 1 AND 128 AND length(CAST(idempotency_key AS BLOB)) = length(idempotency_key) AND idempotency_key NOT GLOB '*[^A-Za-z0-9_-]*'),
+    intent_hash BLOB NOT NULL CHECK (length(intent_hash) = 32),
+    expected_generation INTEGER NOT NULL CHECK (expected_generation BETWEEN 0 AND 9223372036854775806),
+    bound_account_version INTEGER NOT NULL CHECK (bound_account_version >= 1),
+    bound_endpoint_version INTEGER NOT NULL CHECK (bound_endpoint_version >= 1),
+    bound_endpoint_hash BLOB NOT NULL CHECK (length(bound_endpoint_hash) = 32),
+    state TEXT NOT NULL CHECK (state IN ('admitted','running','succeeded','failed')),
+    admitted_at_utc_ms INTEGER NOT NULL CHECK (admitted_at_utc_ms > 0),
+    started_at_utc_ms INTEGER CHECK (started_at_utc_ms IS NULL OR started_at_utc_ms >= admitted_at_utc_ms),
+    completed_at_utc_ms INTEGER CHECK (completed_at_utc_ms IS NULL OR (completed_at_utc_ms >= admitted_at_utc_ms AND (started_at_utc_ms IS NULL OR completed_at_utc_ms >= started_at_utc_ms))),
+    result_generation INTEGER CHECK (result_generation IS NULL OR result_generation = expected_generation + 1),
+    error_code TEXT CHECK (error_code IS NULL OR error_code IN ('INVALID_INPUT','AUTH_REQUIRED','SCOPE_DENIED','POLICY_BLOCKED','CONFLICT','RATE_LIMITED','OFFLINE','NOT_FOUND','SEND_UNKNOWN','APPROVAL_REQUIRED','APPROVAL_EXPIRED','APPROVAL_DENIED','APPROVAL_RATE_LIMITED','CLIENT_NOT_REGISTERED','CLIENT_SUSPENDED','HUMAN_STEP_REQUIRED','CORE_UNAVAILABLE','VERSION_MISMATCH','CURSOR_EXPIRED','CAPABILITY_UNSUPPORTED','QUOTA_EXCEEDED','INTERNAL_ERROR')),
+    catalog_operation_id TEXT REFERENCES imap_mailbox_catalog_operations(operation_id) ON DELETE RESTRICT,
+    result_snapshot_hash BLOB CHECK (result_snapshot_hash IS NULL OR length(result_snapshot_hash) = 32),
+    result_payload_hash BLOB CHECK (result_payload_hash IS NULL OR length(result_payload_hash) = 32),
+    UNIQUE (account_id, idempotency_key),
+    CHECK (
+        (state = 'admitted' AND started_at_utc_ms IS NULL AND completed_at_utc_ms IS NULL AND result_generation IS NULL AND error_code IS NULL AND catalog_operation_id IS NULL AND result_snapshot_hash IS NULL AND result_payload_hash IS NULL)
+        OR (state = 'running' AND started_at_utc_ms IS NOT NULL AND completed_at_utc_ms IS NULL AND result_generation IS NULL AND error_code IS NULL AND catalog_operation_id IS NULL AND result_snapshot_hash IS NULL AND result_payload_hash IS NULL)
+        OR (state = 'succeeded' AND started_at_utc_ms IS NOT NULL AND completed_at_utc_ms IS NOT NULL AND result_generation IS NOT NULL AND error_code IS NULL AND catalog_operation_id IS NOT NULL AND catalog_operation_id = operation_id AND result_snapshot_hash IS NOT NULL AND result_payload_hash IS NOT NULL)
+        OR (state = 'failed' AND completed_at_utc_ms IS NOT NULL AND result_generation IS NULL AND error_code IS NOT NULL AND catalog_operation_id IS NULL AND result_snapshot_hash IS NULL AND result_payload_hash IS NULL)
+    )
 ) STRICT;

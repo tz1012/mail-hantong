@@ -5,6 +5,36 @@ fn read(p: &mut ReadPolicy, id: u128, limit: u32, now: Instant) -> Result<(), Er
 }
 
 #[test]
+fn m203_folder_read_tools_share_the_same_rate_bucket_and_send_stays_blocked() {
+    let now = Instant::now();
+    let mut policy = ReadPolicy::new();
+    assert_eq!(
+        policy.check([7; 16], true, 3, AuditTool::AccountsList, now),
+        Ok(())
+    );
+    assert_eq!(
+        policy.check([7; 16], true, 3, AuditTool::FoldersList, now),
+        Ok(())
+    );
+    assert_eq!(
+        policy.check([7; 16], true, 3, AuditTool::FoldersRefresh, now),
+        Ok(())
+    );
+    assert_eq!(
+        policy.check([7; 16], true, 3, AuditTool::FoldersList, now),
+        Err(ErrorCode::RateLimited)
+    );
+    assert_eq!(
+        policy.check([8; 16], true, 3, AuditTool::FoldersRefresh, now),
+        Ok(())
+    );
+    assert_eq!(
+        policy.check([8; 16], true, 3, AuditTool::SendExecute, now),
+        Err(ErrorCode::PolicyBlocked)
+    );
+}
+
+#[test]
 fn ai05_read_is_allowed_for_both_read_only_values_but_send_always_consumes_then_denies() {
     let now = Instant::now();
     for read_only in [false, true] {
