@@ -10,7 +10,7 @@
 
 ## 현재 상태
 
-2026-10-30 CLI preview.3 기능 묶음: 본문 읽기·암호화 캐시, 초안 작성, 개별 native 승인 발송 원장·SMTP, 최초 SMTP 보호 설정, 독립 MCP 등록·도구 조회/호출, Codex/Claude Console AI 대화, 공급자/모델/추론/fast/agent 세션 제어와 한 줄 설치를 연결했다. `/provider`와 `/provide`를 같은 명령으로 받고, 값 없는 공급자·모델·모드 명령은 상하키 선택을 제공한다. 최종 전체 검사 **1,565개 통과** 후 공개 저장소 [tz1012/mail-hantong](https://github.com/tz1012/mail-hantong)에 새 소스·개발 미리보기를 게시하는 단계다. 아래 preview.2의 1,450개는 직전 기준선으로 보존한다. 보안·계약 변경은 **[사람 검토 필요]**다.
+2026-10-30 CLI preview.3 기능 묶음: 본문 읽기·암호화 캐시, 초안 작성, 개별 native 승인 발송 원장·SMTP, 최초 SMTP 보호 설정, 독립 MCP 등록·도구 조회/호출, Codex/Claude Console AI 대화, 공급자/모델/추론/fast/agent 세션 제어와 한 줄 설치를 연결했다. `/provider`와 `/provide`를 같은 명령으로 받고, 값 없는 공급자·모델·모드 명령은 상하키 선택을 제공한다. 최종 전체 검사 **1,565개 통과** 후 소스 `065366b`와 [개발 미리보기 v0.1.0-preview.3](https://github.com/tz1012/mail-hantong/releases/tag/v0.1.0-preview.3)을 공개했다. 공개 주소의 최종 ZIP으로 실제 임시 설치·실행·제거·데이터 보존을 재검증했다. 아래 preview.2의 1,450개는 직전 기준선으로 보존한다. 보안·계약 변경은 **[사람 검토 필요]**다.
 
 **우선순위 변경(사용자 지시, 2026-10-30): GUI보다 CLI 출시를 먼저 진행한다.** GUI 진행 파일은 보존하고 추가 디자인 작업을 중단했다. 상단 폴더 드롭다운 제거·왼쪽 실제 폴더 통합·스크롤 끝 자동 추가 로딩은 후속에 남긴다. 코어는 별도 프로세스이고 계정 비밀번호 입력·등록/권한 승인은 보호된 Windows 창을 유지한다.
 
@@ -20,16 +20,16 @@
 | --- | --- |
 | 기준 자료 | 사용자 승인으로 채택한 [Markdown 기준 요건](../requirements/README.md): 요건 170개·1단계 P0 144개·문장별 AC ID 341개. 작업 카드 정의 151개는 보존한다. |
 | 현재 카드 | 사용자 우선 지시에 따른 **CLI 개발 미리보기의 로컬 패키지·설치 검증**을 마쳤다. M9-10/11/15/16의 전체 설치·새 OS·서명·출시 게이트 완료가 아니다. M8 GUI 진행 파일은 보존했다. 보안·계약은 **사람 검토 필요**다. |
-| 최신 검증 | **1,565개 통과**(문서 29·빌드 도구 88·Rust 1,448). check-all 전체 build/test/fmt/Clippy·의존/문서/추적 검사 통과. CLI의 Linux x86_64·macOS arm64 대상 Clippy 통과 후 CLI Rust 소스 변경 없음. 실제 ZIP의 Windows PowerShell 5.1 설치·preview.1→2 업데이트·재설치·제거 검증 통과. 실제 Mac 실행·새 OS 시험·전체 기능 완료를 뜻하지 않는다. |
-| 제품 구현 | Rust workspace·영/한 CLI·Windows 코어/인증 IPC·DPAPI·SQLCipher·설정 검증·정책/감사·보호 등록/계정 설정 구현. 폴더·UID 수집/대조/복구·관측 요약·로컬 제목/발신자 목록과 GUI 메타데이터 읽기를 연결했다. CLI 미리보기 설치는 로컬 검증을 마쳤으며, 본문·첨부·발송·전체 GUI와 실제 제공자 검증은 미완료다. |
-| GitHub | 로컬 Git main 저장소를 초기화해 개발 기준선을 기록한다. 공개 저장소 주소·remote·릴리스·패키지 ID는 아직 없음. 빌드 산출물·실행 데이터·에이전트 상태는 제외한다. |
+| 최신 검증 | **1,565개 통과**(문서 29·빌드 도구 88·Rust 1,448). check-all build/test/fmt/Clippy·의존/문서/추적 통과, 동결 후 Windows/Linux 전체 target Clippy 통과. Windows PowerShell5.1 설치·preview.2→3 업데이트·반복·제거와 최종 공개 ZIP 재설치 검증 통과. Mac 실행·새 OS·실제 제공자 검증은 남아 있다. |
+| 제품 구현 | Rust workspace·영/한 CLI·Windows 코어/인증 IPC·DPAPI·SQLCipher·정책/감사·보호 설정/등록, 폴더·UID 수집/대조/복구·검색·본문·초안·native 개별 승인 발송, managed AI·MCP·한 줄 설치를 연결했다. 첨부·예약·주소록·규칙·전체 GUI·실제 제공자 검증은 후속이다. |
+| GitHub | 공개 저장소 [tz1012/mail-hantong](https://github.com/tz1012/mail-hantong), main remote 연결, 개발 미리보기 v0.1.0-preview.3과 ZIP/SHA256SUMS/BUILD-METADATA 게시. 실행 데이터·에이전트 상태는 소스에 포함하지 않는다. WinGet/MSI 등록과 서명은 아직 없다. |
 | 새 사용자 요청 | 진행 상황을 이 문서에 누적하고, GitHub에서 명령어로 설치 및 개발을 시작할 수 있는 경로를 마련한다. 상세 범위는 [공개와 설치 계획](DISTRIBUTION.md)에 기록한다. |
 | 문서 관리 방식 | Markdown을 개발 기준으로 갱신하고 기존 Word는 보관한다. 최신 사용자 지시 “제작 완료까지 일단 묻지말고 진행해”에 따라 일반 구현 판단은 기록하며 연속 진행한다. |
 | 실행 성능 기준 | 빠른 실행을 추구하면서 상주 메모리 사용도 함께 고려한다. 사용자가 이 절충을 근거로 Rust를 선택했다. 웜 캐시 상태의 기본 메일 목록 사용 가능 목표 **1초 이내**는 유지한다. 현재 기준은 [FEATURES.md](FEATURES.md)의 성능 보완이다. |
 | 런타임 결정 | **코어·CLI Rust 확정** — 2026-10-29 사용자 선택, [ADR-001](../adr/ADR-001-core-runtime.md). 비교 실험에서 .NET은 프로세스 시작, Rust는 메모리에 유리했고 검색은 혼재했다. [실측 보고서](RUNTIME-BENCHMARK.md)는 보존하며 제품의 1초 목표는 아직 검증 전이다. |
 | Mac 지원 방향 | 사용자 승인으로 정식 후속 목표에 포함했다. Windows 우선 출시 후 Mac 코어·CLI·최소 승인 도우미부터 제공하고 전체 GUI를 후속 제공한다. 구체적인 단계·일정·패키지는 미정이며 현재 제품은 미구현이다. |
 | 공개 사용 정책 | **[LICENSE Version 1.0](../../LICENSE) 정식 채택** — 개인·회사 내부 업무용 사용, 수정본 비공개 및 원본·수정본 무료 재배포 허용. 프로그램 판매·유료 제공 금지. 고지 유지·수정 표시·보증과 책임 조항 포함. 저작권자는 **Andrew Cho**, 웹사이트 **https://tzt.kr**, 연락처 **andrew@tzt.kr**이다. [한국어 안내](LICENSING.md), [ADR-016](../adr/ADR-016-license.md). |
-| 다음 제품 작업 | CLI 미리보기 검증 기준선을 보존하고 본문/첨부·작성/임시보관·승인 Outbox 등 메일 기능을 이어간다. GUI 추가 디자인·자동 추가 로딩·상단 폴더 선택 제거는 후속 범위다. |
+| 다음 제품 작업 | CLI 배포 기준선을 보존하고 첨부·초안 편집·예약·주소록·규칙 등 남은 P0와 사람 보안 검토·실제 제공자 검증을 이어간다. GUI 디자인·자동 추가 로딩·상단 폴더 선택 제거는 후속 범위다. |
 
 ## CLI preview.3 — 본문·승인 발송·AI·MCP·명령 설치 (2026-10-30)
 
@@ -40,7 +40,9 @@
 - `/provider`와 `/provide`, `/model`, `/mode`의 값 없는 입력은 ↑↓·Enter·Esc를 지원한다. 비대화형/JSON/no-input은 메뉴를 열지 않는다. mode는 모델의 실제 low/medium/high/xhigh/max 지원 범위로 제한한다. `/fast on|off`는 실제 서비스 설정만 요청하며 미지원은 거부한다. `/agent`·`/fast` 단독은 상태를 표시한다.
 - 루트 `install.ps1` 한 줄 부트스트랩은 GitHub의 호환 ZIP·체크섬·크기·압축 경로를 검증한다. 사용자 PATH에 소유한 항목만 추가하고 제거하며 다른 PATH와 데이터는 보존한다. Windows PowerShell5.1 Restricted 파일 정책에서도 시스템/사용자 정책 변경 없이 검증된 스크립트 내용을 실행하는 시험5개가 통과했다.
 - 전체 `target/cli-preview3-final-check.log` exit0: **1,565개**(문서29·빌드 도구88·Rust1,448), fmt·Clippy·build·아키텍처·요건 검사 통과. 로그 SHA-256 `9533798ed72bc6f250d1ec21fb9f97ce0f2433a38b7528d2098ff9fb4c0e2052`. 동결 후 Windows Clippy/fmt 및 Linux 전체 target 교차 Clippy도 통과했다. 최종 추적·패키지 소스 hash는 `0c39d71f42e61d5aa2b92cd5acae08f49e42ce019da54e813a4859c7b31a7c7e`다. 추적표는 개별 AC의 사람 검토·공급자 증거가 없는 항목을 통과로 승격하지 않는다.
-- 실제 ZIP으로 preview.2 설치→preview.3 업데이트·반복→설치된 영/한 도움말·JSON 종료 코드→제거를 시험했다. 공백/한글 경로와 알 수 없는 파일·데이터를 보존했다. 로그 `target/cli-preview3-package-upgrade-smoke.log` exit0, SHA-256 `b608c337a8d8b8375e1d9ade7d36cd11f83f07da21dbba64dba3b6b70b886022`. 최종 AI mode 수정 후 CLI·build metadata·manifest만 달라졌으며 설치 스크립트와 다른 실행 파일은 시험한 바이트와 같음을 대조했다. 최종 네 실행 파일의 help/version·PE·각 manifest checksum도 다시 검증했다.
+- 실제 ZIP으로 preview.2 설치→preview.3 업데이트·반복→설치된 영/한 도움말·JSON 종료 코드→제거를 시험했다. 공백/한글 경로와 알 수 없는 파일·데이터를 보존했다. 로그 `target/cli-preview3-package-upgrade-smoke.log` exit0, SHA-256 `b608c337a8d8b8375e1d9ade7d36cd11f83f07da21dbba64dba3b6b70b886022`. 최종 mode·줄바꿈 정리 후 CLI/Core와 build metadata/manifest가 재생성됐다. 설치 스크립트는 시험한 바이트와 같고 최종 네 실행 파일의 help/version·PE·각 manifest checksum을 다시 검증했다. 최종 source 입력547개는 Git index 바이트와 같음을 확인해 새 clone의 줄바꿈/추적 불일치를 방지했다.
+- 공개 릴리스의 ZIP·SHA256SUMS를 실제 HTTPS로 받아 체크섬 확인→임시 설치→설치된 CLI/Core version·도움말→제거→합성 데이터 보존을 검증했다. 사용자 PATH는 변경하지 않았고 Core run·계정·메일은 사용하지 않았다. `target/cli-preview3-public-download-smoke.log` exit0, SHA-256 `01d483267252339522c4adbe2971383e8d49e2ef6f7474cefb76a900a8b9c80b`. GitHub 자산 digest도 로컬 ZIP SHA와 일치한다. 릴리스는 `065366ba639a71aec550d0915b78e0b1945f2d12`에 연결된다.
+- GitHub [소스 CI 실행](https://github.com/tz1012/mail-hantong/actions/runs/41023688795)은 Ubuntu 전체 검사를 통과했다. 2026-10-30 17:05 KST 확인 당시 Windows Server2025는 native 의존성의 첫 빌드/검사를 진행 중이다. 완료되지 않은 원격 결과를 통과로 표시하지 않는다. 작업 PC의 Windows 전체1,565개 결과와 구분한다.
 - 최종 ZIP `artifacts/cli/0.1.0-preview.3/mail-hantong-cli-0.1.0-preview.3-windows-x86_64.zip`: **20,731,868 bytes**, SHA-256 `c77c85cc9077086022659a37cda19f502b76f900a81919a18177fdaaa29ab146`. 정적 MSVC CRT, Windows 시스템 DLL만 사용함을 확인했다. 의존성 고지134개 포함; 법적 검토·SBOM 완전성을 주장하지 않는다. 실토큰 패턴 검사0건. 앞선 후보들은 별도 rejected 디렉터리에 보존했다.
 - 통합 수정: SMTP recipient550를 lettre 예외와 구분해 명확한 거부로 기록, post-DATA 연결 유실은 Uncertain 유지, SMTP 입력의 IMAP-caption/저장 경로 혼용 차단, 취소/만료/rate/정책 실패 receipt와 strict decoder 정합성, 역사적35개 테이블 보존·새6개 무동의·rollback·backup collision, 새 패키지 그래프 시험/JSON schema ID·공통 envelope, Windows TEMP 8.3 fixture 경로, Clippy 첫 native 빌드 timeout을 보완했다. 시험을 삭제·건너뛰기로 바꾸지 않았다.
 - **[사람 검토 필요]**: 승인·비밀·정책·발송·IPC·계약 변경. 실제 계정/서비스/Hello/외부 추론은 사용하지 않았다. 서명·깨끗한 Windows·실제 IMAP/SMTP 및 AI 공급자 상호 운용성, 첨부·예약·주소록·규칙, Mac 제품은 남아 있다. 이번 배포는 완성된 정식 제품이나 전체 출시 게이트의 통과가 아니다.
