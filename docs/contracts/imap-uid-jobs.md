@@ -16,6 +16,8 @@ admission은 Immediate transaction에서 unresolved인 원래 audit가 SyncPage 
 
 새 정상 binding에서 queue Full/Closed는 각각 RATE_LIMITED/CORE_UNAVAILABLE failed job과 audit terminal을 원자 저장한다. 일반적인 입력·권한·CAS 거부는 audit terminal만 남긴다. INTERNAL_ERROR·DB 오류·불확실 commit은 별도 재시도나 네트워크 작업을 유발하지 않는다. `Ok(UidPageAdmission)`은 audit 소유권을 Store에 넘겼다는 뜻이며 Rejected도 포함한다. 외부 Result 오류는 원자 commit 여부를 추측하는 근거가 아니다.
 
+Core는 durable admission 호출 후 외부 Result 오류도 `AuditHandoff::error`로 전달하며 Application이 감사 terminal을 다시 쓰지 않게 한다. 이는 commit 성공의 증명이 아니라 불확실한 결과에 추가 변경을 하지 않는 경계다. admission 호출 전 worker 부재 등의 오류만 Application이 종료한다.
+
 ## 실행과 완료
 
 state는 admitted→running→succeeded|failed, admitted→failed만 허용한다. start는 admitted에서 한 번만 가능하고 running은 다시 시작하지 않는다. worker는 네트워크 전·실행 중 최대500ms 간격·결과 commit 전에 등록/epoch/scope와 계정/endpoint/catalog/cursor를 다시 대조한다. 변경 시 future를 폐기한다. UIDVALIDITY 변화/불가능한 cursor는 CONFLICT로 매핑하고 reset하지 않는다. 종료·startup·status·replay는 admitted/running을 재접속시키지 않는다.

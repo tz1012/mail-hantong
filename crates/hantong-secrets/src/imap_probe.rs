@@ -1,6 +1,7 @@
 //! Bounded IMAP diagnostics and folder discovery without a public session escape.
 use crate::{MailProbeError, SecretStore, validate_account};
 pub use hantong_domain::capabilities::ImapCapabilities;
+use hantong_domain::imap_reconcile::{ImapUidReconcilePage, ImapUidReconcileRequest};
 use hantong_domain::imap_sync::{ImapUidPage, ImapUidPageRequest};
 use hantong_domain::mail_connection::ImapEndpointConfig;
 
@@ -51,6 +52,28 @@ impl ImapProbeReceipt {
     }
 }
 impl SecretStore {
+    /// Observes one already stored, fixed UID range through Secrets-owned TLS.
+    pub async fn fetch_imap_uid_reconcile_page(
+        &self,
+        request: &ImapUidReconcileRequest,
+        endpoint: &ImapEndpointConfig,
+    ) -> Result<ImapUidReconcilePage, ImapUidPageError> {
+        if request.endpoint_version() != endpoint.settings_version() {
+            return Err(ImapUidPageError::CursorInvalid);
+        }
+        validate_account(request.account_id())
+            .map_err(|_| ImapUidPageError::Probe(MailProbeError::InvalidAccount))?;
+        #[cfg(windows)]
+        {
+            windows::fetch_uid_reconcile_page(self, request, endpoint).await
+        }
+        #[cfg(not(windows))]
+        {
+            let _ = endpoint;
+            Err(ImapUidPageError::Probe(MailProbeError::UnsupportedPlatform))
+        }
+    }
+
     /// Fetches one bounded, read-only UID metadata page through the private
     /// Secrets transport. This method never exposes an IMAP session.
     pub async fn fetch_imap_uid_page(

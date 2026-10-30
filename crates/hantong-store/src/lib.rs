@@ -24,6 +24,7 @@ mod registration_activation;
 mod registrations;
 pub mod scope_refresh;
 pub mod uid_page_jobs;
+pub mod uid_reconcile_jobs;
 pub use registration_activation::{CliRegistrationStage, DEFAULT_CLI_LABEL};
 mod server_identity;
 pub use registrations::{
@@ -33,7 +34,7 @@ pub use registrations::{
 pub use server_identity::ServerIdentity;
 
 #[cfg(windows)]
-const CURRENT_SCHEMA_VERSION: u32 = 12;
+const CURRENT_SCHEMA_VERSION: u32 = 13;
 #[cfg(windows)]
 const DATABASE_FORMAT: &str = "mail-hantong";
 #[cfg(windows)]
@@ -56,6 +57,11 @@ const SCHEMA_V8: &str = include_str!("../../../docs/contracts/migrations/schema-
 const SCHEMA_V10: &str = include_str!("../../../docs/contracts/migrations/schema-v10.sql");
 #[cfg(windows)]
 const SCHEMA_V11: &str = include_str!("../../../docs/contracts/migrations/schema-v11.sql");
+#[cfg(windows)]
+const SCHEMA_V12: &str = include_str!("../../../docs/contracts/migrations/schema-v12.sql");
+#[cfg(windows)]
+const MIGRATION_V12_TO_V13: &str =
+    include_str!("../../../docs/contracts/migrations/012-to-013.sql");
 #[cfg(windows)]
 const MIGRATION_V11_TO_V12: &str =
     include_str!("../../../docs/contracts/migrations/011-to-012.sql");
@@ -274,6 +280,7 @@ impl Store {
                 (9, _) => Ok(SchemaState::V9),
                 (10, _) => Ok(SchemaState::V10),
                 (11, _) => Ok(SchemaState::V11),
+                (12, _) => Ok(SchemaState::V12),
                 (CURRENT_SCHEMA_VERSION, _) => Ok(SchemaState::Current),
                 _ => Ok(SchemaState::Unsupported),
             }
@@ -292,7 +299,8 @@ impl Store {
                 self.migrate_v8_to_v9()?;
                 self.migrate_v9_to_v10()?;
                 self.migrate_v10_to_v11()?;
-                self.migrate_v11_to_v12()
+                self.migrate_v11_to_v12()?;
+                self.migrate_v12_to_v13()
             }
             SchemaState::V2 => {
                 self.with_connection(|connection| validate_schema(connection, SCHEMA_V2, 2))?;
@@ -305,7 +313,8 @@ impl Store {
                 self.migrate_v8_to_v9()?;
                 self.migrate_v9_to_v10()?;
                 self.migrate_v10_to_v11()?;
-                self.migrate_v11_to_v12()
+                self.migrate_v11_to_v12()?;
+                self.migrate_v12_to_v13()
             }
             SchemaState::V3 => {
                 self.with_connection(|connection| validate_schema(connection, SCHEMA_V3, 3))?;
@@ -317,7 +326,8 @@ impl Store {
                 self.migrate_v8_to_v9()?;
                 self.migrate_v9_to_v10()?;
                 self.migrate_v10_to_v11()?;
-                self.migrate_v11_to_v12()
+                self.migrate_v11_to_v12()?;
+                self.migrate_v12_to_v13()
             }
             SchemaState::V4 => {
                 self.with_connection(|connection| validate_schema(connection, SCHEMA_V4, 4))?;
@@ -328,7 +338,8 @@ impl Store {
                 self.migrate_v8_to_v9()?;
                 self.migrate_v9_to_v10()?;
                 self.migrate_v10_to_v11()?;
-                self.migrate_v11_to_v12()
+                self.migrate_v11_to_v12()?;
+                self.migrate_v12_to_v13()
             }
             SchemaState::V5 => {
                 self.with_connection(|connection| validate_schema(connection, SCHEMA_V5, 5))?;
@@ -338,7 +349,8 @@ impl Store {
                 self.migrate_v8_to_v9()?;
                 self.migrate_v9_to_v10()?;
                 self.migrate_v10_to_v11()?;
-                self.migrate_v11_to_v12()
+                self.migrate_v11_to_v12()?;
+                self.migrate_v12_to_v13()
             }
             SchemaState::V6 => {
                 self.with_connection(|connection| validate_schema(connection, SCHEMA_V6, 6))?;
@@ -347,7 +359,8 @@ impl Store {
                 self.migrate_v8_to_v9()?;
                 self.migrate_v9_to_v10()?;
                 self.migrate_v10_to_v11()?;
-                self.migrate_v11_to_v12()
+                self.migrate_v11_to_v12()?;
+                self.migrate_v12_to_v13()
             }
             SchemaState::V7 => {
                 self.with_connection(|connection| validate_schema(connection, SCHEMA_V7, 7))?;
@@ -355,29 +368,38 @@ impl Store {
                 self.migrate_v8_to_v9()?;
                 self.migrate_v9_to_v10()?;
                 self.migrate_v10_to_v11()?;
-                self.migrate_v11_to_v12()
+                self.migrate_v11_to_v12()?;
+                self.migrate_v12_to_v13()
             }
             SchemaState::V8 => {
                 self.with_connection(|connection| validate_schema(connection, SCHEMA_V8, 8))?;
                 self.migrate_v8_to_v9()?;
                 self.migrate_v9_to_v10()?;
                 self.migrate_v10_to_v11()?;
-                self.migrate_v11_to_v12()
+                self.migrate_v11_to_v12()?;
+                self.migrate_v12_to_v13()
             }
             SchemaState::V9 => {
                 self.with_connection(|connection| validate_schema(connection, SCHEMA_V9, 9))?;
                 self.migrate_v9_to_v10()?;
                 self.migrate_v10_to_v11()?;
-                self.migrate_v11_to_v12()
+                self.migrate_v11_to_v12()?;
+                self.migrate_v12_to_v13()
             }
             SchemaState::V10 => {
                 self.with_connection(|connection| validate_schema(connection, SCHEMA_V10, 10))?;
                 self.migrate_v10_to_v11()?;
-                self.migrate_v11_to_v12()
+                self.migrate_v11_to_v12()?;
+                self.migrate_v12_to_v13()
             }
             SchemaState::V11 => {
                 self.with_connection(|c| validate_schema(c, SCHEMA_V11, 11))?;
-                self.migrate_v11_to_v12()
+                self.migrate_v11_to_v12()?;
+                self.migrate_v12_to_v13()
+            }
+            SchemaState::V12 => {
+                self.with_connection(|c| validate_schema(c, SCHEMA_V12, 12))?;
+                self.migrate_v12_to_v13()
             }
             SchemaState::Current => self.with_connection(|connection| {
                 validate_schema(connection, SCHEMA, CURRENT_SCHEMA_VERSION)
@@ -459,7 +481,14 @@ impl Store {
 
     #[cfg(windows)]
     fn migrate_v11_to_v12(&self) -> Result<(), ErrorCode> {
-        self.migrate_with_backup(11, 12, SCHEMA, |c| c.execute_batch(MIGRATION_V11_TO_V12))
+        self.migrate_with_backup(11, 12, SCHEMA_V12, |c| {
+            c.execute_batch(MIGRATION_V11_TO_V12)
+        })
+    }
+
+    #[cfg(windows)]
+    fn migrate_v12_to_v13(&self) -> Result<(), ErrorCode> {
+        self.migrate_with_backup(12, 13, SCHEMA, |c| c.execute_batch(MIGRATION_V12_TO_V13))
     }
 
     #[cfg(windows)]
@@ -552,6 +581,7 @@ enum SchemaState {
     V9,
     V10,
     V11,
+    V12,
     Newer,
     Unsupported,
     Corrupt,
@@ -672,6 +702,9 @@ fn validate_schema(
     }
     if schema_version >= 12 {
         crate::uid_page_jobs::validate_history(connection)?;
+    }
+    if schema_version >= 13 {
+        crate::uid_reconcile_jobs::validate_history(connection)?;
     }
     Ok(())
 }
@@ -1055,7 +1088,7 @@ mod tests {
                     |row| row.get::<_, i64>(0)
                 ))
                 .unwrap(),
-            25
+            28
         );
     }
 
@@ -2190,6 +2223,7 @@ mod tests {
             )
             .unwrap();
     }
+    include!("migration_v13_tests.rs");
     fn seed_v11_fixture(f: &Fixture) {
         seed_v10_fixture(f);
         let store = Store {
@@ -2280,7 +2314,7 @@ mod tests {
                     |c| c.pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0))
                 )
                 .unwrap(),
-            12
+            i64::from(CURRENT_SCHEMA_VERSION)
         );
         assert_eq!(
             store
@@ -2366,7 +2400,7 @@ mod tests {
             connection: f.keyed(),
         };
         assert_eq!(
-            store.migrate_with_backup(11, 12, SCHEMA, |c| {
+            store.migrate_with_backup(11, 12, SCHEMA_V12, |c| {
                 c.execute_batch(MIGRATION_V11_TO_V12)?;
                 c.execute_batch("CREATE TABLE unexpected_uid_job_schema(value)")
             }),

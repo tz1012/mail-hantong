@@ -121,11 +121,11 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Protocol<S> {
     async fn examine(
         &mut self,
         tag: &str,
-        request: &ImapUidPageRequest,
+        mailbox: &ImapMailboxName,
     ) -> Result<(u32, u32), MailProbeError> {
         let command = Command {
             tag: tag.try_into().map_err(|_| MailProbeError::Protocol)?,
-            body: CommandBody::examine(request.mailbox().wire_name())
+            body: CommandBody::examine(mailbox.wire_name())
                 .map_err(|_| MailProbeError::Protocol)?,
         };
         // UTF-8 mailbox names can require a synchronizing literal. Send the
@@ -165,7 +165,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Protocol<S> {
         if request.mailbox().encoding() != encoding {
             return Err(MailProbeError::Protocol.into());
         }
-        let (validity, next) = self.examine("h6", request).await?;
+        let (validity, next) = self.examine("h6", request.mailbox()).await?;
         if request
             .expected_uid_validity()
             .is_some_and(|expected| expected != validity)
@@ -203,7 +203,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Protocol<S> {
                 }
             }
         }
-        let (final_validity, final_next) = self.examine("h8", request).await?;
+        let (final_validity, final_next) = self.examine("h8", request.mailbox()).await?;
         if final_validity != validity {
             return Err(ImapUidPageError::UidValidityChanged);
         }
@@ -211,6 +211,58 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Protocol<S> {
             return Err(ImapUidPageError::CursorInvalid);
         }
         ImapUidPage::new(request.clone(), validity, next, messages)
+            .map_err(|_| MailProbeError::Protocol.into())
+    }
+
+    pub(super) async fn uid_reconcile_page(
+        &mut self,
+        request: &ImapUidReconcileRequest,
+        encoding: MailboxEncoding,
+    ) -> Result<ImapUidReconcilePage, ImapUidPageError> {
+        if request.mailbox().encoding() != encoding {
+            return Err(MailProbeError::Protocol.into());
+        }
+        let (validity, next) = self.examine("h6", request.mailbox()).await?;
+        if validity != request.uid_validity() {
+            return Err(ImapUidPageError::UidValidityChanged);
+        }
+        if next < request.minimum_uid_next() {
+            return Err(ImapUidPageError::CursorInvalid);
+        }
+        // The source range is fixed before connecting; UIDNEXT never widens it.
+        self.uid_fetch(request.after_uid() + 1, request.through_uid())
+            .await?;
+        let mut messages = Vec::new();
+        let mut statuses = 0;
+        loop {
+            match self.uid_frame(Mode::Fetch, "h7").await? {
+                Reply::Tagged(Observation::None) => break,
+                Reply::Status(Observation::None) if statuses < 128 => statuses += 1,
+                Reply::Message(message) => {
+                    if messages.len() == 64
+                        || message.uid() <= request.after_uid()
+                        || message.uid() > request.through_uid()
+                        || messages.iter().any(
+                            |existing: &hantong_domain::imap_sync::ImapMessageMetadata| {
+                                existing.uid() == message.uid()
+                            },
+                        )
+                    {
+                        return Err(MailProbeError::Protocol.into());
+                    }
+                    messages.push(*message);
+                }
+                _ => return Err(MailProbeError::Protocol.into()),
+            }
+        }
+        let (final_validity, final_next) = self.examine("h8", request.mailbox()).await?;
+        if final_validity != validity {
+            return Err(ImapUidPageError::UidValidityChanged);
+        }
+        if final_next < next {
+            return Err(ImapUidPageError::CursorInvalid);
+        }
+        ImapUidReconcilePage::new(request.clone(), next, messages)
             .map_err(|_| MailProbeError::Protocol.into())
     }
 }

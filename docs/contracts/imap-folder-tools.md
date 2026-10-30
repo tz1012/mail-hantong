@@ -43,6 +43,6 @@ Core는 capacity-one channel permit을 DB admission 전에 예약하고, 실행 
 
 worker 시작·실행 중(최대 500ms 간격)·결과 commit 직전에 등록 active/epoch/tool/account와 계정 Ready/version, endpoint hash/version, generation을 재검증한다. 철회/변경은 discovery future를 폐기하고 안정적 오류로 종료한다. 성공은 catalog+catalog operation+job succeeded+원래 audit success를 한 transaction으로 저장한다. 실패는 이전 catalog를 유지하며 job failed+audit error만 원자 저장한다. job 성공 audit의 result_count는 null이다. 동일 operation/key를 기존 direct catalog API와 job API가 각각 소비하지 못하도록 양방향 충돌을 검사한다. job completion의 내부 helper만 예약을 소비한다.
 
-Store admission 결과는 Admitted/Existing/Failed(receipt) 또는 Rejected(error, 이번 audit 이미 종료)다. 외부 Result 오류는 반환된 소유권 인수가 없다는 뜻이며 불확실한 commit도 포함한다. Application은 명시 `AuditHandoff`를 받은 경우 audit를 다시 종료하지 않는다. handoff 전 오류만 공통 실패 종료를 시도하며 이미 종료된 경우 INTERNAL_ERROR로 fail closed한다. receipt는 private fields의 검증된 공통 타입이며 JSON 생성은 실패하지 않는 고정 필드 구성이다. 외부 입력이나 직접 adapter 호출로 이 경계를 우회하지 않는다.
+Store admission 결과는 Admitted/Existing/Failed(receipt) 또는 Rejected(error, 이번 audit 이미 종료)다. 외부 Result 오류에는 불확실한 commit도 포함하므로 Core는 admission을 시도한 뒤의 오류도 `AuditHandoff::error`로 전달한다. Application은 이 경우 audit를 다시 종료하지 않는다. 이 인계는 commit 성공을 주장하지 않으며, admission 호출 전 오류만 공통 실패 종료를 시도한다. receipt는 private fields의 검증된 공통 타입이며 JSON 생성은 실패하지 않는 고정 필드 구성이다. 외부 입력이나 직접 adapter 호출로 이 경계를 우회하지 않는다.
 
 v9→v10은 이전 DDL을 고정 보존하고 audit의 tool CHECK만 확장한다. 기존 audit 행·child 행·capacity·sqlite_sequence high-water를 보존하는 transaction으로 재구성한 후 빈 folder ledger를 만든다. 보호된 사전 backup, foreign_key_check, 기존 행/DDL 비교와 실제 실패 rollback을 검증한다. 기존 미완료 audit를 성공으로 바꾸지 않는다. 보안/계약 변경은 계속 사람 검토 필요다.

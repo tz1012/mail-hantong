@@ -1,4 +1,6 @@
 use super::*;
+#[path = "uid_reconcile_tests.rs"]
+mod reconcile;
 use hantong_domain::{
     imap_sync::{ImapUidPage, ImapUidPageRequest},
     mailboxes::{ImapMailboxName, MailboxEncoding},

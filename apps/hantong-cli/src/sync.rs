@@ -1,20 +1,39 @@
 //! CLI syntax for one explicitly requested UID metadata page.
 use crate::{ErrorCode, Lang, emit_error, resource};
 use hantong_contracts::uid_page::*;
+use hantong_contracts::uid_reconcile::{UidReconcileReceipt, UidReconcileRequest};
 use hantong_ipc_client::uid_page as client;
+use hantong_ipc_client::uid_reconcile as reconcile_client;
 pub(super) enum Action {
     Cursor(UidCursorRequest),
     Page(UidPageRequest),
     Status(UidPageStatusRequest),
+    Reconcile(UidReconcileRequest),
+    ReconcileStatus(UidPageStatusRequest),
 }
 pub(super) enum ResultValue {
     Cursor(UidCursorSnapshot),
     Receipt(UidPageReceipt),
+    ReconcileReceipt(UidReconcileReceipt),
 }
 pub(super) fn real_action(action: Action) -> Result<ResultValue, ErrorCode> {
     match action {
         Action::Cursor(request) => client::cursor_default(request).map(ResultValue::Cursor),
         Action::Status(request) => client::status_default(request).map(ResultValue::Receipt),
+        Action::ReconcileStatus(request) => {
+            reconcile_client::status_default(request).map(ResultValue::ReconcileReceipt)
+        }
+        Action::Reconcile(request) => {
+            let prepared = reconcile_client::prepare_reconcile_request(
+                request.account_id(),
+                request.mailbox().clone(),
+                request.operation_id(),
+                request.idempotency_key(),
+                request.expected_catalog_generation(),
+                request.expected_cursor_version(),
+            )?;
+            reconcile_client::reconcile_default(prepared).map(ResultValue::ReconcileReceipt)
+        }
         Action::Page(request) => {
             let prepared = client::prepare_page_request(
                 request.account_id(),
@@ -50,7 +69,7 @@ fn parse(command: &[String], options: &[(String, String)]) -> Result<Action, Err
     let get = |key: &str| values.get(key).copied().ok_or(ErrorCode::InvalidInput);
     let allowed: &[&str] = match command[1].as_str() {
         "cursor" => &["--account", "--wire-hex", "--encoding"],
-        "page" => &[
+        "page" | "reconcile" => &[
             "--account",
             "--wire-hex",
             "--encoding",
@@ -59,19 +78,23 @@ fn parse(command: &[String], options: &[(String, String)]) -> Result<Action, Err
             "--operation-id",
             "--idempotency-key",
         ],
-        "status" => &["--account", "--execution-id"],
+        "status" | "reconcile-status" => &["--account", "--execution-id"],
         _ => return Err(ErrorCode::InvalidInput),
     };
     if values.len() != allowed.len() || values.keys().any(|k| !allowed.contains(k)) {
         return Err(ErrorCode::InvalidInput);
     }
     let account = get("--account")?;
-    if command[1] == "status" {
-        return UidPageStatusRequest::new(
+    if matches!(command[1].as_str(), "status" | "reconcile-status") {
+        let request = UidPageStatusRequest::new(
             account,
             hantong_contracts::wire_hex::decode_fixed(get("--execution-id")?)?,
-        )
-        .map(Action::Status);
+        )?;
+        return Ok(if command[1] == "reconcile-status" {
+            Action::ReconcileStatus(request)
+        } else {
+            Action::Status(request)
+        });
     }
     let mailbox = UidMailboxIdentity::new(
         get("--wire-hex")?,
@@ -79,6 +102,18 @@ fn parse(command: &[String], options: &[(String, String)]) -> Result<Action, Err
     )?;
     if command[1] == "cursor" {
         return UidCursorRequest::new(account, mailbox).map(Action::Cursor);
+    }
+    if command[1] == "reconcile" {
+        return UidReconcileRequest::new(
+            account,
+            mailbox,
+            get("--operation-id")?,
+            get("--idempotency-key")?,
+            number(get("--expected-catalog-generation")?)?,
+            number(get("--expected-cursor-version")?)?,
+            &"00".repeat(32),
+        )
+        .map(Action::Reconcile);
     }
     UidPageRequest::new(
         account,
@@ -103,6 +138,7 @@ pub(super) fn run(
         Err(e) => return emit_error(e, lang, json),
     };
     let cursor = matches!(&request, Action::Cursor(_));
+    let reconcile = matches!(&request, Action::Reconcile(_) | Action::ReconcileStatus(_));
     match action(request) {
         Ok(ResultValue::Cursor(value)) if cursor => {
             if json {
@@ -112,11 +148,19 @@ pub(super) fn run(
             }
             0
         }
-        Ok(ResultValue::Receipt(value)) if !cursor => {
+        Ok(ResultValue::Receipt(value)) if !cursor && !reconcile => {
             if json {
                 println!("{}", client::receipt_json(&value))
             } else {
                 print!("{}", receipt_human(&value, lang))
+            }
+            0
+        }
+        Ok(ResultValue::ReconcileReceipt(value)) if reconcile => {
+            if json {
+                println!("{}", reconcile_client::receipt_json(&value))
+            } else {
+                print!("{}", reconcile_human(&value, lang))
             }
             0
         }
@@ -178,6 +222,52 @@ fn receipt_human(value: &UidPageReceipt, lang: Lang) -> String {
         ));
     }
     output
+}
+fn reconcile_human(value: &UidReconcileReceipt, lang: Lang) -> String {
+    let state = match value.state() {
+        UidPageState::Unresolved => "sync_unresolved",
+        UidPageState::Succeeded => "sync_succeeded",
+        UidPageState::Failed => "sync_failed",
+    };
+    let mut out = format!(
+        "{}: {}\n{}: {}\n",
+        resource(lang, "sync_reconcile_state"),
+        resource(lang, state),
+        resource(lang, "sync_execution_id"),
+        hantong_contracts::wire_hex::encode(value.execution_id())
+    );
+    if let Some(r) = value.result() {
+        for (key, n) in [
+            ("sync_reconcile_generation", r.generation()),
+            ("sync_reconcile_ceiling", r.frozen_cursor_version()),
+            ("sync_reconcile_source", r.source_cursor_version()),
+            ("sync_reconcile_after", u64::from(r.after_uid())),
+            ("sync_reconcile_through", u64::from(r.through_uid())),
+            ("sync_reconcile_observed", u64::from(r.observed_count())),
+            ("sync_reconcile_changed", u64::from(r.flags_changed_count())),
+            ("sync_reconcile_absent", u64::from(r.newly_absent_count())),
+            ("sync_reconcile_remaining", u64::from(r.remaining_pages())),
+        ] {
+            out.push_str(&format!("{}: {n}\n", resource(lang, key)));
+        }
+        out.push_str(resource(
+            lang,
+            if r.pass_complete() {
+                "sync_reconcile_complete"
+            } else {
+                "sync_reconcile_pending"
+            },
+        ));
+        out.push('\n');
+    }
+    if let Some(e) = value.error() {
+        out.push_str(&format!(
+            "{}: {}\n",
+            resource(lang, "sync_error"),
+            e.as_str()
+        ));
+    }
+    out
 }
 #[cfg(test)]
 #[path = "sync_tests.rs"]

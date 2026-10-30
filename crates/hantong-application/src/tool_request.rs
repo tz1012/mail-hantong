@@ -12,6 +12,7 @@ use hantong_contracts::{
         UidCursorRequest, UidMailboxEncoding, UidMailboxIdentity, UidPageRequest,
         UidPageStatusRequest,
     },
+    uid_reconcile::UidReconcileRequest,
 };
 use serde_json::{Map, Value};
 use std::{collections::BTreeSet, fmt};
@@ -44,6 +45,8 @@ pub enum UidPageAction {
     Cursor(UidCursorRequest),
     Request(UidPageRequest),
     Status(UidPageStatusRequest),
+    Reconcile(UidReconcileRequest),
+    ReconcileStatus(UidPageStatusRequest),
 }
 
 #[derive(Clone, Eq, PartialEq)]
@@ -160,6 +163,8 @@ impl ToolRequest {
                 UidPageAction::Cursor(v) => v.account_ids(),
                 UidPageAction::Request(v) => v.account_ids(),
                 UidPageAction::Status(v) => v.account_ids(),
+                UidPageAction::Reconcile(v) => v.account_ids(),
+                UidPageAction::ReconcileStatus(v) => v.account_ids(),
             },
             Self::SendExecute(value) => std::slice::from_ref(&value.account_id),
         }
@@ -382,7 +387,7 @@ fn parse_uid_page(params: &Map<String, Value>) -> Result<UidPageAction, ErrorCod
                 mailbox()?,
             )?))
         }
-        "request" => {
+        "request" | "reconcile" => {
             exact_keys(
                 params,
                 &[
@@ -403,6 +408,17 @@ fn parse_uid_page(params: &Map<String, Value>) -> Result<UidPageAction, ErrorCod
                     .and_then(Value::as_u64)
                     .ok_or(ErrorCode::InvalidInput)
             };
+            if text("action")? == "reconcile" {
+                return Ok(UidPageAction::Reconcile(UidReconcileRequest::new(
+                    text("account_id")?,
+                    mailbox()?,
+                    text("operation_id")?,
+                    text("idempotency_key")?,
+                    number("expected_catalog_generation")?,
+                    number("expected_cursor_version")?,
+                    text("intent_hash")?,
+                )?));
+            }
             Ok(UidPageAction::Request(UidPageRequest::new(
                 text("account_id")?,
                 mailbox()?,
@@ -413,12 +429,17 @@ fn parse_uid_page(params: &Map<String, Value>) -> Result<UidPageAction, ErrorCod
                 text("intent_hash")?,
             )?))
         }
-        "status" => {
+        "status" | "reconcile-status" => {
             exact_keys(params, &["action", "account_id", "execution_id"])?;
-            Ok(UidPageAction::Status(UidPageStatusRequest::new(
+            let request = UidPageStatusRequest::new(
                 text("account_id")?,
                 hantong_contracts::wire_hex::decode_fixed(text("execution_id")?)?,
-            )?))
+            )?;
+            Ok(if text("action")? == "reconcile-status" {
+                UidPageAction::ReconcileStatus(request)
+            } else {
+                UidPageAction::Status(request)
+            })
         }
         _ => Err(ErrorCode::InvalidInput),
     }

@@ -73,6 +73,8 @@ IMAP 폴더와 한 페이지 메타데이터 수집의 개발용 명령도 제�
 cargo run -p hantong-cli -- sync cursor --account ACCOUNT --wire-hex HEX --encoding utf8
 cargo run -p hantong-cli -- sync page --account ACCOUNT --wire-hex HEX --encoding utf8 --expected-catalog-generation 1 --expected-cursor-version 0 --operation-id my_page_1 --idempotency-key my_page_1
 cargo run -p hantong-cli -- sync status --account ACCOUNT --execution-id EXECUTION_HEX
+cargo run -p hantong-cli -- sync reconcile --account ACCOUNT --wire-hex HEX --encoding utf8 --expected-catalog-generation 1 --expected-cursor-version 1 --operation-id my_reconcile_1 --idempotency-key my_reconcile_1
+cargo run -p hantong-cli -- sync reconcile-status --account ACCOUNT --execution-id EXECUTION_HEX
 ```
 
-위 계정·HEX·encoding·버전은 실제 조회 값으로 바꾸는 예시입니다. 기존 프로필에 새 권한이 없으면 명시 `clients refresh`와 보호 확인이 필요합니다. 한 번에 UID 폭 최대64를 관측하며 중복 요청은 기존 receipt만 반환합니다. 종료 후 미완료 작업은 자동 재실행하지 않습니다. UIDVALIDITY 변화·설정/세대/cursor 충돌은 기존 자료를 보존하며 자동 reset하지 않습니다. 본문·첨부·기존 FLAGS/삭제 대조·전체 mailbox 목록과 실제 제공자 상호 운용성은 후속 구현/검증입니다. [공개 계약](docs/contracts/imap-uid-tools.md)과 [진행 기록](docs/latest/PROGRESS.md)에 현재 증거와 남은 범위를 기록합니다.
+위 계정·HEX·encoding·버전은 실제 조회 값으로 바꾸는 예시입니다. 기존 프로필에 새 권한이 없으면 명시 `clients refresh`와 보호 확인이 필요합니다. 한 번에 UID 폭 최대64를 관측하며 중복 요청은 기존 receipt만 반환합니다. `reconcile`은 이미 저장한 한 페이지의 FLAGS와 원격 부재 관측을 별도로 기록하고 원본 메일은 보존합니다. 다음 페이지도 새 명시 요청으로 진행하며, pass 완료는 시작 때 고정한 기존 페이지 묶음의 관측 완료만 뜻합니다. 종료 후 미완료 작업은 자동 재실행하지 않습니다. UIDVALIDITY 변화·설정/세대/cursor 충돌은 기존 자료를 보존하며 자동 reset하지 않습니다. 본문·첨부·전체 mailbox 목록과 실제 제공자 상호 운용성은 후속 구현/검증입니다. [공개 계약](docs/contracts/imap-uid-tools.md), [상태 대조 계약](docs/contracts/imap-uid-reconcile.md), [진행 기록](docs/latest/PROGRESS.md)에 현재 증거와 남은 범위를 기록합니다.

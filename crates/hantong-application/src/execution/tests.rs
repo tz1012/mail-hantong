@@ -137,6 +137,103 @@ impl ExecutionContext for Fake {
         self.events.push("uid_handoff");
         std::mem::replace(&mut self.handoff, Err(ErrorCode::InternalError))
     }
+    fn request_uid_reconcile(
+        &mut self,
+        _: [u8; 32],
+        _: &UidReconcileRequest,
+    ) -> Result<AuditHandoff<u32>, ErrorCode> {
+        self.events.push("reconcile_handoff");
+        std::mem::replace(&mut self.handoff, Err(ErrorCode::InternalError))
+    }
+    fn read_uid_reconcile_status(
+        &mut self,
+        _: &UidPageStatusRequest,
+    ) -> Result<ReadResult<u32>, ErrorCode> {
+        self.events.push("reconcile_status");
+        ReadResult::new(13, None)
+    }
+}
+
+#[test]
+fn sec03_reconcile_execution_uses_scope_policy_and_distinct_audit_handoff() {
+    for action in ["reconcile", "reconcile-status"] {
+        let mut value = uid_envelope(if action == "reconcile" {
+            "request"
+        } else {
+            "status"
+        });
+        value["params"]["action"] = json!(action);
+        if action == "reconcile" {
+            value["params"]["expected_cursor_version"] = json!(2);
+        }
+        let mut fake = Fake::ok();
+        assert_eq!(
+            execute_tool(&mut fake, "mail.sync.page", &value),
+            Ok(if action == "reconcile" { 10 } else { 13 })
+        );
+        assert_eq!(
+            &fake.events[..4],
+            &["revalidate", "begin", "scope", "policy"]
+        );
+        assert_eq!(fake.scoped_accounts, vec![vec!["a"]]);
+        assert_eq!(
+            fake.terminals.len(),
+            usize::from(action == "reconcile-status")
+        );
+        for policy in [false, true] {
+            let mut denied = Fake::ok();
+            if policy {
+                denied.fail_policy = Some(ErrorCode::PolicyBlocked)
+            } else {
+                denied.fail_scope = Some(ErrorCode::ScopeDenied)
+            }
+            assert!(execute_tool(&mut denied, "mail.sync.page", &value).is_err());
+            assert!(!denied.events.contains(&"reconcile_handoff"));
+            assert!(!denied.events.contains(&"reconcile_status"));
+            assert_eq!(denied.terminals.len(), 1);
+        }
+        if action == "reconcile" {
+            let mut handed = Fake::ok();
+            handed.handoff = Ok(AuditHandoff::error(ErrorCode::InternalError));
+            assert_eq!(
+                execute_tool(&mut handed, "mail.sync.page", &value),
+                Err(ErrorCode::InternalError)
+            );
+            assert!(handed.terminals.is_empty());
+        }
+    }
+}
+
+#[test]
+fn sec03_uncertain_durable_admission_never_finishes_the_audit_again() {
+    let mut reconcile = uid_envelope("request");
+    reconcile["params"]["action"] = json!("reconcile");
+    reconcile["params"]["expected_cursor_version"] = json!(1);
+    for (method, envelope) in [
+        ("mail.folders.refresh", Fake::folders_request()),
+        ("mail.sync.page", uid_envelope("request")),
+        ("mail.sync.page", reconcile),
+    ] {
+        let mut fake = Fake::ok();
+        fake.handoff = Ok(AuditHandoff::error(ErrorCode::InternalError));
+        fake.fail_finish = true;
+        assert_eq!(
+            execute_tool(&mut fake, method, &envelope),
+            Err(ErrorCode::InternalError)
+        );
+        assert!(fake.terminals.is_empty());
+        assert!(!fake.events.contains(&"finish_error"));
+        assert!(!fake.events.contains(&"finish_ok"));
+    }
+    // Read-only service failures retain the coordinator's audit ownership.
+    let mut read = Fake::ok();
+    read.read = Err(ErrorCode::InternalError);
+    assert_eq!(
+        execute_tool(&mut read, "mail.accounts.list", &Fake::accounts()),
+        Err(ErrorCode::InternalError)
+    );
+    assert_eq!(read.terminals.len(), 1);
+    assert_eq!(read.events.last(), Some(&"finish_error"));
 }
 
 fn uid_envelope(action: &str) -> serde_json::Value {

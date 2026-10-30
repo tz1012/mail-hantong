@@ -20,6 +20,7 @@ pub mod imap_setup;
 pub mod profile;
 pub mod registration;
 pub mod uid_page;
+pub mod uid_reconcile;
 
 use hantong_contracts::ErrorCode;
 use serde::{Deserialize, Serialize};

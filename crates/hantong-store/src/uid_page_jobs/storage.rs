@@ -22,7 +22,7 @@ fn hash(bytes: &[u8]) -> Result<[u8; 32], ErrorCode> {
 fn now() -> Result<i64, ErrorCode> {
     db(crate::utc_millis())
 }
-fn mailbox(identity: &UidMailboxIdentity) -> Result<ImapMailboxName, ErrorCode> {
+pub(crate) fn mailbox(identity: &UidMailboxIdentity) -> Result<ImapMailboxName, ErrorCode> {
     let wire = hantong_contracts::wire_hex::decode_bounded(identity.wire_hex(), 1024)?;
     let encoding = match identity.encoding() {
         UidMailboxEncoding::ModifiedUtf7 => MailboxEncoding::ModifiedUtf7,
@@ -264,7 +264,7 @@ fn read_row(c: &Connection, id: [u8; 32]) -> Result<Option<Row>, ErrorCode> {
         receipt,
     }))
 }
-fn current_grants(c: &Connection, audit: &AuditRecord) -> Result<(), ErrorCode> {
+pub(crate) fn current_grants(c: &Connection, audit: &AuditRecord) -> Result<(), ErrorCode> {
     let registration =
         db(read_registration(c, audit.registration_id()))?.ok_or(ErrorCode::ClientNotRegistered)?;
     if registration.state != crate::RegistrationState::Active {
@@ -287,13 +287,13 @@ fn current_grants(c: &Connection, audit: &AuditRecord) -> Result<(), ErrorCode> 
     }
     Ok(())
 }
-struct Binding {
-    av: u64,
-    endpoint: ImapEndpointConfig,
-    endpoint_hash: [u8; 32],
-    fetch: ImapUidPageRequest,
+pub(crate) struct Binding {
+    pub(crate) av: u64,
+    pub(crate) endpoint: ImapEndpointConfig,
+    pub(crate) endpoint_hash: [u8; 32],
+    pub(crate) fetch: ImapUidPageRequest,
 }
-fn binding(c: &Transaction<'_>, request: &UidPageRequest) -> Result<Binding, ErrorCode> {
+pub(crate) fn binding(c: &Transaction<'_>, request: &UidPageRequest) -> Result<Binding, ErrorCode> {
     let name = mailbox(request.mailbox())?;
     check_account(c, request.account_id())?;
     let (av, state): (i64, String) = db(c.query_row(
@@ -389,7 +389,7 @@ pub(crate) fn operation_reserved(
 ) -> Result<bool, ErrorCode> {
     db(c.query_row("SELECT EXISTS(SELECT 1 FROM imap_uid_page_requests WHERE operation_id=?1 OR (account_id=?2 AND idempotency_key=?3))",params![operation,account,key],|r|r.get(0)))
 }
-fn page_operation_exists(
+pub(crate) fn page_operation_exists(
     c: &Connection,
     account: &str,
     operation: &str,
@@ -405,12 +405,13 @@ pub(super) fn admit(
 ) -> Result<UidPageAdmission, ErrorCode> {
     store.mail_transaction(TransactionBehavior::Immediate,|tx|{
         let audit=db(read_audit(tx,&id))?.ok_or(ErrorCode::NotFound)?;
-        if audit.completion().is_some(){return Err(ErrorCode::Conflict)}
+        if audit.completion().is_some() || crate::uid_reconcile_jobs::execution_reserved(tx,id)? {return Err(ErrorCode::Conflict)}
         if id==[0;32] || audit.tool()!=AuditTool::SyncPage || audit.account_ids()!=[request.account_id()]{return Err(ErrorCode::InvalidInput)}
         if let Err(e)=current_grants(tx,&audit){return reject(tx,id,e)}
         if let Err(e)=mailbox(request.mailbox()){return reject(tx,id,e)}
         let intent=hash(&request.intent_bytes())?;
         if hantong_contracts::wire_hex::encode(&intent)!=request.intent_hash(){return reject(tx,id,ErrorCode::InvalidInput)}
+        if crate::uid_reconcile_jobs::operation_reserved(tx,request.account_id(),request.operation_id(),request.idempotency_key())? {return reject(tx,id,ErrorCode::Conflict)}
         let ids={let mut s=db(tx.prepare("SELECT execution_id FROM imap_uid_page_requests WHERE operation_id=?1 OR (account_id=?2 AND idempotency_key=?3) LIMIT 2"))?;db(db(s.query_map(params![request.operation_id(),request.account_id(),request.idempotency_key()],|r|blob_column::<32>(r,0)))?.collect::<rusqlite::Result<Vec<_>>>())?};
         if !ids.is_empty(){
             if ids.len()!=1{return reject(tx,id,ErrorCode::Conflict)}
@@ -420,7 +421,7 @@ pub(super) fn admit(
             insert_audit_terminal_tx(tx,id,AuditTerminal::succeeded(None).map_err(|_|ErrorCode::InternalError)?,now()?)?;
             return Ok(UidPageAdmission::Existing(row.receipt))
         }
-        if page_operation_exists(tx,request.account_id(),request.operation_id(),request.idempotency_key())?{return reject(tx,id,ErrorCode::Conflict)}
+        if page_operation_exists(tx,request.account_id(),request.operation_id(),request.idempotency_key())? {return reject(tx,id,ErrorCode::Conflict)}
         let current=match binding(tx,request){Ok(v)=>v,Err(e)=>return reject(tx,id,e)};
         let count:i64=db(tx.query_row("SELECT count(*) FROM imap_uid_page_requests",[],|r|r.get(0)))?;
         if count>100_000{return Err(ErrorCode::InternalError)}

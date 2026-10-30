@@ -1,6 +1,11 @@
 //! One-shot UID observation sharing the global IMAP operation slot.
+use hantong_contracts::uid_reconcile::UidReconcileRequest;
 use hantong_contracts::{ErrorCode, uid_page::UidPageRequest};
+use hantong_domain::imap_reconcile::ImapUidReconcilePage;
 use hantong_domain::imap_sync::ImapUidPage;
+use hantong_store::uid_reconcile_jobs::{
+    UidReconcileAdmission, UidReconcileJob, UidReconcileStart,
+};
 use hantong_store::{
     Store,
     uid_page_jobs::{UidPageAdmission, UidPageJob, UidPageStart, UidQueueAdmission},
@@ -9,13 +14,18 @@ use std::{cell::Cell, future::Future, path::Path, rc::Rc, time::Duration};
 use tokio::sync::mpsc;
 
 type Job = [u8; 32];
+#[derive(Debug, Eq, PartialEq)]
+enum QueuedJob {
+    Page(Job),
+    Reconcile(Job),
+}
 struct Queue {
-    sender: mpsc::Sender<Job>,
+    sender: mpsc::Sender<QueuedJob>,
     scheduled: Rc<Cell<Option<Job>>>,
     owned: Rc<Cell<Option<Job>>>,
 }
 struct Slot {
-    permit: Option<mpsc::OwnedPermit<Job>>,
+    permit: Option<mpsc::OwnedPermit<QueuedJob>>,
     scheduled: Rc<Cell<Option<Job>>>,
     owned: Rc<Cell<Option<Job>>>,
     id: Job,
@@ -33,7 +43,13 @@ impl Slot {
         self.permit
             .take()
             .expect("owned queue permit")
-            .send(self.id);
+            .send(QueuedJob::Page(self.id));
+    }
+    fn submit_reconcile(mut self) {
+        self.permit
+            .take()
+            .expect("owned queue permit")
+            .send(QueuedJob::Reconcile(self.id));
     }
 }
 impl Queue {
@@ -62,7 +78,7 @@ impl Queue {
         })
     }
 }
-fn queue(shared: Rc<Cell<Option<Job>>>) -> (Queue, mpsc::Receiver<Job>) {
+fn queue(shared: Rc<Cell<Option<Job>>>) -> (Queue, mpsc::Receiver<QueuedJob>) {
     let (sender, receiver) = mpsc::channel(1);
     (
         Queue {
@@ -80,18 +96,29 @@ pub(crate) struct UidWorkerHandle<'a> {
 }
 pub(crate) struct UidWorker<'a, D> {
     store: &'a Store,
-    receiver: mpsc::Receiver<Job>,
+    receiver: mpsc::Receiver<QueuedJob>,
     scheduled: Rc<Cell<Option<Job>>>,
     owned: Rc<Cell<Option<Job>>>,
     discovery: D,
 }
 pub(crate) trait Discovery {
     fn discover(&self, job: &UidPageJob) -> impl Future<Output = Result<ImapUidPage, ErrorCode>>;
+    async fn reconcile(&self, _job: &UidReconcileJob) -> Result<ImapUidReconcilePage, ErrorCode> {
+        Err(ErrorCode::CapabilityUnsupported)
+    }
 }
 pub(crate) struct NativeDiscovery<'a> {
     secrets_root: &'a Path,
 }
 impl Discovery for NativeDiscovery<'_> {
+    async fn reconcile(&self, job: &UidReconcileJob) -> Result<ImapUidReconcilePage, ErrorCode> {
+        let secrets = hantong_secrets::SecretStore::open(self.secrets_root)
+            .map_err(|_| ErrorCode::InternalError)?;
+        secrets
+            .fetch_imap_uid_reconcile_page(job.fetch_request(), job.endpoint())
+            .await
+            .map_err(uid_error)
+    }
     async fn discover(&self, job: &UidPageJob) -> Result<ImapUidPage, ErrorCode> {
         let secrets = hantong_secrets::SecretStore::open(self.secrets_root)
             .map_err(|_| ErrorCode::InternalError)?;
@@ -147,6 +174,22 @@ pub(crate) fn coordinator_with_discovery<D: Discovery>(
     )
 }
 impl UidWorkerHandle<'_> {
+    pub(crate) fn admit_reconcile(
+        &self,
+        id: Job,
+        request: &UidReconcileRequest,
+    ) -> Result<UidReconcileAdmission, ErrorCode> {
+        let (slot, queue) = match self.queue.reserve(id) {
+            Ok(slot) => (Some(slot), UidQueueAdmission::Reserved),
+            Err(queue) => (None, queue),
+        };
+        let outcome = self.store.admit_uid_reconcile(id, request, queue)?;
+        if matches!(outcome, UidReconcileAdmission::Admitted(_)) {
+            slot.expect("Store admits only a reserved queue slot")
+                .submit_reconcile();
+        }
+        Ok(outcome)
+    }
     pub(crate) fn admit(
         &self,
         id: Job,
@@ -177,14 +220,60 @@ impl<D> Drop for UidWorker<'_, D> {
 }
 impl<D: Discovery> UidWorker<'_, D> {
     pub(crate) async fn run(mut self) -> Result<(), ErrorCode> {
-        while let Some(id) = self.receiver.recv().await {
-            self.run_one(id).await?;
+        while let Some(queued) = self.receiver.recv().await {
+            let id = match queued {
+                QueuedJob::Page(id) => {
+                    self.run_one(id).await?;
+                    id
+                }
+                QueuedJob::Reconcile(id) => {
+                    self.run_reconcile(id).await?;
+                    id
+                }
+            };
             if self.scheduled.get() == Some(id) {
                 self.scheduled.set(None);
             }
             self.owned.set(None);
         }
         Ok(())
+    }
+    async fn run_reconcile(&self, id: Job) -> Result<(), ErrorCode> {
+        let job = match self.store.start_uid_reconcile(id)? {
+            UidReconcileStart::Ready(job) => job,
+            UidReconcileStart::Finished(_) => return Ok(()),
+        };
+        let outcome = if let Err(error) = self.store.check_uid_reconcile(id) {
+            if error == ErrorCode::InternalError {
+                return Err(error);
+            }
+            Err(error)
+        } else {
+            let discovery = self.discovery.reconcile(&job);
+            tokio::pin!(discovery);
+            let mut ticker = tokio::time::interval_at(
+                tokio::time::Instant::now() + Duration::from_millis(500),
+                Duration::from_millis(500),
+            );
+            loop {
+                tokio::select! {
+                    biased;
+                    _=ticker.tick()=>{if let Err(error)=self.store.check_uid_reconcile(id){if error==ErrorCode::InternalError{return Err(error)} break Err(error)}},
+                    result=&mut discovery=>break result,
+                }
+            }
+        };
+        // As in append, an uncertain commit never triggers a second terminal write.
+        match outcome {
+            Ok(page) => self
+                .store
+                .complete_uid_reconcile_success(id, &page)
+                .map(|_| ()),
+            Err(error) => self
+                .store
+                .complete_uid_reconcile_failure(id, error)
+                .map(|_| ()),
+        }
     }
     async fn run_one(&self, id: Job) -> Result<(), ErrorCode> {
         let job = match self.store.start_uid_page(id)? {
@@ -237,12 +326,20 @@ impl Discovery for NoDiscovery {
 mod tests {
     use super::*;
     #[tokio::test(flavor = "current_thread")]
+    async fn m204_reconcile_uses_the_same_owned_network_slot_as_append() {
+        let (q, mut receiver) = queue(Rc::new(Cell::new(None)));
+        q.reserve([5; 32]).unwrap().submit_reconcile();
+        assert!(matches!(q.reserve([6; 32]), Err(UidQueueAdmission::Full)));
+        assert_eq!(receiver.recv().await, Some(QueuedJob::Reconcile([5; 32])));
+        assert!(matches!(q.reserve([6; 32]), Err(UidQueueAdmission::Full)));
+    }
+    #[tokio::test(flavor = "current_thread")]
     async fn m204_uid_capacity_one_remains_reserved_during_execution() {
         let (q, mut receiver) = queue(Rc::new(Cell::new(None)));
         let slot = q.reserve([1; 32]).unwrap();
         assert!(matches!(q.reserve([2; 32]), Err(UidQueueAdmission::Full)));
         slot.submit();
-        assert_eq!(receiver.recv().await, Some([1; 32]));
+        assert_eq!(receiver.recv().await, Some(QueuedJob::Page([1; 32])));
         assert!(matches!(q.reserve([2; 32]), Err(UidQueueAdmission::Full)));
         q.scheduled.set(None);
         assert!(q.reserve([2; 32]).is_ok());

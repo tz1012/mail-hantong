@@ -8,6 +8,60 @@ fn request() -> Value {
     json!({"action":"request","account_id":"acct","wire_hex":"494e424f58","encoding":"modified_utf7","operation_id":"operation","idempotency_key":"key","expected_catalog_generation":1,"expected_cursor_version":0,"intent_hash":"00".repeat(32)})
 }
 #[test]
+fn ext04_reconcile_tool_binds_explicit_account_and_rejects_private_state() {
+    let mut p = request();
+    p["action"] = json!("reconcile");
+    p["expected_cursor_version"] = json!(2);
+    let parsed = ToolRequest::validate(&envelope(p.clone())).unwrap();
+    assert!(matches!(
+        parsed,
+        ToolRequest::SyncPage {
+            action: crate::UidPageAction::Reconcile(_),
+            ..
+        }
+    ));
+    assert_eq!(parsed.account_ids(), ["acct"]);
+    for field in [
+        "generation",
+        "through_uid",
+        "minimum_uid_next",
+        "endpoint_version",
+        "uid_validity",
+        "after_uid",
+        "approved",
+    ] {
+        let mut invalid = p.clone();
+        invalid[field] = json!(1);
+        assert_eq!(
+            ToolRequest::validate(&envelope(invalid)),
+            Err(ErrorCode::InvalidInput)
+        );
+    }
+    for (field, value) in [
+        ("expected_cursor_version", json!(0)),
+        ("wire_hex", json!("696e626f78")),
+        ("expected_catalog_generation", json!(1.0)),
+    ] {
+        let mut invalid = p.clone();
+        invalid[field] = value;
+        assert_eq!(
+            ToolRequest::validate(&envelope(invalid)),
+            Err(ErrorCode::InvalidInput)
+        );
+    }
+    let status = ToolRequest::validate(&envelope(
+        json!({"action":"reconcile-status","account_id":"acct","execution_id":"01".repeat(32)}),
+    ))
+    .unwrap();
+    assert!(matches!(
+        status,
+        ToolRequest::SyncPage {
+            action: crate::UidPageAction::ReconcileStatus(_),
+            ..
+        }
+    ));
+}
+#[test]
 fn ext04_uid_tool_routes_exact_three_actions_and_account() {
     for params in [
         request(),

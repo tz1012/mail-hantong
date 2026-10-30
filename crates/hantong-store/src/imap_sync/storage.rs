@@ -354,6 +354,11 @@ pub(super) fn apply(
             page.request().account_id(),
             mutation.operation_id(),
             mutation.idempotency_key(),
+        )? || crate::uid_reconcile_jobs::operation_reserved(
+            tx,
+            page.request().account_id(),
+            mutation.operation_id(),
+            mutation.idempotency_key(),
         )? {
             return Err(ErrorCode::Conflict);
         }

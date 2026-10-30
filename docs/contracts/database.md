@@ -71,3 +71,7 @@ v10 DDL은 `migrations/schema-v10.sql`로 고정하며 `010-to-011.sql`은 [UID 
 [공개 UID 계약](imap-uid-tools.md), [영속 작업](imap-uid-jobs.md), [명시 scope 갱신](client-scope-refresh.md)을 적용한다. v11 DDL은 `migrations/schema-v11.sql`로 고정한다. v11→v12는 기존 audit parent/children과 folder job FK를 함께 재구성해 새 audit tool을 허용하고, scope 이력의 CHECK만 확장하며 빈 UID 작업 원장을 추가한다. 기존 scope v1/v2의 값·hash·phase는 그대로 보존한다. audit sequence high-water와 한 번도 사용하지 않은 sequence의 부재도 유지한다. 기존 UID page/cursor/message와 미완료 folder job을 삭제·재실행하지 않는다.
 
 보호된 backup과 전체 DDL/FK 검증, 원자 commit 규칙은 동일하다. 과거 v9/v10/v11은 frozen v1/v2 scope validator, v12는 v1/v2/v3 validator를 사용한다. schema migration을 권한 확인으로 간주하지 않으며 새 도구 권한은 별도의 native 확인을 통과해야 한다. 실패 시 원본 v11 행과 DDL로 rollback하고 기존 backup 충돌은 덮어쓰지 않는다.
+
+## v13 기존 UID 관측 overlay
+
+[기존 UID 대조 계약](imap-uid-reconcile.md)에 따라 head·request·message observation 표 세 개와 조회 index만 추가한다. v12 DDL은 `migrations/schema-v12.sql`로 보존하고 `012-to-013.sql`을 기존 ladder 다음에 실행한다. 원본 UID page/message/cursor, 미완료 작업, 감사 sequence와 scope v1/v2/v3 이력은 변경하지 않는다. 새 scope나 audit tool은 추가하지 않는다. 보호된 v12 backup→원자 DDL/metadata/version→전체 schema/FK 검증 순서를 유지하며 실패 시 원본과 검증된 backup을 보존한다.

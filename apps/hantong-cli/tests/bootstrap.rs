@@ -21,6 +21,53 @@ fn cli16_help_uses_english_by_default_and_korean_after_all_flags() {
 }
 
 #[test]
+fn cli01_reconcile_help_and_invalid_commands_do_not_load_profiles() {
+    for lang in ["en", "ko"] {
+        let output = cli(&["--lang", lang, "--help"]);
+        assert_eq!(output.status.code(), Some(0));
+        let text = String::from_utf8_lossy(&output.stdout);
+        assert!(text.contains("sync reconcile"));
+        assert!(text.contains("sync reconcile-status"));
+    }
+    for args in [
+        vec!["--json", "sync", "reconcile", "--account", "acct"],
+        vec![
+            "--json",
+            "sync",
+            "reconcile-status",
+            "--account",
+            "acct",
+            "--execution-id",
+            "00",
+        ],
+        vec![
+            "--json",
+            "sync",
+            "reconcile",
+            "--account",
+            "acct",
+            "--wire-hex",
+            "494e424f58",
+            "--encoding",
+            "utf8",
+            "--expected-catalog-generation",
+            "1",
+            "--expected-cursor-version",
+            "0",
+            "--operation-id",
+            "op",
+            "--idempotency-key",
+            "key",
+        ],
+    ] {
+        let output = cli(&args);
+        assert_eq!(output.status.code(), Some(2));
+        assert!(String::from_utf8_lossy(&output.stdout).contains("INVALID_INPUT"));
+        assert!(output.stderr.is_empty());
+    }
+}
+
+#[test]
 fn cli01_uid_invalid_commands_exit_before_any_profile_access() {
     for args in [
         vec!["--json", "sync", "page", "--account", "acct"],

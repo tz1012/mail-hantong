@@ -9,8 +9,8 @@
 | 항목 | 상태와 근거 |
 | --- | --- |
 | 기준 자료 | 사용자 승인으로 채택한 [Markdown 기준 요건](../requirements/README.md): 요건 170개·1단계 P0 144개·문장별 AC ID 341개. 작업 카드 정의 151개는 보존한다. |
-| 현재 카드 | **M2-04 UID 페이지 공개 연결 검증 완료, 카드 진행 중**. 명시 sync cursor/page/status·scope v3·영속 작업·Core/CLI 연결을 병렬 구현하고 전체 검사와 독립 검토를 마쳤다. 기존 메일 상태 대조·재동기화는 후속이다. |
-| 최신 검증 | **1,016개 통과**(문서 29·빌드 도구 63·Rust 924). 전체 build/test/fmt/Clippy·의존/문서/추적 검사와 같은 소스의 Linux x86_64·macOS arm64 교차 Clippy 통과. 아래 UID v12 snapshot에 로그·hash가 있다. 실제 Mac 실행·전체 기능 완료를 뜻하지 않는다. |
+| 현재 카드 | **M2-04 기존 UID 상태 대조 연결 검증 완료, 카드 진행 중**. 고정 범위 FLAGS/원격 부재 관측·v13 원장·영/한 CLI를 병렬 구현하고 교차 검토와 전체 회귀를 마쳤다. UIDVALIDITY 복구·전체 mailbox 목록은 후속이다. |
+| 최신 검증 | **1,069개 통과**(문서 29·빌드 도구 63·Rust 977). 전체 build/test/fmt/Clippy·의존/문서/추적 검사와 같은 소스의 Linux x86_64·macOS arm64 교차 Clippy 통과. 아래 UID v13 snapshot에 로그·hash가 있다. 실제 Mac 실행·전체 기능 완료를 뜻하지 않는다. |
 | 제품 구현 | Rust workspace·영/한 CLI·Windows 코어/IPC·DPAPI·SQLCipher·설정 검증·감사·기본 등록/프로필·권한이 있는 계정 목록 조회·IMAP/SMTP TLS/AUTH probe·CI/추적 도구 구현. 신규 IMAP 설정·명시 재개와 기본 CLI 계정 범위 갱신의 보호 확인·중단 복구를 연결했다. 발송은 차단하며 실제 메일 수신·전체 GUI·설치 패키지는 미완료다. |
 | GitHub | 로컬 Git main 저장소를 초기화해 개발 기준선을 기록한다. 공개 저장소 주소·remote·릴리스·패키지 ID는 아직 없음. 빌드 산출물·실행 데이터·에이전트 상태는 제외한다. |
 | 새 사용자 요청 | 진행 상황을 이 문서에 누적하고, GitHub에서 명령어로 설치 및 개발을 시작할 수 있는 경로를 마련한다. 상세 범위는 [공개와 설치 계획](DISTRIBUTION.md)에 기록한다. |
@@ -19,7 +19,7 @@
 | 런타임 결정 | **코어·CLI Rust 확정** — 2026-10-29 사용자 선택, [ADR-001](../adr/ADR-001-core-runtime.md). 비교 실험에서 .NET은 프로세스 시작, Rust는 메모리에 유리했고 검색은 혼재했다. [실측 보고서](RUNTIME-BENCHMARK.md)는 보존하며 제품의 1초 목표는 아직 검증 전이다. |
 | Mac 지원 방향 | 사용자 승인으로 정식 후속 목표에 포함했다. Windows 우선 출시 후 Mac 코어·CLI·최소 승인 도우미부터 제공하고 전체 GUI를 후속 제공한다. 구체적인 단계·일정·패키지는 미정이며 현재 제품은 미구현이다. |
 | 공개 사용 정책 | **[LICENSE Version 1.0](../../LICENSE) 정식 채택** — 개인·회사 내부 업무용 사용, 수정본 비공개 및 원본·수정본 무료 재배포 허용. 프로그램 판매·유료 제공 금지. 고지 유지·수정 표시·보증과 책임 조항 포함. 저작권자는 **Andrew Cho**, 웹사이트 **https://tzt.kr**, 연락처 **andrew@tzt.kr**이다. [한국어 안내](LICENSING.md), [ADR-016](../adr/ADR-016-license.md). |
-| 다음 제품 작업 | 기존 FLAGS/expunge 대조·UIDVALIDITY 안전 복구·메타데이터 우선 목록/진행 표시를 다음 계약과 카드 범위로 분리한다. 현재 공개 UID 도구의 권한을 묵시적으로 확대하지 않는다. |
+| 다음 제품 작업 | UIDVALIDITY 안전 복구·메타데이터 우선 목록/진행 표시를 다음 계약과 카드 범위로 분리한다. 현재 공개 UID 도구의 권한을 묵시적으로 확대하지 않는다. |
 
 ## 기능별 현재 상태
 
@@ -32,7 +32,7 @@
 | IMAP 계정 설정·재개·계정 조회·CLI 범위 갱신 | 구현 및 연결 | 가짜 제공자/실제 로컬 pipe 자동 검사 통과, 실제 사용자 계정 시험 전 |
 | IMAP/SMTP 연결 진단 | 내부 전송 경계 구현 | in-memory TLS/DPAPI 시험 통과, 제공자 상호 운용성 시험 전 |
 | 폴더 탐색·특수 폴더 후보·저장 | CLI 목록/갱신·권한·Core worker·v10 원장 연결 | 실제 IPC/가짜 제공자 자동 검사 통과, GUI·사용자 역할 지정·실제 제공자 검증 후속 |
-| 실제 메일 동기화·목록·본문·첨부·검색 | 단일 UID metadata page의 명시 CLI/감사/원자 저장 연결 | 격리 실제 pipe 시험 통과; 기존 메일 대조·본문/첨부·검색·전체 사용자 흐름은 미완료 |
+| 실제 메일 동기화·목록·본문·첨부·검색 | 단일 UID 수집·기존 FLAGS/원격 부재 관측의 명시 CLI/감사/원자 저장 연결 | 격리 실제 pipe 시험 통과; UIDVALIDITY 복구·본문/첨부·검색·전체 사용자 흐름은 미완료 |
 | 작성·발송·예약 발송·임시보관·주소록 | 후속 구현 | 안전 승인/Outbox와 제품 종단 흐름 미완료 |
 | 태그·즐겨찾기·스팸·광고필터·자동화 | 후속 구현 | 1단계 필수 범위 유지, 제품 종단 흐름 미완료 |
 | 전체 영/한 GUI·라이트/다크/시스템 테마 | 후속 구현 | native 확인 화면 외 메일 GUI 미완료 |
@@ -59,6 +59,19 @@
 공통 파일은 한 담당자만 쓴다. 계약을 먼저 고정하고 타입/API·필드 의미·파일 소유권을 각 담당자에게 전달한다. 동일 파일 충돌이 생기면 root가 통합하고 다른 담당자는 해당 편집을 중단한다. Cargo는 native build cache를 공유하므로 target 디렉터리를 담당자별로 지정하거나 순차 실행한다. 전체 회귀 동안 소스 변경을 잠시 동결해 결과와 소스 hash를 결속한다. 특정 기능의 선행 작업이 늦어지면 다른 기능의 구현·검토를 먼저 계속한다.
 
 현재 묶음 이후에는 실제 메일 동기화/조회, 작성·임시보관·승인 Outbox, 주소록·분류 기능을 각 계약과 선행 카드에 맞춰 같은 방식으로 나눈다. GUI는 영/한·라이트/다크/시스템 테마를 공통 기반부터 적용한다. 기능 구현 완료, 교차 검토 완료, 연결 검사 완료, 실제 운용/사람 검토 대기를 별도로 기록하며 테스트 개수로 제품 완성률을 추정하지 않는다.
+
+### 다음 병렬 묶음 — 기존 UID 상태 대조
+
+기준선 `94fd693`의 전체 검사 1,016개 통과 후 M2-04의 기존 메일 관측 대조를 진행한다. [고정 계약](../contracts/imap-uid-reconcile.md)을 먼저 작성하고 독립 설계 검토·RFC 근거 확인을 마쳤다. 전체 카드 완료나 실제 사용자 메일 검증으로 표시하지 않는다.
+
+| 담당 | 독립 소유권 | 연결·검증 |
+| --- | --- | --- |
+| reconcile_protocol | Domain 고정 UID 범위 DTO·Secrets 읽기 driver·in-memory TLS 시험 | UIDNEXT 증가에도 범위 유지, 기존 codec 불변, 비정상 응답 시 무반영 |
+| reconcile_store | observation overlay·pass head·영속 job·SQLCipher 시험 | 원본 보존, CAS/replay, 원장 간 충돌, 원자 rollback, 손상 거부 |
+| reconcile_public | 공통 DTO·Application·IPC client·영/한 CLI·tool schema | 기존 action 보존, 별도 intent/receipt, strict 8KiB parsing |
+| root | v13 migration·공유 Core worker·인증 pipe 통합·전체 검사 | 세 묶음 연결, 실행 중 변경 취소, 작성자와 다른 검토자 교차 검증 |
+
+성공한 한 페이지 관측에서 기존 UID가 보이지 않으면 원격 부재 관측만 별도로 기록한다. 원본 메일 삭제·발송·자동 reset은 하지 않는다. pass 완료는 접수 때 고정한 기존 페이지 묶음의 완료이며 전체 mailbox 최신 상태를 뜻하지 않는다. 현재 묶음은 구현 중이며 아직 통합 검증 결과가 없다.
 
 ## 기록 규칙
 
@@ -836,3 +849,28 @@ UID transport/저장 기반은 `827fefc`로 보존했다. 새 공개 계약을 �
 `scripts/check_all.py` 종료 코드 **0**: **1,016개**(문서29·빌드 도구63·Rust924). 전체 build/test/fmt/Clippy·아키텍처·문서·추적 검사 통과. 로그 `target/uid-v12-full-check.log`, SHA-256 `F189EF332A4A06D5C8262653FAAB79C845A11FCF94E9F1EB1BD402A95B3A17C9`, source hash `6a427bc34fb3cf0432b3c0d68ab451e94db1fa3de3941e110a7d16a5d94d6c7e`. 같은 소스의 Linux x86_64/macOS arm64 all-target Clippy 종료 코드0(`target/uid-v12-linux-check.log`, `target/uid-v12-macos-check.log`). 실제 Mac 실행 시험은 아니다.
 
 CNG 제품 키1개와 names hash `3B692D49F1D08F7D3442806CF17694CDC02AF36B44839930FC18EB9C83CE9D4D` 유지. 새 의존성 없음. 실제 사용자 Core/DB/profile/Hello/계정/메일과 외부 공개는 실행하지 않았다. **[사람 검토 필요]**, 전체 제품 AC 완료0개 유지. M2-04 전체·전체 GUI·작성/발송·설치 릴리스 완료를 뜻하지 않는다.
+
+## 2026-10-30 기존 UID 상태 대조와 v13 overlay
+
+[고정 계약](../contracts/imap-uid-reconcile.md)과 RFC 근거·독립 설계 검토 후 Domain/Secrets, Store, 공개 Contracts/Application/client/CLI를 세 담당자에게 나눴다. root가 v13 migration, 공유 UID worker, Core adapter와 실제 인증 pipe 연결을 맡았다. 원본 append page/message/cursor는 불변이며, 기존 메시지 FLAGS와 원격 부재 관측만 별도 저장한다. 각 명시 요청은 한 페이지이며 새 append가 추가되어도 진행 중 pass의 상한은 유지한다.
+
+Domain/Secrets 신규16개 및 해당 두 crate 전체232개, 공개 네 package211개가 통과했다. 공개 경계는 신규13개(기존 EN/KO 출력 byte 보존 포함)이며 테스트를 먼저 썼지만 첫 실행이 green이어서 관측한 RED로 기록하지 않는다. 프로토콜은 missing-API RED 후 GREEN이 있다. 로그 `target/reconcile-protocol-{red,green,regression,clippy}.log`, `target/reconcile-public-{targeted,regression,clippy}.log`.
+
+root migration은 v12에서 그대로 머무는 보존/backup 시험2개의 RED 후 실제 SQLCipher migration3개가 통과했다. v12 기존 행·대기 UID/folder 작업·감사/권한 이력을 보존하고, backup 충돌과 실제 DDL 실패에서 원본을 유지한다. Python SQLite fresh/migration DDL도 정확히 일치했다. 로그 `target/reconcile-migration-red.log`, `target/reconcile-migration-green.log`.
+
+Store는 원본 보존·FLAGS/부재·고정 pass·replay·손상·quota100000·각 쓰기 ABORT/IGNORE rollback 등17개가 통과했다. source 선택 때 과거 전체 JSON을 읽던 경로는 수치 index와 선택된 페이지 검사로 줄였다. 별도 검토에서 수치 손상으로 실제 child가 있는 source를 숨길 가능성을 찾아 child count 검증을 추가 중이다. 계정 상태 시험은 존재하지 않는 suspended 대신 실제 domain 상태 reauth_required로 fixture만 수정했으며 제품 검사를 완화하지 않았다.
+
+공개 경계 독립 검토는 HIGH/MEDIUM 없음. Store 교차 원장 replay가 충돌 확인 전에 과거 receipt를 반환하던 MEDIUM은 양방향 선행 검사와 회귀 시험으로 수정했다. Core 검토 HIGH는 Store admission의 불확실한 외부 오류를 Application으로 돌려 감사 terminal을 다시 쓰려는 경로였다. folder/append/reconcile 모두 durable admission 시도 뒤에는 AuditHandoff로 소유권을 유지하도록 수정하고 Core 분류 시험·Application 추가 terminal 금지 시험을 넣었다. 이는 commit 성공 주장과 구분한다.
+
+Core62개(단위60·lifecycle2)가 통과했다(`target/reconcile-core-first.log`). 실제 서명된 pipe에서 append 두 페이지→FLAGS/부재 대조, 공유 folder/append slot 제한, 새 append가 생긴 뒤에도 frozen pass 유지, 과거 replay가 최신 overlay를 되돌리지 않음, catalog 변경 시 취소·무반영, worker 폐기/재생성 후 unresolved/status/replay 무재접속을 확인했다. 같은 Store를 유지하는 Core 재생성 시험과 실제 DB 재개방을 하는 Store 시험은 구분한다. 전체 인증 시험20초와 추가 대조 흐름15초 제한을 둬 실패 시 무제한 대기를 방지한다.
+
+현재 전체 회귀는 마지막 수정 후 실행할 예정이며 위 최신1,016개는 직전 v12 기준선이다. **[사람 검토 필요]**이고 제품 전체 AC 완료0개를 유지한다. 실제 사용자 계정·메일·DB·Core·Hello나 공개 배포는 사용하지 않았다.
+
+
+### UID v13 최종 자동 검증 snapshot
+
+Store source count 보완은 실제 child count와 declared count를 비교한 뒤 선택하여, 숨겨진 nonempty page·누락 child·zero-span을 거부한다. 해당 회귀 시험은 RED 후 GREEN이었다(`target/reconcile-source-count-red.log`, `target/reconcile-source-count-green.log`). 선택되지 않은 모든 JSON을 decode하지 않는 성능 경계도 유지했다. Store18개 targeted 및 Store Clippy, 공개/Core/Store 독립 최종 검토에 남은 HIGH/MEDIUM은 없다. Core의 무한 대기 지적은 기존 전체20초 제한을 놓친 표현이어서 정정했고 추가 local timeout은 진단 보완으로 기록한다.
+
+`scripts/check_all.py` 종료 코드 **0**: **1,069개**(문서29·빌드 도구63·Rust977). 전체 build/test/fmt/Clippy·아키텍처·문서·추적 검사 통과. 로그 `target/reconcile-v13-full-check.log`, SHA-256 `2F50607BDD7566F7026356B68981F9B36B0440B57CA318B6AE8D3D8D274ECD7C`, source hash `e88fddaa214563a92cb7697d6906a11139ac238db5ed08d811570f9de1c4e1d9`. 같은 소스의 Linux x86_64/macOS arm64 all-target Clippy 종료 코드0(`target/reconcile-v13-linux-check.log`, `target/reconcile-v13-macos-check.log`). 실제 Mac 제품 실행 검증은 아니다.
+
+CNG 제품 키1개/names hash `3B692D49F1D08F7D3442806CF17694CDC02AF36B44839930FC18EB9C83CE9D4D` 유지. 새 의존성 없음. 실제 계정·메일·사용자 DB·Core·Hello와 외부 공개를 실행하지 않았다. **[사람 검토 필요]**, 전체 제품 AC 완료0개 유지. 다음은 M2-04 안에서 UIDVALIDITY 변경을 안전하게 다루는 기반 또는 조회 연결 범위를 정하며, 선행 카드가 끝나지 않은 M2-07 전체 완료/시작으로 표시하지 않는다.

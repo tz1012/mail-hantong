@@ -58,7 +58,10 @@ struct WireCursor {
     covered_through_uid: u32,
     binding_current: bool,
 }
-fn decode<T: serde::de::DeserializeOwned>(bytes: &[u8], expected_id: &str) -> Result<T, ErrorCode> {
+pub(super) fn decode<T: serde::de::DeserializeOwned>(
+    bytes: &[u8],
+    expected_id: &str,
+) -> Result<T, ErrorCode> {
     if bytes.is_empty()
         || bytes.len() > MAX_FRAME
         || expected_id.is_empty()
@@ -83,7 +86,7 @@ fn decode<T: serde::de::DeserializeOwned>(bytes: &[u8], expected_id: &str) -> Re
         _ => Err(ErrorCode::InvalidInput),
     }
 }
-fn error_code(value: &str) -> Result<ErrorCode, ErrorCode> {
+pub(super) fn error_code(value: &str) -> Result<ErrorCode, ErrorCode> {
     ErrorCode::ALL
         .into_iter()
         .find(|e| e.as_str() == value)
@@ -230,7 +233,7 @@ fn authorize(
     }
 }
 #[cfg(windows)]
-fn exchange(params: Value, account: &str) -> Result<Vec<u8>, ErrorCode> {
+pub(super) fn exchange(params: Value, account: &str) -> Result<Vec<u8>, ErrorCode> {
     tokio::runtime::Builder::new_current_thread()
         .enable_io()
         .enable_time()

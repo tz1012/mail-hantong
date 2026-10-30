@@ -4,11 +4,13 @@
 //! an OS-authenticated, connection-owned session and the already opened Store;
 //! it does not create identity or approval evidence.
 
+use hantong_application::render_uid_reconcile_receipt;
 use hantong_application::{
     AccountsListRequest, AuditHandoff, ExecutionContext, ReadResult, ToolRequest,
     render_account_list, render_folder_page, render_folder_refresh_receipt, render_uid_cursor,
     render_uid_receipt, validated_uid_mailbox,
 };
+use hantong_contracts::uid_reconcile::UidReconcileRequest;
 use hantong_contracts::{
     ErrorCode,
     audit::{AuditBegin, AuditTerminal},
@@ -107,6 +109,12 @@ fn registered_client(record: RegistrationRecord) -> Result<RegisteredClient, Err
     .map_err(|_| ErrorCode::InternalError)
 }
 
+// A returned admission error may follow a committed transaction. Store keeps
+// audit ownership even when the caller cannot determine whether commit won.
+fn durable_admission<T>(outcome: Result<T, ErrorCode>) -> Result<T, AuditHandoff<Value>> {
+    outcome.map_err(AuditHandoff::error)
+}
+
 impl<'a, 'server> ExecutionContext for CoreExecutionAdapter<'a, 'server> {
     type Output = Value;
 
@@ -196,7 +204,11 @@ impl<'a, 'server> ExecutionContext for CoreExecutionAdapter<'a, 'server> {
         audit_id: [u8; 32],
         request: &FolderRefreshRequest,
     ) -> Result<AuditHandoff<Self::Output>, ErrorCode> {
-        match self.folder_worker.admit(audit_id, request)? {
+        let admission = match durable_admission(self.folder_worker.admit(audit_id, request)) {
+            Ok(value) => value,
+            Err(handoff) => return Ok(handoff),
+        };
+        match admission {
             hantong_store::folder_refresh::FolderRefreshAdmission::Admitted(receipt)
             | hantong_store::folder_refresh::FolderRefreshAdmission::Existing(receipt)
             | hantong_store::folder_refresh::FolderRefreshAdmission::Failed(receipt) => Ok(
@@ -256,17 +268,47 @@ impl<'a, 'server> ExecutionContext for CoreExecutionAdapter<'a, 'server> {
         request: &UidPageRequest,
     ) -> Result<AuditHandoff<Value>, ErrorCode> {
         use hantong_store::uid_page_jobs::UidPageAdmission;
-        match self
-            .uid_worker
-            .ok_or(ErrorCode::CoreUnavailable)?
-            .admit(id, request)?
-        {
+        let worker = self.uid_worker.ok_or(ErrorCode::CoreUnavailable)?;
+        let admission = match durable_admission(worker.admit(id, request)) {
+            Ok(value) => value,
+            Err(handoff) => return Ok(handoff),
+        };
+        match admission {
             UidPageAdmission::Admitted(receipt)
             | UidPageAdmission::Existing(receipt)
             | UidPageAdmission::Failed(receipt) => {
                 Ok(AuditHandoff::response(render_uid_receipt(&receipt)))
             }
             UidPageAdmission::Rejected(error) => Ok(AuditHandoff::error(error)),
+        }
+    }
+    fn read_uid_reconcile_status(
+        &mut self,
+        request: &UidPageStatusRequest,
+    ) -> Result<ReadResult<Value>, ErrorCode> {
+        let receipt = self
+            .store
+            .load_uid_reconcile_receipt(*self.connection.registration_id(), request)?;
+        ReadResult::new(render_uid_reconcile_receipt(&receipt), None)
+    }
+    fn request_uid_reconcile(
+        &mut self,
+        id: [u8; 32],
+        request: &UidReconcileRequest,
+    ) -> Result<AuditHandoff<Value>, ErrorCode> {
+        use hantong_store::uid_reconcile_jobs::UidReconcileAdmission;
+        let worker = self.uid_worker.ok_or(ErrorCode::CoreUnavailable)?;
+        let admission = match durable_admission(worker.admit_reconcile(id, request)) {
+            Ok(value) => value,
+            Err(handoff) => return Ok(handoff),
+        };
+        match admission {
+            UidReconcileAdmission::Admitted(receipt)
+            | UidReconcileAdmission::Existing(receipt)
+            | UidReconcileAdmission::Failed(receipt) => Ok(AuditHandoff::response(
+                render_uid_reconcile_receipt(&receipt),
+            )),
+            UidReconcileAdmission::Rejected(error) => Ok(AuditHandoff::error(error)),
         }
     }
     fn finish_audit(&mut self, id: [u8; 32], terminal: AuditTerminal) -> Result<(), ErrorCode> {
@@ -277,6 +319,15 @@ impl<'a, 'server> ExecutionContext for CoreExecutionAdapter<'a, 'server> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn sec03_uncertain_durable_admission_retains_audit_ownership() {
+        let outcome: Result<(), ErrorCode> = Err(ErrorCode::InternalError);
+        assert!(matches!(
+            durable_admission(outcome),
+            Err(AuditHandoff::Error(ErrorCode::InternalError))
+        ));
+        assert!(matches!(durable_admission(Ok(7)), Ok(7)));
+    }
     use hantong_contracts::auth::RequestedScope;
     #[test]
     fn sec03_stored_invalid_curve_point_is_internal_error() {

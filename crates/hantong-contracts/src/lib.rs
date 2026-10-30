@@ -10,6 +10,7 @@ pub mod imap_setup;
 pub mod platform;
 pub mod registration;
 pub mod uid_page;
+pub mod uid_reconcile;
 pub mod wire_hex;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

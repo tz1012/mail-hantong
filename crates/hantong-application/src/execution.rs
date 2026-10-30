@@ -5,6 +5,7 @@ use hantong_contracts::{ErrorCode, audit::AuditTerminal};
 use crate::{AccountsListRequest, FolderRefreshAction, ToolRequest, UidPageAction};
 use hantong_contracts::folders::{FolderListRequest, FolderRefreshStatusRequest};
 use hantong_contracts::uid_page::{UidCursorRequest, UidPageRequest, UidPageStatusRequest};
+use hantong_contracts::uid_reconcile::UidReconcileRequest;
 
 /// A bounded service result. The service owns the value and optional count;
 /// callers cannot manufacture an invalid count through this type.
@@ -23,7 +24,9 @@ impl<T> AuditHandoff<T> {
     pub fn response(value: T) -> Self {
         Self::Response(value)
     }
-    /// The Store has durably recorded a terminal admission outcome.
+    /// The Store owns the attempted durable admission outcome. It may have
+    /// recorded a terminal result, or its commit outcome may be uncertain;
+    /// the caller must not attempt another terminal write.
     pub fn error(error: ErrorCode) -> Self {
         Self::Error(error)
     }
@@ -93,6 +96,19 @@ pub trait ExecutionContext {
     ) -> Result<AuditHandoff<Self::Output>, ErrorCode> {
         Err(ErrorCode::CapabilityUnsupported)
     }
+    fn read_uid_reconcile_status(
+        &mut self,
+        _request: &UidPageStatusRequest,
+    ) -> Result<ReadResult<Self::Output>, ErrorCode> {
+        Err(ErrorCode::CapabilityUnsupported)
+    }
+    fn request_uid_reconcile(
+        &mut self,
+        _audit_id: [u8; 32],
+        _request: &UidReconcileRequest,
+    ) -> Result<AuditHandoff<Self::Output>, ErrorCode> {
+        Err(ErrorCode::CapabilityUnsupported)
+    }
     fn finish_audit(&mut self, id: [u8; 32], terminal: AuditTerminal) -> Result<(), ErrorCode>;
 }
 
@@ -157,11 +173,23 @@ pub fn execute_tool<C: ExecutionContext>(
                 Ok(AuditHandoff::Error(error)) => Err(error),
                 Err(error) => finish_failure(context, audit_id, error),
             },
+            UidPageAction::Reconcile(request) => {
+                match context.request_uid_reconcile(audit_id, &request) {
+                    Ok(AuditHandoff::Response(value)) => Ok(value),
+                    Ok(AuditHandoff::Error(error)) => Err(error),
+                    Err(error) => finish_failure(context, audit_id, error),
+                }
+            }
             other => {
                 let result = match other {
                     UidPageAction::Cursor(request) => context.read_uid_cursor(&request),
                     UidPageAction::Status(request) => context.read_uid_page_status(&request),
-                    UidPageAction::Request(_) => unreachable!("handled above"),
+                    UidPageAction::ReconcileStatus(request) => {
+                        context.read_uid_reconcile_status(&request)
+                    }
+                    UidPageAction::Request(_) | UidPageAction::Reconcile(_) => {
+                        unreachable!("handled above")
+                    }
                 };
                 match result {
                     Ok(result) => {

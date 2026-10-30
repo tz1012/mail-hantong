@@ -457,7 +457,7 @@ struct StoragePage {
 }
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct StorageMessage {
+pub(crate) struct StorageMessage {
     schema_version: u8,
     uid: u32,
     flags: Vec<String>,
@@ -544,7 +544,7 @@ impl StoragePage {
     }
 }
 impl StorageMessage {
-    fn from_message(m: &ImapMessageMetadata) -> Result<Self, ImapSyncError> {
+    pub(crate) fn from_message(m: &ImapMessageMetadata) -> Result<Self, ImapSyncError> {
         Ok(Self {
             schema_version: 1,
             uid: m.uid,
@@ -554,7 +554,7 @@ impl StorageMessage {
             envelope: StorageEnvelope::from_envelope(m.envelope())?,
         })
     }
-    fn into_message(self) -> Result<ImapMessageMetadata, ImapSyncError> {
+    pub(crate) fn into_message(self) -> Result<ImapMessageMetadata, ImapSyncError> {
         if self.schema_version != 1 {
             return Err(ImapSyncError::InvalidStorage);
         };
@@ -640,10 +640,10 @@ fn dec_addrs(
     })
     .transpose()
 }
-fn hex(v: &[u8]) -> String {
+pub(crate) fn hex(v: &[u8]) -> String {
     v.iter().map(|b| format!("{b:02x}")).collect()
 }
-fn decode_hex(s: &str) -> Result<Vec<u8>, ImapSyncError> {
+pub(crate) fn decode_hex(s: &str) -> Result<Vec<u8>, ImapSyncError> {
     if !s.len().is_multiple_of(2)
         || !s
             .bytes()
