@@ -20,7 +20,7 @@ fn db<T>(r: rusqlite::Result<T>) -> Result<T, ErrorCode> {
     r.map_err(|_| ErrorCode::InternalError)
 }
 fn hash(bytes: &[u8]) -> Result<[u8; 32], ErrorCode> {
-    hantong_platform::sha256(bytes).map_err(|_| ErrorCode::InternalError)
+    hantong_platform::sha256_storage_payload(bytes).map_err(|_| ErrorCode::InternalError)
 }
 fn now() -> Result<i64, ErrorCode> {
     db(crate::utc_millis())
@@ -281,6 +281,7 @@ fn read_row(c: &Connection, id: [u8; 32]) -> Result<Option<Row>, ErrorCode> {
         if let Some(result) = row.receipt.result() {
             let op =
                 read_operation(c, row.request.operation_id())?.ok_or(ErrorCode::InternalError)?;
+            crate::message_identities::validate_page(c, &op.page)?;
             let epoch = crate::uid_epochs::read(
                 c,
                 row.request.account_id(),

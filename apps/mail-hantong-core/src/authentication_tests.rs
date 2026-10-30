@@ -24,6 +24,16 @@ struct TestKeys {
     wrong_server: Option<ServerSigningKey>,
 }
 
+impl TestKeys {
+    fn new() -> Self {
+        Self {
+            client: Some(ClientSigningKey::create().unwrap()),
+            server: Some(ServerSigningKey::create(random_nonce().unwrap()).unwrap()),
+            wrong_server: Some(ServerSigningKey::create(random_nonce().unwrap()).unwrap()),
+        }
+    }
+}
+
 impl Drop for TestKeys {
     fn drop(&mut self) {
         if let Some(key) = self.client.take() {
@@ -38,14 +48,113 @@ impl Drop for TestKeys {
     }
 }
 
+// These tests use the same production pipe name. Acquire ownership before each
+// scenario's deadline so unrelated scenarios do not consume its time budget.
+static PIPE_TEST: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+async fn bind_fixture_pipe() -> LocalPipeServer {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(1);
+    loop {
+        match LocalPipeServer::bind() {
+            Ok(listener) => return listener,
+            // A prior runtime's IOCP cancellation may briefly retain the handle.
+            Err(ErrorCode::Conflict) if tokio::time::Instant::now() < deadline => {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            Err(code) => panic!("fixture pipe could not bind: {code:?}"),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+enum PipeScenario {
+    Policy,
+    Folders,
+    UidAppend,
+    UidReconcile,
+    UidRecovery,
+}
+
+async fn run_isolated_pipe_scenario(scenario: PipeScenario) {
+    let _owner = PIPE_TEST.lock().await;
+    tokio::time::timeout(Duration::from_secs(20), async {
+        let keys = TestKeys::new();
+        let client = keys.client.as_ref().unwrap();
+        let server = keys.server.as_ref().unwrap();
+        let instance = random_nonce().unwrap();
+        let mut listener = bind_fixture_pipe().await;
+        match scenario {
+            PipeScenario::Policy => {
+                read_policy_tests::run_policy_scenarios(&mut listener, client, server, instance)
+                    .await;
+            }
+            PipeScenario::Folders => {
+                folder_integration_tests::run_folder_scenarios(
+                    &mut listener,
+                    client,
+                    server,
+                    instance,
+                )
+                .await;
+            }
+            PipeScenario::UidAppend => {
+                uid_integration_tests::run_uid_scenarios(&mut listener, client, server, instance)
+                    .await;
+            }
+            PipeScenario::UidReconcile => {
+                uid_integration_tests::run_reconcile_scenarios(
+                    &mut listener,
+                    client,
+                    server,
+                    instance,
+                )
+                .await;
+            }
+            PipeScenario::UidRecovery => {
+                uid_integration_tests::run_recovery_scenarios(
+                    &mut listener,
+                    client,
+                    server,
+                    instance,
+                )
+                .await;
+            }
+        }
+    })
+    .await
+    .unwrap_or_else(|_| panic!("authenticated pipe scenario timed out: {scenario:?}"));
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn sec03_policy_is_enforced_over_the_authenticated_pipe() {
+    run_isolated_pipe_scenario(PipeScenario::Policy).await;
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn ext06_folders_are_observed_over_the_authenticated_pipe() {
+    run_isolated_pipe_scenario(PipeScenario::Folders).await;
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn sync02_uid_append_is_observed_over_the_authenticated_pipe() {
+    run_isolated_pipe_scenario(PipeScenario::UidAppend).await;
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn m204_uid_reconcile_is_observed_over_the_authenticated_pipe() {
+    run_isolated_pipe_scenario(PipeScenario::UidReconcile).await;
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn mail03_sync02_recovery_and_metadata_are_bound_over_the_authenticated_pipe() {
+    run_isolated_pipe_scenario(PipeScenario::UidRecovery).await;
+}
+
 #[tokio::test(flavor = "current_thread")]
 async fn m102_core_authentication_uses_real_pipe_and_consumes_one_tool_request() {
+    let _owner = PIPE_TEST.lock().await;
     tokio::time::timeout(Duration::from_secs(20), async {
-        let keys = TestKeys {
-            client: Some(ClientSigningKey::create().unwrap()),
-            server: Some(ServerSigningKey::create(random_nonce().unwrap()).unwrap()),
-            wrong_server: Some(ServerSigningKey::create(random_nonce().unwrap()).unwrap()),
-        };
+        let keys = TestKeys::new();
         let client_key = keys.client.as_ref().unwrap();
         let server_key = keys.server.as_ref().unwrap();
         let wrong_server = keys.wrong_server.as_ref().unwrap();
@@ -61,7 +170,7 @@ async fn m102_core_authentication_uses_real_pipe_and_consumes_one_tool_request()
         )
         .unwrap();
         let instance = random_nonce().unwrap();
-        let mut listener = LocalPipeServer::bind().unwrap();
+        let mut listener = bind_fixture_pipe().await;
 
         for scenario in ["readiness", "unauthenticated_mail", "unexpected_finish"] {
             let server_task = async {
@@ -312,17 +421,6 @@ async fn m102_core_authentication_uses_real_pipe_and_consumes_one_tool_request()
             };
             tokio::join!(server_task, client_task);
         }
-        read_policy_tests::run_policy_scenarios(&mut listener, client_key, server_key, instance)
-            .await;
-        folder_integration_tests::run_folder_scenarios(
-            &mut listener,
-            client_key,
-            server_key,
-            instance,
-        )
-        .await;
-        uid_integration_tests::run_uid_scenarios(&mut listener, client_key, server_key, instance)
-            .await;
         drop(listener);
         // Fatal local state failures must leave the serving loop with the
         // original stable code; reconnect cannot hide corruption from core.

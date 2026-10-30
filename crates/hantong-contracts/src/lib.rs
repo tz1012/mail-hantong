@@ -7,6 +7,7 @@ pub mod auth;
 pub mod client;
 pub mod folders;
 pub mod imap_setup;
+pub mod message_search;
 pub mod platform;
 pub mod registration;
 pub mod uid_inspection;

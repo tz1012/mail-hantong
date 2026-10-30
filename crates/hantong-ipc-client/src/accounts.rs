@@ -262,7 +262,7 @@ pub(crate) fn valid_timestamp(value: &str) -> bool {
 }
 
 /// Derived structs accept sequences too; this boundary permits only maps.
-struct Object<T>(T);
+pub(crate) struct Object<T>(pub(crate) T);
 impl<'de, T: Deserialize<'de>> Deserialize<'de> for Object<T> {
     fn deserialize<D: de::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         struct Visitor<T>(PhantomData<T>);

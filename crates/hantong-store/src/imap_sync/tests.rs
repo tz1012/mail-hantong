@@ -617,7 +617,7 @@ fn sync02_store_declared_metadata_missing_from_old_or_current_page_is_corruption
             Some(message(deleted_uid))
         );
         f.sql(&format!(
-            "DELETE FROM imap_uid_messages WHERE account_id='acct' AND uid={deleted_uid}"
+            "PRAGMA foreign_keys=OFF; DELETE FROM imap_uid_messages WHERE account_id='acct' AND uid={deleted_uid}; PRAGMA foreign_keys=ON;"
         ));
         assert_eq!(f.counts(), (3, 1, 3));
         let before = f.rows();

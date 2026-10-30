@@ -17,6 +17,7 @@ pub mod accounts;
 pub mod auth_wire;
 pub mod folders;
 pub mod imap_setup;
+pub mod message_search;
 pub mod profile;
 pub mod registration;
 pub mod uid_inspection;

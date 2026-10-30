@@ -110,6 +110,32 @@ fn recovery_params(request: &UidRecoveryRequest) -> Value {
     json!({"action":"recover","account_id":request.account_id(),"wire_hex":request.mailbox().wire_hex(),"encoding":request.mailbox().encoding().as_str(),"operation_id":request.operation_id(),"idempotency_key":request.idempotency_key(),"expected_catalog_generation":request.expected_catalog_generation(),"expected_cursor_version":request.expected_cursor_version(),"intent_hash":request.intent_hash()})
 }
 impl Harness<'_> {
+    async fn metadata_search(&mut self, filter: &str, limit: u32, cursor: Option<&str>) -> Value {
+        let raw = self
+            .rpc(
+                "mail.messages.search",
+                metadata_search_params("account_a", filter, limit, cursor),
+            )
+            .await;
+        use hantong_contracts::message_search::{
+            ImapMetadataFilter, ImapMetadataSearchCursor, ImapMetadataSearchRequest,
+        };
+        let request = ImapMetadataSearchRequest::new(
+            "account_a",
+            mailbox(),
+            Some(ImapMetadataFilter::parse(filter).unwrap()),
+            Some(limit),
+            cursor
+                .map(ImapMetadataSearchCursor::parse)
+                .transpose()
+                .unwrap(),
+        )
+        .unwrap();
+        hantong_ipc_client::message_search::parse_search_response(&raw, "uid-call", &request)
+            .unwrap()
+            .value()
+            .clone()
+    }
     async fn recover(&mut self, request: &UidRecoveryRequest) -> UidRecoveryReceipt {
         let raw = self.rpc("mail.sync.page", recovery_params(request)).await;
         hantong_ipc_client::uid_recovery::parse_recovery_receipt(&raw, "uid-call", request).unwrap()
@@ -133,12 +159,53 @@ impl Harness<'_> {
         .expect("bounded recovery terminal observation")
     }
 }
+fn metadata_search_params(account: &str, filter: &str, limit: u32, cursor: Option<&str>) -> Value {
+    json!({"mode":"imap_metadata","account_id":account,"wire_hex":"494e424f58","encoding":"modified_utf7","filter":filter,"limit":limit,"cursor":cursor})
+}
 pub(super) async fn run_scenarios(
     listener: &mut LocalPipeServer,
     client: &ClientSigningKey,
     server: &ServerSigningKey,
     instance: [u8; 32],
 ) {
+    // Existing L/F/U grants cannot read headers after upgrading the executable.
+    for grant in [
+        None,
+        Some(PolicyFixtureMutation::AllowFolders),
+        Some(PolicyFixtureMutation::AllowUidPage),
+    ] {
+        let fixture = PolicyStoreFixture::new(server, client.public_key().unwrap()).unwrap();
+        if let Some(grant) = grant {
+            fixture.mutate(grant).unwrap();
+        }
+        let store = fixture.open().unwrap();
+        let shared = Rc::new(Cell::new(None));
+        let (folder, _fw) = crate::folder_worker::coordinator_with_discovery_and_slot(
+            &store,
+            crate::folder_worker::NoDiscovery,
+            shared.clone(),
+        );
+        let (uid, _uw) = crate::uid_worker::coordinator_with_discovery(&store, NoProvider, shared);
+        let mut h = Harness {
+            listener,
+            client,
+            server,
+            instance,
+            store: &store,
+            folder: &folder,
+            uid: &uid,
+            registration: fixture.registration_id,
+            policy: hantong_policy::ReadPolicy::new(),
+        };
+        error(
+            &h.rpc(
+                "mail.messages.search",
+                metadata_search_params("account_a", "all", 16, None),
+            )
+            .await,
+            ErrorCode::ScopeDenied,
+        );
+    }
     // The existing folder grant does not gain the shared UID tool implicitly.
     {
         let fixture = PolicyStoreFixture::new(server, client.public_key().unwrap()).unwrap();
@@ -174,7 +241,17 @@ pub(super) async fn run_scenarios(
         error(&h.rpc("mail.sync.page",json!({"action":"inspect","account_id":"account_a","wire_hex":"494e424f58","encoding":"modified_utf7"})).await,ErrorCode::ScopeDenied);
     }
     let fixture = PolicyStoreFixture::new(server, client.public_key().unwrap()).unwrap();
-    fixture.mutate(PolicyFixtureMutation::AllowUidPage).unwrap();
+    fixture
+        .mutate(PolicyFixtureMutation::AllowMetadata)
+        .unwrap();
+    // This aggregate fixture exercises many independent signed requests; the
+    // production 60/minute policy is tested separately, including search.
+    fixture
+        .mutate(PolicyFixtureMutation::Limit {
+            read_only: true,
+            requests_per_minute: 600,
+        })
+        .unwrap();
     let store = fixture.open().unwrap();
     catalog(&store, 0);
     let active_validity = Rc::new(Cell::new(7));
@@ -218,6 +295,19 @@ pub(super) async fn run_scenarios(
     let name = ImapMailboxName::from_wire(b"INBOX", MailboxEncoding::ModifiedUtf7).unwrap();
     {
         let flow = async {
+            let empty_search = h.metadata_search("all", 16, None).await;
+            assert_eq!(empty_search["completeness"], "unavailable");
+            assert_eq!(empty_search["items"], json!([]));
+            assert_eq!(empty_search["untrusted_content"], json!([]));
+            assert!(empty_search["observed_at"].is_null());
+            error(
+                &h.rpc(
+                    "mail.messages.search",
+                    metadata_search_params("account_b", "all", 16, None),
+                )
+                .await,
+                ErrorCode::ScopeDenied,
+            );
             let unobserved = h.inspect().await;
             assert!(unobserved.observation().is_none());
             assert!(unobserved.binding_current());
@@ -233,6 +323,25 @@ pub(super) async fn run_scenarios(
             assert_eq!(shared.get(), None);
             error(&h.rpc("mail.sync.page",json!({"action":"inspect","account_id":"account_b","wire_hex":"494e424f58","encoding":"modified_utf7"})).await,ErrorCode::ScopeDenied);
             h.append_complete("recovery-old-page", 0).await;
+            let first_search = h.metadata_search("all", 1, None).await;
+            assert_eq!(first_search["items"][0]["uid"], 3);
+            assert_eq!(first_search["completeness"], "partial");
+            let old_search_cursor = first_search["next_cursor"].as_str().unwrap().to_owned();
+            let second_search = h.metadata_search("all", 1, Some(&old_search_cursor)).await;
+            assert_eq!(second_search["items"][0]["uid"], 1);
+            assert!(second_search["next_cursor"].is_null());
+            assert_eq!(second_search["completeness"], "partial");
+            let old_message_id = second_search["items"][0]["internal_message_id"].clone();
+            let header: Value = serde_json::from_str(
+                second_search["untrusted_content"][0]["content"]
+                    .as_str()
+                    .unwrap(),
+            )
+            .unwrap();
+            assert_eq!(
+                header["subject_hex"],
+                hantong_contracts::wire_hex::encode(b"epoch-7-uid-1")
+            );
             let old_inspection = h.inspect().await;
             let observed = old_inspection.observation().unwrap();
             assert_eq!(
@@ -265,6 +374,22 @@ pub(super) async fn run_scenarios(
             let old_done = h.reconcile_terminal(*old.execution_id()).await;
             assert!(old_done.result().unwrap().pass_complete());
             assert_eq!(reconcile_calls.get(), 1);
+            let observed_search = h.metadata_search("favorite", 16, None).await;
+            assert_eq!(observed_search["items"].as_array().unwrap().len(), 1);
+            assert_eq!(observed_search["items"][0]["uid"], 1);
+            assert_eq!(
+                observed_search["items"][0]["internal_message_id"],
+                old_message_id
+            );
+            assert_eq!(observed_search["items"][0]["is_favorite"], true);
+            error(
+                &h.rpc(
+                    "mail.messages.search",
+                    metadata_search_params("account_a", "all", 1, Some(&old_search_cursor)),
+                )
+                .await,
+                ErrorCode::CursorExpired,
+            );
             active_validity.set(9);
             let first_request = recovery_request("recovery-first", 1, 1);
             let first = h.recover(&first_request).await;
@@ -278,6 +403,10 @@ pub(super) async fn run_scenarios(
             assert_eq!(h.recover(&first_request).await.execution_id(), &id);
             // A local read keeps the already-owned network permit and never invokes a provider.
             assert_eq!(h.inspect().await, old_inspection);
+            assert_eq!(
+                h.metadata_search("favorite", 16, None).await,
+                observed_search
+            );
             assert_eq!(shared.get(), Some(id));
             assert_eq!(recovery_calls.get(), 1);
             assert_eq!(
@@ -354,6 +483,17 @@ pub(super) async fn run_scenarios(
                 (1, 1, 1)
             );
             assert_eq!(shared.get(), None);
+
+            let recovered_search = h.metadata_search("all", 16, None).await;
+            assert_eq!(recovered_search["items"].as_array().unwrap().len(), 2);
+            assert_eq!(recovered_search["items"][0]["uid"], 3);
+            assert_eq!(recovered_search["items"][1]["uid"], 1);
+            assert_ne!(
+                recovered_search["items"][1]["internal_message_id"],
+                old_message_id
+            );
+            assert_eq!(recovered_search["completeness"], "partial");
+            assert!(recovered_search["next_cursor"].is_null());
 
             let current = store
                 .load_imap_uid_cursor("account_a", &name)
@@ -506,12 +646,24 @@ pub(super) async fn run_scenarios(
             tokio::select!{_=&mut flow=>{},result=&mut run=>panic!("restarted recovery worker stopped: {result:?}")}
         }).await.expect("bounded signed-pipe recovery restart scenario");
     }
+    let mut search_counts = Vec::new();
     for audit in store.list_audit_page(None, 100).unwrap() {
         assert_eq!(
             audit.completion().is_none(),
             *audit.execution_id() == interrupted.get()
         );
+        if audit.tool() == hantong_contracts::audit::AuditTool::MessagesSearch {
+            let terminal = audit.completion().unwrap().terminal();
+            if terminal.is_success() {
+                search_counts.push(
+                    terminal
+                        .result_count()
+                        .expect("search success records emitted count"),
+                );
+            }
+        }
     }
+    assert!(search_counts.contains(&0) && search_counts.contains(&1) && search_counts.contains(&2));
     assert_eq!(
         store
             .load_imap_uid_cursor("account_a", &name)

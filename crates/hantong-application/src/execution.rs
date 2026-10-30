@@ -4,6 +4,7 @@ use hantong_contracts::{ErrorCode, audit::AuditTerminal};
 
 use crate::{AccountsListRequest, FolderRefreshAction, ToolRequest, UidPageAction};
 use hantong_contracts::folders::{FolderListRequest, FolderRefreshStatusRequest};
+use hantong_contracts::message_search::ImapMetadataSearchRequest;
 use hantong_contracts::uid_page::{UidCursorRequest, UidPageRequest, UidPageStatusRequest};
 use hantong_contracts::uid_reconcile::UidReconcileRequest;
 use hantong_contracts::uid_recovery::UidRecoveryRequest;
@@ -59,6 +60,12 @@ pub trait ExecutionContext {
         &mut self,
         request: &AccountsListRequest,
     ) -> Result<ReadResult<Self::Output>, ErrorCode>;
+    fn read_message_search(
+        &mut self,
+        _request: &ImapMetadataSearchRequest,
+    ) -> Result<ReadResult<Self::Output>, ErrorCode> {
+        Err(ErrorCode::CapabilityUnsupported)
+    }
     fn read_folders(
         &mut self,
         _request: &FolderListRequest,
@@ -158,6 +165,17 @@ pub fn execute_tool<C: ExecutionContext>(
             }
             Err(error) => finish_failure(context, audit_id, error),
         },
+        ToolRequest::MessagesSearch { request, .. } => {
+            match context.read_message_search(&request) {
+                Ok(result) => {
+                    let count = result.count();
+                    let value = result.value;
+                    finish_success(context, audit_id, count)?;
+                    Ok(value)
+                }
+                Err(error) => finish_failure(context, audit_id, error),
+            }
+        }
         ToolRequest::FoldersList { request, .. } => match context.read_folders(&request) {
             Ok(result) => {
                 let count = result.count();

@@ -170,7 +170,7 @@ fn push_string(bytes: &mut Vec<u8>, value: &str) {
 fn sha256(bytes: &[u8]) -> Result<[u8; 32], ErrorCode> {
     #[cfg(windows)]
     {
-        hantong_platform::sha256(bytes).map_err(|_| ErrorCode::InternalError)
+        hantong_platform::sha256_storage_payload(bytes).map_err(|_| ErrorCode::InternalError)
     }
     #[cfg(not(windows))]
     {

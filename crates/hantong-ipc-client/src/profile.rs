@@ -287,6 +287,44 @@ mod tests {
     }
 
     #[test]
+    fn cli15_metadata_scope_profile_is_canonical_and_keeps_old_bytes_and_grants() {
+        let legacy = hantong_contracts::auth::default_cli_legacy_tools();
+        let folder = hantong_contracts::auth::default_cli_folder_tools();
+        let uid = hantong_contracts::auth::default_cli_uid_tools();
+        let mut metadata = uid.clone();
+        metadata.insert(3, "mail.messages.search".into());
+        for tools in [legacy, folder, uid, metadata.clone()] {
+            let mut input = value();
+            input["account_ids"] = json!(["a", "b"]);
+            input["tool_ids"] = json!(tools);
+            let p = parse(&input).unwrap();
+            let bytes = p.to_json().unwrap();
+            assert_eq!(
+                ParsedClientProfile::from_json(&bytes)
+                    .unwrap()
+                    .to_json()
+                    .unwrap(),
+                bytes
+            );
+            assert_eq!(p.scope().tools(), tools);
+            assert_eq!(
+                p.scope().permits_account(
+                    p.scope().accounts().first().unwrap(),
+                    "mail.messages.search"
+                ),
+                tools == metadata
+            );
+            assert_eq!(serde_json::from_slice::<Value>(&bytes).unwrap(), input);
+        }
+        let mut input = value();
+        metadata.swap(3, 4);
+        input["tool_ids"] = json!(metadata);
+        invalid(&input);
+        input["tool_ids"] = json!(["mail.accounts.list", "mail.messages.search"]);
+        invalid(&input);
+    }
+
+    #[test]
     fn cli15_profile_roundtrip_accepts_only_canonical_folder_scope() {
         let mut input = value();
         input["tool_ids"] = json!([

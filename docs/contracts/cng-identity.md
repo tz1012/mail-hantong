@@ -23,3 +23,7 @@
 기본 CLI 등록 ID는 `SHA256("mail-hantong/registration-id/v1\0" || request_id[32])[0..16]`이다. 문자열은 위 ASCII 바이트와 마지막 NUL을 포함한다. request_id가 전부 0이면 INVALID_INPUT이고 결과 16 bytes가 전부 0이면 INTERNAL_ERROR다. 요청을 먼저 영속 저장하므로 키 생성 직후 중단돼도 등록 ID와 기존 client key selector를 다시 계산할 수 있다. 실제 개인 키는 여전히 CNG가 생성한다. 등록 ID·key selector는 공개 식별자이며 비밀·권한·승인 증거가 아니다.
 
 정확한 orphan 정리와 등록 링크 확인은 `client-registration.md`·`registration-store.md`를 따른다. namespace 전체 삭제·이름 추측·승인 없는 active 전환은 허용하지 않는다. 고정 시험 벡터: request_id가 0x01 32개이면 registration_id는 `39341cd37c2deeae8b293084b8a73cae`다.
+
+## 저장 payload의 독립 hash 상한
+
+인증 transcript·공개 식별자용 `sha256`은 기존32KiB 상한을 유지한다. canonical Store page/catalog JSON과 framing은 `sha256_storage_payload`로 최대8MiB+4096 bytes를 hash한다. 두 함수는 동일한 private CNG SHA-256 구현을 재사용하고 각 고정 상한을 초과하면 INVALID_INPUT이다. 입력 상한은 u32 변환 범위 안에 있으며 무제한 hash API나 서명 허용 확대를 추가하지 않는다. 작은 입력·기존 저장값의 SHA-256 결과는 동일하다. 저장 한도는 [메타데이터 검색 계약](imap-metadata-search.md)을 따른다. 이 primitive는 영속 CNG 키를 생성하지 않는다.

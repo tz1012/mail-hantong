@@ -126,7 +126,7 @@ fn ext04_v13_to_v14_preserves_observations_pending_jobs_and_initial_epoch() {
         store
             .with_connection(|c| c.pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0)))
             .unwrap(),
-        14
+        i64::from(CURRENT_SCHEMA_VERSION)
     );
     assert!(f.0.join("data/backup-before-v13.db").is_file());
 }
@@ -154,7 +154,7 @@ fn ext04_v13_to_v14_backfill_and_ddl_failure_roll_back_original() {
         connection: f.keyed(),
     };
     assert_eq!(
-        store.migrate_with_backup(13, 14, SCHEMA, |c| {
+        store.migrate_with_backup(13, 14, SCHEMA_V14, |c| {
             apply_v14_migration(c)?;
             c.execute_batch("CREATE TABLE unexpected_epoch_schema(value)")
         }),

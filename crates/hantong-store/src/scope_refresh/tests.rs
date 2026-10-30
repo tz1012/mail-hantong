@@ -141,6 +141,7 @@ fn independent_hash(r: &CliScopeRefresh) -> [u8; 32] {
         1 => b"mail-hantong.cli-scope-refresh.v1\0".to_vec(),
         2 => b"mail-hantong.cli-scope-refresh.v2\0".to_vec(),
         3 => b"mail-hantong.cli-scope-refresh.v3\0".to_vec(),
+        4 => b"mail-hantong.cli-scope-refresh.v4\0".to_vec(),
         _ => panic!("invalid fixture hash version"),
     };
     bytes.extend_from_slice(&r.refresh_id);
@@ -170,6 +171,9 @@ fn independent_hash(r: &CliScopeRefresh) -> [u8; 32] {
     }
     hantong_platform::sha256(&bytes).unwrap()
 }
+
+#[path = "metadata_tests.rs"]
+mod metadata_tests;
 fn shift(f: &Fixture, r: &CliScopeRefresh, delta: i64) -> CliScopeRefresh {
     let mut changed = r.clone();
     changed.created_at_utc_ms += delta;
@@ -190,9 +194,9 @@ fn shift(f: &Fixture, r: &CliScopeRefresh, delta: i64) -> CliScopeRefresh {
 }
 
 #[test]
-fn cli15_uid_scope_new_history_uses_v3_domain() {
+fn cli15_uid_scope_historical_v3_domain_stays_exact() {
     let f = Fixture::new();
-    let pending = f.create(90, &["b"]);
+    let pending = set_historical_hash(&f, f.create(90, &["b"]), 3);
     assert_eq!(pending.hash_version, 3);
     assert_eq!(pending.payload_hash(), &independent_hash(&pending));
     let mut previous = pending.clone();
@@ -290,7 +294,7 @@ fn cli15_uid_scope_v1_v2_pending_staged_and_active_history_remain_immutable() {
             if phase == ScopeRefreshPhase::Active {
                 let next =
                     f.create_scope(85, &["b"], hantong_contracts::auth::default_cli_uid_tools());
-                assert_eq!(next.hash_version, 3);
+                assert_eq!(next.hash_version, 4);
                 assert!(
                     f.store()
                         .with_connection(super::validate_history_v11)
@@ -1147,7 +1151,7 @@ fn cli15_v8_real_legacy_history_migrates_without_rehash_or_scope_change() {
                 &["b"],
                 hantong_contracts::auth::default_cli_folder_tools(),
             );
-            assert_eq!(next.hash_version, 3);
+            assert_eq!(next.hash_version, 4);
             let next = f.store().stage_cli_scope_refresh(&next).unwrap();
             f.store().activate_cli_scope_refresh(&next).unwrap();
             assert_eq!(
@@ -1169,7 +1173,7 @@ fn restore_v8_scope_schema(f: &Fixture) {
             assert_eq!(tx.query_row("SELECT count(*) FROM audit_starts",[],|r|r.get::<_,i64>(0))?,0);
             assert_eq!(tx.query_row("SELECT count(*) FROM folder_refresh_requests",[],|r|r.get::<_,i64>(0))?,0);
             assert_eq!(tx.query_row("SELECT (SELECT count(*) FROM imap_uid_messages)+(SELECT count(*) FROM imap_uid_cursors)+(SELECT count(*) FROM imap_uid_page_operations)",[],|r|r.get::<_,i64>(0))?,0);
-            tx.execute_batch("DROP TABLE imap_uid_reconcile_messages; DROP TABLE imap_uid_reconcile_heads; DROP TABLE imap_uid_reconcile_requests; DROP TABLE imap_uid_epochs; DROP TABLE imap_uid_recovery_requests; DROP TABLE imap_uid_page_requests; DROP TABLE imap_uid_messages; DROP TABLE imap_uid_cursors; DROP TABLE imap_uid_page_operations;")?;
+            tx.execute_batch("DROP TABLE imap_message_identities; DROP TABLE imap_uid_reconcile_messages; DROP TABLE imap_uid_reconcile_heads; DROP TABLE imap_uid_reconcile_requests; DROP TABLE imap_uid_epochs; DROP TABLE imap_uid_recovery_requests; DROP TABLE imap_uid_page_requests; DROP TABLE imap_uid_messages; DROP TABLE imap_uid_cursors; DROP TABLE imap_uid_page_operations;")?;
             tx.execute_batch("DROP TABLE folder_refresh_requests; DROP TABLE audit_terminals; DROP TABLE audit_start_accounts; DROP TABLE audit_starts;")?;
             let audit_start=schema.find("CREATE TABLE audit_starts (").unwrap();
             let audit_end=schema.find("-- Provider-neutral IMAP/SMTP").unwrap();

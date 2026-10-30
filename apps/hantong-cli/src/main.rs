@@ -13,6 +13,7 @@ use hantong_contracts::scope_refresh::{
 };
 use std::env;
 use std::io::{self, Write};
+mod search;
 mod sync;
 
 const EN_RESOURCES: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/resources/en.txt"));
@@ -56,6 +57,128 @@ fn json_escape(value: &str) -> String {
     escaped
 }
 
+/// Escapes untrusted raw header bytes for terminal output without decoding
+/// MIME or interpreting control sequences.
+fn escape_metadata_bytes(bytes: &[u8]) -> String {
+    let mut out = String::new();
+    let mut pos = 0;
+    while pos < bytes.len() {
+        let text = match std::str::from_utf8(&bytes[pos..]) {
+            Ok(v) => v,
+            Err(error) => {
+                let valid = error.valid_up_to();
+                if valid > 0 {
+                    for ch in std::str::from_utf8(&bytes[pos..pos + valid])
+                        .expect("valid UTF-8 prefix")
+                        .chars()
+                    {
+                        append_metadata_char(&mut out, ch);
+                    }
+                    pos += valid;
+                    continue;
+                }
+                out.push_str(&format!("\\x{:02X}", bytes[pos]));
+                pos += 1;
+                continue;
+            }
+        };
+        for ch in text.chars() {
+            append_metadata_char(&mut out, ch);
+            pos += ch.len_utf8();
+        }
+    }
+    out
+}
+
+fn append_metadata_char(out: &mut String, ch: char) {
+    let forbidden = ch == '\u{7f}'
+        || ch <= '\u{1f}'
+        || ('\u{80}'..='\u{9f}').contains(&ch)
+        || matches!(
+            ch,
+            '\u{00ad}'
+                | '\u{034f}'
+                | '\u{0600}'..='\u{0605}'
+                | '\u{061c}'
+                | '\u{06dd}'
+                | '\u{070f}'
+                | '\u{0890}'..='\u{0891}'
+                | '\u{08e2}'
+                | '\u{115f}'..='\u{1160}'
+                | '\u{17b4}'..='\u{17b5}'
+                | '\u{180b}'..='\u{180d}'
+                | '\u{180e}'
+                | '\u{200b}'..='\u{200f}'
+                | '\u{2028}'
+                | '\u{2029}'
+                | '\u{202a}'..='\u{202e}'
+                | '\u{2060}'..='\u{2064}'
+                | '\u{2065}'
+                | '\u{2066}'..='\u{2069}'
+                | '\u{206a}'..='\u{206f}'
+                | '\u{2800}'
+                | '\u{3164}'
+                | '\u{fe00}'..='\u{fe0f}'
+                | '\u{feff}'
+                | '\u{ffa0}'
+                | '\u{fff9}'..='\u{fffb}'
+                | '\u{110bd}'
+                | '\u{110cd}'
+                | '\u{13430}'..='\u{1343f}'
+                | '\u{1bca0}'..='\u{1bca3}'
+                | '\u{1d173}'..='\u{1d17a}'
+                | '\u{e0001}'
+                | '\u{e0020}'..='\u{e007f}'
+                | '\u{e0100}'..='\u{e01ef}'
+        );
+    if forbidden {
+        for byte in ch.to_string().as_bytes() {
+            out.push_str(&format!("\\x{byte:02X}"));
+        }
+    } else if ch == '\\' {
+        out.push_str("\\\\");
+    } else {
+        out.push(ch);
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn sec08_metadata_escape_covers_every_frozen_format_range() {
+    for point in [
+        0x34f, 0x115f, 0x1160, 0x17b4, 0x17b5, 0x180b, 0x180d, 0x2065, 0x2800, 0x3164, 0xffa0,
+        0xfff9, 0xfffb, 0x110bd, 0x110cd, 0x13430, 0x1343f, 0xe0001, 0xe0020, 0xe007f,
+    ] {
+        let ch = char::from_u32(point).unwrap();
+        let input = format!("a{ch}b");
+        let expected = format!(
+            "a{}b",
+            ch.to_string()
+                .as_bytes()
+                .iter()
+                .map(|byte| format!("\\x{byte:02X}"))
+                .collect::<String>()
+        );
+        assert_eq!(
+            escape_metadata_bytes(input.as_bytes()),
+            expected,
+            "U+{point:04X}"
+        );
+    }
+    for point in [
+        0x34e, 0x350, 0x115e, 0x1161, 0x17b3, 0x17b6, 0x180a, 0x180f, 0x2027, 0x202f, 0x205f,
+        0x2070, 0x2801, 0x3165, 0xff9f, 0xffa1, 0xfff8, 0xfffc, 0x110bc, 0x110be, 0x110cc, 0x110ce,
+        0x1342f, 0x13440, 0xe0000, 0xe0002, 0xe001f, 0xe0080,
+    ] {
+        let text = char::from_u32(point).unwrap().to_string();
+        assert_eq!(
+            escape_metadata_bytes(text.as_bytes()),
+            text,
+            "adjacent U+{point:04X}"
+        );
+    }
+}
+
 fn resource(lang: Lang, key: &str) -> &'static str {
     let table = match lang {
         Lang::En => EN_RESOURCES,
@@ -79,11 +202,12 @@ fn message(code: ErrorCode, lang: Lang) -> &'static str {
 
 fn help(lang: Lang) -> String {
     format!(
-        "mail-hantong / hantong\n{}\n{}\n{}\n{}\n{}\n{}",
+        "mail-hantong / hantong\n{}\n{}\n{}\n{}\n{}\n{}\n{}",
         resource(lang, "usage"),
         resource(lang, "commands"),
         resource(lang, "sync_recovery_help"),
         resource(lang, "sync_inspection_help"),
+        resource(lang, "message_search_help"),
         resource(lang, "protected"),
         resource(lang, "help_language")
     )
@@ -457,6 +581,7 @@ fn run_with_mail_actions(
             | "--idempotency-key"
             | "--wire-hex"
             | "--encoding"
+            | "--filter"
             | "--expected-catalog-generation"
             | "--expected-cursor-version"
             | "--execution-id" => {
@@ -498,7 +623,7 @@ fn run_with_mail_actions(
     if !folder_options.is_empty()
         && !matches!(
             command.first().map(String::as_str),
-            Some("folders" | "sync")
+            Some("folders" | "sync" | "search")
         )
     {
         return emit_error(ErrorCode::InvalidInput, lang, json);
@@ -521,6 +646,9 @@ fn run_with_mail_actions(
     }
     if command.first().is_some_and(|v| v == "sync") {
         return sync::run(&command, &folder_options, lang, json, &mut sync_action);
+    }
+    if command.first().is_some_and(|v| v == "search") {
+        return search::run(&command, &folder_options, lang, json);
     }
     if !folder_options.is_empty() || command.first().is_some_and(|v| v == "folders") {
         return run_folder_command(&command, &folder_options, lang, json, &mut folder_action);
@@ -979,6 +1107,29 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn metadata_header_escape_is_terminal_safe_and_preserves_invalid_bytes() {
+        assert_eq!(
+            super::escape_metadata_bytes(b"a\\b\r\n\x00\xff"),
+            "a\\\\b\\x0D\\x0A\\x00\\xFF"
+        );
+        assert_eq!(super::escape_metadata_bytes("홍길동".as_bytes()), "홍길동");
+        assert_eq!(
+            super::escape_metadata_bytes("a\u{202e}b\u{0085}c".as_bytes()),
+            "a\\xE2\\x80\\xAEb\\xC2\\x85c"
+        );
+        assert_eq!(
+            super::escape_metadata_bytes("\u{200b}\u{00ad}\u{fe0f}\u{e0100}".as_bytes()),
+            "\\xE2\\x80\\x8B\\xC2\\xAD\\xEF\\xB8\\x8F\\xF3\\xA0\\x84\\x80"
+        );
+    }
+
+    #[test]
+    fn search_help_has_english_default_and_korean_translation() {
+        assert_ne!(super::help(super::Lang::En), super::help(super::Lang::Ko));
+        assert!(super::help(super::Lang::En).contains("search reads"));
+        assert!(super::help(super::Lang::Ko).contains("search는"));
+    }
     use super::*;
     #[test]
     fn cli15_verify_calls_only_injected_authentication_and_never_prompts() {

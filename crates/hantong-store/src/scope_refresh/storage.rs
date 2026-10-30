@@ -3,10 +3,7 @@ use crate::{
     ClientKind, DEFAULT_CLI_LABEL, RegistrationRequestState, RegistrationState,
     registrations::{blob_column, read_registration_bare, read_request, text_column},
 };
-use hantong_contracts::auth::{
-    RequestedScope, default_cli_folder_tools, default_cli_legacy_tools,
-    is_supported_default_cli_toolset, is_supported_default_cli_toolset_transition,
-};
+use hantong_contracts::auth::{RequestedScope, is_supported_default_cli_toolset_transition};
 use rusqlite::{Connection, OptionalExtension, Row, Transaction, params};
 use std::collections::BTreeMap;
 
@@ -48,6 +45,7 @@ fn hash_payload(value: &CliScopeRefresh) -> Result<[u8; 32], ErrorCode> {
         1 => b"mail-hantong.cli-scope-refresh.v1\0".to_vec(),
         2 => b"mail-hantong.cli-scope-refresh.v2\0".to_vec(),
         3 => b"mail-hantong.cli-scope-refresh.v3\0".to_vec(),
+        4 => b"mail-hantong.cli-scope-refresh.v4\0".to_vec(),
         _ => return Err(ErrorCode::InternalError),
     };
     bytes.extend_from_slice(&value.refresh_id);
@@ -77,13 +75,49 @@ fn hash_payload(value: &CliScopeRefresh) -> Result<[u8; 32], ErrorCode> {
     }
     hantong_platform::sha256(&bytes).map_err(|_| ErrorCode::InternalError)
 }
-fn historical_toolset(tools: &[String], hash_version: u8) -> bool {
-    match hash_version {
-        1 => tools == default_cli_legacy_tools(),
-        2 => tools == default_cli_legacy_tools() || tools == default_cli_folder_tools(),
-        3 => is_supported_default_cli_toolset(tools),
-        _ => false,
+// Frozen historical ranks must not inherit future current-toolset changes.
+fn historical_rank(tools: &[String]) -> Option<u8> {
+    if tools == ["mail.accounts.list"] {
+        Some(0)
+    } else if tools
+        == [
+            "mail.accounts.list",
+            "mail.folders.list",
+            "mail.folders.refresh",
+        ]
+    {
+        Some(1)
+    } else if tools
+        == [
+            "mail.accounts.list",
+            "mail.folders.list",
+            "mail.folders.refresh",
+            "mail.sync.page",
+        ]
+    {
+        Some(2)
+    } else if tools
+        == [
+            "mail.accounts.list",
+            "mail.folders.list",
+            "mail.folders.refresh",
+            "mail.messages.search",
+            "mail.sync.page",
+        ]
+    {
+        Some(3)
+    } else {
+        None
     }
+}
+fn historical_toolset(tools: &[String], hash_version: u8) -> bool {
+    (1..=4).contains(&hash_version)
+        && historical_rank(tools).is_some_and(|rank| rank < hash_version)
+}
+fn historical_transition(old: &[String], target: &[String], hash_version: u8) -> bool {
+    historical_toolset(old, hash_version)
+        && historical_toolset(target, hash_version)
+        && historical_rank(old) <= historical_rank(target)
 }
 fn accounts_column(row: &Row<'_>, index: usize) -> rusqlite::Result<Vec<String>> {
     let values: Vec<String> = serde_json::from_str(text_column(row, index, 32768)?)
@@ -122,7 +156,7 @@ fn read_row(
     if !(1..=i64::from(maximum_hash_version)).contains(&hash_version)
         || !historical_toolset(&base_tools, hash_version as u8)
         || !historical_toolset(&target_tools, hash_version as u8)
-        || !is_supported_default_cli_toolset_transition(&base_tools, &target_tools)
+        || !historical_transition(&base_tools, &target_tools, hash_version as u8)
         || serde_json::to_string(&base_tools).map_err(|_| rusqlite::Error::InvalidQuery)?
             != text_column(row, 18, 1024)?
         || serde_json::to_string(&target_tools).map_err(|_| rusqlite::Error::InvalidQuery)?
@@ -197,7 +231,7 @@ fn read_row(
     Ok(value)
 }
 pub(super) fn context(connection: &Connection) -> Result<Option<Context>, ErrorCode> {
-    context_with_layout(connection, false, 3)
+    context_with_layout(connection, false, 4)
 }
 fn context_with_layout(
     connection: &Connection,
@@ -234,7 +268,7 @@ fn context_with_layout(
     if original.state != RegistrationRequestState::Approved
         || original.client_kind != ClientKind::Cli
         || original.display_label != DEFAULT_CLI_LABEL
-        || original.scope.tools() != default_cli_legacy_tools()
+        || !historical_toolset(original.scope.tools(), 1)
         || !historical_toolset(registration.scope.tools(), maximum_hash_version)
         || !registration.read_only
         || registration.requests_per_minute != 60
@@ -285,6 +319,13 @@ pub(super) fn validate_history_v8(connection: &Connection) -> rusqlite::Result<(
 /// Freezes v9-v11 semantics before a v12 schema migration.
 pub(super) fn validate_history_v11(connection: &Connection) -> rusqlite::Result<()> {
     context_with_layout(connection, false, 2)
+        .map(|_| ())
+        .map_err(|_| rusqlite::Error::InvalidQuery)
+}
+
+/// Freezes v12-v14 history before the metadata-scope schema migration.
+pub(super) fn validate_history_v14(connection: &Connection) -> rusqlite::Result<()> {
+    context_with_layout(connection, false, 3)
         .map(|_| ())
         .map_err(|_| rusqlite::Error::InvalidQuery)
 }
@@ -547,7 +588,7 @@ pub(super) fn create(
     }
     let mut value = CliScopeRefresh {
         refresh_id: id,
-        hash_version: 3,
+        hash_version: 4,
         client_public_key_hash: hantong_platform::sha256(&base.public_key)
             .map_err(|_| ErrorCode::InternalError)?,
         base_registration: base,

@@ -5,6 +5,7 @@ use std::{ffi::OsStr, os::windows::ffi::OsStrExt, ptr};
 use windows_sys::Win32::Security::Cryptography::*;
 
 const MAX_TRANSCRIPT: usize = 32 * 1024;
+pub const MAX_STORAGE_PAYLOAD: usize = 8 * 1024 * 1024 + 4096;
 const PUBLIC_BLOB_LEN: usize = 72;
 const SIGNATURE_LEN: usize = 64;
 const NTE_EXISTS_STATUS: i32 = windows_sys::Win32::Foundation::NTE_EXISTS;
@@ -125,7 +126,17 @@ pub fn random_nonce() -> Result<[u8; 32], ErrorCode> {
 
 /// SHA-256 using the Windows CNG primitive; input is bounded for IPC use.
 pub fn sha256(input: &[u8]) -> Result<[u8; 32], ErrorCode> {
-    if input.len() > MAX_TRANSCRIPT {
+    sha256_with_limit(input, MAX_TRANSCRIPT)
+}
+
+/// Hashes a bounded stored payload. This limit is intentionally larger than
+/// the transcript limit because stored metadata includes a bounded frame.
+pub fn sha256_storage_payload(input: &[u8]) -> Result<[u8; 32], ErrorCode> {
+    sha256_with_limit(input, MAX_STORAGE_PAYLOAD)
+}
+
+fn sha256_with_limit(input: &[u8], max_len: usize) -> Result<[u8; 32], ErrorCode> {
+    if input.len() > max_len {
         return Err(ErrorCode::InvalidInput);
     }
     let mut alg = ptr::null_mut();
@@ -789,6 +800,31 @@ mod tests {
                 0xf2, 0x00, 0x15, 0xad
             ]
         );
+    }
+
+    #[test]
+    fn storage_payload_hash_has_independent_eight_mib_frame_bound() {
+        assert_eq!(
+            sha256_storage_payload(&vec![0; MAX_STORAGE_PAYLOAD + 1]),
+            Err(ErrorCode::InvalidInput)
+        );
+        let payload = vec![0u8; MAX_STORAGE_PAYLOAD];
+        assert!(sha256_storage_payload(&payload).is_ok());
+        assert_eq!(sha256(b"abc"), sha256_storage_payload(b"abc"));
+        assert_eq!(
+            sha256(&vec![0; MAX_TRANSCRIPT + 1]),
+            Err(ErrorCode::InvalidInput)
+        );
+    }
+
+    #[test]
+    fn storage_payload_hash_handles_known_vector_above_transcript_limit() {
+        let payload: Vec<u8> = (0..65_536).map(|index| (index % 256) as u8).collect();
+        assert_eq!(
+            hantong_contracts::wire_hex::encode(&sha256_storage_payload(&payload).unwrap()),
+            "7daca2095d0438260fa849183dfc67faa459fdf4936e1bc91eec6b281b27e4c2"
+        );
+        assert_eq!(sha256(&payload), Err(ErrorCode::InvalidInput));
     }
 
     struct ServerTestKey {

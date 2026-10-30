@@ -14,6 +14,7 @@ pub enum AuditTool {
     FoldersList,
     FoldersRefresh,
     SyncPage,
+    MessagesSearch,
     SendExecute,
 }
 impl AuditTool {
@@ -23,6 +24,7 @@ impl AuditTool {
             Self::FoldersList => "mail.folders.list",
             Self::FoldersRefresh => "mail.folders.refresh",
             Self::SyncPage => "mail.sync.page",
+            Self::MessagesSearch => "mail.messages.search",
             Self::SendExecute => "mail.send.execute",
         }
     }
@@ -32,6 +34,7 @@ impl AuditTool {
             "mail.folders.list" => Ok(Self::FoldersList),
             "mail.folders.refresh" => Ok(Self::FoldersRefresh),
             "mail.sync.page" => Ok(Self::SyncPage),
+            "mail.messages.search" => Ok(Self::MessagesSearch),
             "mail.send.execute" => Ok(Self::SendExecute),
             _ => Err(ErrorCode::InvalidInput),
         }

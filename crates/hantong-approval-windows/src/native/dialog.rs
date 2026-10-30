@@ -233,6 +233,47 @@ mod tests {
     }
 
     #[test]
+    fn cli15_metadata_scope_dialog_requires_exact_header_disclosure_paint() {
+        let review = ScopeRefreshReview::new_with_tools(
+            [1; 32],
+            1,
+            [2; 16],
+            [3; 32],
+            4,
+            5,
+            [6; 32],
+            [7; 32],
+            vec!["acct_a".into()],
+            vec!["acct_a".into()],
+            hantong_contracts::auth::default_cli_uid_tools(),
+            hantong_contracts::auth::default_cli_metadata_tools(),
+            1000,
+            301000,
+        )
+        .unwrap();
+        for (language, disclosure) in [
+            (Language::En, "subject and sender headers"),
+            (Language::Ko, "제목·보낸 사람 헤더"),
+        ] {
+            let dialog = DialogReview::ScopeRefresh(review.clone());
+            assert!(dialog.summary(language).unwrap().contains(disclosure));
+            let mut model = ReviewModel::new(
+                dialog.clone(),
+                Presentation::new(Some(language), Theme::System, false, true, false),
+            );
+            assert_eq!(
+                model.begin_verification(2000, Duration::from_secs(1)),
+                ReviewIntent::None
+            );
+            assert!(model.paint_completed(&dialog));
+            assert_eq!(
+                model.begin_verification(2001, Duration::from_secs(1)),
+                ReviewIntent::RequestVerification
+            );
+        }
+    }
+
+    #[test]
     fn cli15_scope_refresh_dialog_paints_exact_bilingual_snapshot_before_verification() {
         let review = ScopeRefreshReview::new(
             [1; 32],

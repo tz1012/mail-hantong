@@ -9,9 +9,9 @@
 | 항목 | 상태와 근거 |
 | --- | --- |
 | 기준 자료 | 사용자 승인으로 채택한 [Markdown 기준 요건](../requirements/README.md): 요건 170개·1단계 P0 144개·문장별 AC ID 341개. 작업 카드 정의 151개는 보존한다. |
-| 현재 카드 | **M2-04 로컬 UID 관측 요약 자동 검증 완료**. `sync inspect`를 실제 인증 경로에 연결했다. 다음은 M2-05의 로컬 메일 메타데이터 목록과 명시 권한 갱신 계약이다. |
-| 최신 검증 | **1,150개 통과**(문서 29·빌드 도구 63·Rust 1,058). 전체 build/test/fmt/Clippy·의존/문서/추적 검사와 같은 소스의 Linux x86_64·macOS arm64 교차 Clippy 통과. 아래 UID 관측 요약 snapshot에 로그·hash가 있다. 실제 Mac 실행·전체 기능 완료를 뜻하지 않는다. |
-| 제품 구현 | Rust workspace·영/한 CLI·Windows 코어/IPC·DPAPI·SQLCipher·설정 검증·감사·기본 등록/프로필·권한이 있는 계정 목록 조회·IMAP/SMTP TLS/AUTH probe·CI/추적 도구 구현. 신규 IMAP 설정·명시 재개와 기본 CLI 계정 범위 갱신의 보호 확인·중단 복구를 연결했다. 발송은 차단하며 실제 메일 수신·전체 GUI·설치 패키지는 미완료다. |
+| 현재 카드 | **M2-05 로컬 메일 메타데이터 목록 연결·자동 검증 완료, 카드 전체는 진행 중**. 저장·목록·명시 권한 갱신을 병렬 구현하고 v15 migration과 실제 인증 pipe를 연결했다. 보안·계약은 **사람 검토 필요**다. |
+| 최신 검증 | **1,232개 통과**(문서 29·빌드 도구 63·Rust 1,140). 전체 build/test/fmt/Clippy·의존/문서/추적 검사와 같은 소스의 Linux x86_64·macOS arm64 교차 Clippy 통과. 아래 v15 최종 snapshot에 로그·hash가 있다. 실제 Mac 실행·전체 기능 완료를 뜻하지 않는다. |
+| 제품 구현 | Rust workspace·영/한 CLI·Windows 코어/인증 IPC·DPAPI·SQLCipher·설정 검증·정책/감사·보호 등록/계정 설정 구현. 폴더·UID 수집/대조/복구·관측 요약과 로컬 제목/발신자 목록을 연결했다. 본문·첨부·발송·전체 GUI·설치 패키지와 실제 제공자 검증은 미완료다. |
 | GitHub | 로컬 Git main 저장소를 초기화해 개발 기준선을 기록한다. 공개 저장소 주소·remote·릴리스·패키지 ID는 아직 없음. 빌드 산출물·실행 데이터·에이전트 상태는 제외한다. |
 | 새 사용자 요청 | 진행 상황을 이 문서에 누적하고, GitHub에서 명령어로 설치 및 개발을 시작할 수 있는 경로를 마련한다. 상세 범위는 [공개와 설치 계획](DISTRIBUTION.md)에 기록한다. |
 | 문서 관리 방식 | Markdown을 개발 기준으로 갱신하고 기존 Word는 보관한다. 최신 사용자 지시 “제작 완료까지 일단 묻지말고 진행해”에 따라 일반 구현 판단은 기록하며 연속 진행한다. |
@@ -19,7 +19,7 @@
 | 런타임 결정 | **코어·CLI Rust 확정** — 2026-10-29 사용자 선택, [ADR-001](../adr/ADR-001-core-runtime.md). 비교 실험에서 .NET은 프로세스 시작, Rust는 메모리에 유리했고 검색은 혼재했다. [실측 보고서](RUNTIME-BENCHMARK.md)는 보존하며 제품의 1초 목표는 아직 검증 전이다. |
 | Mac 지원 방향 | 사용자 승인으로 정식 후속 목표에 포함했다. Windows 우선 출시 후 Mac 코어·CLI·최소 승인 도우미부터 제공하고 전체 GUI를 후속 제공한다. 구체적인 단계·일정·패키지는 미정이며 현재 제품은 미구현이다. |
 | 공개 사용 정책 | **[LICENSE Version 1.0](../../LICENSE) 정식 채택** — 개인·회사 내부 업무용 사용, 수정본 비공개 및 원본·수정본 무료 재배포 허용. 프로그램 판매·유료 제공 금지. 고지 유지·수정 표시·보증과 책임 조항 포함. 저작권자는 **Andrew Cho**, 웹사이트 **https://tzt.kr**, 연락처 **andrew@tzt.kr**이다. [한국어 안내](LICENSING.md), [ADR-016](../adr/ADR-016-license.md). |
-| 다음 제품 작업 | 단일 IMAP 사서함의 저장된 메타데이터 목록을 canonical `mail.messages.search`/`hantong search`에 연결하는 계약을 검토한다. 현재 공개 UID 도구의 권한을 묵시적으로 확대하지 않는다. |
+| 다음 제품 작업 | 기존 진행 카드의 저장된 CLI 언어 읽기, 비민감 진단 집계, 최초 동기화 진행·일시정지 모델을 다음 병렬 후보로 정리했다. 각각 공개 경계 계약을 먼저 고정한다. 전체 카드의 선행 완료나 사람 검토 완료로 간주하지 않는다. |
 
 ## 기능별 현재 상태
 
@@ -32,9 +32,9 @@
 | IMAP 계정 설정·재개·계정 조회·CLI 범위 갱신 | 구현 및 연결 | 가짜 제공자/실제 로컬 pipe 자동 검사 통과, 실제 사용자 계정 시험 전 |
 | IMAP/SMTP 연결 진단 | 내부 전송 경계 구현 | in-memory TLS/DPAPI 시험 통과, 제공자 상호 운용성 시험 전 |
 | 폴더 탐색·특수 폴더 후보·저장 | CLI 목록/갱신·권한·Core worker·v10 원장 연결 | 실제 IPC/가짜 제공자 자동 검사 통과, GUI·사용자 역할 지정·실제 제공자 검증 후속 |
-| 실제 메일 동기화·목록·본문·첨부·검색 | 단일 UID 수집·기존 FLAGS/원격 부재 관측의 명시 CLI/감사/원자 저장 연결 | 격리 실제 pipe 시험 통과; UIDVALIDITY 복구·본문/첨부·검색·전체 사용자 흐름은 미완료 |
+| 실제 메일 동기화·목록·본문·첨부·검색 | 단일 UID 수집·FLAGS/부재 대조·UIDVALIDITY 복구·로컬 헤더 목록/필터의 명시 CLI·정책/감사·원자 저장 연결 | 격리 실제 pipe 시험 통과; 본문/첨부·FTS/서버 검색·전체 최초 동기화·실제 제공자/성능 검증은 후속 |
 | 작성·발송·예약 발송·임시보관·주소록 | 후속 구현 | 안전 승인/Outbox와 제품 종단 흐름 미완료 |
-| 태그·즐겨찾기·스팸·광고필터·자동화 | 후속 구현 | 1단계 필수 범위 유지, 제품 종단 흐름 미완료 |
+| 태그·즐겨찾기·스팸·광고필터·자동화 | 저장된 IMAP Flagged 기준 즐겨찾기 목록 필터 연결; 변경 기능은 후속 | 1단계 필수 범위 유지, 태그/즐겨찾기 변경·필터/자동화 제품 흐름 미완료 |
 | 전체 영/한 GUI·라이트/다크/시스템 테마 | 후속 구현 | native 확인 화면 외 메일 GUI 미완료 |
 | GitHub 공개·명령어 설치·macOS 제품 | 후속 구현 | 개발용 명령/CI와 교차 정적 검사 준비, 릴리스·실제 Mac 실행 전 |
 
@@ -927,3 +927,57 @@ Core 실제 인증 pipe 시험은 연결 전 CAPABILITY_UNSUPPORTED로 RED(`targ
 CNG 제품 키1개/names hash `3B692D49F1D08F7D3442806CF17694CDC02AF36B44839930FC18EB9C83CE9D4D` 유지. migration·새 의존성 없음. 실제 사용자 DB·Core·Hello·계정·메일과 외부 공개를 실행하지 않았다. **[사람 검토 필요]**, 전체 제품 AC 완료0개 유지.
 
 다음 목록의 표준 도구는 요건의 `mail.messages.search`/`hantong search`다. 첫 버전은 정확한 IMAP 사서함 하나의 로컬 metadata 조회로 한정하는 계약을 검토한다. 헤더 공개를 기존 U 권한에 몰래 추가하지 않고 새 명시 native 갱신 경로를 설계하며, 과거 v1~v3 scope 이력은 그대로 보존해야 한다. 이 계획은 새 기능의 구현 완료나 실제 권한 부여를 뜻하지 않는다.
+
+## 2026-10-30 로컬 메일 목록·명시 권한 v15 병렬 묶음 (자동 검증 완료 · 사람 검토 필요)
+
+직전 기준선 `f70cdf3`의 1,150개 전체 검사 통과를 보존한다. [메타데이터 검색 계약](../contracts/imap-metadata-search.md)과 [권한 갱신 v4 계약](../contracts/client-metadata-scope-refresh.md)을 작성하고 각각 다른 담당자가 검토했다. 선택된 source page·현재 epoch·cursor 결속, byte budget, 헤더 안전 표시, v1~v3 이력 고정, pending/staged 재개 구분을 보완했다. 일반 연속 개발 위임에 따른 구현이며 **[사람 검토 필요]**다.
+
+| 병렬 담당 | 소유 범위 | 검증 계획 |
+| --- | --- | --- |
+| Store | 불변 IMAP 위치 ID, 단일 snapshot 목록, 최신 관측·필터, cursor, 원자 mapping | mapping 누락/변조·원자 rollback·과거 epoch 격리·빈 page/byte budget 진행 |
+| 공개 경계 | 공통 DTO, Application, IPC strict parser, 영/한 CLI, schema | 입력/응답 결속·부분 결과·제어문자 escape·한 번 호출 |
+| 권한 | M 도구 집합, scope v4, native 표시/opaque proof, 기존 profile/history | 기존 L/F/U 보존·명시 확인·과거 pending/staged 그대로 재개·rollback |
+| root | v14 동결·v15 migration, 감사/정책, 실제 서명 pipe 연결 | 모든 과거 행/순환 FK/sequence 보존·권한 거부·조회 중 worker 무호출·전체 회귀 |
+
+먼저 migration이 아직 v14를 반환하는 행동 RED, 정책이 새 검색 도구를 인식하지 못하는 행동 RED를 확인했다(`target/metadata-v15-migration-red.log`, `target/metadata-policy-red.log`). Store mapping 신규4개와 권한 공개 경계3개도 각각 구현 전 행동 실패를 확인했다(`target/metadata-identity-red.log`, `target/metadata-scope-public-red.log`). 검색 DTO는 신규 모듈 부재의 compile RED를 확인했으며 행동 검증과 구분한다. 현재 v15 migration의 빈 DB DDL 일치/FK 정적 점검은 통과했지만 실제 SQLCipher 데이터 이전·전체 연결 검증은 진행 중이다.
+
+기존 공통 오류·response schema, 최초 L 등록, 과거 payload/hash bytes를 유지한다. 전체 제품 완성이나 M2-05 전체 카드 완료로 기록하지 않는다. 본문/첨부·전체 GUI·실제 제공자·성능 목표·공개 설치는 후속 검증이 남아 있다.
+
+v15 SQLCipher migration6개가 통과했다. 기존 모든 표의 행/JSON/hash, 두 UID epoch와 양쪽 reconcile cycle, 성공·미완료 recovery 작업, audit sequence high-water/부재를 보존한다. ABORT/IGNORE/삽입 후 ID 변조 및 최종 DDL 실패를 주입해 원본 rollback을 확인했다. 권한 공개 회귀214개·Store scope33개·Core scope11개, Application63개(신규7개)도 통과했다. 각 수치는 중복 경계를 포함하므로 더해 전체 검사 수로 표시하지 않는다.
+
+큰 header 시험은 기존 Platform hash의32KiB 입력 제한으로 저장 자체가 실패하는 경계 오류를 찾았다. 인증 transcript는 기존 제한을 유지하고 Store payload용8MiB+4096 해시 경로를 추가했다. 동일 SHA-256 결과·독립64KiB 벡터·최대/초과 경계의 Platform 시험과 실제 큰 header 저장/페이지 예산 시험이 통과했다. 새 의존성은 없다.
+
+IPC strict decoder는 원본 JSON의 duplicate/missing/unknown/null/array 대체, 구조 item·account 복제·header canonical hex/NIL·timestamp·오류 envelope·실제 byte cap을 검증한다. 신규4개 행동 RED 후 확장8개 GREEN(`target/metadata-client-{red,final-green}.log`)이다. 다른 담당자의 IPC/Contracts 검토는 CLEAR다.
+
+실제 서명 pipe 통합은 미연결 시 CAPABILITY_UNSUPPORTED RED 후 단일 Store API+renderer 연결로 GREEN14.63초를 확인했다(`target/metadata-core-{red,green}.log`, 기존20초 제한 유지). L/F/U에서 header 조회 거부, M의 미관측/페이지/필터, 관측 변경 cursor 만료, UIDVALIDITY 복구 후 ID 격리, 네트워크 slot 무변경과 emitted count 감사 완료를 확인한다. 이는 통합 scenario1개 실행이며 Core 전체 회귀 완료와 구분한다.
+
+교차 검토의 CLI2건은 누락된 Unicode 범위와 다음 cursor/부분·미관측·stale 표시였다. 두 건 모두 행동 RED 후 수정해 CLI44개 GREEN(`target/metadata-cli-review-{red,green}.log`), 재검토 CLEAR다. Scope/native/profile/Application 독립 검토도 CLEAR다. Store 손상 이력 거부 추가 보완과 전체 회귀/Clippy·교차 컴파일은 진행 중이며 최종 소스 동결 전이다.
+
+### v15 최종 교차 검토와 통합 시험 분리
+
+Store 전체361개(단위358·통합3)가 통과했다(`target/metadata-store-full-green.log`). 검색17개·identity9개·v15 migration6개를 포함하며 중복 합산하지 않는다. cursor가 없는 초기 append의 cv0 admitted/running/failed와 독립 audit는 허용하고, 과거 성공·후속 append·recovery·reconcile orphan은 손상으로 거부한다. 성공 reconcile replay/receipt에서도 누락된 identity mapping을 거부한다. 다른 담당자의 최종 Store 검토와 저장 payload hash cap 검토는 모두 CLEAR다.
+
+최초 전체 검사에서는 실제 인증 pipe 통합 하나가 합산20초 제한을 넘겼다(`target/metadata-full-check.log`). 계측 실행에서는 policy까지4.60초, folder까지6.15초, reconcile2.78초, recovery/metadata5.25초, 전체16.24초였다(`target/metadata-core-timing.log`). 서로 독립적인 Store·provider 시나리오가 인증 시험 하나의 타이머를 공유한 구조를 확인했다. 인증·정책·폴더·append·reconcile·recovery/metadata를 여섯 독립 시험으로 분리하고 각각 기존20초 제한과 내부2/3/10/15초 제한, 모든 assertion·실제 서명 RPC를 보존했다. 고정 pipe 이름은 시험 전용 async mutex로 직렬화하며 잠금 대기는 시나리오 시간에 포함하지 않는다. 이전 IOCP handle 정리의 bind Conflict만 기존 방식대로1초 이내 재시도하며 시험 본문은 재시도하지 않는다. 제품 코드·제품 timeout은 바꾸지 않았다.
+
+임시 계측을 제거한 Core 전체70개(단위68·lifecycle2)가 통과했다(`target/metadata-core-isolated-green.log`, 단위15.02초). 검토 담당자가 기존 모든 실행 경로와 실패 시 listener/key/Store 정리를 재검토해 CLEAR를 보고했다. 같은 수정 소스로 전체 검사와 Linux/macOS 교차 검사를 다시 실행하며 최초 실패 로그도 보존한다.
+
+### 다음 병렬 묶음의 범위 검토
+
+현재 M2-04·05는 부분 구현 상태다. M2-06~09의 선행 완료나 ADR-005 채택을 만들어내지 않고, 기존 진행 카드의 남은 범위를 먼저 준비한다. 다음 후보는 아래와 같으며 현재 묶음의 완료 항목과 구분한다.
+
+| 담당 후보 | 기존 카드의 제한된 후속 범위 | 먼저 고정할 계약과 검증 |
+| --- | --- | --- |
+| A | M1-05·12 저장된 CLI 언어 읽기 | 명시 --lang → 저장값 → 영어 우선순위, 인증된 최소 표시설정 조회·미등록/미기동 fallback; CLI의 DB 직접 접근·별도 설정 파일 금지 |
+| B | M1-10 비민감 진단 집계 | 집계 기간·상한·등록 소유 범위·고정 상태 집합; 계정/제목/주소/경로 미노출, 같은 snapshot의 bytes 일치, provider/queue 호출0 |
+| C | M2-05 최초 동기화 진행·일시정지 모델 | 목표 UID 상한·pause/resume·재시작·예산·세대 무효화; sparse UID를 메일 건수로 표시하지 않고 암묵적 재개/자동 page loop 금지 |
+| root | 계약·공유 모듈·Core/정책/감사 통합 | 신규 모듈 중심 파일 소유권 배정, 작성자와 다른 교차 검토, 실제 signed pipe와 전체 회귀 |
+
+이 표는 다음 계약/구현 준비 계획이다. 일반 설정 쓰기, 전체 FTS 검색, IDLE, 본문/첨부 또는 제품 활성화 완료를 뜻하지 않는다. 실제 사람 보안 검토·제공자 상호 운용성·성능/GUI/배포 검증은 계속 남는다.
+
+### 로컬 메일 목록 v15 최종 자동 검증 snapshot
+
+`scripts/check_all.py` 종료 코드 **0**: **1,232개**(문서29·빌드 도구63·Rust1,140). build/test/fmt/Clippy·아키텍처·요건/문서/추적 검사 모두 통과했다. 로그 `target/metadata-full-check-green.log`, SHA-256 `1CB48A4D5AC31441E6AFB868316C0874C6D793187D5D0DA564396AD534A7BF9A`, source hash `a95541550f3a1108fa277486d6c0e81595914cba7b2c1063e29519f884526448`. 이 전체 실행의 Core 단위68개는21.39초에 통과했으며 기능별20초·기존 내부 제한을 유지했다. lifecycle2개도 통과했다. 검사 수 증가는 신규 검증과 기존 독립 시나리오5개의 분리를 함께 포함한다.
+
+같은 소스의 Linux x86_64/macOS arm64 workspace all-target Clippy 종료 코드0이다(`target/metadata-linux-check-green.log`, `target/metadata-macos-check-green.log`). 실제 Mac 실행 검증은 아니다. Windows CNG 제품 키1개/names hash `3B692D49F1D08F7D3442806CF17694CDC02AF36B44839930FC18EB9C83CE9D4D`를 유지했다.
+
+이번 변경은 `hantong search`의 영/한·JSON·안전한 원시 헤더 표시, M 권한의 명시 갱신, 현재 UID namespace의 로컬 목록/미읽음/즐겨찾기 필터, 엄격한 페이지 cursor, v15 identity mapping과 이전·rollback 검증이다. 실제 사용자 DB·Core·Hello·계정·메일이나 외부 공개는 실행하지 않았다. 새 의존성은 없다. **[사람 검토 필요]**이며, M2-05 전체 최초 동기화·성능·본문 지연 다운로드와 제품 전체 AC 완료0개 상태는 유지한다. 위 다음 병렬 묶음 표는 후속 계획이다.

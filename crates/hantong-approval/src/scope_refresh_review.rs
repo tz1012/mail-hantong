@@ -229,6 +229,14 @@ impl ScopeRefreshReview {
             summary.push_str("\r\n");
             summary.push_str(t(TextKey::ScopeRefreshUidPagePermission));
         }
+        if self
+            .target_tool_ids
+            .iter()
+            .any(|tool| tool == "mail.messages.search")
+        {
+            summary.push_str("\r\n");
+            summary.push_str(t(TextKey::ScopeRefreshMetadataPermission));
+        }
         summary
     }
 }
@@ -248,6 +256,73 @@ fn valid_account_ids(values: &[String]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cli15_metadata_scope_review_discloses_cached_headers_without_widening_uid_text() {
+        let uid = hantong_contracts::auth::default_cli_uid_tools();
+        let mut metadata = uid.clone();
+        metadata.insert(3, "mail.messages.search".into());
+        let build = |old, target| {
+            ScopeRefreshReview::new_with_tools(
+                [1; 32],
+                1,
+                [2; 16],
+                [3; 32],
+                4,
+                5,
+                [6; 32],
+                [7; 32],
+                vec!["acct".into()],
+                vec!["acct".into()],
+                old,
+                target,
+                1,
+                300001,
+            )
+        };
+        let review = build(uid.clone(), metadata.clone()).unwrap();
+        for (language, terms) in [
+            (
+                Language::En,
+                [
+                    "local cache",
+                    "subject",
+                    "sender",
+                    "body",
+                    "server search",
+                    "complete",
+                ],
+            ),
+            (
+                Language::Ko,
+                [
+                    "로컬 캐시",
+                    "제목",
+                    "보낸 사람",
+                    "본문",
+                    "서버 검색",
+                    "전체",
+                ],
+            ),
+        ] {
+            let summary = review.summary(language);
+            for term in terms {
+                assert!(summary.contains(term), "missing {term}");
+            }
+            assert!(summary.contains("mail.messages.search"));
+            let old = build(
+                hantong_contracts::auth::default_cli_folder_tools(),
+                uid.clone(),
+            )
+            .unwrap();
+            assert!(!old.summary(language).contains("mail.messages.search"));
+        }
+        assert_eq!(build(metadata.clone(), uid), Err(ErrorCode::InvalidInput));
+        assert_eq!(
+            build(metadata.clone(), metadata),
+            Err(ErrorCode::InvalidInput)
+        );
+    }
 
     #[test]
     fn cli15_uid_scope_review_explains_exact_tool_only_upgrade_in_both_languages() {

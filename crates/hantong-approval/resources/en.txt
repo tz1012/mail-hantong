@@ -49,3 +49,4 @@ scope_refresh_footer=Verification alone does not activate the new scope. Core mu
 scope_refresh_current_tools=Current allowed tools
 scope_refresh_target_tools=New allowed tools
 scope_refresh_uid_page_permission=mail.sync.page allows reading one metadata page or first-page recovery after mailbox identity changes, preserving existing records. It does not send or change server mail.
+scope_refresh_metadata_permission=mail.messages.search exposes metadata already in the local cache, including subject and sender headers, to this registered client. It does not read the body, perform server search, send, or change mail. Results cover stored data and do not guarantee a complete mailbox or its current server state.

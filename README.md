@@ -81,3 +81,14 @@ cargo run -p hantong-cli -- sync recover-status --account ACCOUNT --execution-id
 ```
 
 위 계정·HEX·encoding·버전은 실제 조회 값으로 바꾸는 예시입니다. `inspect`는 저장된 UID 범위·해당 페이지의 관측 상한·로컬 저장 시각을 조회합니다. 미관측과 관측된 빈 메일함을 구분하며, UID 범위는 메일 건수나 현재 서버의 최신 상태를 뜻하지 않습니다. 기존 프로필에 새 권한이 없으면 명시 `clients refresh`와 보호 확인이 필요합니다. 한 번에 UID 폭 최대64를 관측하며 중복 요청은 기존 receipt만 반환합니다. `reconcile`은 이미 저장한 한 페이지의 FLAGS와 원격 부재 관측을 별도로 기록하고 원본 메일은 보존합니다. 다음 페이지도 새 명시 요청으로 진행하며, pass 완료는 시작 때 고정한 기존 페이지 묶음의 관측 완료만 뜻합니다. 종료 후 미완료 작업은 자동 재실행하지 않습니다. UIDVALIDITY가 바뀌면 `recover`로 새 식별 체계의 첫 페이지를 명시 수집합니다. 기존 원본·관측·작업 이력은 보존하고 cursor version은 계속 증가합니다. 복구 성공은 전체 mailbox 수집 완료가 아닙니다. 설정/세대/cursor 충돌은 무반영 실패하며 자동 reset하지 않습니다. 본문·첨부·전체 mailbox 목록과 실제 제공자 상호 운용성은 후속 구현/검증입니다. [공개 계약](docs/contracts/imap-uid-tools.md), [상태 대조 계약](docs/contracts/imap-uid-reconcile.md), [복구 계약](docs/contracts/imap-uid-recovery.md), [관측 요약 계약](docs/contracts/imap-uid-inspection.md), [진행 기록](docs/latest/PROGRESS.md)에 현재 증거와 남은 범위를 기록합니다.
+
+저장된 메일의 제목·발신자는 로컬 메타데이터 조회로 확인합니다. 처음 등록한 CLI나 기존 폴더/UID 권한은 헤더를 읽을 수 없습니다. 사용자가 `clients refresh`의 보호 확인에서 메타데이터 공개 범위를 명시적으로 허용한 뒤 사용할 수 있습니다.
+
+```powershell
+cargo run -p hantong-cli -- search --account ACCOUNT --wire-hex HEX --encoding utf8 --limit 16
+cargo run -p hantong-cli -- search --account ACCOUNT --wire-hex HEX --encoding utf8 --filter unread --lang ko
+cargo run -p hantong-cli -- search --account ACCOUNT --wire-hex HEX --encoding utf8 --filter favorite --json
+cargo run -p hantong-cli -- search --account ACCOUNT --wire-hex HEX --encoding utf8 --limit 16 --cursor CURSOR
+```
+
+한 요청은 현재 UID namespace의 저장된 source 한 페이지를 UID 내림차순으로 조회합니다. 표시된 다음 cursor는 같은 계정·mailbox·filter·limit에 사용하며 5분 뒤나 저장 상태가 바뀌면 만료됩니다. 빈 결과에도 다음 cursor가 있을 수 있습니다. 결과는 로컬의 부분 관측이며 마지막 페이지도 서버 전체 결과를 의미하지 않습니다. `search`는 네트워크 동기화나 자동 다음 페이지 요청을 실행하지 않습니다. 제목·주소는 원시 헤더의 안전 표시이고 MIME encoded-word 해석은 후속 범위입니다. [검색 계약](docs/contracts/imap-metadata-search.md)과 [명시 권한 계약](docs/contracts/client-metadata-scope-refresh.md)에 상세 경계가 있습니다.

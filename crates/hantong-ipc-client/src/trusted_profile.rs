@@ -269,6 +269,39 @@ mod tests {
     }
 
     #[test]
+    fn cli15_metadata_scope_trusted_profile_preserves_exact_requested_scope() {
+        let id = id();
+        let client = OwnedKey::registered(id);
+        let server = OwnedKey::random();
+        let scope = RequestedScope::new(
+            vec!["account_a".into()],
+            hantong_contracts::auth::default_cli_metadata_tools(),
+        )
+        .unwrap();
+        let profile = ParsedClientProfile::new_with_scope(
+            id,
+            client_key_id_for_registration(id).unwrap(),
+            client.key().public_key().unwrap(),
+            server.key().public_key().unwrap(),
+            4,
+            scope.clone(),
+        )
+        .unwrap();
+        let pending = prepare_profile(&profile, 1000).unwrap();
+        assert_eq!(pending.requested_scope(), &scope);
+        assert!(
+            pending
+                .requested_scope()
+                .permits_account("account_a", "mail.messages.search")
+        );
+        assert!(
+            !pending
+                .requested_scope()
+                .permits_account("account_b", "mail.messages.search")
+        );
+    }
+
+    #[test]
     fn cli07_trusted_profile_rejects_selector_public_key_and_curve_mismatches() {
         let id = id();
         let client = OwnedKey::registered(id);

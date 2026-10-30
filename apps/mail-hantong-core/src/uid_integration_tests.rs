@@ -452,7 +452,14 @@ pub(super) async fn run_uid_scenarios(
             assert!(audit.completion().is_some())
         }
     }
-    run_reconcile_scenarios(listener, client, server, instance).await;
+}
+
+pub(super) async fn run_recovery_scenarios(
+    listener: &mut LocalPipeServer,
+    client: &ClientSigningKey,
+    server: &ServerSigningKey,
+    instance: [u8; 32],
+) {
     recovery::run_scenarios(listener, client, server, instance).await;
 }
 
@@ -557,7 +564,7 @@ fn reconcile_request(id: &str, generation: u64, version: u64) -> UidReconcileReq
     )
     .unwrap()
 }
-async fn run_reconcile_scenarios(
+pub(super) async fn run_reconcile_scenarios(
     listener: &mut LocalPipeServer,
     client: &ClientSigningKey,
     server: &ServerSigningKey,

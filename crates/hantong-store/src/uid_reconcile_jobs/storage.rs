@@ -19,7 +19,7 @@ fn db<T>(r: rusqlite::Result<T>) -> Result<T, ErrorCode> {
     r.map_err(|_| ErrorCode::InternalError)
 }
 fn hash(bytes: &[u8]) -> Result<[u8; 32], ErrorCode> {
-    hantong_platform::sha256(bytes).map_err(|_| ErrorCode::InternalError)
+    hantong_platform::sha256_storage_payload(bytes).map_err(|_| ErrorCode::InternalError)
 }
 fn now() -> Result<i64, ErrorCode> {
     db(crate::utc_millis())
@@ -200,10 +200,11 @@ fn sources(
 }
 fn raw_head(
     c: &Connection,
-    request: &UidReconcileRequest,
+    account: &str,
+    identity: &UidMailboxIdentity,
     validity: u32,
 ) -> Result<Option<Head>, ErrorCode> {
-    let raw=db(c.query_row("SELECT generation,version,frozen_cursor_version,last_source_cursor_version,phase,uid_validity,endpoint_version,endpoint_hash,updated_at_utc_ms,last_execution_id,epoch_first_cursor_version FROM imap_uid_reconcile_heads WHERE account_id=?1 AND mailbox_key=?2 AND mailbox_encoding=?3 AND uid_validity=?4",params![request.account_id(),request.mailbox().wire_hex(),request.mailbox().encoding().as_str(),i64::from(validity)],|r|Ok(([r.get::<_,i64>(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(5)?,r.get(6)?,r.get(10)?],text_column(r,4,8)?.to_owned(),blob_column::<32>(r,7)?,r.get::<_,i64>(8)?,optional_hash(r,9)?))).optional())?;
+    let raw=db(c.query_row("SELECT generation,version,frozen_cursor_version,last_source_cursor_version,phase,uid_validity,endpoint_version,endpoint_hash,updated_at_utc_ms,last_execution_id,epoch_first_cursor_version FROM imap_uid_reconcile_heads WHERE account_id=?1 AND mailbox_key=?2 AND mailbox_encoding=?3 AND uid_validity=?4",params![account,identity.wire_hex(),identity.encoding().as_str(),i64::from(validity)],|r|Ok(([r.get::<_,i64>(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(5)?,r.get(6)?,r.get(10)?],text_column(r,4,8)?.to_owned(),blob_column::<32>(r,7)?,r.get::<_,i64>(8)?,optional_hash(r,9)?))).optional())?;
     let Some((n, phase, eh, at, id)) = raw else {
         return Ok(None);
     };
@@ -244,12 +245,20 @@ fn read_head(
     request: &UidReconcileRequest,
     validity: u32,
 ) -> Result<Option<Head>, ErrorCode> {
-    let Some(head) = raw_head(c, request, validity)? else {
+    read_head_for(c, request.account_id(), request.mailbox(), validity)
+}
+fn read_head_for(
+    c: &Connection,
+    account: &str,
+    identity: &UidMailboxIdentity,
+    validity: u32,
+) -> Result<Option<Head>, ErrorCode> {
+    let Some(head) = raw_head(c, account, identity, validity)? else {
         return Ok(None);
     };
-    let name = mailbox(request.mailbox())?;
-    let epoch = crate::uid_epochs::read(c, request.account_id(), &name, validity)?
-        .ok_or(ErrorCode::InternalError)?;
+    let name = mailbox(identity)?;
+    let epoch =
+        crate::uid_epochs::read(c, account, &name, validity)?.ok_or(ErrorCode::InternalError)?;
     let last = crate::uid_epochs::boundary_last(c, &epoch)?;
     if epoch.first != head.epoch_first
         || head.ceiling > last.receipt.cursor_version()
@@ -261,8 +270,8 @@ fn read_head(
     if let Some(id) = head.last_id {
         let row = read_row_core(c, id)?.ok_or(ErrorCode::InternalError)?;
         let p = row.result.as_ref().ok_or(ErrorCode::InternalError)?;
-        if row.request.account_id() != request.account_id()
-            || row.request.mailbox() != request.mailbox()
+        if row.request.account_id() != account
+            || row.request.mailbox() != identity
             || row.generation != head.generation
             || row.head_version.checked_add(1) != Some(head.version)
             || row.ceiling != head.ceiling
@@ -277,7 +286,7 @@ fn read_head(
         }
         validate_latest_overlay(c, &row)?;
     } else {
-        let count:i64=db(c.query_row("SELECT count(*) FROM imap_uid_reconcile_requests WHERE account_id=?1 AND mailbox_key=?2 AND mailbox_encoding=?3 AND generation=?4 AND head_version=?5 AND uid_validity=?6",params![request.account_id(),request.mailbox().wire_hex(),request.mailbox().encoding().as_str(),as_i64(head.generation)?,as_i64(head.version)?,i64::from(validity)],|r|r.get(0)))?;
+        let count:i64=db(c.query_row("SELECT count(*) FROM imap_uid_reconcile_requests WHERE account_id=?1 AND mailbox_key=?2 AND mailbox_encoding=?3 AND generation=?4 AND head_version=?5 AND uid_validity=?6",params![account,identity.wire_hex(),identity.encoding().as_str(),as_i64(head.generation)?,as_i64(head.version)?,i64::from(validity)],|r|r.get(0)))?;
         if count == 0 {
             return Err(ErrorCode::InternalError);
         }
@@ -286,6 +295,13 @@ fn read_head(
 }
 
 fn read_row_core(c: &Connection, id: [u8; 32]) -> Result<Option<Row>, ErrorCode> {
+    read_row_with_source(c, id, None)
+}
+fn read_row_with_source(
+    c: &Connection,
+    id: [u8; 32],
+    supplied: Option<Operation>,
+) -> Result<Option<Row>, ErrorCode> {
     let raw=db(c.query_row("SELECT account_id,operation_id,idempotency_key,mailbox_key,mailbox_encoding,intent_hash,expected_catalog_generation,expected_cursor_version,bound_account_version,bound_endpoint_version,uid_validity,minimum_uid_next,generation,head_version,frozen_cursor_version,source_cursor_version,after_uid,through_uid,bound_endpoint_hash,source_operation_id,source_page_hash,state,admitted_at_utc_ms,started_at_utc_ms,completed_at_utc_ms,result_json,result_hash,error_code FROM imap_uid_reconcile_requests WHERE execution_id=?1",[id.as_slice()],|r|{
         let mut n=[0i64;12];for (i,v) in n.iter_mut().take(12).enumerate(){*v=r.get(i+6)?;}
         Ok(Raw{account:text_column(r,0,128)?.into(),op:text_column(r,1,128)?.into(),key:text_column(r,2,128)?.into(),mailbox:text_column(r,3,2048)?.into(),encoding:text_column(r,4,13)?.into(),intent:blob_column::<32>(r,5)?,n,endpoint_hash:blob_column::<32>(r,18)?,source:text_column(r,19,128)?.into(),source_hash:blob_column::<32>(r,20)?,state:text_column(r,21,10)?.into(),admitted:r.get(22)?,started:r.get(23)?,completed:r.get(24)?,result:optional_text(r,25,MAX_RESULT)?,result_hash:optional_hash(r,26)?,error:optional_text(r,27,32)?})
@@ -348,7 +364,11 @@ fn read_row_core(c: &Connection, id: [u8; 32]) -> Result<Option<Row>, ErrorCode>
     {
         return Err(ErrorCode::InternalError);
     }
-    let source = read_operation(c, &raw.source)?.ok_or(ErrorCode::InternalError)?;
+    let source = match supplied {
+        Some(source) if source.id == raw.source => source,
+        Some(_) => return Err(ErrorCode::InternalError),
+        None => read_operation(c, &raw.source)?.ok_or(ErrorCode::InternalError)?,
+    };
     crate::uid_epochs::validate_operation(c, &source)?;
     if !source_matches(
         &source,
@@ -577,6 +597,11 @@ fn parse_result(row: &Row, json: &str) -> Result<ObservationResult, ErrorCode> {
     })
 }
 fn latest(c: &Connection, source: &str) -> Result<Option<Row>, ErrorCode> {
+    latest_id(c, source)?
+        .map(|id| read_row_core(c, id)?.ok_or(ErrorCode::InternalError))
+        .transpose()
+}
+fn latest_id(c: &Connection, source: &str) -> Result<Option<[u8; 32]>, ErrorCode> {
     let ids = {
         let mut stmt=db(c.prepare("SELECT execution_id,generation FROM imap_uid_reconcile_requests WHERE source_operation_id=?1 AND state='succeeded' ORDER BY generation DESC LIMIT 2"))?;
         db(db(stmt.query_map([source], |r| {
@@ -587,9 +612,7 @@ fn latest(c: &Connection, source: &str) -> Result<Option<Row>, ErrorCode> {
     if ids.len() == 2 && ids[0].1 <= ids[1].1 {
         return Err(ErrorCode::InternalError);
     }
-    ids.first()
-        .map(|(id, _)| read_row_core(c, *id)?.ok_or(ErrorCode::InternalError))
-        .transpose()
+    Ok(ids.first().map(|(id, _)| *id))
 }
 fn validate_overlay(c: &Connection, row: &Row) -> Result<(), ErrorCode> {
     let result = row.result.as_ref().ok_or(ErrorCode::InternalError)?;
@@ -653,6 +676,9 @@ fn read_row(c: &Connection, id: [u8; 32]) -> Result<Option<Row>, ErrorCode> {
     let row = read_row_core(c, id)?;
     if let Some(row) = &row {
         validate_latest_overlay(c, row)?;
+        if row.result.is_some() {
+            crate::message_identities::validate_page(c, &row.source.page)?;
+        }
     }
     Ok(row)
 }
@@ -1012,4 +1038,70 @@ pub(crate) fn validate_history(c: &Connection) -> rusqlite::Result<()> {
         }
     }
     Ok(())
+}
+
+pub(crate) struct SearchHead(Head);
+impl SearchHead {
+    pub(crate) fn generation(&self) -> u64 {
+        self.0.generation
+    }
+    pub(crate) fn version(&self) -> u64 {
+        self.0.version
+    }
+}
+pub(crate) fn search_head(
+    c: &Connection,
+    account: &str,
+    identity: &UidMailboxIdentity,
+    validity: u32,
+) -> Result<Option<SearchHead>, ErrorCode> {
+    let head = read_head_for(c, account, identity, validity)?;
+    if head.is_none() {
+        let exists:bool=db(c.query_row("SELECT EXISTS(SELECT 1 FROM imap_uid_reconcile_requests WHERE account_id=?1 AND mailbox_key=?2 AND mailbox_encoding=?3 AND uid_validity=?4) OR EXISTS(SELECT 1 FROM imap_uid_reconcile_messages WHERE account_id=?1 AND mailbox_key=?2 AND mailbox_encoding=?3 AND uid_validity=?4)",params![account,identity.wire_hex(),identity.encoding().as_str(),i64::from(validity)],|r|r.get(0)))?;
+        if exists {
+            return Err(ErrorCode::InternalError);
+        }
+    }
+    Ok(head.map(SearchHead))
+}
+pub(crate) struct SearchSource {
+    pub(crate) source: Operation,
+    /// None is unreconciled; each inner None is a recorded remote absence.
+    pub(crate) flags: Option<Vec<Option<Vec<String>>>>,
+}
+pub(crate) fn search_source(
+    c: &Connection,
+    source: Operation,
+    head: Option<&SearchHead>,
+) -> Result<SearchSource, ErrorCode> {
+    let request = source.page.request();
+    let count:i64=db(c.query_row("SELECT count(*) FROM imap_uid_reconcile_messages WHERE account_id=?1 AND mailbox_key=?2 AND mailbox_encoding=?3 AND uid_validity=?4 AND uid>?5 AND uid<=?6",params![request.account_id(),crate::uid_epochs::key(request.mailbox()),crate::uid_epochs::encoding(request.mailbox()),i64::from(source.page.uid_validity()),i64::from(request.after_uid()),i64::from(source.page.covered_through_uid())],|r|r.get(0)))?;
+    let Some(id) = latest_id(c, &source.id)? else {
+        if count != 0 {
+            return Err(ErrorCode::InternalError);
+        }
+        return Ok(SearchSource {
+            source,
+            flags: None,
+        });
+    };
+    let head = &head.ok_or(ErrorCode::InternalError)?.0;
+    let row = read_row_with_source(c, id, Some(source))?.ok_or(ErrorCode::InternalError)?;
+    if row.generation > head.generation
+        || row.head_version >= head.version
+        || row.completed.is_none_or(|at| at > head.at)
+        || (row.generation == head.generation
+            && (row.ceiling != head.ceiling || row.source.receipt.cursor_version() > head.last))
+    {
+        return Err(ErrorCode::InternalError);
+    }
+    validate_overlay(c, &row)?;
+    let result = row.result.ok_or(ErrorCode::InternalError)?;
+    if count != result.observations.len() as i64 {
+        return Err(ErrorCode::InternalError);
+    }
+    Ok(SearchSource {
+        source: row.source,
+        flags: Some(result.observations.into_iter().map(|v| v.flags).collect()),
+    })
 }

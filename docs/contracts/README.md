@@ -17,7 +17,7 @@
 | `mail.accounts.list.schema.json` | 명시된 계정 프로필 조회 | 초안, 활성화 전 |
 | `mail.send.execute.schema.json` | 승인 결속 발송 의도 접수 | 초안, 활성화 전 |
 | `logical-data-model.md` | 27개 논리 엔터티와 키·보안 경계 | 초안, 활성화 전 |
-| `database.md`, `db-schema.sql`, `migrations/` | 암호화 DB 키 경계·v1→v14 백업과 마이그레이션 | UID 원본·관측·epoch 보존 이전, 구현·검증 진행, 사람 검토 필요 |
+| `database.md`, `db-schema.sql`, `migrations/` | 암호화 DB 키 경계·v1→v15 백업과 마이그레이션 | UID 원본·관측·epoch 보존 이전, 구현·검증 진행, 사람 검토 필요 |
 | `query-language.md` | 검색 문법·계정 범위·기간·완전성 | 초안, 활성화 전 |
 | `config.md`, `config.schema.json` | 언어·테마·시간대와 보호 설정·CAS | 도메인·암호화 저장·코어 시작 연결 검증, 인증된 설정 IPC 미연결 |
 | `app-paths.md` | OS Known Folder와 고정 데이터/키 경로 | Windows 구현·시작 연결 검증 |
@@ -49,6 +49,8 @@
 | `imap-uid-page.md`, `imap-uid-tools.md`, `imap-uid-jobs.md` | 고정 UID 페이지·공개 요청·영속 작업 | Core/CLI·인증 pipe와 원자 저장 검증, 사람 검토 필요 |
 | `imap-uid-reconcile.md` | 기존 메일 FLAGS/원격 부재 관측과 고정 pass | v13 자동 통합 검증, 원본 보존, 사람 검토 필요 |
 | `imap-uid-recovery.md` | 새 UIDVALIDITY 첫 페이지·과거 epoch 보존 | v14 구현, 검증 범위·남은 지적은 PROGRESS 참조, 사람 검토 필요 |
+| `imap-metadata-search.md`, `tools/mail.messages.search.schema.json` | 단일 IMAP 로컬 metadata 조회·cursor·untrusted headers | 병렬 구현·교차 검증 진행, 사람 검토 필요 |
+| `client-metadata-scope-refresh.md` | 명시 M 권한·scope v4·과거 v1~v3 보존 | 병렬 구현·교차 검증 진행, 사람 검토 필요 |
 | `imap-uid-inspection.md` | 단일 로컬 snapshot의 UID 수집 범위·관측 상한 | 구현·검증 범위는 PROGRESS 참조, 사람 검토 필요 |
 | `core-lifecycle.md` | 고정 HKCU 자동 시작 값·충돌 보존·재시작 예산 | 격리 registry/상태 시험, 설치·supervisor 연결 전 |
 | `diagnostic-export.md` | 선택한 비민감 진단 항목의 미리보기/내보내기 값 | 순수 직렬화 검증, 실제 수집·UI·파일 쓰기 미연결 |

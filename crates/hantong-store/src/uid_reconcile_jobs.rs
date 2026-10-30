@@ -185,6 +185,8 @@ impl Store {
 #[cfg(windows)]
 mod storage;
 #[cfg(windows)]
+pub(crate) use storage::{SearchHead, search_head, search_source};
+#[cfg(windows)]
 pub(super) use storage::{execution_reserved, operation_reserved, validate_history};
 #[cfg(all(test, windows))]
 pub(crate) mod tests;

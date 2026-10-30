@@ -867,7 +867,7 @@ fn m204_reconcile_clock_regression_and_wrong_fetch_are_non_mutating() {
 fn m204_reconcile_source_counts_cannot_hide_nonempty_or_missing_children() {
     for corruption in [
         "UPDATE imap_uid_page_operations SET inserted_count=0 WHERE operation_id='append-1'",
-        "DELETE FROM imap_uid_messages WHERE operation_id='append-1'",
+        "PRAGMA foreign_keys=OFF; DELETE FROM imap_uid_messages WHERE operation_id='append-1'; PRAGMA foreign_keys=ON;",
         "UPDATE imap_uid_page_operations SET after_uid=covered_through_uid,uid_next_at_start=covered_through_uid+1,inserted_count=0 WHERE operation_id='append-1'",
     ] {
         let f = Fixture::new();

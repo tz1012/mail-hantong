@@ -8,6 +8,7 @@ use hantong_contracts::{
     ErrorCode,
     audit::AuditTool,
     folders::{FolderCursor, FolderListRequest, FolderRefreshRequest, FolderRefreshStatusRequest},
+    message_search::{ImapMetadataFilter, ImapMetadataSearchCursor, ImapMetadataSearchRequest},
     uid_page::{
         UidCursorRequest, UidMailboxEncoding, UidMailboxIdentity, UidPageRequest,
         UidPageStatusRequest,
@@ -34,6 +35,10 @@ pub enum ToolRequest {
         action: UidPageAction,
     },
     SendExecute(SendExecuteRequest),
+    MessagesSearch {
+        request_id: String,
+        request: ImapMetadataSearchRequest,
+    },
 }
 
 #[derive(Clone, Eq, PartialEq)]
@@ -80,6 +85,7 @@ impl fmt::Debug for ToolRequest {
             Self::FoldersRefresh { .. } => f.write_str("ToolRequest::FoldersRefresh(<redacted>)"),
             Self::SyncPage { .. } => f.write_str("ToolRequest::SyncPage(<redacted>)"),
             Self::SendExecute(_) => f.write_str("ToolRequest::SendExecute(<redacted>)"),
+            Self::MessagesSearch { .. } => f.write_str("ToolRequest::MessagesSearch(<redacted>)"),
         }
     }
 }
@@ -120,6 +126,10 @@ impl ToolRequest {
                 action: parse_uid_page(params)?,
             }),
             "mail.send.execute" => Ok(Self::SendExecute(parse_send(request_id, params)?)),
+            "mail.messages.search" => Ok(Self::MessagesSearch {
+                request_id,
+                request: parse_message_search(params)?,
+            }),
             _ => Err(ErrorCode::InvalidInput),
         }
     }
@@ -142,6 +152,7 @@ impl ToolRequest {
             | Self::FoldersRefresh { request_id, .. }
             | Self::SyncPage { request_id, .. } => request_id,
             Self::SendExecute(v) => &v.request_id,
+            Self::MessagesSearch { request_id, .. } => request_id,
         }
     }
 
@@ -152,6 +163,7 @@ impl ToolRequest {
             Self::FoldersRefresh { .. } => AuditTool::FoldersRefresh,
             Self::SyncPage { .. } => AuditTool::SyncPage,
             Self::SendExecute(_) => AuditTool::SendExecute,
+            Self::MessagesSearch { .. } => AuditTool::MessagesSearch,
         }
     }
 
@@ -173,6 +185,7 @@ impl ToolRequest {
                 UidPageAction::RecoverStatus(v) => v.account_ids(),
             },
             Self::SendExecute(value) => std::slice::from_ref(&value.account_id),
+            Self::MessagesSearch { request, .. } => request.account_ids(),
         }
     }
 }
@@ -308,6 +321,42 @@ fn parse_accounts(
         include_capabilities: include,
     })
 }
+fn parse_message_search(
+    params: &Map<String, Value>,
+) -> Result<ImapMetadataSearchRequest, ErrorCode> {
+    if params.keys().any(|key| {
+        !matches!(
+            key.as_str(),
+            "mode" | "account_id" | "wire_hex" | "encoding" | "filter" | "limit" | "cursor"
+        )
+    }) {
+        return Err(ErrorCode::InvalidInput);
+    }
+    let text = |key: &str| string(params.get(key).ok_or(ErrorCode::InvalidInput)?);
+    if text("mode")? != "imap_metadata" {
+        return Err(ErrorCode::InvalidInput);
+    }
+    let account = account_id(text("account_id")?)?;
+    let mailbox = UidMailboxIdentity::new(
+        text("wire_hex")?,
+        UidMailboxEncoding::parse(text("encoding")?)?,
+    )?;
+    crate::validated_uid_mailbox(&mailbox)?;
+    let filter = params
+        .get("filter")
+        .map(|value| ImapMetadataFilter::parse(string(value)?))
+        .transpose()?;
+    let limit = params
+        .get("limit")
+        .map(|value| u32::try_from(integer(value)?).map_err(|_| ErrorCode::InvalidInput))
+        .transpose()?;
+    let cursor = match params.get("cursor") {
+        None | Some(Value::Null) => None,
+        Some(value) => Some(ImapMetadataSearchCursor::parse(string(value)?)?),
+    };
+    ImapMetadataSearchRequest::new(&account, mailbox, filter, limit, cursor)
+}
+
 fn parse_send(
     request_id: String,
     params: &Map<String, Value>,

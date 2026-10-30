@@ -565,7 +565,7 @@ fn sync02_uid_job_rejects_wrong_result_request_and_corrupt_success_children() {
     f.store()
         .complete_uid_page_success([1; 32], &page(&job, 3, Some(2)))
         .unwrap();
-    f.sql("DELETE FROM imap_uid_messages");
+    f.sql("PRAGMA foreign_keys=OFF; DELETE FROM imap_uid_messages; PRAGMA foreign_keys=ON;");
     assert_eq!(
         f.store().load_uid_page_receipt(
             [9; 16],

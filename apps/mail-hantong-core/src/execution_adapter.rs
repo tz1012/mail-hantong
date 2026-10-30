@@ -229,6 +229,13 @@ impl<'a, 'server> ExecutionContext for CoreExecutionAdapter<'a, 'server> {
         let snapshot = self.store.inspect_imap_uid(request)?;
         ReadResult::new(hantong_application::render_uid_inspection(&snapshot), None)
     }
+    fn read_message_search(
+        &mut self,
+        request: &hantong_contracts::message_search::ImapMetadataSearchRequest,
+    ) -> Result<ReadResult<Value>, ErrorCode> {
+        let page = self.store.search_imap_metadata(request)?;
+        hantong_application::render_imap_metadata_search(&page)
+    }
     fn read_uid_cursor(
         &mut self,
         request: &UidCursorRequest,

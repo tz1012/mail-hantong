@@ -75,3 +75,9 @@ v10 DDL은 `migrations/schema-v10.sql`로 고정하며 `010-to-011.sql`은 [UID 
 ## v13 기존 UID 관측 overlay
 
 [기존 UID 대조 계약](imap-uid-reconcile.md)에 따라 head·request·message observation 표 세 개와 조회 index만 추가한다. v12 DDL은 `migrations/schema-v12.sql`로 보존하고 `012-to-013.sql`을 기존 ladder 다음에 실행한다. 원본 UID page/message/cursor, 미완료 작업, 감사 sequence와 scope v1/v2/v3 이력은 변경하지 않는다. 새 scope나 audit tool은 추가하지 않는다. 보호된 v12 backup→원자 DDL/metadata/version→전체 schema/FK 검증 순서를 유지하며 실패 시 원본과 검증된 backup을 보존한다.
+
+## v15 로컬 메타데이터 ID와 명시 권한
+
+[검색 계약](imap-metadata-search.md)과 [scope v4 계약](client-metadata-scope-refresh.md)에 따라 frozen `schema-v14.sql`과 `014-to-015.sql`을 사용한다. 열 개 audit FK closure 표와 scope ledger를 함께 재구축하고 새로운 `imap_message_identities` 표를 추가한다. 보호된 암호화 backup 뒤 단일 Immediate transaction에서 모든 기존 행/JSON/hash·원본 scope v1~v3·미완료 작업·audit capacity/sequence를 보존하며 자동 재개하거나 권한을 확대하지 않는다. 미사용 audit sequence의 행 부재도 보존한다. 같은 transaction에서 모든 불변 IMAP locator의 ID를 streaming backfill하고 삽입값을 검증한다. 잘못된 locator/충돌/누락/변조/DDL 실패는 원본 v14로 rollback한다.
+
+schema12~14는 frozen max3 scope validator, schema15는 max4 validator를 사용한다. mapping은 새 append/recovery와 함께 원자 삽입하며 조회·재실행·startup에서 자동 생성하지 않는다. startup은 mapping/base bijection·FK·count를 검증하고 개별 hash는 선택된 source read에서 검증한다. 전체 메시지 JSON을 startup에 일괄 decode했다고 주장하지 않는다. 실행 증거와 남은 검토는 [PROGRESS](../latest/PROGRESS.md)에 기록한다.

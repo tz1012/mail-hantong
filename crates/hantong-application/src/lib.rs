@@ -7,6 +7,8 @@ pub mod lifecycle;
 pub use accounts_response::render_account_list;
 mod folders_response;
 pub use folders_response::{render_folder_page, render_folder_refresh_receipt};
+mod message_search_response;
+pub use message_search_response::render_imap_metadata_search;
 
 mod diagnostics;
 pub use diagnostics::{DiagnosticEvent, EventKind, LogError, Severity, redact_sensitive};
@@ -28,5 +30,7 @@ pub use uid_page_response::{
 
 mod execution;
 pub use execution::{AuditHandoff, ExecutionContext, ReadResult, execute_tool};
+#[cfg(test)]
+mod message_search_tests;
 #[cfg(test)]
 mod uid_page_tests;

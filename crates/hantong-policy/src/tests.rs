@@ -1,5 +1,22 @@
 use super::*;
 use std::time::Duration;
+#[test]
+fn mail03_metadata_search_shares_rate_bucket_and_cannot_enable_send() {
+    let now = Instant::now();
+    let search = AuditTool::parse("mail.messages.search").unwrap();
+    for read_only in [true, false] {
+        let mut policy = ReadPolicy::new();
+        assert_eq!(policy.check([9; 16], read_only, 2, search, now), Ok(()));
+        assert_eq!(
+            policy.check([9; 16], read_only, 2, AuditTool::SendExecute, now),
+            Err(ErrorCode::PolicyBlocked)
+        );
+        assert_eq!(
+            policy.check([9; 16], read_only, 2, search, now),
+            Err(ErrorCode::RateLimited)
+        );
+    }
+}
 fn read(p: &mut ReadPolicy, id: u128, limit: u32, now: Instant) -> Result<(), ErrorCode> {
     p.check(id.to_be_bytes(), true, limit, AuditTool::AccountsList, now)
 }

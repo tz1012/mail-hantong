@@ -4,6 +4,8 @@
 
 ## 검색 요청의 바깥 범위
 
+적용 범위: 이 문서의 query·AST·timezone 규칙은 후속 통합 검색 모드의 계약이다. M2-05의 `mail.messages.search`에 추가하는 구조화된 `mode="imap_metadata"`는 [별도 로컬 메타데이터 계약](imap-metadata-search.md)을 따른다. 그 모드는 정확한 계정·mailbox와 고정 filter만 받으며 query·timezone 입력을 거부한다. 로컬 결과는 항상 partial 또는 unavailable이며, 이 구분은 아래 통합 검색의 문법·완전성·cursor 규칙을 완화하지 않는다.
+
 검색 문자열은 계정 범위를 정하지 않는다. 호출자는 공통 도구 envelope에서 다음 중 하나를 반드시 보낸다.
 
 - `account_id`: 한 계정

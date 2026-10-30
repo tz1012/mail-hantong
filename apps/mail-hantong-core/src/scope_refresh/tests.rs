@@ -214,13 +214,13 @@ impl Effects for Fake<'_> {
 }
 
 #[test]
-fn cli15_uid_scope_fresh_request_offers_uid_but_preserves_pending_and_staged_targets() {
+fn cli15_metadata_scope_fresh_request_offers_metadata_but_preserves_existing_targets() {
     let fixture = Fixture::new();
     let fresh =
         prepare_for_pin(&fixture.store, hantong_platform::sha256(&public()).unwrap()).unwrap();
     assert_eq!(
         fresh.target_tools(),
-        hantong_contracts::auth::default_cli_uid_tools()
+        hantong_contracts::auth::default_cli_metadata_tools()
     );
     assert_eq!(
         fixture
@@ -279,6 +279,82 @@ fn cli15_uid_scope_fresh_request_offers_uid_but_preserves_pending_and_staged_tar
             tools
         );
     }
+}
+
+#[test]
+fn cli15_metadata_scope_staged_consent_recovers_without_fresh_account_snapshot() {
+    let fixture = Fixture::new();
+    let pending = fixture.pending_with_scope(hantong_contracts::auth::default_cli_metadata_tools());
+    let original_profiles = profiles(&pending, public()).unwrap();
+    let staged = fixture.store.stage_cli_scope_refresh(&pending).unwrap();
+    let setup = crate::setup_imap::create(
+        &fixture.store,
+        &ImapSetupInput::new(
+            None,
+            None,
+            "later.example".into(),
+            993,
+            ImapSetupTls::ImplicitTls,
+            "synthetic-later".into(),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    fixture.store.stage_imap_setup_request(&setup).unwrap();
+    assert_ne!(
+        fixture.store.list_registrable_account_ids().unwrap(),
+        staged.target_accounts()
+    );
+    assert_eq!(
+        prepare_for_pin(&fixture.store, hantong_platform::sha256(&public()).unwrap()).unwrap(),
+        staged
+    );
+    let effects = Fake::new(&fixture.store);
+    recover_staged(&effects, &staged).unwrap();
+    assert_eq!(
+        effects.published.borrow().as_ref(),
+        Some(&original_profiles)
+    );
+    assert_eq!(
+        fixture
+            .store
+            .load_default_cli_registration()
+            .unwrap()
+            .unwrap()
+            .scope,
+        pending.target_scope()
+    );
+}
+
+#[test]
+fn sec03_metadata_scope_cannot_consume_uid_review_as_metadata_consent() {
+    let fixture = Fixture::new();
+    let pending = fixture.pending_with_scope(hantong_contracts::auth::default_cli_metadata_tools());
+    let b = pending.base_registration();
+    let substituted = ScopeRefreshReview::new_with_tools(
+        *pending.refresh_id(),
+        pending.version(),
+        b.registration_id,
+        b.request_id,
+        b.version,
+        b.profile_epoch,
+        *pending.client_public_key_hash(),
+        *pending.server_public_key_hash(),
+        b.scope.accounts().to_vec(),
+        pending.target_accounts().to_vec(),
+        b.scope.tools().to_vec(),
+        hantong_contracts::auth::default_cli_uid_tools(),
+        pending.created_at_utc_ms(),
+        pending.expires_at_utc_ms(),
+    )
+    .unwrap();
+    let effects = Fake::new(&fixture.store);
+    assert_eq!(
+        commit_consumed_review(&effects, &pending, &substituted),
+        Err(ErrorCode::Conflict)
+    );
+    assert!(!effects.events.borrow().contains(&"stage"));
+    assert!(effects.published.borrow().is_none());
 }
 
 #[test]

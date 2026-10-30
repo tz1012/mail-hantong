@@ -270,7 +270,7 @@ fn sync02_recovery_review_unknown_epoch_does_not_hide_existing_metadata() {
     for (cv, after, uid) in [(0, 0, 1), (1, 64, 65), (2, 128, 129), (3, 192, 193)] {
         append(&f, cv, after, 300, &[uid], &format!("append-{cv}"));
     }
-    f.sql("UPDATE imap_uid_messages SET uid_validity=999 WHERE operation_id='append-1'");
+    f.sql("PRAGMA foreign_keys=OFF; UPDATE imap_uid_messages SET uid_validity=999 WHERE operation_id='append-1'; PRAGMA foreign_keys=ON;");
     assert_eq!(
         f.store()
             .load_imap_uid_metadata("acct", &mailbox(), 999, 65),

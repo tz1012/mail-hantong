@@ -59,6 +59,7 @@ impl ReadPolicy {
             AuditTool::AccountsList
             | AuditTool::FoldersList
             | AuditTool::FoldersRefresh
+            | AuditTool::MessagesSearch
             | AuditTool::SyncPage => Ok(()),
             AuditTool::SendExecute => Err(ErrorCode::PolicyBlocked),
         }

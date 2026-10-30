@@ -11,7 +11,7 @@ fn db<T>(r: rusqlite::Result<T>) -> Result<T, ErrorCode> {
     r.map_err(|_| ErrorCode::InternalError)
 }
 fn hash(b: &[u8]) -> Result<[u8; 32], ErrorCode> {
-    hantong_platform::sha256(b).map_err(|_| ErrorCode::InternalError)
+    hantong_platform::sha256_storage_payload(b).map_err(|_| ErrorCode::InternalError)
 }
 fn encoding(m: &ImapMailboxName) -> &'static str {
     match m.encoding() {
@@ -73,6 +73,7 @@ pub(crate) struct Operation {
     pub(crate) json: String,
     pub(crate) endpoint_hash: [u8; 32],
     pub(crate) payload_hash: [u8; 32],
+    pub(crate) page_hash: [u8; 32],
     pub(crate) av: u64,
     pub(crate) cg: u64,
     pub(crate) expected: u64,
@@ -131,6 +132,7 @@ pub(crate) fn read_operation(c: &Connection, id: &str) -> Result<Option<Operatio
         json,
         endpoint_hash: eh,
         payload_hash: payload,
+        page_hash: ph,
         av: n[2] as u64,
         cg: n[3] as u64,
         expected: n[0] as u64,
@@ -490,6 +492,7 @@ fn apply_mode(
             return Err(ErrorCode::InternalError);
         }
         crate::uid_epochs::validate_operation(tx, &op)?;
+        crate::message_identities::validate_page(tx, &op.page)?;
         return Ok(op.receipt);
     }
     check_account(tx, account)?;
@@ -600,6 +603,7 @@ fn apply_mode(
         .map_err(|_| ErrorCode::InternalError)?;
         db(tx.execute("INSERT INTO imap_uid_messages(account_id,mailbox_key,mailbox_encoding,uid_validity,uid,metadata_json,metadata_hash,stored_at_utc_ms,operation_id) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9)",params![account,mailbox_key,enc,i64::from(page.uid_validity()),i64::from(message.uid()),raw,hash(raw.as_bytes())?.as_slice(),at,mutation.operation_id()]))?;
     }
+    crate::message_identities::insert_page(tx, page)?;
     if previous.is_none() {
         let initial =
             read_operation(tx, mutation.operation_id())?.ok_or(ErrorCode::InternalError)?;

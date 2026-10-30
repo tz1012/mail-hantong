@@ -564,6 +564,13 @@ pub fn default_cli_uid_tools() -> Vec<String> {
     tools
 }
 
+/// Exact cached-header disclosure grant offered by a new native scope review.
+pub fn default_cli_metadata_tools() -> Vec<String> {
+    let mut tools = default_cli_uid_tools();
+    tools.insert(3, "mail.messages.search".into());
+    tools
+}
+
 fn default_cli_toolset_rank(tools: &[String]) -> Option<u8> {
     if tools == default_cli_legacy_tools() {
         Some(0)
@@ -571,6 +578,8 @@ fn default_cli_toolset_rank(tools: &[String]) -> Option<u8> {
         Some(1)
     } else if tools == default_cli_uid_tools() {
         Some(2)
+    } else if tools == default_cli_metadata_tools() {
+        Some(3)
     } else {
         None
     }
@@ -595,6 +604,58 @@ pub fn is_supported_default_cli_toolset_transition(old: &[String], target: &[Str
 #[cfg(test)]
 mod default_toolset_tests {
     use super::*;
+    #[test]
+    fn cli15_metadata_scope_is_exact_and_never_widens_existing_grants() {
+        let metadata: Vec<String> = [
+            "mail.accounts.list",
+            "mail.folders.list",
+            "mail.folders.refresh",
+            "mail.messages.search",
+            "mail.sync.page",
+        ]
+        .into_iter()
+        .map(str::to_owned)
+        .collect();
+        assert_eq!(default_cli_metadata_tools(), metadata);
+        let sets = [
+            default_cli_legacy_tools(),
+            default_cli_folder_tools(),
+            default_cli_uid_tools(),
+            metadata.clone(),
+        ];
+        assert!(is_supported_default_cli_toolset(&metadata));
+        for (old_index, old) in sets.iter().enumerate() {
+            let scope = RequestedScope::new(vec!["acct".into()], old.clone()).unwrap();
+            assert_eq!(
+                scope.permits_account("acct", "mail.messages.search"),
+                old_index == 3
+            );
+            assert!(!scope.permits_account("other", "mail.messages.search"));
+            for (target_index, target) in sets.iter().enumerate() {
+                assert_eq!(
+                    is_supported_default_cli_toolset_transition(old, target),
+                    old_index <= target_index
+                );
+            }
+        }
+        for tools in [
+            vec!["mail.messages.search".into()],
+            vec!["mail.accounts.list".into(), "mail.messages.search".into()],
+            metadata.iter().rev().cloned().collect(),
+            metadata
+                .iter()
+                .cloned()
+                .chain(["mail.send.execute".into()])
+                .collect(),
+            metadata
+                .iter()
+                .cloned()
+                .chain(["mail.sync.page".into()])
+                .collect(),
+        ] {
+            assert!(!is_supported_default_cli_toolset(&tools));
+        }
+    }
     #[test]
     fn cli15_uid_scope_transition_is_monotonic_for_every_supported_pair() {
         let sets = [

@@ -120,7 +120,7 @@ CREATE TABLE audit_starts (
     profile_epoch INTEGER NOT NULL CHECK (profile_epoch >= 1),
     client_kind TEXT NOT NULL CHECK (client_kind IN ('cli', 'mcp', 'gui')),
     display_label TEXT NOT NULL CHECK (length(display_label) BETWEEN 1 AND 128 AND length(CAST(display_label AS BLOB)) <= 512),
-    tool_code TEXT NOT NULL CHECK (tool_code IN ('mail.accounts.list', 'mail.send.execute', 'mail.folders.list', 'mail.folders.refresh', 'mail.sync.page')),
+    tool_code TEXT NOT NULL CHECK (tool_code IN ('mail.accounts.list', 'mail.send.execute', 'mail.folders.list', 'mail.folders.refresh', 'mail.sync.page', 'mail.messages.search')),
     started_at_utc_ms INTEGER NOT NULL CHECK (started_at_utc_ms > 0)
 ) STRICT;
 
@@ -273,12 +273,12 @@ CREATE TABLE client_scope_refreshes (
     updated_at_utc_ms INTEGER NOT NULL CHECK (updated_at_utc_ms>=created_at_utc_ms),
     decided_at_utc_ms INTEGER,
     activated_at_utc_ms INTEGER,
-    hash_version INTEGER NOT NULL DEFAULT 1 CHECK (hash_version IN (1,2,3)),
-    base_tools_json TEXT NOT NULL DEFAULT '["mail.accounts.list"]' CHECK (base_tools_json IN ('["mail.accounts.list"]','["mail.accounts.list","mail.folders.list","mail.folders.refresh"]','["mail.accounts.list","mail.folders.list","mail.folders.refresh","mail.sync.page"]')),
-    target_tools_json TEXT NOT NULL DEFAULT '["mail.accounts.list"]' CHECK (target_tools_json IN ('["mail.accounts.list"]','["mail.accounts.list","mail.folders.list","mail.folders.refresh"]','["mail.accounts.list","mail.folders.list","mail.folders.refresh","mail.sync.page"]')),
+    hash_version INTEGER NOT NULL DEFAULT 1 CHECK (hash_version IN (1,2,3,4)),
+    base_tools_json TEXT NOT NULL DEFAULT '["mail.accounts.list"]' CHECK (base_tools_json IN ('["mail.accounts.list"]','["mail.accounts.list","mail.folders.list","mail.folders.refresh"]','["mail.accounts.list","mail.folders.list","mail.folders.refresh","mail.sync.page"]','["mail.accounts.list","mail.folders.list","mail.folders.refresh","mail.messages.search","mail.sync.page"]')),
+    target_tools_json TEXT NOT NULL DEFAULT '["mail.accounts.list"]' CHECK (target_tools_json IN ('["mail.accounts.list"]','["mail.accounts.list","mail.folders.list","mail.folders.refresh"]','["mail.accounts.list","mail.folders.list","mail.folders.refresh","mail.sync.page"]','["mail.accounts.list","mail.folders.list","mail.folders.refresh","mail.messages.search","mail.sync.page"]')),
     CHECK (base_accounts_json<>target_accounts_json OR base_tools_json<>target_tools_json),
-    CHECK ((hash_version=1 AND base_tools_json='["mail.accounts.list"]' AND target_tools_json='["mail.accounts.list"]') OR (hash_version=2 AND base_tools_json IN ('["mail.accounts.list"]','["mail.accounts.list","mail.folders.list","mail.folders.refresh"]') AND target_tools_json IN ('["mail.accounts.list"]','["mail.accounts.list","mail.folders.list","mail.folders.refresh"]')) OR hash_version=3),
-    CHECK (base_tools_json='["mail.accounts.list"]' OR (base_tools_json='["mail.accounts.list","mail.folders.list","mail.folders.refresh"]' AND target_tools_json IN ('["mail.accounts.list","mail.folders.list","mail.folders.refresh"]','["mail.accounts.list","mail.folders.list","mail.folders.refresh","mail.sync.page"]')) OR (base_tools_json='["mail.accounts.list","mail.folders.list","mail.folders.refresh","mail.sync.page"]' AND target_tools_json='["mail.accounts.list","mail.folders.list","mail.folders.refresh","mail.sync.page"]')),
+    CHECK ((hash_version=1 AND base_tools_json IN ('["mail.accounts.list"]') AND target_tools_json IN ('["mail.accounts.list"]')) OR (hash_version=2 AND base_tools_json IN ('["mail.accounts.list"]','["mail.accounts.list","mail.folders.list","mail.folders.refresh"]') AND target_tools_json IN ('["mail.accounts.list"]','["mail.accounts.list","mail.folders.list","mail.folders.refresh"]')) OR (hash_version=3 AND base_tools_json IN ('["mail.accounts.list"]','["mail.accounts.list","mail.folders.list","mail.folders.refresh"]','["mail.accounts.list","mail.folders.list","mail.folders.refresh","mail.sync.page"]') AND target_tools_json IN ('["mail.accounts.list"]','["mail.accounts.list","mail.folders.list","mail.folders.refresh"]','["mail.accounts.list","mail.folders.list","mail.folders.refresh","mail.sync.page"]')) OR (hash_version=4 AND base_tools_json IN ('["mail.accounts.list"]','["mail.accounts.list","mail.folders.list","mail.folders.refresh"]','["mail.accounts.list","mail.folders.list","mail.folders.refresh","mail.sync.page"]','["mail.accounts.list","mail.folders.list","mail.folders.refresh","mail.messages.search","mail.sync.page"]') AND target_tools_json IN ('["mail.accounts.list"]','["mail.accounts.list","mail.folders.list","mail.folders.refresh"]','["mail.accounts.list","mail.folders.list","mail.folders.refresh","mail.sync.page"]','["mail.accounts.list","mail.folders.list","mail.folders.refresh","mail.messages.search","mail.sync.page"]'))),
+    CHECK ((base_tools_json='["mail.accounts.list"]' AND target_tools_json IN ('["mail.accounts.list"]','["mail.accounts.list","mail.folders.list","mail.folders.refresh"]','["mail.accounts.list","mail.folders.list","mail.folders.refresh","mail.sync.page"]','["mail.accounts.list","mail.folders.list","mail.folders.refresh","mail.messages.search","mail.sync.page"]')) OR (base_tools_json='["mail.accounts.list","mail.folders.list","mail.folders.refresh"]' AND target_tools_json IN ('["mail.accounts.list","mail.folders.list","mail.folders.refresh"]','["mail.accounts.list","mail.folders.list","mail.folders.refresh","mail.sync.page"]','["mail.accounts.list","mail.folders.list","mail.folders.refresh","mail.messages.search","mail.sync.page"]')) OR (base_tools_json='["mail.accounts.list","mail.folders.list","mail.folders.refresh","mail.sync.page"]' AND target_tools_json IN ('["mail.accounts.list","mail.folders.list","mail.folders.refresh","mail.sync.page"]','["mail.accounts.list","mail.folders.list","mail.folders.refresh","mail.messages.search","mail.sync.page"]')) OR (base_tools_json='["mail.accounts.list","mail.folders.list","mail.folders.refresh","mail.messages.search","mail.sync.page"]' AND target_tools_json IN ('["mail.accounts.list","mail.folders.list","mail.folders.refresh","mail.messages.search","mail.sync.page"]'))),
     CHECK (
         (phase='pending' AND version=1 AND updated_at_utc_ms=created_at_utc_ms AND decided_at_utc_ms IS NULL AND activated_at_utc_ms IS NULL)
         OR (phase IN ('staged','denied') AND version=2 AND decided_at_utc_ms IS NOT NULL AND decided_at_utc_ms>=created_at_utc_ms AND decided_at_utc_ms<expires_at_utc_ms AND updated_at_utc_ms=decided_at_utc_ms AND activated_at_utc_ms IS NULL)
@@ -590,3 +590,27 @@ CREATE TABLE imap_uid_reconcile_messages (
     CHECK((presence='present' AND flags_json IS NOT NULL) OR (presence='remote_absent' AND flags_json IS NULL))
 ) STRICT;
 CREATE INDEX imap_uid_reconcile_messages_execution ON imap_uid_reconcile_messages(last_execution_id,uid);
+
+-- Stable immutable IMAP location IDs; existing payloads and hashes are untouched.
+CREATE TABLE imap_message_identities (
+    internal_message_id TEXT NOT NULL PRIMARY KEY
+        CHECK (length(internal_message_id) = 68
+            AND length(CAST(internal_message_id AS BLOB)) = 68
+            AND substr(internal_message_id, 1, 4) = 'msg_'
+            AND substr(internal_message_id, 5) NOT GLOB '*[^0-9a-f]*'),
+    account_id TEXT NOT NULL
+        CHECK (length(account_id) BETWEEN 1 AND 128
+            AND length(CAST(account_id AS BLOB)) = length(account_id)
+            AND account_id NOT GLOB '*[^A-Za-z0-9_-]*'),
+    mailbox_key TEXT NOT NULL
+        CHECK (length(mailbox_key) BETWEEN 2 AND 2048
+            AND length(mailbox_key) % 2 = 0
+            AND mailbox_key NOT GLOB '*[^0-9a-f]*'),
+    mailbox_encoding TEXT NOT NULL CHECK (mailbox_encoding IN ('modified_utf7','utf8')),
+    uid_validity INTEGER NOT NULL CHECK (uid_validity BETWEEN 1 AND 4294967295),
+    uid INTEGER NOT NULL CHECK (uid BETWEEN 1 AND 4294967295),
+    UNIQUE (account_id, mailbox_key, mailbox_encoding, uid_validity, uid),
+    FOREIGN KEY (account_id, mailbox_key, mailbox_encoding, uid_validity, uid)
+        REFERENCES imap_uid_messages(account_id, mailbox_key, mailbox_encoding, uid_validity, uid)
+        ON DELETE RESTRICT
+) STRICT;

@@ -2,6 +2,77 @@ use super::*;
 use serde_json::json;
 
 #[test]
+fn sec03_metadata_search_uses_common_policy_audit_and_emitted_item_count() {
+    let envelope = json!({"schema_version":1,"request_id":"r","tool":"mail.messages.search","params":{"mode":"imap_metadata","account_id":"a","wire_hex":"494e424f58","encoding":"utf8"}});
+    let mut fake = Fake::ok();
+    fake.read = ReadResult::new(17, Some(3));
+    assert_eq!(
+        execute_tool(&mut fake, "mail.messages.search", &envelope),
+        Ok(17)
+    );
+    assert_eq!(
+        fake.events,
+        [
+            "revalidate",
+            "begin",
+            "scope",
+            "policy",
+            "message_search",
+            "finish_ok"
+        ]
+    );
+    assert_eq!(fake.scoped_accounts, vec![vec!["a"]]);
+    assert_eq!(fake.terminals.len(), 1);
+    assert_eq!(fake.terminals[0].1.result_count(), Some(3));
+    for error in [
+        ErrorCode::NotFound,
+        ErrorCode::CursorExpired,
+        ErrorCode::QuotaExceeded,
+        ErrorCode::InternalError,
+    ] {
+        let mut fake = Fake::ok();
+        fake.read = Err(error);
+        assert_eq!(
+            execute_tool(&mut fake, "mail.messages.search", &envelope),
+            Err(error)
+        );
+        assert_eq!(fake.terminals.len(), 1);
+        assert_eq!(fake.terminals[0].1.error(), Some(error));
+    }
+    for policy in [false, true] {
+        let mut fake = Fake::ok();
+        let error = if policy {
+            fake.fail_policy = Some(ErrorCode::PolicyBlocked);
+            ErrorCode::PolicyBlocked
+        } else {
+            fake.fail_scope = Some(ErrorCode::ScopeDenied);
+            ErrorCode::ScopeDenied
+        };
+        assert_eq!(
+            execute_tool(&mut fake, "mail.messages.search", &envelope),
+            Err(error)
+        );
+        assert!(!fake.events.contains(&"message_search"));
+        assert_eq!(fake.terminals.len(), 1);
+    }
+    let mut fake = Fake::ok();
+    fake.fail_finish = true;
+    assert_eq!(
+        execute_tool(&mut fake, "mail.messages.search", &envelope),
+        Err(ErrorCode::InternalError)
+    );
+    assert_eq!(fake.terminals.len(), 1);
+    let mut invalid = envelope.clone();
+    invalid["params"]["limit"] = json!(0);
+    let mut fake = Fake::ok();
+    assert_eq!(
+        execute_tool(&mut fake, "mail.messages.search", &invalid),
+        Err(ErrorCode::InvalidInput)
+    );
+    assert!(fake.events.is_empty());
+}
+
+#[test]
 fn sec03_inspection_finishes_the_common_read_audit_without_job_handoff() {
     let envelope = json!({"schema_version":1,"request_id":"r","tool":"mail.sync.page","params":{"action":"inspect","account_id":"a","wire_hex":"494e424f58","encoding":"utf8"}});
     let mut fake = Fake::ok();
@@ -137,6 +208,13 @@ impl ExecutionContext for Fake {
     }
     fn read_accounts(&mut self, _: &AccountsListRequest) -> Result<ReadResult<u32>, ErrorCode> {
         self.events.push("read");
+        std::mem::replace(&mut self.read, Err(ErrorCode::InternalError))
+    }
+    fn read_message_search(
+        &mut self,
+        _: &ImapMetadataSearchRequest,
+    ) -> Result<ReadResult<u32>, ErrorCode> {
+        self.events.push("message_search");
         std::mem::replace(&mut self.read, Err(ErrorCode::InternalError))
     }
     fn read_folders(
