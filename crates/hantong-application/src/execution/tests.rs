@@ -118,6 +118,88 @@ impl ExecutionContext for Fake {
             Ok(())
         }
     }
+    fn read_uid_cursor(&mut self, _: &UidCursorRequest) -> Result<ReadResult<u32>, ErrorCode> {
+        self.events.push("uid_cursor");
+        ReadResult::new(11, None)
+    }
+    fn read_uid_page_status(
+        &mut self,
+        _: &UidPageStatusRequest,
+    ) -> Result<ReadResult<u32>, ErrorCode> {
+        self.events.push("uid_status");
+        ReadResult::new(12, None)
+    }
+    fn request_uid_page(
+        &mut self,
+        _: [u8; 32],
+        _: &UidPageRequest,
+    ) -> Result<AuditHandoff<u32>, ErrorCode> {
+        self.events.push("uid_handoff");
+        std::mem::replace(&mut self.handoff, Err(ErrorCode::InternalError))
+    }
+}
+
+fn uid_envelope(action: &str) -> serde_json::Value {
+    let params = match action {
+        "cursor" => {
+            json!({"action":"cursor","account_id":"a","wire_hex":"494e424f58","encoding":"utf8"})
+        }
+        "status" => json!({"action":"status","account_id":"a","execution_id":"01".repeat(32)}),
+        _ => {
+            json!({"action":"request","account_id":"a","wire_hex":"494e424f58","encoding":"utf8","operation_id":"o","idempotency_key":"k","expected_catalog_generation":1,"expected_cursor_version":0,"intent_hash":"00".repeat(32)})
+        }
+    };
+    json!({"schema_version":1,"request_id":"uid","tool":"mail.sync.page","params":params})
+}
+#[test]
+fn ext04_uid_execution_scope_policy_audit_and_handoff_are_shared() {
+    for (action, result, event) in [
+        ("cursor", 11, "uid_cursor"),
+        ("status", 12, "uid_status"),
+        ("request", 10, "uid_handoff"),
+    ] {
+        let mut fake = Fake::ok();
+        assert_eq!(
+            execute_tool(&mut fake, "mail.sync.page", &uid_envelope(action)),
+            Ok(result)
+        );
+        assert_eq!(
+            &fake.events[..5],
+            &["revalidate", "begin", "scope", "policy", event]
+        );
+        assert_eq!(
+            fake.terminals.len(),
+            if action == "request" { 0 } else { 1 }
+        );
+        for policy in [false, true] {
+            let mut fake = Fake::ok();
+            if policy {
+                fake.fail_policy = Some(ErrorCode::PolicyBlocked)
+            } else {
+                fake.fail_scope = Some(ErrorCode::ScopeDenied)
+            }
+            assert!(execute_tool(&mut fake, "mail.sync.page", &uid_envelope(action)).is_err());
+            assert!(!fake.events.contains(&event));
+            assert_eq!(fake.terminals.len(), 1);
+        }
+    }
+}
+#[test]
+fn ext04_uid_admission_owned_error_does_not_finish_a_second_time() {
+    let mut fake = Fake::ok();
+    fake.handoff = Ok(AuditHandoff::error(ErrorCode::Conflict));
+    assert_eq!(
+        execute_tool(&mut fake, "mail.sync.page", &uid_envelope("request")),
+        Err(ErrorCode::Conflict)
+    );
+    assert!(fake.terminals.is_empty());
+    let mut fake = Fake::ok();
+    fake.handoff = Err(ErrorCode::InternalError);
+    assert_eq!(
+        execute_tool(&mut fake, "mail.sync.page", &uid_envelope("request")),
+        Err(ErrorCode::InternalError)
+    );
+    assert_eq!(fake.terminals.len(), 1);
 }
 
 #[test]

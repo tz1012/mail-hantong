@@ -9,6 +9,7 @@ pub mod folders;
 pub mod imap_setup;
 pub mod platform;
 pub mod registration;
+pub mod uid_page;
 pub mod wire_hex;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

@@ -17,7 +17,13 @@ pub use diagnostic_snapshot::{
 };
 
 mod tool_request;
-pub use tool_request::{AccountsListRequest, FolderRefreshAction, SendExecuteRequest, ToolRequest};
+pub use tool_request::{
+    AccountsListRequest, FolderRefreshAction, SendExecuteRequest, ToolRequest, UidPageAction,
+};
+mod uid_page_response;
+pub use uid_page_response::{render_uid_cursor, render_uid_receipt, validated_uid_mailbox};
 
 mod execution;
 pub use execution::{AuditHandoff, ExecutionContext, ReadResult, execute_tool};
+#[cfg(test)]
+mod uid_page_tests;

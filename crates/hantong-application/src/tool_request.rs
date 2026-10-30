@@ -8,6 +8,10 @@ use hantong_contracts::{
     ErrorCode,
     audit::AuditTool,
     folders::{FolderCursor, FolderListRequest, FolderRefreshRequest, FolderRefreshStatusRequest},
+    uid_page::{
+        UidCursorRequest, UidMailboxEncoding, UidMailboxIdentity, UidPageRequest,
+        UidPageStatusRequest,
+    },
 };
 use serde_json::{Map, Value};
 use std::{collections::BTreeSet, fmt};
@@ -23,6 +27,10 @@ pub enum ToolRequest {
         request_id: String,
         action: FolderRefreshAction,
     },
+    SyncPage {
+        request_id: String,
+        action: UidPageAction,
+    },
     SendExecute(SendExecuteRequest),
 }
 
@@ -30,6 +38,12 @@ pub enum ToolRequest {
 pub enum FolderRefreshAction {
     Request(FolderRefreshRequest),
     Status(FolderRefreshStatusRequest),
+}
+#[derive(Clone, Eq, PartialEq)]
+pub enum UidPageAction {
+    Cursor(UidCursorRequest),
+    Request(UidPageRequest),
+    Status(UidPageStatusRequest),
 }
 
 #[derive(Clone, Eq, PartialEq)]
@@ -57,6 +71,7 @@ impl fmt::Debug for ToolRequest {
             Self::AccountsList(_) => f.write_str("ToolRequest::AccountsList(<redacted>)"),
             Self::FoldersList { .. } => f.write_str("ToolRequest::FoldersList(<redacted>)"),
             Self::FoldersRefresh { .. } => f.write_str("ToolRequest::FoldersRefresh(<redacted>)"),
+            Self::SyncPage { .. } => f.write_str("ToolRequest::SyncPage(<redacted>)"),
             Self::SendExecute(_) => f.write_str("ToolRequest::SendExecute(<redacted>)"),
         }
     }
@@ -93,6 +108,10 @@ impl ToolRequest {
                 request_id,
                 action: parse_folder_refresh(params)?,
             }),
+            "mail.sync.page" => Ok(Self::SyncPage {
+                request_id,
+                action: parse_uid_page(params)?,
+            }),
             "mail.send.execute" => Ok(Self::SendExecute(parse_send(request_id, params)?)),
             _ => Err(ErrorCode::InvalidInput),
         }
@@ -112,9 +131,9 @@ impl ToolRequest {
     pub fn request_id(&self) -> &str {
         match self {
             Self::AccountsList(v) => &v.request_id,
-            Self::FoldersList { request_id, .. } | Self::FoldersRefresh { request_id, .. } => {
-                request_id
-            }
+            Self::FoldersList { request_id, .. }
+            | Self::FoldersRefresh { request_id, .. }
+            | Self::SyncPage { request_id, .. } => request_id,
             Self::SendExecute(v) => &v.request_id,
         }
     }
@@ -124,6 +143,7 @@ impl ToolRequest {
             Self::AccountsList(_) => AuditTool::AccountsList,
             Self::FoldersList { .. } => AuditTool::FoldersList,
             Self::FoldersRefresh { .. } => AuditTool::FoldersRefresh,
+            Self::SyncPage { .. } => AuditTool::SyncPage,
             Self::SendExecute(_) => AuditTool::SendExecute,
         }
     }
@@ -135,6 +155,11 @@ impl ToolRequest {
             Self::FoldersRefresh { action, .. } => match action {
                 FolderRefreshAction::Request(value) => value.account_ids(),
                 FolderRefreshAction::Status(value) => value.account_ids(),
+            },
+            Self::SyncPage { action, .. } => match action {
+                UidPageAction::Cursor(v) => v.account_ids(),
+                UidPageAction::Request(v) => v.account_ids(),
+                UidPageAction::Status(v) => v.account_ids(),
             },
             Self::SendExecute(value) => std::slice::from_ref(&value.account_id),
         }
@@ -339,6 +364,65 @@ fn parse_folder_list(params: &Map<String, Value>) -> Result<FolderListRequest, E
     FolderListRequest::new(&account, limit, cursor)
 }
 
+fn parse_uid_page(params: &Map<String, Value>) -> Result<UidPageAction, ErrorCode> {
+    let text = |key: &str| string(params.get(key).ok_or(ErrorCode::InvalidInput)?);
+    let mailbox = || {
+        let identity = UidMailboxIdentity::new(
+            text("wire_hex")?,
+            UidMailboxEncoding::parse(text("encoding")?)?,
+        )?;
+        crate::validated_uid_mailbox(&identity)?;
+        Ok::<_, ErrorCode>(identity)
+    };
+    match text("action")? {
+        "cursor" => {
+            exact_keys(params, &["action", "account_id", "wire_hex", "encoding"])?;
+            Ok(UidPageAction::Cursor(UidCursorRequest::new(
+                text("account_id")?,
+                mailbox()?,
+            )?))
+        }
+        "request" => {
+            exact_keys(
+                params,
+                &[
+                    "action",
+                    "account_id",
+                    "wire_hex",
+                    "encoding",
+                    "operation_id",
+                    "idempotency_key",
+                    "expected_catalog_generation",
+                    "expected_cursor_version",
+                    "intent_hash",
+                ],
+            )?;
+            let number = |key: &str| {
+                params
+                    .get(key)
+                    .and_then(Value::as_u64)
+                    .ok_or(ErrorCode::InvalidInput)
+            };
+            Ok(UidPageAction::Request(UidPageRequest::new(
+                text("account_id")?,
+                mailbox()?,
+                text("operation_id")?,
+                text("idempotency_key")?,
+                number("expected_catalog_generation")?,
+                number("expected_cursor_version")?,
+                text("intent_hash")?,
+            )?))
+        }
+        "status" => {
+            exact_keys(params, &["action", "account_id", "execution_id"])?;
+            Ok(UidPageAction::Status(UidPageStatusRequest::new(
+                text("account_id")?,
+                hantong_contracts::wire_hex::decode_fixed(text("execution_id")?)?,
+            )?))
+        }
+        _ => Err(ErrorCode::InvalidInput),
+    }
+}
 fn parse_folder_refresh(params: &Map<String, Value>) -> Result<FolderRefreshAction, ErrorCode> {
     let action = string(params.get("action").ok_or(ErrorCode::InvalidInput)?)?;
     match action {

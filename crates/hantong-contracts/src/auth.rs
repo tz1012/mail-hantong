@@ -557,14 +557,80 @@ pub fn default_cli_folder_tools() -> Vec<String> {
     ]
 }
 
+/// Exact UID-page grant offered only by a new explicit native scope review.
+pub fn default_cli_uid_tools() -> Vec<String> {
+    let mut tools = default_cli_folder_tools();
+    tools.push("mail.sync.page".into());
+    tools
+}
+
+fn default_cli_toolset_rank(tools: &[String]) -> Option<u8> {
+    if tools == default_cli_legacy_tools() {
+        Some(0)
+    } else if tools == default_cli_folder_tools() {
+        Some(1)
+    } else if tools == default_cli_uid_tools() {
+        Some(2)
+    } else {
+        None
+    }
+}
+
 /// Validates the canonical order as well as membership; never widens scope.
 pub fn is_supported_default_cli_toolset(tools: &[String]) -> bool {
-    tools == default_cli_legacy_tools() || tools == default_cli_folder_tools()
+    default_cli_toolset_rank(tools).is_some()
+}
+
+/// Equal tool sets may accompany an account change; callers reject a full no-op.
+pub fn is_supported_default_cli_toolset_transition(old: &[String], target: &[String]) -> bool {
+    match (
+        default_cli_toolset_rank(old),
+        default_cli_toolset_rank(target),
+    ) {
+        (Some(old), Some(target)) => old <= target,
+        _ => false,
+    }
 }
 
 #[cfg(test)]
 mod default_toolset_tests {
     use super::*;
+    #[test]
+    fn cli15_uid_scope_transition_is_monotonic_for_every_supported_pair() {
+        let sets = [
+            default_cli_legacy_tools(),
+            default_cli_folder_tools(),
+            default_cli_uid_tools(),
+        ];
+        for (old_index, old) in sets.iter().enumerate() {
+            for (new_index, new) in sets.iter().enumerate() {
+                assert_eq!(
+                    is_supported_default_cli_toolset_transition(old, new),
+                    old_index <= new_index
+                );
+            }
+        }
+        assert!(!is_supported_default_cli_toolset_transition(&[], &sets[2]));
+        assert!(!is_supported_default_cli_toolset_transition(
+            &sets[0],
+            &["mail.sync.page".into()]
+        ));
+    }
+    #[test]
+    fn cli15_uid_scope_accepts_exact_tools_without_widening_old_grants() {
+        let mut uid = default_cli_folder_tools();
+        uid.push("mail.sync.page".into());
+        assert!(is_supported_default_cli_toolset(&uid));
+        for tools in [default_cli_legacy_tools(), default_cli_folder_tools()] {
+            let scope = RequestedScope::new(vec!["acct".into()], tools).unwrap();
+            assert!(!scope.permits_account("acct", "mail.sync.page"));
+        }
+        let scope = RequestedScope::new(vec!["acct".into()], uid.clone()).unwrap();
+        assert!(scope.permits_account("acct", "mail.sync.page"));
+        assert!(!scope.permits_account("other", "mail.sync.page"));
+        uid.swap(2, 3);
+        assert!(!is_supported_default_cli_toolset(&uid));
+    }
     #[test]
     fn cli15_default_toolsets_reject_partial_duplicate_and_send_grants() {
         assert!(is_supported_default_cli_toolset(&default_cli_legacy_tools()));

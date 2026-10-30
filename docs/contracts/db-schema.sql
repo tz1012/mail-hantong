@@ -1,4 +1,4 @@
--- mail-hantong encrypted schema v9
+-- mail-hantong encrypted schema v12
 -- This file is consumed only after SQLCipher keying and connection checks.
 -- It never creates a plaintext fallback database.
 -- Connection policy pragmas are applied by KeyedConnection before this DDL
@@ -120,7 +120,7 @@ CREATE TABLE audit_starts (
     profile_epoch INTEGER NOT NULL CHECK (profile_epoch >= 1),
     client_kind TEXT NOT NULL CHECK (client_kind IN ('cli', 'mcp', 'gui')),
     display_label TEXT NOT NULL CHECK (length(display_label) BETWEEN 1 AND 128 AND length(CAST(display_label AS BLOB)) <= 512),
-    tool_code TEXT NOT NULL CHECK (tool_code IN ('mail.accounts.list', 'mail.send.execute', 'mail.folders.list', 'mail.folders.refresh')),
+    tool_code TEXT NOT NULL CHECK (tool_code IN ('mail.accounts.list', 'mail.send.execute', 'mail.folders.list', 'mail.folders.refresh', 'mail.sync.page')),
     started_at_utc_ms INTEGER NOT NULL CHECK (started_at_utc_ms > 0)
 ) STRICT;
 
@@ -273,12 +273,12 @@ CREATE TABLE client_scope_refreshes (
     updated_at_utc_ms INTEGER NOT NULL CHECK (updated_at_utc_ms>=created_at_utc_ms),
     decided_at_utc_ms INTEGER,
     activated_at_utc_ms INTEGER,
-    hash_version INTEGER NOT NULL DEFAULT 1 CHECK (hash_version IN (1,2)),
-    base_tools_json TEXT NOT NULL DEFAULT '["mail.accounts.list"]' CHECK (base_tools_json IN ('["mail.accounts.list"]','["mail.accounts.list","mail.folders.list","mail.folders.refresh"]')),
-    target_tools_json TEXT NOT NULL DEFAULT '["mail.accounts.list"]' CHECK (target_tools_json IN ('["mail.accounts.list"]','["mail.accounts.list","mail.folders.list","mail.folders.refresh"]')),
+    hash_version INTEGER NOT NULL DEFAULT 1 CHECK (hash_version IN (1,2,3)),
+    base_tools_json TEXT NOT NULL DEFAULT '["mail.accounts.list"]' CHECK (base_tools_json IN ('["mail.accounts.list"]','["mail.accounts.list","mail.folders.list","mail.folders.refresh"]','["mail.accounts.list","mail.folders.list","mail.folders.refresh","mail.sync.page"]')),
+    target_tools_json TEXT NOT NULL DEFAULT '["mail.accounts.list"]' CHECK (target_tools_json IN ('["mail.accounts.list"]','["mail.accounts.list","mail.folders.list","mail.folders.refresh"]','["mail.accounts.list","mail.folders.list","mail.folders.refresh","mail.sync.page"]')),
     CHECK (base_accounts_json<>target_accounts_json OR base_tools_json<>target_tools_json),
-    CHECK (hash_version=2 OR (base_tools_json='["mail.accounts.list"]' AND target_tools_json='["mail.accounts.list"]')),
-    CHECK (base_tools_json='["mail.accounts.list"]' OR target_tools_json='["mail.accounts.list","mail.folders.list","mail.folders.refresh"]'),
+    CHECK ((hash_version=1 AND base_tools_json='["mail.accounts.list"]' AND target_tools_json='["mail.accounts.list"]') OR (hash_version=2 AND base_tools_json IN ('["mail.accounts.list"]','["mail.accounts.list","mail.folders.list","mail.folders.refresh"]') AND target_tools_json IN ('["mail.accounts.list"]','["mail.accounts.list","mail.folders.list","mail.folders.refresh"]')) OR hash_version=3),
+    CHECK (base_tools_json='["mail.accounts.list"]' OR (base_tools_json='["mail.accounts.list","mail.folders.list","mail.folders.refresh"]' AND target_tools_json IN ('["mail.accounts.list","mail.folders.list","mail.folders.refresh"]','["mail.accounts.list","mail.folders.list","mail.folders.refresh","mail.sync.page"]')) OR (base_tools_json='["mail.accounts.list","mail.folders.list","mail.folders.refresh","mail.sync.page"]' AND target_tools_json='["mail.accounts.list","mail.folders.list","mail.folders.refresh","mail.sync.page"]')),
     CHECK (
         (phase='pending' AND version=1 AND updated_at_utc_ms=created_at_utc_ms AND decided_at_utc_ms IS NULL AND activated_at_utc_ms IS NULL)
         OR (phase IN ('staged','denied') AND version=2 AND decided_at_utc_ms IS NOT NULL AND decided_at_utc_ms>=created_at_utc_ms AND decided_at_utc_ms<expires_at_utc_ms AND updated_at_utc_ms=decided_at_utc_ms AND activated_at_utc_ms IS NULL)
@@ -414,3 +414,42 @@ CREATE TABLE imap_uid_messages (
 CREATE INDEX imap_uid_messages_operation_idx ON imap_uid_messages(operation_id, uid);
 
 CREATE INDEX imap_uid_page_coverage_idx ON imap_uid_page_operations(account_id, mailbox_key, mailbox_encoding, uid_validity, covered_through_uid, after_uid);
+
+CREATE TABLE imap_uid_page_requests (
+    execution_id BLOB PRIMARY KEY REFERENCES audit_starts(execution_id) ON DELETE RESTRICT
+        CHECK (length(execution_id) = 32 AND execution_id <> zeroblob(32)),
+    operation_id TEXT NOT NULL UNIQUE CHECK (length(operation_id) BETWEEN 1 AND 128 AND length(CAST(operation_id AS BLOB)) = length(operation_id) AND operation_id NOT GLOB '*[^A-Za-z0-9_-]*'),
+    account_id TEXT NOT NULL REFERENCES accounts(account_id) ON DELETE RESTRICT
+        CHECK (length(account_id) BETWEEN 1 AND 128 AND length(CAST(account_id AS BLOB)) = length(account_id) AND account_id NOT GLOB '*[^A-Za-z0-9_-]*'),
+    idempotency_key TEXT NOT NULL CHECK (length(idempotency_key) BETWEEN 1 AND 128 AND length(CAST(idempotency_key AS BLOB)) = length(idempotency_key) AND idempotency_key NOT GLOB '*[^A-Za-z0-9_-]*'),
+    mailbox_key TEXT NOT NULL CHECK (length(mailbox_key) BETWEEN 2 AND 2048 AND length(mailbox_key) % 2 = 0 AND mailbox_key NOT GLOB '*[^0-9a-f]*'),
+    mailbox_encoding TEXT NOT NULL CHECK (mailbox_encoding IN ('modified_utf7','utf8')),
+    intent_hash BLOB NOT NULL CHECK (length(intent_hash) = 32),
+    expected_catalog_generation INTEGER NOT NULL CHECK (expected_catalog_generation >= 1),
+    expected_cursor_version INTEGER NOT NULL CHECK (expected_cursor_version BETWEEN 0 AND 9223372036854775806),
+    bound_account_version INTEGER NOT NULL CHECK (bound_account_version >= 1),
+    bound_endpoint_version INTEGER NOT NULL CHECK (bound_endpoint_version >= 1),
+    bound_endpoint_hash BLOB NOT NULL CHECK (length(bound_endpoint_hash) = 32),
+    expected_uid_validity INTEGER CHECK (expected_uid_validity IS NULL OR expected_uid_validity BETWEEN 1 AND 4294967295),
+    after_uid INTEGER NOT NULL CHECK (after_uid BETWEEN 0 AND 4294967294),
+    state TEXT NOT NULL CHECK (state IN ('admitted','running','succeeded','failed')),
+    admitted_at_utc_ms INTEGER NOT NULL CHECK (admitted_at_utc_ms > 0),
+    started_at_utc_ms INTEGER CHECK (started_at_utc_ms IS NULL OR started_at_utc_ms >= admitted_at_utc_ms),
+    completed_at_utc_ms INTEGER CHECK (completed_at_utc_ms IS NULL OR (completed_at_utc_ms >= admitted_at_utc_ms AND (started_at_utc_ms IS NULL OR completed_at_utc_ms >= started_at_utc_ms))),
+    result_cursor_version INTEGER CHECK (result_cursor_version IS NULL OR result_cursor_version = expected_cursor_version + 1),
+    result_covered_through_uid INTEGER CHECK (result_covered_through_uid IS NULL OR (result_covered_through_uid BETWEEN after_uid AND 4294967294 AND result_covered_through_uid <= after_uid + 64)),
+    result_inserted_count INTEGER CHECK (result_inserted_count IS NULL OR result_inserted_count BETWEEN 0 AND 64),
+    error_code TEXT CHECK (error_code IS NULL OR error_code IN ('INVALID_INPUT','AUTH_REQUIRED','SCOPE_DENIED','POLICY_BLOCKED','CONFLICT','RATE_LIMITED','OFFLINE','NOT_FOUND','SEND_UNKNOWN','APPROVAL_REQUIRED','APPROVAL_EXPIRED','APPROVAL_DENIED','APPROVAL_RATE_LIMITED','CLIENT_NOT_REGISTERED','CLIENT_SUSPENDED','HUMAN_STEP_REQUIRED','CORE_UNAVAILABLE','VERSION_MISMATCH','CURSOR_EXPIRED','CAPABILITY_UNSUPPORTED','QUOTA_EXCEEDED','INTERNAL_ERROR')),
+    page_operation_id TEXT REFERENCES imap_uid_page_operations(operation_id) ON DELETE RESTRICT,
+    result_page_hash BLOB CHECK (result_page_hash IS NULL OR length(result_page_hash) = 32),
+    result_payload_hash BLOB CHECK (result_payload_hash IS NULL OR length(result_payload_hash) = 32),
+    UNIQUE (account_id, idempotency_key),
+    CHECK ((expected_cursor_version = 0 AND expected_uid_validity IS NULL AND after_uid = 0)
+        OR (expected_cursor_version > 0 AND expected_uid_validity IS NOT NULL)),
+    CHECK (
+        (state = 'admitted' AND started_at_utc_ms IS NULL AND completed_at_utc_ms IS NULL AND result_cursor_version IS NULL AND result_covered_through_uid IS NULL AND result_inserted_count IS NULL AND error_code IS NULL AND page_operation_id IS NULL AND result_page_hash IS NULL AND result_payload_hash IS NULL)
+        OR (state = 'running' AND started_at_utc_ms IS NOT NULL AND completed_at_utc_ms IS NULL AND result_cursor_version IS NULL AND result_covered_through_uid IS NULL AND result_inserted_count IS NULL AND error_code IS NULL AND page_operation_id IS NULL AND result_page_hash IS NULL AND result_payload_hash IS NULL)
+        OR (state = 'succeeded' AND started_at_utc_ms IS NOT NULL AND completed_at_utc_ms IS NOT NULL AND result_cursor_version IS NOT NULL AND result_covered_through_uid IS NOT NULL AND result_inserted_count IS NOT NULL AND error_code IS NULL AND page_operation_id IS NOT NULL AND page_operation_id = operation_id AND result_page_hash IS NOT NULL AND result_payload_hash IS NOT NULL)
+        OR (state = 'failed' AND completed_at_utc_ms IS NOT NULL AND result_cursor_version IS NULL AND result_covered_through_uid IS NULL AND result_inserted_count IS NULL AND error_code IS NOT NULL AND page_operation_id IS NULL AND result_page_hash IS NULL AND result_payload_hash IS NULL)
+    )
+) STRICT;

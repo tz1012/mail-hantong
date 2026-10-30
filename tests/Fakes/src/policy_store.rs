@@ -23,6 +23,7 @@ pub enum PolicyFixtureMutation {
     Revoke,
     AdvanceEpoch,
     AllowFolders,
+    AllowUidPage,
 }
 impl PolicyStoreFixture {
     pub fn new(server: &ServerSigningKey, client_public: [u8; 72]) -> Result<Self, ErrorCode> {
@@ -105,6 +106,12 @@ impl PolicyStoreFixture {
                 PolicyFixtureMutation::AllowFolders=> {
                     c.execute("UPDATE client_registration_requests SET requested_tools_json='[\"mail.accounts.list\",\"mail.folders.list\",\"mail.folders.refresh\"]',version=version+1 WHERE request_id=(SELECT request_id FROM client_registrations WHERE registration_id=?1)",[self.registration_id.as_slice()])?;
                     c.execute("INSERT OR IGNORE INTO client_registration_tools(registration_id,tool_id) VALUES(?1,'mail.folders.list'),(?1,'mail.folders.refresh')",[self.registration_id.as_slice()])?;
+                    c.execute("INSERT OR IGNORE INTO mail_connection_settings(account_id,endpoint_kind,settings_version,host,port,tls,login_name,authentication,updated_at_utc_ms) VALUES('account_a','imap',1,'imap.fixture.invalid',993,'implicit_tls','fixture-user','app_password',1)",[])?;
+                    c.execute("UPDATE client_registrations SET profile_epoch=profile_epoch+1,version=version+1 WHERE registration_id=?1",[self.registration_id.as_slice()])?;
+                }
+                PolicyFixtureMutation::AllowUidPage=> {
+                    c.execute("UPDATE client_registration_requests SET requested_tools_json='[\"mail.accounts.list\",\"mail.folders.list\",\"mail.folders.refresh\",\"mail.sync.page\"]',version=version+1 WHERE request_id=(SELECT request_id FROM client_registrations WHERE registration_id=?1)",[self.registration_id.as_slice()])?;
+                    c.execute("INSERT OR IGNORE INTO client_registration_tools(registration_id,tool_id) VALUES(?1,'mail.folders.list'),(?1,'mail.folders.refresh'),(?1,'mail.sync.page')",[self.registration_id.as_slice()])?;
                     c.execute("INSERT OR IGNORE INTO mail_connection_settings(account_id,endpoint_kind,settings_version,host,port,tls,login_name,authentication,updated_at_utc_ms) VALUES('account_a','imap',1,'imap.fixture.invalid',993,'implicit_tls','fixture-user','app_password',1)",[])?;
                     c.execute("UPDATE client_registrations SET profile_epoch=profile_epoch+1,version=version+1 WHERE registration_id=?1",[self.registration_id.as_slice()])?;
                 }

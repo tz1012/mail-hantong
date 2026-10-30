@@ -4,7 +4,8 @@ use crate::{
     registrations::{blob_column, read_registration_bare, read_request, text_column},
 };
 use hantong_contracts::auth::{
-    RequestedScope, default_cli_legacy_tools, is_supported_default_cli_toolset,
+    RequestedScope, default_cli_folder_tools, default_cli_legacy_tools,
+    is_supported_default_cli_toolset, is_supported_default_cli_toolset_transition,
 };
 use rusqlite::{Connection, OptionalExtension, Row, Transaction, params};
 use std::collections::BTreeMap;
@@ -43,15 +44,11 @@ fn phase_parse(value: &str) -> rusqlite::Result<ScopeRefreshPhase> {
 }
 fn hash_payload(value: &CliScopeRefresh) -> Result<[u8; 32], ErrorCode> {
     let base = &value.base_registration;
-    let v2 = match value.hash_version {
-        1 => false,
-        2 => true,
+    let mut bytes = match value.hash_version {
+        1 => b"mail-hantong.cli-scope-refresh.v1\0".to_vec(),
+        2 => b"mail-hantong.cli-scope-refresh.v2\0".to_vec(),
+        3 => b"mail-hantong.cli-scope-refresh.v3\0".to_vec(),
         _ => return Err(ErrorCode::InternalError),
-    };
-    let mut bytes = if v2 {
-        b"mail-hantong.cli-scope-refresh.v2\0".to_vec()
-    } else {
-        b"mail-hantong.cli-scope-refresh.v1\0".to_vec()
     };
     bytes.extend_from_slice(&value.refresh_id);
     bytes.extend_from_slice(&base.registration_id);
@@ -69,7 +66,7 @@ fn hash_payload(value: &CliScopeRefresh) -> Result<[u8; 32], ErrorCode> {
             bytes.extend_from_slice(account.as_bytes());
         }
     }
-    if v2 {
+    if value.hash_version >= 2 {
         for tools in [base.scope.tools(), value.target_tools.as_slice()] {
             bytes.extend_from_slice(&(tools.len() as u32).to_be_bytes());
             for tool in tools {
@@ -79,6 +76,14 @@ fn hash_payload(value: &CliScopeRefresh) -> Result<[u8; 32], ErrorCode> {
         }
     }
     hantong_platform::sha256(&bytes).map_err(|_| ErrorCode::InternalError)
+}
+fn historical_toolset(tools: &[String], hash_version: u8) -> bool {
+    match hash_version {
+        1 => tools == default_cli_legacy_tools(),
+        2 => tools == default_cli_legacy_tools() || tools == default_cli_folder_tools(),
+        3 => is_supported_default_cli_toolset(tools),
+        _ => false,
+    }
 }
 fn accounts_column(row: &Row<'_>, index: usize) -> rusqlite::Result<Vec<String>> {
     let values: Vec<String> = serde_json::from_str(text_column(row, index, 32768)?)
@@ -90,6 +95,7 @@ fn read_row(
     row: &Row<'_>,
     current: &RegistrationRecord,
     client_hash: &[u8; 32],
+    maximum_hash_version: u8,
 ) -> rusqlite::Result<CliScopeRefresh> {
     let id = blob_column::<32>(row, 0)?;
     let registration_id = blob_column::<16>(row, 1)?;
@@ -113,13 +119,10 @@ fn read_row(
         .map_err(|_| rusqlite::Error::InvalidQuery)?;
     let target_tools: Vec<String> = serde_json::from_str(text_column(row, 19, 1024)?)
         .map_err(|_| rusqlite::Error::InvalidQuery)?;
-    if !is_supported_default_cli_toolset(&base_tools)
-        || !is_supported_default_cli_toolset(&target_tools)
-        || !matches!(hash_version, 1 | 2)
-        || (hash_version == 1
-            && (base_tools != default_cli_legacy_tools()
-                || target_tools != default_cli_legacy_tools()))
-        || (base_tools != default_cli_legacy_tools() && target_tools == default_cli_legacy_tools())
+    if !(1..=i64::from(maximum_hash_version)).contains(&hash_version)
+        || !historical_toolset(&base_tools, hash_version as u8)
+        || !historical_toolset(&target_tools, hash_version as u8)
+        || !is_supported_default_cli_toolset_transition(&base_tools, &target_tools)
         || serde_json::to_string(&base_tools).map_err(|_| rusqlite::Error::InvalidQuery)?
             != text_column(row, 18, 1024)?
         || serde_json::to_string(&target_tools).map_err(|_| rusqlite::Error::InvalidQuery)?
@@ -194,11 +197,12 @@ fn read_row(
     Ok(value)
 }
 pub(super) fn context(connection: &Connection) -> Result<Option<Context>, ErrorCode> {
-    context_with_layout(connection, false)
+    context_with_layout(connection, false, 3)
 }
 fn context_with_layout(
     connection: &Connection,
     legacy: bool,
+    maximum_hash_version: u8,
 ) -> Result<Option<Context>, ErrorCode> {
     let count: i64 = db(connection.query_row(
         "SELECT count(*) FROM (SELECT refresh_id FROM client_scope_refreshes LIMIT 1025)",
@@ -231,8 +235,7 @@ fn context_with_layout(
         || original.client_kind != ClientKind::Cli
         || original.display_label != DEFAULT_CLI_LABEL
         || original.scope.tools() != default_cli_legacy_tools()
-        || !is_supported_default_cli_toolset(registration.scope.tools())
-        || (legacy && registration.scope.tools() != default_cli_legacy_tools())
+        || !historical_toolset(registration.scope.tools(), maximum_hash_version)
         || !registration.read_only
         || registration.requests_per_minute != 60
         || registration.approved_channel != "approval_helper"
@@ -255,8 +258,10 @@ fn context_with_layout(
     let mut stmt = db(connection.prepare(
         if legacy { "SELECT refresh_id,registration_id,base_registration_version,base_profile_epoch,target_profile_epoch,base_accounts_json,target_accounts_json,client_public_key_hash,server_public_key_hash,payload_hash,phase,version,created_at_utc_ms,expires_at_utc_ms,updated_at_utc_ms,decided_at_utc_ms,activated_at_utc_ms,1,'[\"mail.accounts.list\"]','[\"mail.accounts.list\"]' FROM client_scope_refreshes ORDER BY target_profile_epoch,refresh_id LIMIT 1025" } else { "SELECT refresh_id,registration_id,base_registration_version,base_profile_epoch,target_profile_epoch,base_accounts_json,target_accounts_json,client_public_key_hash,server_public_key_hash,payload_hash,phase,version,created_at_utc_ms,expires_at_utc_ms,updated_at_utc_ms,decided_at_utc_ms,activated_at_utc_ms,hash_version,base_tools_json,target_tools_json FROM client_scope_refreshes ORDER BY target_profile_epoch,refresh_id LIMIT 1025" },
     ))?;
-    let rows: Vec<CliScopeRefresh> =
-        db(db(stmt.query_map([], |row| read_row(row, &registration, &key_hash)))?.collect())?;
+    let rows: Vec<CliScopeRefresh> = db(db(stmt.query_map([], |row| {
+        read_row(row, &registration, &key_hash, maximum_hash_version)
+    }))?
+    .collect())?;
     if rows.len() > LIMIT {
         return Err(ErrorCode::QuotaExceeded);
     }
@@ -272,7 +277,14 @@ fn context_with_layout(
 /// The migration validator uses this before rebuilding the table, so the old
 /// payload hash and legacy tool snapshot are checked exactly as stored.
 pub(super) fn validate_history_v8(connection: &Connection) -> rusqlite::Result<()> {
-    context_with_layout(connection, true)
+    context_with_layout(connection, true, 1)
+        .map(|_| ())
+        .map_err(|_| rusqlite::Error::InvalidQuery)
+}
+
+/// Freezes v9-v11 semantics before a v12 schema migration.
+pub(super) fn validate_history_v11(connection: &Connection) -> rusqlite::Result<()> {
+    context_with_layout(connection, false, 2)
         .map(|_| ())
         .map_err(|_| rusqlite::Error::InvalidQuery)
 }
@@ -504,8 +516,7 @@ pub(super) fn create(
     if base.state != RegistrationState::Active
         || (target_scope.accounts() == base.scope.accounts()
             && target_scope.tools() == base.scope.tools())
-        || (base.scope.tools() != default_cli_legacy_tools()
-            && target_scope.tools() == default_cli_legacy_tools())
+        || !is_supported_default_cli_toolset_transition(base.scope.tools(), target_scope.tools())
         || base.version > i64::MAX as u64 - 2
         || base.profile_epoch >= i64::MAX as u64
         || context.rows.iter().any(|r| {
@@ -536,7 +547,7 @@ pub(super) fn create(
     }
     let mut value = CliScopeRefresh {
         refresh_id: id,
-        hash_version: 2,
+        hash_version: 3,
         client_public_key_hash: hantong_platform::sha256(&base.public_key)
             .map_err(|_| ErrorCode::InternalError)?,
         base_registration: base,

@@ -21,6 +21,38 @@ fn cli16_help_uses_english_by_default_and_korean_after_all_flags() {
 }
 
 #[test]
+fn cli01_uid_invalid_commands_exit_before_any_profile_access() {
+    for args in [
+        vec!["--json", "sync", "page", "--account", "acct"],
+        vec![
+            "--json",
+            "sync",
+            "cursor",
+            "--account",
+            "acct",
+            "--wire-hex",
+            "AB",
+            "--encoding",
+            "utf8",
+        ],
+        vec![
+            "--json",
+            "sync",
+            "status",
+            "--account",
+            "acct",
+            "--execution-id",
+            "00",
+        ],
+    ] {
+        let output = cli(&args);
+        assert_eq!(output.status.code(), Some(2));
+        assert!(String::from_utf8_lossy(&output.stdout).contains("INVALID_INPUT"));
+        assert!(output.stderr.is_empty());
+    }
+}
+
+#[test]
 fn cli15_verify_rejects_paths_before_loading_any_profile() {
     for selector in ["other", "../default", "D:/fixture/default.json"] {
         let output = cli(&[

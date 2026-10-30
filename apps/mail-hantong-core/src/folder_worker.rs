@@ -14,16 +14,18 @@ type Job = [u8; 32];
 struct Queue {
     sender: mpsc::Sender<Job>,
     scheduled: Rc<Cell<Option<Job>>>,
+    owned: Rc<Cell<Option<Job>>>,
 }
 struct Slot {
     permit: Option<mpsc::OwnedPermit<Job>>,
     scheduled: Rc<Cell<Option<Job>>>,
+    owned: Rc<Cell<Option<Job>>>,
     id: Job,
 }
 impl Drop for Slot {
     fn drop(&mut self) {
-        if self.permit.is_some() && self.scheduled.get() == Some(self.id) {
-            self.scheduled.set(None);
+        if self.permit.is_some() && self.owned.get() == Some(self.id) {
+            release_owned(&self.scheduled, &self.owned);
         }
     }
 }
@@ -52,19 +54,33 @@ impl Queue {
                 mpsc::error::TrySendError::Closed(_) => FolderQueueAdmission::Closed,
             })?;
         self.scheduled.set(Some(id));
+        self.owned.set(Some(id));
         Ok(Slot {
             permit: Some(permit),
             scheduled: self.scheduled.clone(),
+            owned: self.owned.clone(),
             id,
         })
     }
 }
+#[cfg(test)]
 fn queue() -> (Queue, mpsc::Receiver<Job>) {
+    queue_with_slot(Rc::new(Cell::new(None)))
+}
+fn release_owned(shared: &Cell<Option<Job>>, owned: &Cell<Option<Job>>) {
+    if let Some(id) = owned.take()
+        && shared.get() == Some(id)
+    {
+        shared.set(None)
+    }
+}
+fn queue_with_slot(scheduled: Rc<Cell<Option<Job>>>) -> (Queue, mpsc::Receiver<Job>) {
     let (sender, receiver) = mpsc::channel(1);
     (
         Queue {
             sender,
-            scheduled: Rc::new(Cell::new(None)),
+            scheduled,
+            owned: Rc::new(Cell::new(None)),
         },
         receiver,
     )
@@ -78,6 +94,7 @@ pub(crate) struct FolderWorker<'a, D> {
     store: &'a Store,
     receiver: mpsc::Receiver<Job>,
     scheduled: Rc<Cell<Option<Job>>>,
+    owned: Rc<Cell<Option<Job>>>,
     discovery: D,
 }
 pub(crate) trait Discovery {
@@ -114,24 +131,35 @@ fn probe_error(error: hantong_secrets::MailProbeError) -> ErrorCode {
 pub(crate) fn coordinator_for_store<'a>(
     store: &'a Store,
     secrets_root: &'a Path,
+    shared_slot: Rc<Cell<Option<Job>>>,
 ) -> (
     FolderWorkerHandle<'a>,
     FolderWorker<'a, NativeDiscovery<'a>>,
 ) {
-    coordinator_with_discovery(store, NativeDiscovery { secrets_root })
+    coordinator_with_discovery_and_slot(store, NativeDiscovery { secrets_root }, shared_slot)
 }
+#[cfg(test)]
 pub(crate) fn coordinator_with_discovery<D: Discovery>(
     store: &Store,
     discovery: D,
 ) -> (FolderWorkerHandle<'_>, FolderWorker<'_, D>) {
-    let (queue, receiver) = queue();
+    coordinator_with_discovery_and_slot(store, discovery, Rc::new(Cell::new(None)))
+}
+pub(crate) fn coordinator_with_discovery_and_slot<D: Discovery>(
+    store: &Store,
+    discovery: D,
+    shared_slot: Rc<Cell<Option<Job>>>,
+) -> (FolderWorkerHandle<'_>, FolderWorker<'_, D>) {
+    let (queue, receiver) = queue_with_slot(shared_slot);
     let scheduled = queue.scheduled.clone();
+    let owned = queue.owned.clone();
     (
         FolderWorkerHandle { store, queue },
         FolderWorker {
             store,
             receiver,
             scheduled,
+            owned,
             discovery,
         },
     )
@@ -157,16 +185,14 @@ impl FolderWorkerHandle<'_> {
 }
 impl<D> Drop for FolderWorker<'_, D> {
     fn drop(&mut self) {
-        self.scheduled.set(None);
+        release_owned(&self.scheduled, &self.owned);
     }
 }
 impl<D: Discovery> FolderWorker<'_, D> {
     pub(crate) async fn run(mut self) -> Result<(), ErrorCode> {
         while let Some(id) = self.receiver.recv().await {
             self.run_one(id).await?;
-            if self.scheduled.get() == Some(id) {
-                self.scheduled.set(None);
-            }
+            release_owned(&self.scheduled, &self.owned);
         }
         Ok(())
     }
@@ -223,6 +249,22 @@ impl Discovery for NoDiscovery {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test(flavor = "current_thread")]
+    async fn ext04_shared_slot_idle_owner_cannot_release_other_queued_work() {
+        let shared = Rc::new(Cell::new(None));
+        let (first, mut receiver) = queue_with_slot(shared.clone());
+        let (second, _other_receiver) = queue_with_slot(shared.clone());
+        first.reserve([8; 32]).unwrap().submit();
+        release_owned(&shared, &second.owned);
+        assert_eq!(shared.get(), Some([8; 32]));
+        assert!(matches!(
+            second.reserve([9; 32]),
+            Err(FolderQueueAdmission::Full)
+        ));
+        assert_eq!(receiver.recv().await, Some([8; 32]));
+        release_owned(&shared, &first.owned);
+        assert!(second.reserve([9; 32]).is_ok());
+    }
     #[tokio::test(flavor = "current_thread")]
     async fn m203_capacity_one_remains_reserved_during_execution() {
         let (q, mut receiver) = queue();

@@ -171,7 +171,7 @@ impl Store {
     }
 }
 #[cfg(windows)]
-mod storage;
+pub(crate) mod storage;
 #[cfg(windows)]
 pub(super) use storage::validate_history;
 #[cfg(all(test, windows))]

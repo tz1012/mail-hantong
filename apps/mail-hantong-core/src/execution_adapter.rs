@@ -6,12 +6,14 @@
 
 use hantong_application::{
     AccountsListRequest, AuditHandoff, ExecutionContext, ReadResult, ToolRequest,
-    render_account_list, render_folder_page, render_folder_refresh_receipt,
+    render_account_list, render_folder_page, render_folder_refresh_receipt, render_uid_cursor,
+    render_uid_receipt, validated_uid_mailbox,
 };
 use hantong_contracts::{
     ErrorCode,
     audit::{AuditBegin, AuditTerminal},
     folders::{FolderListRequest, FolderRefreshRequest, FolderRefreshStatusRequest},
+    uid_page::{UidCursorRequest, UidCursorSnapshot, UidPageRequest, UidPageStatusRequest},
 };
 use hantong_ipc_server::{
     RpcRequest,
@@ -27,6 +29,7 @@ pub(crate) struct CoreExecutionAdapter<'a, 'server> {
     store: &'a Store,
     policy: &'a mut ReadPolicy,
     folder_worker: &'a crate::folder_worker::FolderWorkerHandle<'a>,
+    uid_worker: Option<&'a crate::uid_worker::UidWorkerHandle<'a>>,
 }
 
 pub(crate) fn load_registration(
@@ -39,6 +42,7 @@ pub(crate) fn load_registration(
         .transpose()
 }
 
+#[cfg(test)]
 pub(crate) fn execute<'server>(
     store: &Store,
     policy: &mut ReadPolicy,
@@ -46,7 +50,17 @@ pub(crate) fn execute<'server>(
     connection: &mut AuthenticatedConnection<'server>,
     request: &RpcRequest,
 ) -> Result<Value, ErrorCode> {
-    let mut adapter = CoreExecutionAdapter::new(connection, store, policy, worker);
+    execute_with_uid(store, policy, worker, None, connection, request)
+}
+pub(crate) fn execute_with_uid<'server>(
+    store: &Store,
+    policy: &mut ReadPolicy,
+    worker: &crate::folder_worker::FolderWorkerHandle<'_>,
+    uid_worker: Option<&crate::uid_worker::UidWorkerHandle<'_>>,
+    connection: &mut AuthenticatedConnection<'server>,
+    request: &RpcRequest,
+) -> Result<Value, ErrorCode> {
+    let mut adapter = CoreExecutionAdapter::new(connection, store, policy, worker, uid_worker);
     hantong_application::execute_tool(&mut adapter, &request.method, &request.params)
 }
 
@@ -56,12 +70,14 @@ impl<'a, 'server> CoreExecutionAdapter<'a, 'server> {
         store: &'a Store,
         policy: &'a mut ReadPolicy,
         folder_worker: &'a crate::folder_worker::FolderWorkerHandle<'a>,
+        uid_worker: Option<&'a crate::uid_worker::UidWorkerHandle<'a>>,
     ) -> Self {
         Self {
             connection,
             store,
             policy,
             folder_worker,
+            uid_worker,
         }
     }
 
@@ -192,6 +208,67 @@ impl<'a, 'server> ExecutionContext for CoreExecutionAdapter<'a, 'server> {
         }
     }
 
+    fn read_uid_cursor(
+        &mut self,
+        request: &UidCursorRequest,
+    ) -> Result<ReadResult<Value>, ErrorCode> {
+        let mailbox = validated_uid_mailbox(request.mailbox())?;
+        let catalog = self
+            .store
+            .load_imap_mailbox_snapshot(request.account_id())?
+            .ok_or(ErrorCode::NotFound)?;
+        if !catalog.snapshot().mailboxes().iter().any(|m| {
+            m.selectable()
+                && m.name().encoding() == mailbox.encoding()
+                && m.name().wire_name() == mailbox.wire_name()
+        }) {
+            return Err(ErrorCode::NotFound);
+        }
+        let stored = self
+            .store
+            .load_imap_uid_cursor(request.account_id(), &mailbox)?;
+        let (version, covered, current) = stored
+            .map(|c| (c.version(), c.covered_through_uid(), c.binding_current()))
+            .unwrap_or((0, 0, true));
+        let value = UidCursorSnapshot::new(
+            request.account_id(),
+            request.mailbox().clone(),
+            catalog.generation(),
+            version,
+            covered,
+            current && catalog.binding_current(),
+        )
+        .map_err(|_| ErrorCode::InternalError)?;
+        ReadResult::new(render_uid_cursor(&value), None)
+    }
+    fn read_uid_page_status(
+        &mut self,
+        request: &UidPageStatusRequest,
+    ) -> Result<ReadResult<Value>, ErrorCode> {
+        let receipt = self
+            .store
+            .load_uid_page_receipt(*self.connection.registration_id(), request)?;
+        ReadResult::new(render_uid_receipt(&receipt), None)
+    }
+    fn request_uid_page(
+        &mut self,
+        id: [u8; 32],
+        request: &UidPageRequest,
+    ) -> Result<AuditHandoff<Value>, ErrorCode> {
+        use hantong_store::uid_page_jobs::UidPageAdmission;
+        match self
+            .uid_worker
+            .ok_or(ErrorCode::CoreUnavailable)?
+            .admit(id, request)?
+        {
+            UidPageAdmission::Admitted(receipt)
+            | UidPageAdmission::Existing(receipt)
+            | UidPageAdmission::Failed(receipt) => {
+                Ok(AuditHandoff::response(render_uid_receipt(&receipt)))
+            }
+            UidPageAdmission::Rejected(error) => Ok(AuditHandoff::error(error)),
+        }
+    }
     fn finish_audit(&mut self, id: [u8; 32], terminal: AuditTerminal) -> Result<(), ErrorCode> {
         self.store.finish_audit(id, terminal)
     }

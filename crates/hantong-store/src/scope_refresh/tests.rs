@@ -137,10 +137,11 @@ fn snapshot(f: &Fixture) -> Vec<Vec<Vec<rusqlite::types::Value>>> {
 }
 fn independent_hash(r: &CliScopeRefresh) -> [u8; 32] {
     let b = &r.base_registration;
-    let mut bytes = if r.hash_version == 1 {
-        b"mail-hantong.cli-scope-refresh.v1\0".to_vec()
-    } else {
-        b"mail-hantong.cli-scope-refresh.v2\0".to_vec()
+    let mut bytes = match r.hash_version {
+        1 => b"mail-hantong.cli-scope-refresh.v1\0".to_vec(),
+        2 => b"mail-hantong.cli-scope-refresh.v2\0".to_vec(),
+        3 => b"mail-hantong.cli-scope-refresh.v3\0".to_vec(),
+        _ => panic!("invalid fixture hash version"),
     };
     bytes.extend_from_slice(&r.refresh_id);
     bytes.extend_from_slice(&b.registration_id);
@@ -158,7 +159,7 @@ fn independent_hash(r: &CliScopeRefresh) -> [u8; 32] {
             bytes.extend_from_slice(value.as_bytes());
         }
     }
-    if r.hash_version == 2 {
+    if r.hash_version >= 2 {
         for values in [b.scope.tools(), r.target_tools.as_slice()] {
             bytes.extend_from_slice(&(values.len() as u32).to_be_bytes());
             for value in values {
@@ -186,6 +187,161 @@ fn shift(f: &Fixture, r: &CliScopeRefresh, delta: i64) -> CliScopeRefresh {
         Ok(())
     }).unwrap();
     changed
+}
+
+#[test]
+fn cli15_uid_scope_new_history_uses_v3_domain() {
+    let f = Fixture::new();
+    let pending = f.create(90, &["b"]);
+    assert_eq!(pending.hash_version, 3);
+    assert_eq!(pending.payload_hash(), &independent_hash(&pending));
+    let mut previous = pending.clone();
+    previous.hash_version = 2;
+    assert_ne!(pending.payload_hash(), &independent_hash(&previous));
+}
+
+#[test]
+fn cli15_uid_scope_upgrade_keeps_old_grants_until_atomic_activation_and_rejects_downgrades() {
+    let f = Fixture::new();
+    let folder = hantong_contracts::auth::default_cli_folder_tools();
+    let uid = hantong_contracts::auth::default_cli_uid_tools();
+    let first = f.create_scope(81, &["a"], folder.clone());
+    let first = f.store().stage_cli_scope_refresh(&first).unwrap();
+    f.store().activate_cli_scope_refresh(&first).unwrap();
+    let pending = f.create_scope(82, &["a"], uid.clone());
+    let staged = f.store().stage_cli_scope_refresh(&pending).unwrap();
+    assert_eq!(
+        f.store()
+            .load_default_cli_registration()
+            .unwrap()
+            .unwrap()
+            .scope
+            .tools(),
+        folder
+    );
+    let before = snapshot(&f);
+    sql(
+        &f,
+        "CREATE TRIGGER fail_uid_tool BEFORE INSERT ON client_registration_tools WHEN NEW.tool_id='mail.sync.page' BEGIN SELECT RAISE(ABORT,'synthetic'); END;",
+    );
+    assert_eq!(
+        f.store().activate_cli_scope_refresh(&staged),
+        Err(ErrorCode::InternalError)
+    );
+    assert_eq!(snapshot(&f), before);
+    sql(&f, "DROP TRIGGER fail_uid_tool");
+    let active = f.store().activate_cli_scope_refresh(&staged).unwrap();
+    assert_eq!(active.scope.tools(), uid);
+    let before = snapshot(&f);
+    for target in [folder, default_cli_legacy_tools(), uid] {
+        assert_eq!(
+            f.store().create_cli_scope_refresh_with_scope(
+                [83; 32],
+                RequestedScope::new(vec!["a".into()], target).unwrap(),
+                pin()
+            ),
+            Err(ErrorCode::Conflict)
+        );
+    }
+    assert_eq!(snapshot(&f), before);
+}
+
+fn set_historical_hash(f: &Fixture, mut row: CliScopeRefresh, version: u8) -> CliScopeRefresh {
+    row.hash_version = version;
+    row.payload_hash = independent_hash(&row);
+    f.store().with_connection(|c| c.execute("UPDATE client_scope_refreshes SET hash_version=?1,payload_hash=?2 WHERE refresh_id=?3", params![version, row.payload_hash.as_slice(), row.refresh_id.as_slice()])).unwrap();
+    row
+}
+
+#[test]
+fn cli15_uid_scope_v1_v2_pending_staged_and_active_history_remain_immutable() {
+    for version in [1, 2] {
+        for phase in [
+            ScopeRefreshPhase::Pending,
+            ScopeRefreshPhase::Staged,
+            ScopeRefreshPhase::Active,
+        ] {
+            let mut f = Fixture::new();
+            let tools = if version == 1 {
+                default_cli_legacy_tools()
+            } else {
+                hantong_contracts::auth::default_cli_folder_tools()
+            };
+            let fresh = f.create_scope(84, &["b"], tools.clone());
+            let mut old = set_historical_hash(&f, fresh, version);
+            if phase != ScopeRefreshPhase::Pending {
+                old = f.store().stage_cli_scope_refresh(&old).unwrap();
+            }
+            if phase == ScopeRefreshPhase::Active {
+                f.store().activate_cli_scope_refresh(&old).unwrap();
+                old = f.store().load_cli_scope_refresh([84; 32]).unwrap().unwrap();
+            }
+            let before = snapshot(&f);
+            f.store()
+                .with_connection(super::validate_history_v11)
+                .unwrap();
+            f.reopen();
+            assert_eq!(snapshot(&f), before);
+            assert_eq!(
+                f.store().load_cli_scope_refresh([84; 32]).unwrap(),
+                Some(old.clone())
+            );
+            assert_eq!(old.target_tools(), tools);
+            if phase == ScopeRefreshPhase::Active {
+                let next =
+                    f.create_scope(85, &["b"], hantong_contracts::auth::default_cli_uid_tools());
+                assert_eq!(next.hash_version, 3);
+                assert!(
+                    f.store()
+                        .with_connection(super::validate_history_v11)
+                        .is_err()
+                );
+                let staged = f.store().stage_cli_scope_refresh(&next).unwrap();
+                f.store().activate_cli_scope_refresh(&staged).unwrap();
+                assert_eq!(
+                    f.store().load_cli_scope_refresh([84; 32]).unwrap(),
+                    Some(old)
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn sec03_uid_scope_old_hash_versions_cannot_encode_uid_even_with_recomputed_hash() {
+    for version in [1, 2] {
+        let f = Fixture::new();
+        let fresh = f.create_scope(86, &["b"], hantong_contracts::auth::default_cli_uid_tools());
+        sql(&f, "PRAGMA ignore_check_constraints=ON");
+        let forged = set_historical_hash(&f, fresh, version);
+        sql(&f, "PRAGMA ignore_check_constraints=OFF");
+        assert_eq!(
+            f.store().load_cli_scope_refresh(*forged.refresh_id()),
+            Err(ErrorCode::InternalError)
+        );
+    }
+}
+
+#[test]
+fn sec03_uid_scope_unreviewed_uid_grant_is_rejected_at_initial_and_staged_epochs() {
+    for staged in [false, true] {
+        let f = Fixture::new();
+        if staged {
+            let pending =
+                f.create_scope(87, &["b"], hantong_contracts::auth::default_cli_uid_tools());
+            f.store().stage_cli_scope_refresh(&pending).unwrap();
+        }
+        f.store().with_connection(|c| {
+            for tool in ["mail.folders.list", "mail.folders.refresh", "mail.sync.page"] {
+                c.execute("INSERT INTO client_registration_tools(registration_id,tool_id) VALUES(?1,?2)", params![f.registration.registration_id.as_slice(), tool])?;
+            }
+            Ok(())
+        }).unwrap();
+        assert_eq!(
+            f.store().load_registration(f.registration.registration_id),
+            Err(ErrorCode::InternalError)
+        );
+    }
 }
 
 #[test]
@@ -991,7 +1147,7 @@ fn cli15_v8_real_legacy_history_migrates_without_rehash_or_scope_change() {
                 &["b"],
                 hantong_contracts::auth::default_cli_folder_tools(),
             );
-            assert_eq!(next.hash_version, 2);
+            assert_eq!(next.hash_version, 3);
             let next = f.store().stage_cli_scope_refresh(&next).unwrap();
             f.store().activate_cli_scope_refresh(&next).unwrap();
             assert_eq!(
@@ -1013,7 +1169,7 @@ fn restore_v8_scope_schema(f: &Fixture) {
             assert_eq!(tx.query_row("SELECT count(*) FROM audit_starts",[],|r|r.get::<_,i64>(0))?,0);
             assert_eq!(tx.query_row("SELECT count(*) FROM folder_refresh_requests",[],|r|r.get::<_,i64>(0))?,0);
             assert_eq!(tx.query_row("SELECT (SELECT count(*) FROM imap_uid_messages)+(SELECT count(*) FROM imap_uid_cursors)+(SELECT count(*) FROM imap_uid_page_operations)",[],|r|r.get::<_,i64>(0))?,0);
-            tx.execute_batch("DROP TABLE imap_uid_messages; DROP TABLE imap_uid_cursors; DROP TABLE imap_uid_page_operations;")?;
+            tx.execute_batch("DROP TABLE imap_uid_page_requests; DROP TABLE imap_uid_messages; DROP TABLE imap_uid_cursors; DROP TABLE imap_uid_page_operations;")?;
             tx.execute_batch("DROP TABLE folder_refresh_requests; DROP TABLE audit_terminals; DROP TABLE audit_start_accounts; DROP TABLE audit_starts;")?;
             let audit_start=schema.find("CREATE TABLE audit_starts (").unwrap();
             let audit_end=schema.find("-- Provider-neutral IMAP/SMTP").unwrap();

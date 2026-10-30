@@ -19,6 +19,8 @@ mod scope_refresh;
 mod setup_imap;
 #[cfg(windows)]
 mod storage;
+#[cfg(windows)]
+mod uid_worker;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Lang {
@@ -101,8 +103,11 @@ fn start() -> Result<(), ErrorCode> {
         };
         let (registration, registration_worker) =
             registration::coordinator(&store, &server_identity, &directories.secrets);
+        let shared_slot = std::rc::Rc::new(std::cell::Cell::new(None));
         let (folder_worker_handle, folder_worker) =
-            folder_worker::coordinator_for_store(&store, &directories.secrets);
+            folder_worker::coordinator_for_store(&store, &directories.secrets, shared_slot.clone());
+        let (uid_worker_handle, uid_worker) =
+            uid_worker::coordinator_for_store(&store, &directories.secrets, shared_slot);
         let server = hantong_ipc_server::authenticated_wire::serve_until_with_setup(
             shutdown,
             || event(EventKind::CoreTransportReady),
@@ -110,10 +115,11 @@ fn start() -> Result<(), ErrorCode> {
             server_instance,
             |id| execution_adapter::load_registration(&store, id),
             |session, request| {
-                execution_adapter::execute(
+                execution_adapter::execute_with_uid(
                     &store,
                     &mut read_policy,
                     &folder_worker_handle,
+                    Some(&uid_worker_handle),
                     session,
                     request,
                 )
@@ -124,6 +130,7 @@ fn start() -> Result<(), ErrorCode> {
             biased;
             result=registration_worker.run()=>{result?;return Err(ErrorCode::InternalError);},
             result=folder_worker.run()=>{result?;return Err(ErrorCode::InternalError);},
+            result=uid_worker.run()=>{result?;return Err(ErrorCode::InternalError);},
             result=server=>result?,
         }
         event(EventKind::CoreStopped);

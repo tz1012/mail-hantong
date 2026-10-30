@@ -15,6 +15,8 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 mod folder_integration_tests;
 #[path = "read_policy_tests.rs"]
 mod read_policy_tests;
+#[path = "uid_integration_tests.rs"]
+mod uid_integration_tests;
 
 struct TestKeys {
     client: Option<ClientSigningKey>,
@@ -319,6 +321,8 @@ async fn m102_core_authentication_uses_real_pipe_and_consumes_one_tool_request()
             instance,
         )
         .await;
+        uid_integration_tests::run_uid_scenarios(&mut listener, client_key, server_key, instance)
+            .await;
         drop(listener);
         // Fatal local state failures must leave the serving loop with the
         // original stable code; reconnect cannot hide corruption from core.

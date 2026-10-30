@@ -288,6 +288,41 @@ mod tests {
     }
 
     #[test]
+    fn cli15_uid_scope_binding_rejects_tool_only_snapshot_substitution() {
+        let build = |target| {
+            ScopeRefreshReview::new_with_tools(
+                [1; 32],
+                1,
+                [2; 16],
+                [3; 32],
+                4,
+                5,
+                [6; 32],
+                [7; 32],
+                vec!["acct_a".into()],
+                vec!["acct_b".into()],
+                hantong_contracts::auth::default_cli_legacy_tools(),
+                target,
+                1000,
+                301000,
+            )
+            .unwrap()
+        };
+        let uid = build(hantong_contracts::auth::default_cli_uid_tools());
+        let folder = build(hantong_contracts::auth::default_cli_folder_tools());
+        let mut captured = captured_scope();
+        captured.review = uid.clone();
+        assert_eq!(
+            captured.validate_at(&uid, 2000, Duration::from_secs(1), &context(8)),
+            Ok(())
+        );
+        assert_eq!(
+            captured.validate_at(&folder, 2000, Duration::from_secs(1), &context(8)),
+            Err(ErrorCode::ScopeDenied)
+        );
+    }
+
+    #[test]
     fn cli15_scope_binding_requires_exact_snapshot_user_nonce_and_live_time() {
         let captured = captured_scope();
         assert_eq!(

@@ -3,7 +3,7 @@
 use crate::resources::{TextKey, text};
 use hantong_contracts::{
     ErrorCode,
-    auth::{default_cli_legacy_tools, is_supported_default_cli_toolset},
+    auth::{default_cli_legacy_tools, is_supported_default_cli_toolset_transition},
 };
 use hantong_domain::config::Language;
 use std::fmt;
@@ -110,11 +110,8 @@ impl ScopeRefreshReview {
             || !lifetime.is_some_and(|value| (1..=MAX_LIFETIME_MS).contains(&value))
             || !valid_account_ids(&old_account_ids)
             || !valid_account_ids(&target_account_ids)
-            || !is_supported_default_cli_toolset(&old_tool_ids)
-            || !is_supported_default_cli_toolset(&target_tool_ids)
+            || !is_supported_default_cli_toolset_transition(&old_tool_ids, &target_tool_ids)
             || (old_account_ids == target_account_ids && old_tool_ids == target_tool_ids)
-            || (old_tool_ids != default_cli_legacy_tools()
-                && target_tool_ids == default_cli_legacy_tools())
         {
             return Err(ErrorCode::InvalidInput);
         }
@@ -206,7 +203,7 @@ impl ScopeRefreshReview {
         };
         let old_tools = self.old_tool_ids.join(", ");
         let target_tools = self.target_tool_ids.join(", ");
-        format!(
+        let mut summary = format!(
             "{}\r\n{}: {}\r\n{}:\r\n{}\r\n{}:\r\n{}\r\n{}: {}\r\n{}: {}\r\n{}: {} -> {}\r\n{}",
             t(TextKey::ScopeRefreshIntroduction),
             t(TextKey::Profile),
@@ -223,7 +220,16 @@ impl ScopeRefreshReview {
             self.base_profile_epoch,
             self.target_profile_epoch(),
             t(TextKey::ScopeRefreshDisconnected),
-        )
+        );
+        if self
+            .target_tool_ids
+            .iter()
+            .any(|tool| tool == "mail.sync.page")
+        {
+            summary.push_str("\r\n");
+            summary.push_str(t(TextKey::ScopeRefreshUidPagePermission));
+        }
+        summary
     }
 }
 
@@ -242,6 +248,47 @@ fn valid_account_ids(values: &[String]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cli15_uid_scope_review_explains_exact_tool_only_upgrade_in_both_languages() {
+        let folder = hantong_contracts::auth::default_cli_folder_tools();
+        let mut uid = folder.clone();
+        uid.push("mail.sync.page".into());
+        let build = |old, target| {
+            ScopeRefreshReview::new_with_tools(
+                [1; 32],
+                1,
+                [2; 16],
+                [3; 32],
+                4,
+                5,
+                [6; 32],
+                [7; 32],
+                vec!["acct".into()],
+                vec!["acct".into()],
+                old,
+                target,
+                1,
+                300001,
+            )
+        };
+        let review = build(folder.clone(), uid.clone()).unwrap();
+        for (language, explanation) in [(Language::En, "metadata"), (Language::Ko, "메타데이터")]
+        {
+            let summary = review.summary(language);
+            assert!(summary.contains("mail.sync.page"));
+            assert!(summary.contains(explanation));
+            assert!(
+                summary.contains("mail.accounts.list, mail.folders.list, mail.folders.refresh")
+            );
+        }
+        assert_eq!(build(uid.clone(), folder), Err(ErrorCode::InvalidInput));
+        assert_eq!(
+            build(uid.clone(), default_cli_legacy_tools()),
+            Err(ErrorCode::InvalidInput)
+        );
+        assert_eq!(build(uid.clone(), uid), Err(ErrorCode::InvalidInput));
+    }
 
     fn review(old: Vec<String>, target: Vec<String>) -> ScopeRefreshReview {
         ScopeRefreshReview::new(

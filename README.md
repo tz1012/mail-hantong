@@ -53,7 +53,7 @@ cargo run -p hantong-cli -- clients refresh
 cargo run -p hantong-cli -- clients refresh-status <refresh_id>
 ```
 
-범위 갱신은 현재 등록의 최초 요청·키·서버 pin을 보존하고, 현재 등록된 읽기 전용 `accounts.list`와 실제 계정 snapshot을 native 검토 대상으로 삼습니다. revoked 등록을 되살리지 않으며, native 확인·Core stage/activate·보호 프로필 배포의 실제 효과는 사람 검토가 필요한 Windows 경계입니다. 발송 명령은 계속 차단됩니다.
+범위 갱신은 현재 등록의 최초 요청·키·서버 pin을 보존하고, 현재 계정 snapshot과 계정 목록·폴더 목록/갱신·IMAP UID 메타데이터 한 페이지 수집 권한을 native 검토 대상으로 삼습니다. 새 권한은 새 명시 요청에서만 제안하며, 기존 대기/복구 요청의 범위를 바꾸지 않습니다. revoked 등록을 되살리지 않으며, native 확인·Core stage/activate·보호 프로필 배포의 실제 효과는 사람 검토가 필요한 Windows 경계입니다. 발송 명령은 계속 차단됩니다.
 
 
 신규 IMAP 연결 개발 명령은 다음과 같습니다. 코어를 먼저 실행하고 실제 서버 정보로 바꿉니다. 요청은 세션 ID를 반환하고 코어의 영/한 설정 확인 창을 엽니다. 비밀번호는 그 보호 입력 창에서만 입력하며 Windows Hello 확인 뒤 저장과 1회 TLS/AUTH 진단을 실행합니다. 이 기능은 메일 수신·발송을 수행하지 않습니다.
@@ -65,3 +65,14 @@ cargo run -p hantong-cli -- setup imap resume <request_id> --json
 ```
 
 `starttls_required`도 선택할 수 있습니다. `--lang ko`는 CLI 출력 언어를 바꾸고 확인 창은 저장된 GUI 언어·테마를 따릅니다. `--no-input`은 터미널 질문을 없애며 사람 확인 창을 생략하지 않습니다. `ready`는 해당 연결 진단 결과이며 CLI 권한을 자동 부여하지 않습니다. 기존 등록이 없으면 별도로 `clients register`를 실행하고, 이미 등록이 있으면 상태·계정 범위 재검토가 필요합니다. 중단/실패한 요청은 `resume`으로 같은 대상의 새 시도를 시작할 수 있습니다. 과거 이력을 보존하고 보호 입력·Hello 확인을 다시 요구합니다. 진행 중인 같은 시도나 이미 연결을 마친 시도는 상태만 반환합니다. 원래 대상이나 계정 버전이 바뀌면 재개를 거부하며 reset은 아직 지원하지 않습니다. 개발 자동 시험에서는 실제 계정이나 Hello를 사용하지 않았고 사람 보안·화면 검토가 남아 있습니다.
+
+
+IMAP 폴더와 한 페이지 메타데이터 수집의 개발용 명령도 제공됩니다. `folders list --account ACCOUNT --json` 결과의 `wire_hex`와 `encoding`을 그대로 사용하고, `sync cursor`에서 확인한 catalog generation/cursor version을 `sync page`에 지정합니다. 처음부터 전체 mailbox를 자동 수집하지 않습니다.
+
+```powershell
+cargo run -p hantong-cli -- sync cursor --account ACCOUNT --wire-hex HEX --encoding utf8
+cargo run -p hantong-cli -- sync page --account ACCOUNT --wire-hex HEX --encoding utf8 --expected-catalog-generation 1 --expected-cursor-version 0 --operation-id my_page_1 --idempotency-key my_page_1
+cargo run -p hantong-cli -- sync status --account ACCOUNT --execution-id EXECUTION_HEX
+```
+
+위 계정·HEX·encoding·버전은 실제 조회 값으로 바꾸는 예시입니다. 기존 프로필에 새 권한이 없으면 명시 `clients refresh`와 보호 확인이 필요합니다. 한 번에 UID 폭 최대64를 관측하며 중복 요청은 기존 receipt만 반환합니다. 종료 후 미완료 작업은 자동 재실행하지 않습니다. UIDVALIDITY 변화·설정/세대/cursor 충돌은 기존 자료를 보존하며 자동 reset하지 않습니다. 본문·첨부·기존 FLAGS/삭제 대조·전체 mailbox 목록과 실제 제공자 상호 운용성은 후속 구현/검증입니다. [공개 계약](docs/contracts/imap-uid-tools.md)과 [진행 기록](docs/latest/PROGRESS.md)에 현재 증거와 남은 범위를 기록합니다.

@@ -23,6 +23,7 @@ pub mod mail_connection;
 mod registration_activation;
 mod registrations;
 pub mod scope_refresh;
+pub mod uid_page_jobs;
 pub use registration_activation::{CliRegistrationStage, DEFAULT_CLI_LABEL};
 mod server_identity;
 pub use registrations::{
@@ -32,7 +33,7 @@ pub use registrations::{
 pub use server_identity::ServerIdentity;
 
 #[cfg(windows)]
-const CURRENT_SCHEMA_VERSION: u32 = 11;
+const CURRENT_SCHEMA_VERSION: u32 = 12;
 #[cfg(windows)]
 const DATABASE_FORMAT: &str = "mail-hantong";
 #[cfg(windows)]
@@ -53,6 +54,11 @@ const SCHEMA_V7: &str = include_str!("../../../docs/contracts/migrations/schema-
 const SCHEMA_V8: &str = include_str!("../../../docs/contracts/migrations/schema-v8.sql");
 #[cfg(windows)]
 const SCHEMA_V10: &str = include_str!("../../../docs/contracts/migrations/schema-v10.sql");
+#[cfg(windows)]
+const SCHEMA_V11: &str = include_str!("../../../docs/contracts/migrations/schema-v11.sql");
+#[cfg(windows)]
+const MIGRATION_V11_TO_V12: &str =
+    include_str!("../../../docs/contracts/migrations/011-to-012.sql");
 #[cfg(windows)]
 const MIGRATION_V10_TO_V11: &str =
     include_str!("../../../docs/contracts/migrations/010-to-011.sql");
@@ -267,6 +273,7 @@ impl Store {
                 (8, _) => Ok(SchemaState::V8),
                 (9, _) => Ok(SchemaState::V9),
                 (10, _) => Ok(SchemaState::V10),
+                (11, _) => Ok(SchemaState::V11),
                 (CURRENT_SCHEMA_VERSION, _) => Ok(SchemaState::Current),
                 _ => Ok(SchemaState::Unsupported),
             }
@@ -284,7 +291,8 @@ impl Store {
                 self.migrate_v7_to_v8()?;
                 self.migrate_v8_to_v9()?;
                 self.migrate_v9_to_v10()?;
-                self.migrate_v10_to_v11()
+                self.migrate_v10_to_v11()?;
+                self.migrate_v11_to_v12()
             }
             SchemaState::V2 => {
                 self.with_connection(|connection| validate_schema(connection, SCHEMA_V2, 2))?;
@@ -296,7 +304,8 @@ impl Store {
                 self.migrate_v7_to_v8()?;
                 self.migrate_v8_to_v9()?;
                 self.migrate_v9_to_v10()?;
-                self.migrate_v10_to_v11()
+                self.migrate_v10_to_v11()?;
+                self.migrate_v11_to_v12()
             }
             SchemaState::V3 => {
                 self.with_connection(|connection| validate_schema(connection, SCHEMA_V3, 3))?;
@@ -307,7 +316,8 @@ impl Store {
                 self.migrate_v7_to_v8()?;
                 self.migrate_v8_to_v9()?;
                 self.migrate_v9_to_v10()?;
-                self.migrate_v10_to_v11()
+                self.migrate_v10_to_v11()?;
+                self.migrate_v11_to_v12()
             }
             SchemaState::V4 => {
                 self.with_connection(|connection| validate_schema(connection, SCHEMA_V4, 4))?;
@@ -317,7 +327,8 @@ impl Store {
                 self.migrate_v7_to_v8()?;
                 self.migrate_v8_to_v9()?;
                 self.migrate_v9_to_v10()?;
-                self.migrate_v10_to_v11()
+                self.migrate_v10_to_v11()?;
+                self.migrate_v11_to_v12()
             }
             SchemaState::V5 => {
                 self.with_connection(|connection| validate_schema(connection, SCHEMA_V5, 5))?;
@@ -326,7 +337,8 @@ impl Store {
                 self.migrate_v7_to_v8()?;
                 self.migrate_v8_to_v9()?;
                 self.migrate_v9_to_v10()?;
-                self.migrate_v10_to_v11()
+                self.migrate_v10_to_v11()?;
+                self.migrate_v11_to_v12()
             }
             SchemaState::V6 => {
                 self.with_connection(|connection| validate_schema(connection, SCHEMA_V6, 6))?;
@@ -334,29 +346,38 @@ impl Store {
                 self.migrate_v7_to_v8()?;
                 self.migrate_v8_to_v9()?;
                 self.migrate_v9_to_v10()?;
-                self.migrate_v10_to_v11()
+                self.migrate_v10_to_v11()?;
+                self.migrate_v11_to_v12()
             }
             SchemaState::V7 => {
                 self.with_connection(|connection| validate_schema(connection, SCHEMA_V7, 7))?;
                 self.migrate_v7_to_v8()?;
                 self.migrate_v8_to_v9()?;
                 self.migrate_v9_to_v10()?;
-                self.migrate_v10_to_v11()
+                self.migrate_v10_to_v11()?;
+                self.migrate_v11_to_v12()
             }
             SchemaState::V8 => {
                 self.with_connection(|connection| validate_schema(connection, SCHEMA_V8, 8))?;
                 self.migrate_v8_to_v9()?;
                 self.migrate_v9_to_v10()?;
-                self.migrate_v10_to_v11()
+                self.migrate_v10_to_v11()?;
+                self.migrate_v11_to_v12()
             }
             SchemaState::V9 => {
                 self.with_connection(|connection| validate_schema(connection, SCHEMA_V9, 9))?;
                 self.migrate_v9_to_v10()?;
-                self.migrate_v10_to_v11()
+                self.migrate_v10_to_v11()?;
+                self.migrate_v11_to_v12()
             }
             SchemaState::V10 => {
                 self.with_connection(|connection| validate_schema(connection, SCHEMA_V10, 10))?;
-                self.migrate_v10_to_v11()
+                self.migrate_v10_to_v11()?;
+                self.migrate_v11_to_v12()
+            }
+            SchemaState::V11 => {
+                self.with_connection(|c| validate_schema(c, SCHEMA_V11, 11))?;
+                self.migrate_v11_to_v12()
             }
             SchemaState::Current => self.with_connection(|connection| {
                 validate_schema(connection, SCHEMA, CURRENT_SCHEMA_VERSION)
@@ -431,7 +452,14 @@ impl Store {
 
     #[cfg(windows)]
     fn migrate_v10_to_v11(&self) -> Result<(), ErrorCode> {
-        self.migrate_with_backup(10, 11, SCHEMA, |c| c.execute_batch(MIGRATION_V10_TO_V11))
+        self.migrate_with_backup(10, 11, SCHEMA_V11, |c| {
+            c.execute_batch(MIGRATION_V10_TO_V11)
+        })
+    }
+
+    #[cfg(windows)]
+    fn migrate_v11_to_v12(&self) -> Result<(), ErrorCode> {
+        self.migrate_with_backup(11, 12, SCHEMA, |c| c.execute_batch(MIGRATION_V11_TO_V12))
     }
 
     #[cfg(windows)]
@@ -523,6 +551,7 @@ enum SchemaState {
     V8,
     V9,
     V10,
+    V11,
     Newer,
     Unsupported,
     Corrupt,
@@ -626,7 +655,9 @@ fn validate_schema(
     }
     if matches!(schema_version, 7 | 8) {
         crate::scope_refresh::validate_history_v8(connection)?;
-    } else if schema_version >= 9 {
+    } else if (9..=11).contains(&schema_version) {
+        crate::scope_refresh::validate_history_v11(connection)?;
+    } else if schema_version >= 12 {
         crate::scope_refresh::validate_history(connection)?;
     }
     if schema_version >= 10 {
@@ -638,6 +669,9 @@ fn validate_schema(
     }
     if schema_version >= 11 {
         crate::imap_sync::validate_history(connection)?;
+    }
+    if schema_version >= 12 {
+        crate::uid_page_jobs::validate_history(connection)?;
     }
     Ok(())
 }
@@ -1021,7 +1055,7 @@ mod tests {
                     |row| row.get::<_, i64>(0)
                 ))
                 .unwrap(),
-            24
+            25
         );
     }
 
@@ -2156,6 +2190,143 @@ mod tests {
             )
             .unwrap();
     }
+    fn seed_v11_fixture(f: &Fixture) {
+        seed_v10_fixture(f);
+        let store = Store {
+            connection: f.keyed(),
+        };
+        store
+            .migrate_with_backup(
+                10,
+                11,
+                include_str!("../../../docs/contracts/migrations/schema-v11.sql"),
+                |c| c.execute_batch(MIGRATION_V10_TO_V11),
+            )
+            .unwrap();
+        use hantong_domain::{
+            imap_sync::{
+                ImapEnvelope, ImapEnvelopeInput, ImapMessageMetadata, ImapUidPage,
+                ImapUidPageRequest,
+            },
+            mailboxes::{ImapMailboxName, MailboxEncoding},
+        };
+        let mailbox = ImapMailboxName::from_wire(b"INBOX", MailboxEncoding::ModifiedUtf7).unwrap();
+        let page = ImapUidPage::new(
+            ImapUidPageRequest::new("v5-account", 2, mailbox, None, 0).unwrap(),
+            9,
+            2,
+            vec![
+                ImapMessageMetadata::new(
+                    1,
+                    vec![],
+                    0,
+                    0,
+                    ImapEnvelope::new(ImapEnvelopeInput::default()).unwrap(),
+                )
+                .unwrap(),
+            ],
+        )
+        .unwrap();
+        let raw = page.to_storage_json().unwrap();
+        let metadata = page.messages()[0].to_storage_json().unwrap();
+        let mut payload = b"mail-hantong.imap-uid-page-payload.v1\0".to_vec();
+        for value in [2u64, 1, 0] {
+            payload.extend_from_slice(&value.to_be_bytes());
+        }
+        payload.extend_from_slice(&[0; 32]);
+        payload.extend_from_slice(&(raw.len() as u64).to_be_bytes());
+        payload.extend_from_slice(&raw);
+        let sha = |bytes: &[u8]| hantong_platform::sha256(bytes).unwrap();
+        store.with_connection(|c| {
+            c.execute("INSERT INTO imap_uid_page_operations VALUES('v11-page','v5-account','v11-key','494e424f58','modified_utf7',0,1,2,1,2,zeroblob(32),?1,?2,?3,9,2,0,1,1,12)", rusqlite::params![std::str::from_utf8(&raw).unwrap(), sha(&raw).as_slice(), sha(&payload).as_slice()])?;
+            c.execute("INSERT INTO imap_uid_cursors VALUES('v5-account','494e424f58','modified_utf7',1,2,1,2,zeroblob(32),9,2,1,12,'v11-page')", [])?;
+            c.execute("INSERT INTO imap_uid_messages VALUES('v5-account','494e424f58','modified_utf7',9,1,?1,?2,12,'v11-page')", rusqlite::params![std::str::from_utf8(&metadata).unwrap(),sha(&metadata).as_slice()])?;
+            validate_schema(c,include_str!("../../../docs/contracts/migrations/schema-v11.sql"),11)
+        }).unwrap();
+    }
+    fn v11_rows(
+        c: &rusqlite::Connection,
+    ) -> rusqlite::Result<Vec<Vec<Vec<rusqlite::types::Value>>>> {
+        let mut rows = v10_rows(c)?;
+        for table in [
+            "imap_uid_page_operations",
+            "imap_uid_cursors",
+            "imap_uid_messages",
+        ] {
+            let mut query = c.prepare(&format!("SELECT * FROM {table} ORDER BY rowid"))?;
+            let n = query.column_count();
+            rows.push(
+                query
+                    .query_map([], |r| {
+                        (0..n)
+                            .map(|i| r.get(i))
+                            .collect::<rusqlite::Result<Vec<_>>>()
+                    })?
+                    .collect::<rusqlite::Result<Vec<_>>>()?,
+            );
+        }
+        Ok(rows)
+    }
+    #[test]
+    fn ext04_v11_to_v12_preserves_uid_rows_folder_job_and_audit_sequence() {
+        let f = Fixture::new();
+        seed_v11_fixture(&f);
+        let before = f.keyed().with_connection(v11_rows).unwrap();
+        let store = f.open().unwrap();
+        assert_eq!(before, store.with_connection(v11_rows).unwrap());
+        assert_eq!(
+            store
+                .with_connection(
+                    |c| c.pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0))
+                )
+                .unwrap(),
+            12
+        );
+        assert_eq!(
+            store
+                .with_connection(|c| c.query_row(
+                    "SELECT count(*) FROM imap_uid_page_requests",
+                    [],
+                    |r| r.get::<_, i64>(0)
+                ))
+                .unwrap(),
+            0
+        );
+        let mailbox = hantong_domain::mailboxes::ImapMailboxName::from_wire(
+            b"INBOX",
+            hantong_domain::mailboxes::MailboxEncoding::ModifiedUtf7,
+        )
+        .unwrap();
+        assert_eq!(
+            store
+                .load_imap_uid_metadata("v5-account", &mailbox, 9, 1)
+                .unwrap()
+                .unwrap()
+                .uid(),
+            1
+        );
+        assert!(
+            store
+                .load_audit([41; 32])
+                .unwrap()
+                .unwrap()
+                .completion()
+                .is_none()
+        );
+        assert!(f.0.join("data/backup-before-v11.db").is_file());
+    }
+    #[test]
+    fn ext04_v11_to_v12_backup_collision_preserves_original() {
+        let f = Fixture::new();
+        seed_v11_fixture(&f);
+        let db = f.0.join("data/mail-hantong.db");
+        let before = fs::read(&db).unwrap();
+        let backup = f.0.join("data/backup-before-v11.db");
+        fs::write(&backup, b"preserve-v11").unwrap();
+        assert!(matches!(f.open(), Err(ErrorCode::Conflict)));
+        assert_eq!(before, fs::read(db).unwrap());
+        assert_eq!(fs::read(backup).unwrap(), b"preserve-v11");
+    }
     fn seed_v10_fixture(f: &Fixture) {
         seed_v9_fixture(f);
         let store = Store {
@@ -2185,6 +2356,27 @@ mod tests {
             c.execute("INSERT INTO folder_refresh_requests(execution_id,operation_id,account_id,idempotency_key,intent_hash,expected_generation,bound_account_version,bound_endpoint_version,bound_endpoint_hash,state,admitted_at_utc_ms) VALUES(?1,'v10-pending','v5-account','v10-key',?2,0,2,2,zeroblob(32),'admitted',8)",rusqlite::params![vec![41u8;32],intent.as_slice()])?;
             validate_schema(c,include_str!("../../../docs/contracts/migrations/schema-v10.sql"),10)
         }).unwrap();
+    }
+    #[test]
+    fn ext04_v11_to_v12_real_ddl_failure_rolls_back_rows_and_schema() {
+        let f = Fixture::new();
+        seed_v11_fixture(&f);
+        let before = f.keyed().with_connection(v11_rows).unwrap();
+        let store = Store {
+            connection: f.keyed(),
+        };
+        assert_eq!(
+            store.migrate_with_backup(11, 12, SCHEMA, |c| {
+                c.execute_batch(MIGRATION_V11_TO_V12)?;
+                c.execute_batch("CREATE TABLE unexpected_uid_job_schema(value)")
+            }),
+            Err(ErrorCode::InternalError)
+        );
+        assert_eq!(before, store.with_connection(v11_rows).unwrap());
+        store
+            .with_connection(|c| validate_schema(c, SCHEMA_V11, 11))
+            .unwrap();
+        assert!(f.0.join("data/backup-before-v11.db").is_file());
     }
     fn v10_rows(
         c: &rusqlite::Connection,
@@ -2221,7 +2413,7 @@ mod tests {
                     |c| c.pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0))
                 )
                 .unwrap(),
-            11
+            i64::from(CURRENT_SCHEMA_VERSION)
         );
         assert_eq!(store.with_connection(|c|c.query_row("SELECT (SELECT count(*) FROM imap_uid_cursors)+(SELECT count(*) FROM imap_uid_messages)+(SELECT count(*) FROM imap_uid_page_operations)",[],|r|r.get::<_,i64>(0))).unwrap(),0);
         assert!(
@@ -2255,7 +2447,7 @@ mod tests {
             connection: f.keyed(),
         };
         assert_eq!(
-            store.migrate_with_backup(10, 11, SCHEMA, |c| {
+            store.migrate_with_backup(10, 11, SCHEMA_V11, |c| {
                 c.execute_batch(include_str!(
                     "../../../docs/contracts/migrations/010-to-011.sql"
                 ))?;

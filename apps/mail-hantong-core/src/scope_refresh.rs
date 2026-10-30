@@ -16,6 +16,10 @@ pub(super) fn prepare(
 ) -> Result<CliScopeRefresh, ErrorCode> {
     let effects = Native { store, server };
     let pin = hantong_platform::sha256(&effects.server_public()?)?;
+    prepare_for_pin(store, pin)
+}
+
+fn prepare_for_pin(store: &Store, pin: [u8; 32]) -> Result<CliScopeRefresh, ErrorCode> {
     if let Some(staged) = store.list_staged_cli_scope_refreshes()?.into_iter().next() {
         return Ok(staged);
     }
@@ -27,8 +31,7 @@ pub(super) fn prepare(
             .ok_or(ErrorCode::NotFound)?;
         if &current != pending.base_registration()
             || store.list_registrable_account_ids()? != pending.target_accounts()
-            || (pending.target_tools() != hantong_contracts::auth::default_cli_folder_tools()
-                && pending.target_tools() != hantong_contracts::auth::default_cli_legacy_tools())
+            || !hantong_contracts::auth::is_supported_default_cli_toolset(pending.target_tools())
             || &pin != pending.server_public_key_hash()
         {
             return Err(ErrorCode::Conflict);
@@ -39,7 +42,7 @@ pub(super) fn prepare(
         hantong_platform::random_nonce()?,
         RequestedScope::new(
             store.list_registrable_account_ids()?,
-            hantong_contracts::auth::default_cli_folder_tools(),
+            hantong_contracts::auth::default_cli_uid_tools(),
         )?,
         pin,
     )

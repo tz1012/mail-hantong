@@ -244,6 +244,49 @@ mod tests {
         assert_eq!(bytes, again.to_json().unwrap());
     }
     #[test]
+    fn cli15_uid_scope_profile_roundtrip_keeps_legacy_and_folder_permissions_exact() {
+        for tools in [
+            hantong_contracts::auth::default_cli_legacy_tools(),
+            hantong_contracts::auth::default_cli_folder_tools(),
+        ] {
+            let mut input = value();
+            input["tool_ids"] = json!(tools);
+            let profile = parse(&input).unwrap();
+            let bytes = profile.to_json().unwrap();
+            assert_eq!(
+                ParsedClientProfile::from_json(&bytes)
+                    .unwrap()
+                    .to_json()
+                    .unwrap(),
+                bytes
+            );
+            assert!(
+                !profile
+                    .scope()
+                    .tools()
+                    .iter()
+                    .any(|tool| tool == "mail.sync.page")
+            );
+        }
+        let mut input = value();
+        input["tool_ids"] = json!([
+            "mail.accounts.list",
+            "mail.folders.list",
+            "mail.folders.refresh",
+            "mail.sync.page"
+        ]);
+        let profile = parse(&input).unwrap();
+        let bytes = profile.to_json().unwrap();
+        assert_eq!(ParsedClientProfile::from_json(&bytes).unwrap(), profile);
+        assert_eq!(
+            serde_json::from_slice::<Value>(&bytes).unwrap()["schema_version"],
+            1
+        );
+        input["tool_ids"] = json!(["mail.accounts.list", "mail.sync.page"]);
+        invalid(&input);
+    }
+
+    #[test]
     fn cli15_profile_roundtrip_accepts_only_canonical_folder_scope() {
         let mut input = value();
         input["tool_ids"] = json!([

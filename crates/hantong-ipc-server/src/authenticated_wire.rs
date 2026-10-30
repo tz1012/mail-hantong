@@ -377,8 +377,10 @@ where
 {
     let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
     tokio::time::timeout_at(deadline, async {
-        let request = read_bounded_request(authenticated.transport()?, crate::MAX_FRAME_SIZE).await?;
+        let (request, length) = read_bounded_request_with_length(authenticated.transport()?, crate::MAX_FRAME_SIZE).await?;
         if !request.method.starts_with("mail.") { return Err(ErrorCode::InvalidInput); }
+        let response_limit=if request.method=="mail.sync.page" {8192}else{crate::MAX_FRAME_SIZE};
+        if length>response_limit {return Err(ErrorCode::InvalidInput)}
         if tokio::time::Instant::now() >= deadline { return Err(ErrorCode::CoreUnavailable); }
         let result = execute(&mut authenticated, &request);
         // In this foundation the internal path is local Store/security state.
@@ -390,7 +392,7 @@ where
             Ok(value) => json!({"jsonrpc":"2.0","id":request.id,"result":value}),
             Err(code) => json!({"jsonrpc":"2.0","id":request.id,"error":{"code":code.as_str(),"message":code.as_str()}}),
         };
-        send_response(authenticated.transport()?, response, deadline).await
+        send_response_with_limit(authenticated.transport()?, response, deadline,response_limit).await
     }).await.map_err(|_| ErrorCode::CoreUnavailable)?
 }
 
@@ -399,8 +401,16 @@ async fn send_response(
     response: Value,
     deadline: tokio::time::Instant,
 ) -> Result<(), ErrorCode> {
+    send_response_with_limit(pipe, response, deadline, crate::MAX_FRAME_SIZE).await
+}
+async fn send_response_with_limit(
+    pipe: &mut LocalPipeConnection<'_>,
+    response: Value,
+    deadline: tokio::time::Instant,
+    max_length: usize,
+) -> Result<(), ErrorCode> {
     let bytes = serde_json::to_vec(&response).map_err(|_| ErrorCode::InternalError)?;
-    if bytes.len() > crate::MAX_FRAME_SIZE {
+    if bytes.len() > max_length {
         return Err(ErrorCode::InternalError);
     }
     if tokio::time::Instant::now() >= deadline {

@@ -19,6 +19,7 @@ pub mod folders;
 pub mod imap_setup;
 pub mod profile;
 pub mod registration;
+pub mod uid_page;
 
 use hantong_contracts::ErrorCode;
 use serde::{Deserialize, Serialize};

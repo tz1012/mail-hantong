@@ -2,8 +2,9 @@
 
 use hantong_contracts::{ErrorCode, audit::AuditTerminal};
 
-use crate::{AccountsListRequest, FolderRefreshAction, ToolRequest};
+use crate::{AccountsListRequest, FolderRefreshAction, ToolRequest, UidPageAction};
 use hantong_contracts::folders::{FolderListRequest, FolderRefreshStatusRequest};
+use hantong_contracts::uid_page::{UidCursorRequest, UidPageRequest, UidPageStatusRequest};
 
 /// A bounded service result. The service owns the value and optional count;
 /// callers cannot manufacture an invalid count through this type.
@@ -73,6 +74,25 @@ pub trait ExecutionContext {
     ) -> Result<AuditHandoff<Self::Output>, ErrorCode> {
         Err(ErrorCode::CapabilityUnsupported)
     }
+    fn read_uid_cursor(
+        &mut self,
+        _request: &UidCursorRequest,
+    ) -> Result<ReadResult<Self::Output>, ErrorCode> {
+        Err(ErrorCode::CapabilityUnsupported)
+    }
+    fn read_uid_page_status(
+        &mut self,
+        _request: &UidPageStatusRequest,
+    ) -> Result<ReadResult<Self::Output>, ErrorCode> {
+        Err(ErrorCode::CapabilityUnsupported)
+    }
+    fn request_uid_page(
+        &mut self,
+        _audit_id: [u8; 32],
+        _request: &UidPageRequest,
+    ) -> Result<AuditHandoff<Self::Output>, ErrorCode> {
+        Err(ErrorCode::CapabilityUnsupported)
+    }
     fn finish_audit(&mut self, id: [u8; 32], terminal: AuditTerminal) -> Result<(), ErrorCode>;
 }
 
@@ -127,6 +147,29 @@ pub fn execute_tool<C: ExecutionContext>(
                 match context.request_folder_refresh(audit_id, &request) {
                     Ok(AuditHandoff::Response(value)) => Ok(value),
                     Ok(AuditHandoff::Error(error)) => Err(error),
+                    Err(error) => finish_failure(context, audit_id, error),
+                }
+            }
+        },
+        ToolRequest::SyncPage { action, .. } => match action {
+            UidPageAction::Request(request) => match context.request_uid_page(audit_id, &request) {
+                Ok(AuditHandoff::Response(value)) => Ok(value),
+                Ok(AuditHandoff::Error(error)) => Err(error),
+                Err(error) => finish_failure(context, audit_id, error),
+            },
+            other => {
+                let result = match other {
+                    UidPageAction::Cursor(request) => context.read_uid_cursor(&request),
+                    UidPageAction::Status(request) => context.read_uid_page_status(&request),
+                    UidPageAction::Request(_) => unreachable!("handled above"),
+                };
+                match result {
+                    Ok(result) => {
+                        let count = result.count();
+                        let value = result.value;
+                        finish_success(context, audit_id, count)?;
+                        Ok(value)
+                    }
                     Err(error) => finish_failure(context, audit_id, error),
                 }
             }

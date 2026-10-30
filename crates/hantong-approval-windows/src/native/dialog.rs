@@ -178,6 +178,47 @@ mod tests {
     }
 
     #[test]
+    fn cli15_uid_scope_dialog_paints_bilingual_uid_permission_before_verification() {
+        let review = ScopeRefreshReview::new_with_tools(
+            [1; 32],
+            1,
+            [2; 16],
+            [3; 32],
+            4,
+            5,
+            [6; 32],
+            [7; 32],
+            vec!["acct_a".into()],
+            vec!["acct_a".into()],
+            hantong_contracts::auth::default_cli_folder_tools(),
+            hantong_contracts::auth::default_cli_uid_tools(),
+            1000,
+            301000,
+        )
+        .unwrap();
+        for (language, explanation) in [(Language::En, "metadata"), (Language::Ko, "메타데이터")]
+        {
+            let dialog = DialogReview::ScopeRefresh(review.clone());
+            let summary = dialog.summary(language).unwrap();
+            assert!(summary.contains("mail.sync.page"));
+            assert!(summary.contains(explanation));
+            let mut model = ReviewModel::new(
+                dialog.clone(),
+                Presentation::new(Some(language), Theme::System, false, true, false),
+            );
+            assert_eq!(
+                model.begin_verification(2000, Duration::from_secs(1)),
+                ReviewIntent::None
+            );
+            assert!(model.paint_completed(&dialog));
+            assert_eq!(
+                model.begin_verification(2001, Duration::from_secs(1)),
+                ReviewIntent::RequestVerification
+            );
+        }
+    }
+
+    #[test]
     fn cli15_scope_refresh_dialog_paints_exact_bilingual_snapshot_before_verification() {
         let review = ScopeRefreshReview::new(
             [1; 32],

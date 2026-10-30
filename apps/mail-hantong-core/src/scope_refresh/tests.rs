@@ -214,6 +214,131 @@ impl Effects for Fake<'_> {
 }
 
 #[test]
+fn cli15_uid_scope_fresh_request_offers_uid_but_preserves_pending_and_staged_targets() {
+    let fixture = Fixture::new();
+    let fresh =
+        prepare_for_pin(&fixture.store, hantong_platform::sha256(&public()).unwrap()).unwrap();
+    assert_eq!(
+        fresh.target_tools(),
+        hantong_contracts::auth::default_cli_uid_tools()
+    );
+    assert_eq!(
+        fixture
+            .store
+            .load_default_cli_registration()
+            .unwrap()
+            .unwrap()
+            .scope
+            .tools(),
+        hantong_contracts::auth::default_cli_legacy_tools()
+    );
+    assert_eq!(
+        status(&fixture.store, *fresh.refresh_id(), false)
+            .unwrap()
+            .state(),
+        ScopeRefreshProgress::Interrupted
+    );
+    assert_eq!(
+        fixture
+            .store
+            .load_cli_scope_refresh(*fresh.refresh_id())
+            .unwrap(),
+        Some(fresh)
+    );
+
+    for tools in [
+        hantong_contracts::auth::default_cli_legacy_tools(),
+        hantong_contracts::auth::default_cli_folder_tools(),
+        hantong_contracts::auth::default_cli_uid_tools(),
+    ] {
+        let fixture = Fixture::new();
+        let pending = fixture.pending_with_scope(tools.clone());
+        let pin = hantong_platform::sha256(&public()).unwrap();
+        assert_eq!(prepare_for_pin(&fixture.store, pin).unwrap(), pending);
+        let (old, new) = profiles(&pending, public()).unwrap();
+        assert_eq!(
+            ParsedClientProfile::from_json(&new)
+                .unwrap()
+                .scope()
+                .tools(),
+            tools
+        );
+        let staged = fixture.store.stage_cli_scope_refresh(&pending).unwrap();
+        assert_eq!(prepare_for_pin(&fixture.store, pin).unwrap(), staged);
+        assert_eq!(profiles(&staged, public()).unwrap(), (old, new));
+        let effects = Fake::new(&fixture.store);
+        recover_staged(&effects, &staged).unwrap();
+        assert_eq!(
+            fixture
+                .store
+                .load_default_cli_registration()
+                .unwrap()
+                .unwrap()
+                .scope
+                .tools(),
+            tools
+        );
+    }
+}
+
+#[test]
+fn cli15_uid_scope_recovery_preserves_exact_profile_and_rejects_tool_substitution() {
+    let fixture = Fixture::new();
+    let pending = fixture.pending_with_scope(hantong_contracts::auth::default_cli_uid_tools());
+    let b = pending.base_registration();
+    let altered = ScopeRefreshReview::new_with_tools(
+        *pending.refresh_id(),
+        pending.version(),
+        b.registration_id,
+        b.request_id,
+        b.version,
+        b.profile_epoch,
+        *pending.client_public_key_hash(),
+        *pending.server_public_key_hash(),
+        b.scope.accounts().to_vec(),
+        pending.target_accounts().to_vec(),
+        b.scope.tools().to_vec(),
+        hantong_contracts::auth::default_cli_folder_tools(),
+        pending.created_at_utc_ms(),
+        pending.expires_at_utc_ms(),
+    )
+    .unwrap();
+    let mut effects = Fake::new(&fixture.store);
+    assert_eq!(
+        commit_consumed_review(&effects, &pending, &altered),
+        Err(ErrorCode::Conflict)
+    );
+    assert!(!effects.events.borrow().contains(&"stage"));
+    effects.fail = Some("activate");
+    assert_eq!(
+        commit_consumed_review(&effects, &pending, &review_snapshot(&pending).unwrap()),
+        Err(ErrorCode::InternalError)
+    );
+    let original_bytes = effects.published.borrow().clone().unwrap();
+    let staged = fixture
+        .store
+        .load_cli_scope_refresh(*pending.refresh_id())
+        .unwrap()
+        .unwrap();
+    let effects = Fake::new(&fixture.store);
+    recover_staged(&effects, &staged).unwrap();
+    assert_eq!(
+        effects.published.borrow().as_ref().unwrap(),
+        &original_bytes
+    );
+    assert_eq!(
+        fixture
+            .store
+            .load_default_cli_registration()
+            .unwrap()
+            .unwrap()
+            .scope
+            .tools(),
+        hantong_contracts::auth::default_cli_uid_tools()
+    );
+}
+
+#[test]
 fn cli15_folder_scope_refresh_activates_full_scope_and_recovery_reuses_same_profile_bytes() {
     let fixture = Fixture::new();
     let tools = hantong_contracts::auth::default_cli_folder_tools();

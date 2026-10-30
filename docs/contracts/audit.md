@@ -42,3 +42,8 @@ Store는 시작 트랜잭션에서 검증한 등록부의 종류·표시명을 �
 자동 pruning은 제공하지 않는다. M9-14 보존 정책은 terminal이 존재하는 오래된 실행만 명시적 정책으로 제한된 batch에서 정리하며 unresolved·활성 원장 참조는 보존한다. 요청 중 용량 확보를 위해 기록을 자동 삭제하지 않는다. 쓰기 connection은 journal_mode=DELETE·synchronous=EXTRA를 설정하고 값을 검증한다. 전원 장애 내구성은 VFS·OS·저장장치의 flush 보장에 의존하며 설정 시험만으로 절대적인 전원 장애 안전을 주장하지 않는다.
 
 v3 시작 검증은 capacity singleton과 카운터 범위를 확인하고 실제 start/계정 참조 행 수와 대조한다. 누락·불일치 시 자동으로 카운터를 재계산하거나 기록을 삭제하지 않고 시작을 거부한다. 정상 API는 한 트랜잭션에서 두 카운터와 실제 행 수를 함께 유지한다.
+
+
+## 읽기 전용 폴더·UID 작업 확장
+
+v10은 `mail.folders.list`와 `mail.folders.refresh`, v12는 `mail.sync.page`를 enum allow-list에 추가한다. UID 도구의 cursor/status도 같은 enum으로 감사하며 request만 원래 audit 소유권을 영속 작업 원장에 넘긴다. 공개 JSON의 action과 mailbox/intent는 각 검증된 계약으로 처리하고 감사에는 원문을 복사하지 않는다. 범위/정책 거부는 이번 audit에만 terminal을 기록한다. 성공 effect와 원래 audit terminal은 해당 Store transaction으로 원자 저장한다. 미완료 audit를 startup이나 status 조회로 재실행하지 않는다. 상세는 [폴더 도구](imap-folder-tools.md)·[UID 영속 작업](imap-uid-jobs.md)을 따른다.

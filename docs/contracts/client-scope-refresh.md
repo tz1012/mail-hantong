@@ -1,3 +1,29 @@
+# 기본 CLI 계정·도구 범위 갱신 v3
+
+상태: 2026-10-30 v12 UID 페이지 공개 경로의 권한 선행 계약, **사람 검토 필요**. 연속 개발 위임에 따라 구현한다. v1/v2의 기존 이력·hash·복구 의미는 보존하고, 아래 v3 규칙을 새 요청에 적용한다. UID 페이지 구현 완료나 실제 사람 보안 검토를 뜻하지 않는다.
+
+## v3 고정 도구 집합과 명시 확인
+
+공통 `hantong_contracts::auth::default_cli_uid_tools()`는 정렬된 정확한 `["mail.accounts.list","mail.folders.list","mail.folders.refresh","mail.sync.page"]`를 반환한다(U). 기존 legacy(L)와 folder(F) 함수의 값은 바꾸지 않는다. `is_supported_default_cli_toolset`은 L/F/U만 허용하며 순서·중복·부분 집합·임의/send 도구는 거부한다. `is_supported_default_cli_toolset_transition(old,target)`은 두 집합을 먼저 검증한 뒤 L≤F≤U의 단조 전이만 허용한다. 동일 집합은 계정 범위가 달라질 때만 유효하며 전체 scope no-op은 별도로 거부한다.
+
+최초 등록은 L을 유지한다. 새 명시 `hantong clients refresh`만 현재 등록 가능한 계정과 U를 native 화면에 제안한다. 화면은 영/한으로 기존/새 계정·전체 도구를 표시하고, U에는 IMAP 메타데이터 한 페이지를 읽어 로컬에 저장하는 권한이라는 설명을 함께 표시한다. 기존 paint/전체 snapshot/OS 사용자·로그온/Hello opaque proof 경계는 그대로다. CLI·MCP·status·startup·프로필 파싱은 이 확인을 대신하지 않는다.
+
+프로필 schema_version=1과 scope RPC protocol_version=1은 유지한다. 기존 L/F 프로필은 동일 canonical bytes로 유효하며 `mail.sync.page`를 허용하지 않는다. 새 U도 고정 read_only/60rpm·계정별 scope를 유지한다. scope refresh는 UID 작업을 실행하거나 자동 enqueue하지 않는다.
+
+## v3 이력과 v12 이전
+
+새 요청 행은 hash_version=3이다. hash domain은 `mail-hantong.cli-scope-refresh.v3\0`이며 domain 이후 필드·순서·길이 encoding은 v2와 동일하다. v1은 기존 v1 domain/encoding과 L/L만, v2는 기존 v2 domain/encoding과 L/F 집합만 정확히 검증한다. v3은 L/F/U를 허용한다. 버전을 내용으로 추정하지 않는다. phase CAS version(pending1→staged2→active3)은 hash_version과 별개이며 바뀌지 않는다.
+
+v11 DDL을 고정하고 v12가 `client_scope_refreshes`의 CHECK만 확장하여 표를 재구축한다. 모든 기존 열·행·ID·hash·시각·phase·version 및 unique index/FK/개수·TTL 규칙을 보존하며 hash를 다시 계산하거나 toolset을 바꾸지 않는다. 기존 DEFAULT hash_version=1과 L/L 기본값은 유지한다. 허용 hash_version은 1/2/3이다. base/target tools는 L/F/U의 canonical JSON이며 버전별 제한과 단조 전이를 DDL·strict reader 양쪽에서 검사한다. v9/v10/v11 검증용 `scope_refresh::validate_history_v11`은 v1/v2와 L/F만 허용하고, 현재 v12 validator만 v3/U를 허용한다. v8의 과거 layout validator도 유지한다.
+
+단조 전이는 L→L/F/U, F→F/U, U→U이며 어떤 계정 변경도 tool downgrade를 허용하지 않는다. 계정·도구가 모두 같은 no-op은 거부한다. create의 accounts-only wrapper는 계속 L을 요청하는 호환 API이며 F/U에서 호출하면 downgrade로 거부한다. 새 with_scope/create가 만드는 이력은 v3이며 기존 성공 이력 전체 scope의 연속성을 그대로 검증한다. stage는 old grants를 보존하고 activate만 target accounts/tools로 정확히 교체한다.
+
+기존 pending/staged는 저장된 목표와 hash를 바꾸지 않는다. 명시 refresh는 유효한 기존 pending을 같은 L/F/U snapshot으로 다시 표시하거나 기존 staged 결정을 그대로 복구한다. 기존 v1/v2 결정의 완료가 U 권한을 뜻하지 않는다. U가 필요하면 해당 완료 뒤 별도의 새 명시 refresh와 native 확인을 거친다. startup은 staged의 exact old/new profile 발행·활성화만 복구하고 pending에는 효과를 주지 않는다. 키·서버 pin·등록 ID를 새로 만들지 않는다.
+
+시험은 v1/v2 실제 pending/staged/active hash·프로필 bytes 보존, F→U tool-only 전이, U→F/L 거부, v1/v2 행에 U를 주입한 손상, phase별 old/target grants와 rollback, 이력 provenance, 영/한 UID 권한 설명·snapshot 변조, L/F/U strict profile, old pending/staged 재개에서 자동 확대 없음, 초기 등록 L 유지 및 구 epoch 거부를 포함한다. 격리 synthetic fixture만 사용하며 실제 사용자 프로필·Hello·계정·비밀은 사용하지 않는다.
+
+---
+
 # 기본 CLI 계정·도구 범위 갱신 v2
 
 상태: 2026-10-30 v9 폴더 도구 활성화 선행 계약, **사람 검토 필요**. 아래 v2 절은 v1의 계정만 갱신/도구 고정 부분을 대체한다. 그 외 TTL·phase·stage/publish/activate·파일 보호·중단 복구 규칙은 유지한다.

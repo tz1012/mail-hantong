@@ -13,6 +13,7 @@ use hantong_contracts::scope_refresh::{
 };
 use std::env;
 use std::io::{self, Write};
+mod sync;
 
 const EN_RESOURCES: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/resources/en.txt"));
 const KO_RESOURCES: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/resources/ko.txt"));
@@ -95,14 +96,14 @@ fn error_json(code: ErrorCode, lang: Lang) -> String {
 }
 
 fn run(args: impl IntoIterator<Item = String>) -> i32 {
-    run_with_boundaries_and_scope_with_folders(
+    run_with_mail_actions(
         args,
         hantong_ipc_client::registration::exchange,
         verify_profile,
         hantong_ipc_client::accounts::list_default_accounts,
         hantong_ipc_client::imap_setup::exchange,
         hantong_ipc_client::scope_refresh::exchange,
-        real_folder_action,
+        (real_folder_action, sync::real_action),
     )
 }
 
@@ -342,7 +343,31 @@ fn run_with_boundaries_and_folders(
     )
 }
 
+#[cfg(test)]
 fn run_with_boundaries_and_scope_with_folders(
+    args: impl IntoIterator<Item = String>,
+    registration: impl FnMut(RegistrationCommand) -> Result<RegistrationReceipt, ErrorCode>,
+    verification: impl FnMut() -> Result<(), ErrorCode>,
+    account_list: impl FnMut(
+        bool,
+    )
+        -> Result<hantong_ipc_client::accounts::AccountListResponse, ErrorCode>,
+    setup: impl FnMut(ImapSetupCommand) -> Result<ImapSetupReceipt, ErrorCode>,
+    scope_refresh: impl FnMut(ScopeRefreshCommand) -> Result<ScopeRefreshReceipt, ErrorCode>,
+    folder_action: impl FnMut(FolderAction) -> Result<FolderActionResult, ErrorCode>,
+) -> i32 {
+    run_with_mail_actions(
+        args,
+        registration,
+        verification,
+        account_list,
+        setup,
+        scope_refresh,
+        (folder_action, |_| Err(ErrorCode::CapabilityUnsupported)),
+    )
+}
+
+fn run_with_mail_actions(
     args: impl IntoIterator<Item = String>,
     mut registration: impl FnMut(RegistrationCommand) -> Result<RegistrationReceipt, ErrorCode>,
     mut verification: impl FnMut() -> Result<(), ErrorCode>,
@@ -352,8 +377,12 @@ fn run_with_boundaries_and_scope_with_folders(
         -> Result<hantong_ipc_client::accounts::AccountListResponse, ErrorCode>,
     mut setup: impl FnMut(ImapSetupCommand) -> Result<ImapSetupReceipt, ErrorCode>,
     mut scope_refresh: impl FnMut(ScopeRefreshCommand) -> Result<ScopeRefreshReceipt, ErrorCode>,
-    mut folder_action: impl FnMut(FolderAction) -> Result<FolderActionResult, ErrorCode>,
+    actions: (
+        impl FnMut(FolderAction) -> Result<FolderActionResult, ErrorCode>,
+        impl FnMut(sync::Action) -> Result<sync::ResultValue, ErrorCode>,
+    ),
 ) -> i32 {
+    let (mut folder_action, mut sync_action) = actions;
     let mut lang = Lang::En;
     let mut json = false;
     let mut include_capabilities = false;
@@ -424,6 +453,10 @@ fn run_with_boundaries_and_scope_with_folders(
             | "--expected-generation"
             | "--operation-id"
             | "--idempotency-key"
+            | "--wire-hex"
+            | "--encoding"
+            | "--expected-catalog-generation"
+            | "--expected-cursor-version"
             | "--execution-id" => {
                 let Some(value) = it.next() else {
                     return emit_error(ErrorCode::InvalidInput, lang, json);
@@ -460,7 +493,12 @@ fn run_with_boundaries_and_scope_with_folders(
     if (want_help || want_version) && !command.is_empty() {
         return emit_error(ErrorCode::InvalidInput, lang, json);
     }
-    if !folder_options.is_empty() && command.first().map(String::as_str) != Some("folders") {
+    if !folder_options.is_empty()
+        && !matches!(
+            command.first().map(String::as_str),
+            Some("folders" | "sync")
+        )
+    {
         return emit_error(ErrorCode::InvalidInput, lang, json);
     }
     if let Some(command) = parse_setup_command(&command, &setup_options) {
@@ -478,6 +516,9 @@ fn run_with_boundaries_and_scope_with_folders(
     }
     if !setup_options.is_empty() {
         return emit_error(ErrorCode::InvalidInput, lang, json);
+    }
+    if command.first().is_some_and(|v| v == "sync") {
+        return sync::run(&command, &folder_options, lang, json, &mut sync_action);
     }
     if !folder_options.is_empty() || command.first().is_some_and(|v| v == "folders") {
         return run_folder_command(&command, &folder_options, lang, json, &mut folder_action);
