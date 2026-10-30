@@ -8,6 +8,49 @@ fn request() -> Value {
     json!({"action":"request","account_id":"acct","wire_hex":"494e424f58","encoding":"modified_utf7","operation_id":"operation","idempotency_key":"key","expected_catalog_generation":1,"expected_cursor_version":0,"intent_hash":"00".repeat(32)})
 }
 #[test]
+fn sync02_recovery_actions_validate_without_client_supplied_epoch_state() {
+    let mut p = request();
+    p["action"] = json!("recover");
+    p["expected_cursor_version"] = json!(4);
+    let parsed = ToolRequest::validate(&envelope(p.clone())).unwrap();
+    assert_eq!(parsed.tool(), AuditTool::SyncPage);
+    assert_eq!(parsed.account_ids(), ["acct"]);
+    let status = ToolRequest::validate(&envelope(
+        json!({"action":"recover-status","account_id":"acct","execution_id":"01".repeat(32)}),
+    ))
+    .unwrap();
+    assert_eq!(status.account_ids(), ["acct"]);
+    for field in [
+        "previous_uid_validity",
+        "uid_validity",
+        "epoch_generation",
+        "endpoint_version",
+        "after_uid",
+        "through_uid",
+        "approved",
+    ] {
+        let mut invalid = p.clone();
+        invalid[field] = json!(1);
+        assert_eq!(
+            ToolRequest::validate(&envelope(invalid)),
+            Err(ErrorCode::InvalidInput)
+        );
+    }
+    for (field, value) in [
+        ("expected_cursor_version", json!(0)),
+        ("wire_hex", json!("696e626f78")),
+        ("expected_cursor_version", json!(i64::MAX)),
+        ("expected_catalog_generation", json!(1.0)),
+    ] {
+        let mut invalid = p.clone();
+        invalid[field] = value;
+        assert_eq!(
+            ToolRequest::validate(&envelope(invalid)),
+            Err(ErrorCode::InvalidInput)
+        );
+    }
+}
+#[test]
 fn ext04_reconcile_tool_binds_explicit_account_and_rejects_private_state() {
     let mut p = request();
     p["action"] = json!("reconcile");

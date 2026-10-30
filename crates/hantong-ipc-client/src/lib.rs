@@ -21,6 +21,7 @@ pub mod profile;
 pub mod registration;
 pub mod uid_page;
 pub mod uid_reconcile;
+pub mod uid_recovery;
 
 use hantong_contracts::ErrorCode;
 use serde::{Deserialize, Serialize};

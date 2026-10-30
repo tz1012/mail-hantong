@@ -196,12 +196,26 @@ mod tests {
             301000,
         )
         .unwrap();
-        for (language, explanation) in [(Language::En, "metadata"), (Language::Ko, "메타데이터")]
-        {
+        for (language, explanation, recovery, preservation) in [
+            (
+                Language::En,
+                "metadata",
+                "first-page recovery",
+                "preserving existing records",
+            ),
+            (
+                Language::Ko,
+                "메타데이터",
+                "첫 페이지 복구",
+                "기존 기록을 보존",
+            ),
+        ] {
             let dialog = DialogReview::ScopeRefresh(review.clone());
             let summary = dialog.summary(language).unwrap();
             assert!(summary.contains("mail.sync.page"));
             assert!(summary.contains(explanation));
+            assert!(summary.contains(recovery));
+            assert!(summary.contains(preservation));
             let mut model = ReviewModel::new(
                 dialog.clone(),
                 Presentation::new(Some(language), Theme::System, false, true, false),

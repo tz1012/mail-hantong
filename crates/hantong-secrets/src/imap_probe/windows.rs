@@ -6,6 +6,7 @@ use super::{
 };
 use crate::{SensitiveBuffer, mail_transport::BoundedAsyncStream};
 use hantong_domain::imap_reconcile::{ImapUidReconcilePage, ImapUidReconcileRequest};
+use hantong_domain::imap_recovery::{ImapUidRecoveryPage, ImapUidRecoveryRequest};
 use hantong_domain::imap_sync::{ImapUidPage, ImapUidPageRequest};
 use hantong_domain::mail_connection::{Authentication, TlsMode};
 use hantong_domain::mailboxes::{
@@ -75,12 +76,14 @@ enum ReadOperation<'a> {
     Mailboxes,
     UidPage(&'a ImapUidPageRequest),
     UidReconcile(&'a ImapUidReconcileRequest),
+    UidRecovery(&'a ImapUidRecoveryRequest),
 }
 enum ReadReceipt {
     Probe(ImapProbeReceipt),
     Mailboxes(ImapMailboxSnapshot),
     UidPage(Result<ImapUidPage, ImapUidPageError>),
     UidReconcile(Result<ImapUidReconcilePage, ImapUidPageError>),
+    UidRecovery(Result<ImapUidRecoveryPage, ImapUidPageError>),
 }
 async fn connect(
     store: &SecretStore,
@@ -171,6 +174,47 @@ pub(super) async fn fetch_uid_reconcile_page(
     .await?
     {
         ReadReceipt::UidReconcile(page) => page,
+        _ => Err(MailProbeError::Protocol.into()),
+    }
+}
+
+pub(super) async fn fetch_uid_recovery_page(
+    store: &SecretStore,
+    request: &ImapUidRecoveryRequest,
+    endpoint: &ImapEndpointConfig,
+) -> Result<ImapUidRecoveryPage, ImapUidPageError> {
+    match connect(
+        store,
+        request.account_id(),
+        endpoint,
+        ReadOperation::UidRecovery(request),
+    )
+    .await?
+    {
+        ReadReceipt::UidRecovery(page) => page,
+        _ => Err(MailProbeError::Protocol.into()),
+    }
+}
+
+#[cfg(test)]
+pub(super) async fn run_uid_recovery_connected<S>(
+    source: Source<'_>,
+    stream: S,
+    tls: Arc<ClientConfig>,
+    request: &ImapUidRecoveryRequest,
+) -> Result<ImapUidRecoveryPage, ImapUidPageError>
+where
+    S: AsyncRead + AsyncWrite + Send + Unpin + 'static,
+{
+    match with_deadline(run_operation(
+        source,
+        stream,
+        tls,
+        ReadOperation::UidRecovery(request),
+    ))
+    .await?
+    {
+        ReadReceipt::UidRecovery(page) => page,
         _ => Err(MailProbeError::Protocol.into()),
     }
 }
@@ -564,12 +608,20 @@ where
             ImapUidPageError::CursorInvalid,
         )));
     }
+    if let ReadOperation::UidRecovery(request) = operation
+        && (source.account != request.account_id()
+            || source.endpoint.settings_version() != request.endpoint_version())
+    {
+        return Ok(ReadReceipt::UidRecovery(Err(
+            ImapUidPageError::CursorInvalid,
+        )));
+    }
     let (wire_limit, plaintext_limit) = match operation {
         ReadOperation::Probe => (256 * 1024, 256 * 1024),
         ReadOperation::Mailboxes => (4 * 1024 * 1024, 2 * 1024 * 1024),
-        ReadOperation::UidPage(_) | ReadOperation::UidReconcile(_) => {
-            (16 * 1024 * 1024, 8 * 1024 * 1024)
-        }
+        ReadOperation::UidPage(_)
+        | ReadOperation::UidReconcile(_)
+        | ReadOperation::UidRecovery(_) => (16 * 1024 * 1024, 8 * 1024 * 1024),
     };
     // Prefetch remains BELOW TLS, including bytes following STARTTLS OK.
     let mut plain = Protocol {
@@ -604,7 +656,9 @@ where
         written: plain.written,
         remaining: if matches!(
             operation,
-            ReadOperation::UidPage(_) | ReadOperation::UidReconcile(_)
+            ReadOperation::UidPage(_)
+                | ReadOperation::UidReconcile(_)
+                | ReadOperation::UidRecovery(_)
         ) {
             plaintext_limit.saturating_sub(plain_consumed)
         } else {
@@ -672,6 +726,18 @@ where
                 return Ok(ReadReceipt::UidReconcile(page));
             }
             (ReadReceipt::UidReconcile(page), "h9")
+        }
+        ReadOperation::UidRecovery(request) => {
+            let encoding = if has(&caps, "IMAP4REV2") && !has(&caps, "IMAP4REV1") {
+                MailboxEncoding::Utf8
+            } else {
+                MailboxEncoding::ModifiedUtf7
+            };
+            let page = verified.uid_recovery_page(request, encoding).await;
+            if page.is_err() {
+                return Ok(ReadReceipt::UidRecovery(page));
+            }
+            (ReadReceipt::UidRecovery(page), "h9")
         }
     };
     verified.command(logout_tag, CommandBody::Logout).await?;

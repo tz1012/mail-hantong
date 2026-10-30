@@ -13,6 +13,7 @@ use hantong_contracts::{
         UidPageStatusRequest,
     },
     uid_reconcile::UidReconcileRequest,
+    uid_recovery::UidRecoveryRequest,
 };
 use serde_json::{Map, Value};
 use std::{collections::BTreeSet, fmt};
@@ -47,6 +48,8 @@ pub enum UidPageAction {
     Status(UidPageStatusRequest),
     Reconcile(UidReconcileRequest),
     ReconcileStatus(UidPageStatusRequest),
+    Recover(UidRecoveryRequest),
+    RecoverStatus(UidPageStatusRequest),
 }
 
 #[derive(Clone, Eq, PartialEq)]
@@ -165,6 +168,8 @@ impl ToolRequest {
                 UidPageAction::Status(v) => v.account_ids(),
                 UidPageAction::Reconcile(v) => v.account_ids(),
                 UidPageAction::ReconcileStatus(v) => v.account_ids(),
+                UidPageAction::Recover(v) => v.account_ids(),
+                UidPageAction::RecoverStatus(v) => v.account_ids(),
             },
             Self::SendExecute(value) => std::slice::from_ref(&value.account_id),
         }
@@ -387,7 +392,7 @@ fn parse_uid_page(params: &Map<String, Value>) -> Result<UidPageAction, ErrorCod
                 mailbox()?,
             )?))
         }
-        "request" | "reconcile" => {
+        "request" | "reconcile" | "recover" => {
             exact_keys(
                 params,
                 &[
@@ -419,6 +424,17 @@ fn parse_uid_page(params: &Map<String, Value>) -> Result<UidPageAction, ErrorCod
                     text("intent_hash")?,
                 )?));
             }
+            if text("action")? == "recover" {
+                return Ok(UidPageAction::Recover(UidRecoveryRequest::new(
+                    text("account_id")?,
+                    mailbox()?,
+                    text("operation_id")?,
+                    text("idempotency_key")?,
+                    number("expected_catalog_generation")?,
+                    number("expected_cursor_version")?,
+                    text("intent_hash")?,
+                )?));
+            }
             Ok(UidPageAction::Request(UidPageRequest::new(
                 text("account_id")?,
                 mailbox()?,
@@ -429,13 +445,15 @@ fn parse_uid_page(params: &Map<String, Value>) -> Result<UidPageAction, ErrorCod
                 text("intent_hash")?,
             )?))
         }
-        "status" | "reconcile-status" => {
+        "status" | "reconcile-status" | "recover-status" => {
             exact_keys(params, &["action", "account_id", "execution_id"])?;
             let request = UidPageStatusRequest::new(
                 text("account_id")?,
                 hantong_contracts::wire_hex::decode_fixed(text("execution_id")?)?,
             )?;
-            Ok(if text("action")? == "reconcile-status" {
+            Ok(if text("action")? == "recover-status" {
+                UidPageAction::RecoverStatus(request)
+            } else if text("action")? == "reconcile-status" {
                 UidPageAction::ReconcileStatus(request)
             } else {
                 UidPageAction::Status(request)

@@ -1169,7 +1169,7 @@ fn restore_v8_scope_schema(f: &Fixture) {
             assert_eq!(tx.query_row("SELECT count(*) FROM audit_starts",[],|r|r.get::<_,i64>(0))?,0);
             assert_eq!(tx.query_row("SELECT count(*) FROM folder_refresh_requests",[],|r|r.get::<_,i64>(0))?,0);
             assert_eq!(tx.query_row("SELECT (SELECT count(*) FROM imap_uid_messages)+(SELECT count(*) FROM imap_uid_cursors)+(SELECT count(*) FROM imap_uid_page_operations)",[],|r|r.get::<_,i64>(0))?,0);
-            tx.execute_batch("DROP TABLE imap_uid_reconcile_messages; DROP TABLE imap_uid_reconcile_heads; DROP TABLE imap_uid_reconcile_requests; DROP TABLE imap_uid_page_requests; DROP TABLE imap_uid_messages; DROP TABLE imap_uid_cursors; DROP TABLE imap_uid_page_operations;")?;
+            tx.execute_batch("DROP TABLE imap_uid_reconcile_messages; DROP TABLE imap_uid_reconcile_heads; DROP TABLE imap_uid_reconcile_requests; DROP TABLE imap_uid_epochs; DROP TABLE imap_uid_recovery_requests; DROP TABLE imap_uid_page_requests; DROP TABLE imap_uid_messages; DROP TABLE imap_uid_cursors; DROP TABLE imap_uid_page_operations;")?;
             tx.execute_batch("DROP TABLE folder_refresh_requests; DROP TABLE audit_terminals; DROP TABLE audit_start_accounts; DROP TABLE audit_starts;")?;
             let audit_start=schema.find("CREATE TABLE audit_starts (").unwrap();
             let audit_end=schema.find("-- Provider-neutral IMAP/SMTP").unwrap();

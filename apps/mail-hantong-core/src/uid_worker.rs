@@ -1,11 +1,14 @@
 //! One-shot UID observation sharing the global IMAP operation slot.
 use hantong_contracts::uid_reconcile::UidReconcileRequest;
+use hantong_contracts::uid_recovery::UidRecoveryRequest;
 use hantong_contracts::{ErrorCode, uid_page::UidPageRequest};
 use hantong_domain::imap_reconcile::ImapUidReconcilePage;
+use hantong_domain::imap_recovery::ImapUidRecoveryPage;
 use hantong_domain::imap_sync::ImapUidPage;
 use hantong_store::uid_reconcile_jobs::{
     UidReconcileAdmission, UidReconcileJob, UidReconcileStart,
 };
+use hantong_store::uid_recovery_jobs::{UidRecoveryAdmission, UidRecoveryJob, UidRecoveryStart};
 use hantong_store::{
     Store,
     uid_page_jobs::{UidPageAdmission, UidPageJob, UidPageStart, UidQueueAdmission},
@@ -18,6 +21,7 @@ type Job = [u8; 32];
 enum QueuedJob {
     Page(Job),
     Reconcile(Job),
+    Recovery(Job),
 }
 struct Queue {
     sender: mpsc::Sender<QueuedJob>,
@@ -50,6 +54,12 @@ impl Slot {
             .take()
             .expect("owned queue permit")
             .send(QueuedJob::Reconcile(self.id));
+    }
+    fn submit_recovery(mut self) {
+        self.permit
+            .take()
+            .expect("owned queue permit")
+            .send(QueuedJob::Recovery(self.id));
     }
 }
 impl Queue {
@@ -106,6 +116,9 @@ pub(crate) trait Discovery {
     async fn reconcile(&self, _job: &UidReconcileJob) -> Result<ImapUidReconcilePage, ErrorCode> {
         Err(ErrorCode::CapabilityUnsupported)
     }
+    async fn recover(&self, _job: &UidRecoveryJob) -> Result<ImapUidRecoveryPage, ErrorCode> {
+        Err(ErrorCode::CapabilityUnsupported)
+    }
 }
 pub(crate) struct NativeDiscovery<'a> {
     secrets_root: &'a Path,
@@ -116,6 +129,14 @@ impl Discovery for NativeDiscovery<'_> {
             .map_err(|_| ErrorCode::InternalError)?;
         secrets
             .fetch_imap_uid_reconcile_page(job.fetch_request(), job.endpoint())
+            .await
+            .map_err(uid_error)
+    }
+    async fn recover(&self, job: &UidRecoveryJob) -> Result<ImapUidRecoveryPage, ErrorCode> {
+        let secrets = hantong_secrets::SecretStore::open(self.secrets_root)
+            .map_err(|_| ErrorCode::InternalError)?;
+        secrets
+            .fetch_imap_uid_recovery_page(job.fetch_request(), job.endpoint())
             .await
             .map_err(uid_error)
     }
@@ -190,6 +211,22 @@ impl UidWorkerHandle<'_> {
         }
         Ok(outcome)
     }
+    pub(crate) fn admit_recovery(
+        &self,
+        id: Job,
+        request: &UidRecoveryRequest,
+    ) -> Result<UidRecoveryAdmission, ErrorCode> {
+        let (slot, queue) = match self.queue.reserve(id) {
+            Ok(slot) => (Some(slot), UidQueueAdmission::Reserved),
+            Err(queue) => (None, queue),
+        };
+        let outcome = self.store.admit_uid_recovery(id, request, queue)?;
+        if matches!(outcome, UidRecoveryAdmission::Admitted(_)) {
+            slot.expect("Store admits only a reserved queue slot")
+                .submit_recovery();
+        }
+        Ok(outcome)
+    }
     pub(crate) fn admit(
         &self,
         id: Job,
@@ -228,6 +265,10 @@ impl<D: Discovery> UidWorker<'_, D> {
                 }
                 QueuedJob::Reconcile(id) => {
                     self.run_reconcile(id).await?;
+                    id
+                }
+                QueuedJob::Recovery(id) => {
+                    self.run_recovery(id).await?;
                     id
                 }
             };
@@ -272,6 +313,43 @@ impl<D: Discovery> UidWorker<'_, D> {
             Err(error) => self
                 .store
                 .complete_uid_reconcile_failure(id, error)
+                .map(|_| ()),
+        }
+    }
+    async fn run_recovery(&self, id: Job) -> Result<(), ErrorCode> {
+        let job = match self.store.start_uid_recovery(id)? {
+            UidRecoveryStart::Ready(job) => job,
+            UidRecoveryStart::Finished(_) => return Ok(()),
+        };
+        let outcome = if let Err(error) = self.store.check_uid_recovery(id) {
+            if error == ErrorCode::InternalError {
+                return Err(error);
+            }
+            Err(error)
+        } else {
+            let discovery = self.discovery.recover(&job);
+            tokio::pin!(discovery);
+            let mut ticker = tokio::time::interval_at(
+                tokio::time::Instant::now() + Duration::from_millis(500),
+                Duration::from_millis(500),
+            );
+            loop {
+                tokio::select! {
+                    biased;
+                    _=ticker.tick()=>{if let Err(error)=self.store.check_uid_recovery(id){if error==ErrorCode::InternalError{return Err(error)} break Err(error)}},
+                    result=&mut discovery=>break result,
+                }
+            }
+        };
+        // As in append, an uncertain commit never triggers a second terminal write.
+        match outcome {
+            Ok(page) => self
+                .store
+                .complete_uid_recovery_success(id, &page)
+                .map(|_| ()),
+            Err(error) => self
+                .store
+                .complete_uid_recovery_failure(id, error)
                 .map(|_| ()),
         }
     }
@@ -325,6 +403,13 @@ impl Discovery for NoDiscovery {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test(flavor = "current_thread")]
+    async fn sync02_recovery_retains_the_shared_network_slot_until_completion() {
+        let (q, mut receiver) = queue(Rc::new(Cell::new(None)));
+        q.reserve([7; 32]).unwrap().submit_recovery();
+        assert_eq!(receiver.recv().await, Some(QueuedJob::Recovery([7; 32])));
+        assert!(matches!(q.reserve([8; 32]), Err(UidQueueAdmission::Full)));
+    }
     #[tokio::test(flavor = "current_thread")]
     async fn m204_reconcile_uses_the_same_owned_network_slot_as_append() {
         let (q, mut receiver) = queue(Rc::new(Cell::new(None)));

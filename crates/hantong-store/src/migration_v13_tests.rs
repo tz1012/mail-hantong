@@ -54,7 +54,7 @@ fn ext04_v12_to_v13_preserves_base_pending_jobs_audits_and_scope_history() {
         store
             .with_connection(|c| c.pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0)))
             .unwrap(),
-        13
+        i64::from(CURRENT_SCHEMA_VERSION)
     );
     for table in [
         "imap_uid_reconcile_heads",
@@ -103,7 +103,7 @@ fn ext04_v12_to_v13_real_ddl_failure_rolls_back_all_rows_and_schema() {
         connection: f.keyed(),
     };
     assert_eq!(
-        store.migrate_with_backup(12, 13, SCHEMA, |c| {
+        store.migrate_with_backup(12, 13, SCHEMA_V13, |c| {
             c.execute_batch(MIGRATION_V12_TO_V13)?;
             c.execute_batch("CREATE TABLE unexpected_reconcile_schema(value)")
         }),

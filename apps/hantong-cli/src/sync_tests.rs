@@ -1,4 +1,103 @@
 use super::*;
+#[test]
+fn cli01_recovery_syntax_is_explicit_and_rejects_zero_cursor() {
+    let command = vec!["sync".into(), "recover".into()];
+    let mut options = vec![
+        ("--account".into(), "acct".into()),
+        ("--wire-hex".into(), "494e424f58".into()),
+        ("--encoding".into(), "utf8".into()),
+        ("--expected-catalog-generation".into(), "1".into()),
+        ("--expected-cursor-version".into(), "4".into()),
+        ("--operation-id".into(), "op".into()),
+        ("--idempotency-key".into(), "key".into()),
+    ];
+    assert!(parse(&command, &options).is_ok());
+    options[4].1 = "0".into();
+    assert!(parse(&command, &options).is_err());
+    assert!(
+        parse(
+            &["sync".into(), "recover-status".into()],
+            &[
+                ("--account".into(), "acct".into()),
+                ("--execution-id".into(), "01".repeat(32))
+            ]
+        )
+        .is_ok()
+    );
+}
+#[test]
+fn cli01_recovery_dispatches_once_and_localizes_first_page_preservation() {
+    let progress = hantong_contracts::uid_recovery::UidRecoveryProgress::new(2, 5, 10, 2).unwrap();
+    let receipt = UidRecoveryReceipt::new(
+        "acct",
+        [1; 32],
+        UidPageState::Succeeded,
+        Some(progress),
+        None,
+    )
+    .unwrap();
+    let mut args = reconcile_args();
+    args[1] = "recover";
+    args[11] = "4";
+    let mut calls = 0;
+    assert_eq!(
+        invoke(args.clone(), |action| {
+            calls += 1;
+            let Action::Recover(request) = action else {
+                panic!("recovery expected")
+            };
+            assert_eq!(request.expected_cursor_version(), 4);
+            Ok(ResultValue::RecoveryReceipt(receipt.clone()))
+        }),
+        0
+    );
+    assert_eq!(calls, 1);
+    let old = UidPageReceipt::new(
+        "acct",
+        [1; 32],
+        UidPageState::Unresolved,
+        None,
+        None,
+        None,
+        None,
+    )
+    .unwrap();
+    assert_eq!(
+        invoke(args, |_| Ok(ResultValue::Receipt(old.clone()))),
+        ErrorCode::InternalError.exit_code()
+    );
+    let execution = "01".repeat(32);
+    assert_eq!(
+        invoke(
+            vec![
+                "--no-input",
+                "--json",
+                "--lang",
+                "ko",
+                "sync",
+                "recover-status",
+                "--account",
+                "acct",
+                "--execution-id",
+                &execution
+            ],
+            |action| {
+                let Action::RecoverStatus(request) = action else {
+                    panic!("recovery status expected")
+                };
+                assert_eq!(request.execution_id(), &[1; 32]);
+                Ok(ResultValue::RecoveryReceipt(receipt.clone()))
+            }
+        ),
+        0
+    );
+    let en = recovery_human(&receipt, Lang::En);
+    let ko = recovery_human(&receipt, Lang::Ko);
+    assert!(en.contains("First metadata page stored; existing records preserved"));
+    assert!(ko.contains("첫 메타데이터 페이지 저장, 기존 기록 보존"));
+    assert!(en.contains("Cursor version: 5"));
+    assert!(ko.contains("커서 버전: 5"));
+}
 fn reconcile_args() -> Vec<&'static str> {
     vec![
         "sync",

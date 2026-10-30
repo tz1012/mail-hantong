@@ -9,8 +9,8 @@
 | 항목 | 상태와 근거 |
 | --- | --- |
 | 기준 자료 | 사용자 승인으로 채택한 [Markdown 기준 요건](../requirements/README.md): 요건 170개·1단계 P0 144개·문장별 AC ID 341개. 작업 카드 정의 151개는 보존한다. |
-| 현재 카드 | **M2-04 기존 UID 상태 대조 연결 검증 완료, 카드 진행 중**. 고정 범위 FLAGS/원격 부재 관측·v13 원장·영/한 CLI를 병렬 구현하고 교차 검토와 전체 회귀를 마쳤다. UIDVALIDITY 복구·전체 mailbox 목록은 후속이다. |
-| 최신 검증 | **1,069개 통과**(문서 29·빌드 도구 63·Rust 977). 전체 build/test/fmt/Clippy·의존/문서/추적 검사와 같은 소스의 Linux x86_64·macOS arm64 교차 Clippy 통과. 아래 UID v13 snapshot에 로그·hash가 있다. 실제 Mac 실행·전체 기능 완료를 뜻하지 않는다. |
+| 현재 카드 | **M2-04 UIDVALIDITY 복구 기반 자동 검증 완료**. v14는 과거 namespace·관측·작업을 보존하며 명시 복구를 연결했다. 카드 전체 완료·사람 검토는 별도이며 다음은 로컬 동기화 관측 요약이다. |
+| 최신 검증 | **1,126개 통과**(문서 29·빌드 도구 63·Rust 1,034). 전체 build/test/fmt/Clippy·의존/문서/추적 검사와 같은 소스의 Linux x86_64·macOS arm64 교차 Clippy 통과. 아래 UID v14 snapshot에 로그·hash가 있다. 실제 Mac 실행·전체 기능 완료를 뜻하지 않는다. |
 | 제품 구현 | Rust workspace·영/한 CLI·Windows 코어/IPC·DPAPI·SQLCipher·설정 검증·감사·기본 등록/프로필·권한이 있는 계정 목록 조회·IMAP/SMTP TLS/AUTH probe·CI/추적 도구 구현. 신규 IMAP 설정·명시 재개와 기본 CLI 계정 범위 갱신의 보호 확인·중단 복구를 연결했다. 발송은 차단하며 실제 메일 수신·전체 GUI·설치 패키지는 미완료다. |
 | GitHub | 로컬 Git main 저장소를 초기화해 개발 기준선을 기록한다. 공개 저장소 주소·remote·릴리스·패키지 ID는 아직 없음. 빌드 산출물·실행 데이터·에이전트 상태는 제외한다. |
 | 새 사용자 요청 | 진행 상황을 이 문서에 누적하고, GitHub에서 명령어로 설치 및 개발을 시작할 수 있는 경로를 마련한다. 상세 범위는 [공개와 설치 계획](DISTRIBUTION.md)에 기록한다. |
@@ -19,7 +19,7 @@
 | 런타임 결정 | **코어·CLI Rust 확정** — 2026-10-29 사용자 선택, [ADR-001](../adr/ADR-001-core-runtime.md). 비교 실험에서 .NET은 프로세스 시작, Rust는 메모리에 유리했고 검색은 혼재했다. [실측 보고서](RUNTIME-BENCHMARK.md)는 보존하며 제품의 1초 목표는 아직 검증 전이다. |
 | Mac 지원 방향 | 사용자 승인으로 정식 후속 목표에 포함했다. Windows 우선 출시 후 Mac 코어·CLI·최소 승인 도우미부터 제공하고 전체 GUI를 후속 제공한다. 구체적인 단계·일정·패키지는 미정이며 현재 제품은 미구현이다. |
 | 공개 사용 정책 | **[LICENSE Version 1.0](../../LICENSE) 정식 채택** — 개인·회사 내부 업무용 사용, 수정본 비공개 및 원본·수정본 무료 재배포 허용. 프로그램 판매·유료 제공 금지. 고지 유지·수정 표시·보증과 책임 조항 포함. 저작권자는 **Andrew Cho**, 웹사이트 **https://tzt.kr**, 연락처 **andrew@tzt.kr**이다. [한국어 안내](LICENSING.md), [ADR-016](../adr/ADR-016-license.md). |
-| 다음 제품 작업 | UIDVALIDITY 안전 복구·메타데이터 우선 목록/진행 표시를 다음 계약과 카드 범위로 분리한다. 현재 공개 UID 도구의 권한을 묵시적으로 확대하지 않는다. |
+| 다음 제품 작업 | 현재 관측 상한·수집 범위를 읽는 요약을 다음 계약으로 연결하고, 메타데이터 우선 목록/진행 표시는 해당 카드 범위로 나눈다. 현재 공개 UID 도구의 권한을 묵시적으로 확대하지 않는다. |
 
 ## 기능별 현재 상태
 
@@ -71,7 +71,13 @@
 | reconcile_public | 공통 DTO·Application·IPC client·영/한 CLI·tool schema | 기존 action 보존, 별도 intent/receipt, strict 8KiB parsing |
 | root | v13 migration·공유 Core worker·인증 pipe 통합·전체 검사 | 세 묶음 연결, 실행 중 변경 취소, 작성자와 다른 검토자 교차 검증 |
 
-성공한 한 페이지 관측에서 기존 UID가 보이지 않으면 원격 부재 관측만 별도로 기록한다. 원본 메일 삭제·발송·자동 reset은 하지 않는다. pass 완료는 접수 때 고정한 기존 페이지 묶음의 완료이며 전체 mailbox 최신 상태를 뜻하지 않는다. 현재 묶음은 구현 중이며 아직 통합 검증 결과가 없다.
+성공한 한 페이지 관측에서 기존 UID가 보이지 않으면 원격 부재 관측만 별도로 기록한다. 원본 메일 삭제·발송·자동 reset은 하지 않는다. pass 완료는 접수 때 고정한 기존 페이지 묶음의 완료이며 전체 mailbox 최신 상태를 뜻하지 않는다. 이 묶음은 아래 v13 snapshot의 전체 검증을 마쳤고 `5f27187`로 보존했다.
+
+### 현재 병렬 묶음 — UIDVALIDITY 복구
+
+v13 기준선 `5f27187` 다음에는 같은 세 담당자가 [복구 계약](../contracts/imap-uid-recovery.md)의 독립 영역을 구현한다. 통신 담당은 새 namespace 첫 페이지와 TLS 실패 처리를, 저장소 담당은 epoch·과거 기록 보존·복구 원장을, 공개 경계 담당은 CLI/IPC와 인증 pipe 시나리오를 맡는다. root는 migration·공유 worker·전체 회귀를 통합한다. 구현을 끝낸 통신 담당은 공개 경계를 교차 검토하고, 별도 설계 담당자는 Store의 과거 기록·원자 전환·충돌 경계를 검토한다.
+
+전체 검사는 검토 지적 수정과 소스 동결 후 실행한다. native Cargo cache는 담당자 간 순차 인계하며, 그동안 다른 담당자는 코드 작성과 검토를 계속한다. 현재 단계별 증거는 이 문서 하단 v14 기록에 누적한다.
 
 ## 기록 규칙
 
@@ -874,3 +880,30 @@ Store source count 보완은 실제 child count와 declared count를 비교한 �
 `scripts/check_all.py` 종료 코드 **0**: **1,069개**(문서29·빌드 도구63·Rust977). 전체 build/test/fmt/Clippy·아키텍처·문서·추적 검사 통과. 로그 `target/reconcile-v13-full-check.log`, SHA-256 `2F50607BDD7566F7026356B68981F9B36B0440B57CA318B6AE8D3D8D274ECD7C`, source hash `e88fddaa214563a92cb7697d6906a11139ac238db5ed08d811570f9de1c4e1d9`. 같은 소스의 Linux x86_64/macOS arm64 all-target Clippy 종료 코드0(`target/reconcile-v13-linux-check.log`, `target/reconcile-v13-macos-check.log`). 실제 Mac 제품 실행 검증은 아니다.
 
 CNG 제품 키1개/names hash `3B692D49F1D08F7D3442806CF17694CDC02AF36B44839930FC18EB9C83CE9D4D` 유지. 새 의존성 없음. 실제 계정·메일·사용자 DB·Core·Hello와 외부 공개를 실행하지 않았다. **[사람 검토 필요]**, 전체 제품 AC 완료0개 유지. 다음은 M2-04 안에서 UIDVALIDITY 변경을 안전하게 다루는 기반 또는 조회 연결 범위를 정하며, 선행 카드가 끝나지 않은 M2-07 전체 완료/시작으로 표시하지 않는다.
+
+
+## 2026-10-30 UIDVALIDITY 복구 기반 v14 (진행 중)
+
+직전 v13 전체1,069개 통과 기준선은 `5f27187`이다. [복구 계약](../contracts/imap-uid-recovery.md)을 먼저 작성하고 M2-04/SYNC-02의 사용 불가 cursor 복구 기반으로 진행한다. M2-07의 선행을 완료 처리하지 않는다. 서브에이전트가 지적한 epoch FK·strict cursor 전환·reconcile 시작 경계 문제를 계약에 반영했다. namespace 전환은 원본/관측/과거 작업을 모두 보존하는 원격 읽기이므로 기존 U 범위 안에서 명시 요청하며, 요건이 요구하지 않은 추가 Hello 승인 절차는 만들지 않는다.
+
+Domain/Secrets 담당은 새 validity의 첫 metadata 페이지 읽기와 기존 codec 보존을 구현했고 신규14개·관련 전체246개 시험과 Clippy가 통과했다(`target/recovery-protocol-{red,green,regression,clippy}.log`). Store 담당은 epoch/영속 작업/역사적 읽기·reconcile 분리, 공개 담당은 Contracts/Application/client/영한CLI를 병렬 구현한다. root는 한 번의 v14 migration과 공통 Core worker/실제 pipe 연결을 맡는다. 현재 v14 제품 연결과 전체 검증은 미완료다.
+
+공개 경계는 신규12개 RED→GREEN, 담당6패키지296개 회귀·Clippy·서식 검사를 통과했다(`target/recovery-public-{red,green,regression,clippy}.log`). 구현자와 다른 담당자가 wire/권한/응답 결속을 검토했고 HIGH/MEDIUM 지적은 없다. 기존 다섯 action의 schema와 scope hash/history는 유지됐다. Store migration과 실제 인증 pipe 시험은 아직 진행 중이며 이 수치를 전체 v14 통과로 기록하지 않는다.
+
+v13→v14 SQLCipher migration 시험4개가 통과했다(`target/recovery-v14-migration-green.log`). 과거 행/JSON/hash·대기 audit 보존, 최초 epoch backfill, backup 충돌 시 원본 bytes 유지, DDL/backfill 실패 rollback, 불일치 namespace 거부를 확인했다. 독립 Store 검토에서는 실행 ID 재사용, 누락 epoch의 metadata 오류 처리, 과거 receipt의 epoch 결속, orphan epoch startup 검사 보완을 찾아 회귀 시험과 함께 수정 중이다. 아직 v14 전체 통과/완료를 주장하지 않는다.
+
+Core 실제 서명 pipe 복구 시나리오 포함 **63개**(단위61·lifecycle2)가 통과했다(`target/recovery-core-integration.log`, 단위13.62초, 기존 전체20초 제한 유지). epoch7→9 동일UID 다른 metadata 격리, 과거 원본/관측/replay 보존, 모든 IMAP 작업의 공유 slot, 새 epoch source floor, catalog 변경 취소, worker 재생성 후 unresolved 무재접속을 확인했다. Store 교차 검토 HIGH2/MEDIUM3과 인자 수 Clippy 경고는 수정 중이므로 이 결과를 최종 통과로 취급하지 않는다.
+
+독립 Store 검토의 HIGH3/MEDIUM3을 모두 재현 시험과 함께 수정했다. 처음5개 RED→GREEN 뒤, 한 단계 오래된 outgoing recovery provenance 누락1개를 추가로 RED→GREEN 확인했다. 각 epoch의 직전/직후 경계만 검증하며 전체 이력을 재귀 순회하지 않는다. 최종 focused 검토는 CLEAR이며 남은 HIGH/MEDIUM 없음. 공개/Core 교차 검토도 CLEAR다.
+
+Store 복구 시험26개에는 18개 ABORT/IGNORE 저장 실패 지점, 시계 역행, 실제 DB 재개방, 계정 재인증/새 catalog, endpoint/CAS/권한 변경, 옛 작업 차단, 원장 간 예약 충돌과 두 개의 실제10만 행 quota fixture가 포함된다. quota 시험은 선택된 정상 행을 유지한 수량 한도 검증이며 모든 생성 행의 의미적 이력을 검증했다는 뜻은 아니다. Store **313개**·수정 후 Core **63개**·두 패키지 all-target Clippy가 통과했다(`target/recovery-store-full.log`, `target/recovery-core-after-store.log`, `target/recovery-store-core-clippy-green.log`).
+
+소스 동결 뒤 Linux x86_64/macOS arm64 workspace all-target Clippy가 종료 코드0으로 통과했다(`target/recovery-v14-linux-check.log`, `target/recovery-v14-macos-check.log`). Windows 전체 `check_all.py`는 실행 중이다.
+
+### UID v14 최종 자동 검증 snapshot
+
+`scripts/check_all.py` 종료 코드 **0**: **1,126개**(문서29·빌드 도구63·Rust1,034). 전체 build/test/fmt/Clippy·아키텍처·문서·추적 검사 통과. 로그 `target/recovery-v14-full-check.log`, SHA-256 `CCE9F2BFD6B92AF5105D4C6B6F350CE4A6B56D38B164D4771FADDF4FBB7ADC21`, source hash `e557bd0eb9beaca919f3f7566deee490ae9c1ea3ed99062a981581125bccda75`. 같은 소스의 Linux x86_64/macOS arm64 all-target Clippy 종료 코드0. 실제 Mac 실행 검증은 아니다.
+
+CNG 제품 키1개/names hash `3B692D49F1D08F7D3442806CF17694CDC02AF36B44839930FC18EB9C83CE9D4D` 유지. 새 의존성 없음. 실제 사용자 DB·Core·Hello·계정·메일과 외부 공개는 실행하지 않았다. **[사람 검토 필요]**, 전체 제품 AC 완료0개 유지. 아직 없는 알림·초안·대기 변경의 AC 완료를 주장하지 않는다.
+
+다음 묶음은 이미 연결된 복구 후 append/reconcile을 재구현하지 않고, 현재 저장 범위가 마지막 관측 상한까지 도달했는지 보여 주는 로컬 요약이다. 전체 목록·본문은 M2-05/M2-09 범위에 속하며 M2-04의 무조건 미완료 사유로 붙잡지 않는다. 요약은 실제 서버의 현재 최신성과 구분하며 자동 접속을 추가하지 않는다.

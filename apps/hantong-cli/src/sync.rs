@@ -2,19 +2,24 @@
 use crate::{ErrorCode, Lang, emit_error, resource};
 use hantong_contracts::uid_page::*;
 use hantong_contracts::uid_reconcile::{UidReconcileReceipt, UidReconcileRequest};
+use hantong_contracts::uid_recovery::{UidRecoveryReceipt, UidRecoveryRequest};
 use hantong_ipc_client::uid_page as client;
 use hantong_ipc_client::uid_reconcile as reconcile_client;
+use hantong_ipc_client::uid_recovery as recovery_client;
 pub(super) enum Action {
     Cursor(UidCursorRequest),
     Page(UidPageRequest),
     Status(UidPageStatusRequest),
     Reconcile(UidReconcileRequest),
     ReconcileStatus(UidPageStatusRequest),
+    Recover(UidRecoveryRequest),
+    RecoverStatus(UidPageStatusRequest),
 }
 pub(super) enum ResultValue {
     Cursor(UidCursorSnapshot),
     Receipt(UidPageReceipt),
     ReconcileReceipt(UidReconcileReceipt),
+    RecoveryReceipt(UidRecoveryReceipt),
 }
 pub(super) fn real_action(action: Action) -> Result<ResultValue, ErrorCode> {
     match action {
@@ -22,6 +27,20 @@ pub(super) fn real_action(action: Action) -> Result<ResultValue, ErrorCode> {
         Action::Status(request) => client::status_default(request).map(ResultValue::Receipt),
         Action::ReconcileStatus(request) => {
             reconcile_client::status_default(request).map(ResultValue::ReconcileReceipt)
+        }
+        Action::RecoverStatus(request) => {
+            recovery_client::status_default(request).map(ResultValue::RecoveryReceipt)
+        }
+        Action::Recover(request) => {
+            let prepared = recovery_client::prepare_recovery_request(
+                request.account_id(),
+                request.mailbox().clone(),
+                request.operation_id(),
+                request.idempotency_key(),
+                request.expected_catalog_generation(),
+                request.expected_cursor_version(),
+            )?;
+            recovery_client::recover_default(prepared).map(ResultValue::RecoveryReceipt)
         }
         Action::Reconcile(request) => {
             let prepared = reconcile_client::prepare_reconcile_request(
@@ -69,7 +88,7 @@ fn parse(command: &[String], options: &[(String, String)]) -> Result<Action, Err
     let get = |key: &str| values.get(key).copied().ok_or(ErrorCode::InvalidInput);
     let allowed: &[&str] = match command[1].as_str() {
         "cursor" => &["--account", "--wire-hex", "--encoding"],
-        "page" | "reconcile" => &[
+        "page" | "reconcile" | "recover" => &[
             "--account",
             "--wire-hex",
             "--encoding",
@@ -78,19 +97,24 @@ fn parse(command: &[String], options: &[(String, String)]) -> Result<Action, Err
             "--operation-id",
             "--idempotency-key",
         ],
-        "status" | "reconcile-status" => &["--account", "--execution-id"],
+        "status" | "reconcile-status" | "recover-status" => &["--account", "--execution-id"],
         _ => return Err(ErrorCode::InvalidInput),
     };
     if values.len() != allowed.len() || values.keys().any(|k| !allowed.contains(k)) {
         return Err(ErrorCode::InvalidInput);
     }
     let account = get("--account")?;
-    if matches!(command[1].as_str(), "status" | "reconcile-status") {
+    if matches!(
+        command[1].as_str(),
+        "status" | "reconcile-status" | "recover-status"
+    ) {
         let request = UidPageStatusRequest::new(
             account,
             hantong_contracts::wire_hex::decode_fixed(get("--execution-id")?)?,
         )?;
-        return Ok(if command[1] == "reconcile-status" {
+        return Ok(if command[1] == "recover-status" {
+            Action::RecoverStatus(request)
+        } else if command[1] == "reconcile-status" {
             Action::ReconcileStatus(request)
         } else {
             Action::Status(request)
@@ -114,6 +138,18 @@ fn parse(command: &[String], options: &[(String, String)]) -> Result<Action, Err
             &"00".repeat(32),
         )
         .map(Action::Reconcile);
+    }
+    if command[1] == "recover" {
+        return UidRecoveryRequest::new(
+            account,
+            mailbox,
+            get("--operation-id")?,
+            get("--idempotency-key")?,
+            number(get("--expected-catalog-generation")?)?,
+            number(get("--expected-cursor-version")?)?,
+            &"00".repeat(32),
+        )
+        .map(Action::Recover);
     }
     UidPageRequest::new(
         account,
@@ -139,6 +175,7 @@ pub(super) fn run(
     };
     let cursor = matches!(&request, Action::Cursor(_));
     let reconcile = matches!(&request, Action::Reconcile(_) | Action::ReconcileStatus(_));
+    let recovery = matches!(&request, Action::Recover(_) | Action::RecoverStatus(_));
     match action(request) {
         Ok(ResultValue::Cursor(value)) if cursor => {
             if json {
@@ -148,7 +185,7 @@ pub(super) fn run(
             }
             0
         }
-        Ok(ResultValue::Receipt(value)) if !cursor && !reconcile => {
+        Ok(ResultValue::Receipt(value)) if !cursor && !reconcile && !recovery => {
             if json {
                 println!("{}", client::receipt_json(&value))
             } else {
@@ -161,6 +198,14 @@ pub(super) fn run(
                 println!("{}", reconcile_client::receipt_json(&value))
             } else {
                 print!("{}", reconcile_human(&value, lang))
+            }
+            0
+        }
+        Ok(ResultValue::RecoveryReceipt(value)) if recovery => {
+            if json {
+                println!("{}", recovery_client::receipt_json(&value))
+            } else {
+                print!("{}", recovery_human(&value, lang))
             }
             0
         }
@@ -258,6 +303,40 @@ fn reconcile_human(value: &UidReconcileReceipt, lang: Lang) -> String {
                 "sync_reconcile_pending"
             },
         ));
+        out.push('\n');
+    }
+    if let Some(e) = value.error() {
+        out.push_str(&format!(
+            "{}: {}\n",
+            resource(lang, "sync_error"),
+            e.as_str()
+        ));
+    }
+    out
+}
+fn recovery_human(value: &UidRecoveryReceipt, lang: Lang) -> String {
+    let state = match value.state() {
+        UidPageState::Unresolved => "sync_unresolved",
+        UidPageState::Succeeded => "sync_succeeded",
+        UidPageState::Failed => "sync_failed",
+    };
+    let mut out = format!(
+        "{}: {}\n{}: {}\n",
+        resource(lang, "sync_recovery_state"),
+        resource(lang, state),
+        resource(lang, "sync_execution_id"),
+        hantong_contracts::wire_hex::encode(value.execution_id())
+    );
+    if let Some(r) = value.result() {
+        for (key, n) in [
+            ("sync_recovery_epoch", r.epoch_generation()),
+            ("sync_cursor_version", r.cursor_version()),
+            ("sync_covered_uid", u64::from(r.covered_through_uid())),
+            ("sync_inserted", u64::from(r.inserted_count())),
+        ] {
+            out.push_str(&format!("{}: {n}\n", resource(lang, key)));
+        }
+        out.push_str(resource(lang, "sync_recovery_first_page"));
         out.push('\n');
     }
     if let Some(e) = value.error() {

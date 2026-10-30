@@ -79,9 +79,10 @@ fn message(code: ErrorCode, lang: Lang) -> &'static str {
 
 fn help(lang: Lang) -> String {
     format!(
-        "mail-hantong / hantong\n{}\n{}\n{}\n{}",
+        "mail-hantong / hantong\n{}\n{}\n{}\n{}\n{}",
         resource(lang, "usage"),
         resource(lang, "commands"),
+        resource(lang, "sync_recovery_help"),
         resource(lang, "protected"),
         resource(lang, "help_language")
     )

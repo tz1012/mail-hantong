@@ -48,4 +48,4 @@ scope_refresh_verification_required=Windows Hello is required to refresh the def
 scope_refresh_footer=Verification alone does not activate the new scope. Core must revalidate the exact snapshot.
 scope_refresh_current_tools=Current allowed tools
 scope_refresh_target_tools=New allowed tools
-scope_refresh_uid_page_permission=mail.sync.page allows reading one page of IMAP metadata and storing it locally. It does not send or change server mail.
+scope_refresh_uid_page_permission=mail.sync.page allows reading one metadata page or first-page recovery after mailbox identity changes, preserving existing records. It does not send or change server mail.

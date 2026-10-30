@@ -152,6 +152,71 @@ impl ExecutionContext for Fake {
         self.events.push("reconcile_status");
         ReadResult::new(13, None)
     }
+    fn request_uid_recovery(
+        &mut self,
+        _id: [u8; 32],
+        _request: &UidRecoveryRequest,
+    ) -> Result<AuditHandoff<u32>, ErrorCode> {
+        self.events.push("recovery_handoff");
+        std::mem::replace(&mut self.handoff, Err(ErrorCode::InternalError))
+    }
+    fn read_uid_recovery_status(
+        &mut self,
+        _request: &UidPageStatusRequest,
+    ) -> Result<ReadResult<u32>, ErrorCode> {
+        self.events.push("recovery_status");
+        ReadResult::new(14, None)
+    }
+}
+
+#[test]
+fn sec03_recovery_uses_common_grants_and_preserves_durable_audit_ownership() {
+    for action in ["recover", "recover-status"] {
+        let mut envelope = uid_envelope(if action == "recover" {
+            "request"
+        } else {
+            "status"
+        });
+        envelope["params"]["action"] = json!(action);
+        if action == "recover" {
+            envelope["params"]["expected_cursor_version"] = json!(4);
+        }
+        let mut fake = Fake::ok();
+        assert_eq!(
+            execute_tool(&mut fake, "mail.sync.page", &envelope),
+            Ok(if action == "recover" { 10 } else { 14 })
+        );
+        assert_eq!(
+            &fake.events[..4],
+            &["revalidate", "begin", "scope", "policy"]
+        );
+        assert_eq!(fake.scoped_accounts, vec![vec!["a"]]);
+        assert_eq!(
+            fake.terminals.len(),
+            usize::from(action == "recover-status")
+        );
+        for policy in [true, false] {
+            let mut fake = Fake::ok();
+            if policy {
+                fake.fail_policy = Some(ErrorCode::PolicyBlocked)
+            } else {
+                fake.fail_scope = Some(ErrorCode::ScopeDenied)
+            }
+            assert!(execute_tool(&mut fake, "mail.sync.page", &envelope).is_err());
+            assert!(!fake.events.contains(&"recovery_handoff"));
+            assert!(!fake.events.contains(&"recovery_status"));
+            assert_eq!(fake.terminals.len(), 1);
+        }
+        if action == "recover" {
+            let mut fake = Fake::ok();
+            fake.handoff = Ok(AuditHandoff::error(ErrorCode::InternalError));
+            assert_eq!(
+                execute_tool(&mut fake, "mail.sync.page", &envelope),
+                Err(ErrorCode::InternalError)
+            );
+            assert!(fake.terminals.is_empty());
+        }
+    }
 }
 
 #[test]

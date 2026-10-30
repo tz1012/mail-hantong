@@ -205,6 +205,21 @@ pub(crate) fn read_cursor(
     account: &str,
     mailbox: &ImapMailboxName,
 ) -> Result<Option<Cursor>, ErrorCode> {
+    read_cursor_inner(c, account, mailbox, true)
+}
+pub(crate) fn read_cursor_v13(
+    c: &Connection,
+    account: &str,
+    mailbox: &ImapMailboxName,
+) -> Result<Option<Cursor>, ErrorCode> {
+    read_cursor_inner(c, account, mailbox, false)
+}
+fn read_cursor_inner(
+    c: &Connection,
+    account: &str,
+    mailbox: &ImapMailboxName,
+    with_epochs: bool,
+) -> Result<Option<Cursor>, ErrorCode> {
     let raw=db(c.query_row("SELECT version,account_version,catalog_generation,endpoint_version,uid_validity,uid_next_at_start,covered_through_uid,stored_at_utc_ms,endpoint_hash,last_operation_id FROM imap_uid_cursors WHERE account_id=?1 AND mailbox_key=?2 AND mailbox_encoding=?3",params![account,key(mailbox),encoding(mailbox)],|r|{
   let mut n=[0i64;8];for (i,v) in n.iter_mut().enumerate(){*v=r.get(i)?;}Ok((n,blob_column::<32>(r,8)?,text_column(r,9,128)?.to_owned()))
  }).optional())?;
@@ -239,7 +254,21 @@ pub(crate) fn read_cursor(
     if count != n[0] || max != n[0] {
         return Err(ErrorCode::InternalError);
     }
-    if op.expected > 0 {
+    let boundary = if with_epochs {
+        let epoch = crate::uid_epochs::read(c, account, mailbox, op.page.uid_validity())?
+            .ok_or(ErrorCode::InternalError)?;
+        if epoch.last.is_some()
+            || epoch.first > op.receipt.cursor_version()
+            || epoch.endpoint_hash != eh
+            || epoch.endpoint_version != n[3] as u64
+        {
+            return Err(ErrorCode::InternalError);
+        }
+        epoch.generation > 1 && epoch.first_id == op.id
+    } else {
+        false
+    };
+    if op.expected > 0 && !boundary {
         let previous_id:String=db(c.query_row("SELECT operation_id FROM imap_uid_page_operations WHERE account_id=?1 AND mailbox_key=?2 AND mailbox_encoding=?3 AND result_cursor_version=?4",params![account,key(mailbox),encoding(mailbox),op.expected as i64],|r|Ok(text_column(r,0,128)?.to_owned())))?;
         let previous = read_operation(c, &previous_id)?.ok_or(ErrorCode::InternalError)?;
         if previous.page.covered_through_uid() != op.page.request().after_uid()
@@ -304,26 +333,24 @@ pub(super) fn metadata(
         return Err(ErrorCode::InvalidInput);
     }
     store.mail_transaction(TransactionBehavior::Deferred,|tx|{
-  let raw=db(tx.query_row("SELECT operation_id FROM imap_uid_messages WHERE account_id=?1 AND mailbox_key=?2 AND mailbox_encoding=?3 AND uid_validity=?4 AND uid=?5",params![account,key(mailbox),encoding(mailbox),i64::from(validity),i64::from(uid)],|r|Ok(text_column(r,0,128)?.to_owned())).optional())?;
-  let current=read_cursor(tx,account,mailbox)?;
-  let Some(id)=raw else{
-   let Some(current)=current else{return Ok(None)};
-   if current.value.uid_validity!=validity||current.value.covered_through_uid<uid{return Ok(None)}
-   // Absence is only a legitimate UID gap when the immutable covering page
-   // also omits it. A deleted child row must not hide behind Option::None.
-   let mut statement=db(tx.prepare("SELECT operation_id FROM imap_uid_page_operations WHERE account_id=?1 AND mailbox_key=?2 AND mailbox_encoding=?3 AND uid_validity=?4 AND covered_through_uid>=?5 AND covered_through_uid<=?6 AND after_uid<?5 LIMIT 2"))?;
-   let upper=(u64::from(uid)+63).min(u64::from(u32::MAX)-1) as i64;
-   let ids=db(db(statement.query_map(params![account,key(mailbox),encoding(mailbox),i64::from(validity),i64::from(uid),upper],|r|Ok(text_column(r,0,128)?.to_owned())))?.collect::<rusqlite::Result<Vec<_>>>())?;
-   if ids.len()!=1{return Err(ErrorCode::InternalError)}
-   let operation=read_operation(tx,&ids[0])?.ok_or(ErrorCode::InternalError)?;
-   if operation.receipt.cursor_version>current.value.version||operation.page.messages().iter().any(|m|m.uid()==uid){return Err(ErrorCode::InternalError)}
-   return Ok(None)
-  };
-  let current=current.ok_or(ErrorCode::InternalError)?;
-  let op=read_operation(tx,&id)?.ok_or(ErrorCode::InternalError)?;
-  if op.page.request().account_id()!=account||!same_name(op.page.request().mailbox(),mailbox)||op.page.uid_validity()!=validity||current.value.uid_validity!=validity||current.value.covered_through_uid<uid{return Err(ErrorCode::InternalError)}
-  Ok(Some(op.page.messages().iter().find(|m|m.uid()==uid).ok_or(ErrorCode::InternalError)?.clone()))
- })
+        let raw=db(tx.query_row("SELECT operation_id FROM imap_uid_messages WHERE account_id=?1 AND mailbox_key=?2 AND mailbox_encoding=?3 AND uid_validity=?4 AND uid=?5",params![account,key(mailbox),encoding(mailbox),i64::from(validity),i64::from(uid)],|r|Ok(text_column(r,0,128)?.to_owned())).optional())?;
+        let Some(current)=read_cursor(tx,account,mailbox)? else{return if raw.is_some(){Err(ErrorCode::InternalError)}else{Ok(None)}};
+        let Some(epoch)=crate::uid_epochs::read(tx,account,mailbox,validity)? else{return if raw.is_some(){Err(ErrorCode::InternalError)}else{Ok(None)}};
+        let last=crate::uid_epochs::boundary_last(tx,&epoch)?;
+        if last.receipt.cursor_version()>current.value.version(){return Err(ErrorCode::InternalError)}
+        let Some(id)=raw else{
+            if last.page.covered_through_uid()<uid{return Ok(None)}
+            let mut statement=db(tx.prepare("SELECT operation_id FROM imap_uid_page_operations WHERE account_id=?1 AND mailbox_key=?2 AND mailbox_encoding=?3 AND uid_validity=?4 AND covered_through_uid>=?5 AND covered_through_uid<=?6 AND after_uid<?5 LIMIT 2"))?;
+            let upper=(u64::from(uid)+63).min(u64::from(u32::MAX)-1) as i64;
+            let ids=db(db(statement.query_map(params![account,key(mailbox),encoding(mailbox),i64::from(validity),i64::from(uid),upper],|r|Ok(text_column(r,0,128)?.to_owned())))?.collect::<rusqlite::Result<Vec<_>>>())?;
+            if ids.len()!=1{return Err(ErrorCode::InternalError)}
+            let op=read_operation(tx,&ids[0])?.ok_or(ErrorCode::InternalError)?;
+            if op.receipt.cursor_version()<epoch.first || op.receipt.cursor_version()>last.receipt.cursor_version() || op.page.messages().iter().any(|m|m.uid()==uid){return Err(ErrorCode::InternalError)}return Ok(None)
+        };
+        let op=read_operation(tx,&id)?.ok_or(ErrorCode::InternalError)?;
+        if op.page.request().account_id()!=account || !same_name(op.page.request().mailbox(),mailbox) || op.page.uid_validity()!=validity || op.receipt.cursor_version()<epoch.first || op.receipt.cursor_version()>last.receipt.cursor_version() || last.page.covered_through_uid()<uid{return Err(ErrorCode::InternalError)}
+        Ok(Some(op.page.messages().iter().find(|m|m.uid()==uid).ok_or(ErrorCode::InternalError)?.clone()))
+    })
 }
 pub(crate) fn validate_history(c: &Connection) -> rusqlite::Result<()> {
     for (table, limit) in [
@@ -349,7 +376,12 @@ pub(super) fn apply(
     mutation: &MailMutation,
 ) -> Result<ImapUidApplyReceipt, ErrorCode> {
     store.mail_transaction(TransactionBehavior::Immediate, |tx| {
-        if crate::uid_page_jobs::operation_reserved(
+        if crate::uid_recovery_jobs::operation_reserved(
+            tx,
+            page.request().account_id(),
+            mutation.operation_id(),
+            mutation.idempotency_key(),
+        )? || crate::uid_page_jobs::operation_reserved(
             tx,
             page.request().account_id(),
             mutation.operation_id(),
@@ -374,6 +406,40 @@ pub(crate) fn apply_tx(
     endpoint: &ImapEndpointConfig,
     page: &ImapUidPage,
     mutation: &MailMutation,
+) -> Result<ImapUidApplyReceipt, ErrorCode> {
+    apply_mode(tx, av, cg, endpoint, page, mutation, ApplyMode::Append)
+}
+pub(crate) fn apply_recovery_tx(
+    tx: &Transaction<'_>,
+    av: u64,
+    cg: u64,
+    endpoint: &ImapEndpointConfig,
+    page: &ImapUidPage,
+    mutation: &MailMutation,
+    evidence: &crate::uid_recovery_jobs::storage::RecoveryTransition,
+) -> Result<ImapUidApplyReceipt, ErrorCode> {
+    apply_mode(
+        tx,
+        av,
+        cg,
+        endpoint,
+        page,
+        mutation,
+        ApplyMode::Recovery(evidence),
+    )
+}
+enum ApplyMode<'a> {
+    Append,
+    Recovery(&'a crate::uid_recovery_jobs::storage::RecoveryTransition),
+}
+fn apply_mode(
+    tx: &Transaction<'_>,
+    av: u64,
+    cg: u64,
+    endpoint: &ImapEndpointConfig,
+    page: &ImapUidPage,
+    mutation: &MailMutation,
+    mode: ApplyMode<'_>,
 ) -> Result<ImapUidApplyReceipt, ErrorCode> {
     let payload = payload_hash(av, cg, endpoint, page, mutation.expected_version())?;
     if &payload != mutation.payload_hash() {
@@ -400,6 +466,9 @@ pub(crate) fn apply_tx(
         .collect::<rusqlite::Result<Vec<_>>>())?
     };
     if !ids.is_empty() {
+        if matches!(mode, ApplyMode::Recovery(_)) {
+            return Err(ErrorCode::InternalError);
+        }
         if ids.len() != 1 {
             return Err(ErrorCode::Conflict);
         }
@@ -420,6 +489,7 @@ pub(crate) fn apply_tx(
         if current.value.version < op.receipt.cursor_version {
             return Err(ErrorCode::InternalError);
         }
+        crate::uid_epochs::validate_operation(tx, &op)?;
         return Ok(op.receipt);
     }
     check_account(tx, account)?;
@@ -444,27 +514,41 @@ pub(crate) fn apply_tx(
         return Err(ErrorCode::Conflict);
     }
     let previous = read_cursor(tx, account, mailbox)?;
-    match &previous {
-        None => {
-            if mutation.expected_version() != 0
-                || request.expected_uid_validity().is_some()
-                || request.after_uid() != 0
-            {
-                return Err(ErrorCode::Conflict);
+    if let ApplyMode::Recovery(evidence) = &mode {
+        evidence.validate(
+            tx,
+            previous.as_ref().ok_or(ErrorCode::Conflict)?,
+            (av, cg),
+            endpoint,
+            page,
+            mutation,
+        )?;
+    } else {
+        match &previous {
+            None => {
+                if mutation.expected_version() != 0
+                    || request.expected_uid_validity().is_some()
+                    || request.after_uid() != 0
+                {
+                    return Err(ErrorCode::Conflict);
+                }
+            }
+            Some(old) => {
+                if mutation.expected_version() != old.value.version
+                    || request.expected_uid_validity() != Some(old.value.uid_validity)
+                    || request.after_uid() != old.value.covered_through_uid
+                    || page.uid_validity() != old.value.uid_validity
+                    || page.uid_next_at_start() < old.value.uid_next_at_start
+                    || old.endpoint_hash != eh
+                    || old.value.endpoint_version != endpoint.settings_version()
+                {
+                    return Err(ErrorCode::Conflict);
+                }
             }
         }
-        Some(old) => {
-            if mutation.expected_version() != old.value.version
-                || request.expected_uid_validity() != Some(old.value.uid_validity)
-                || request.after_uid() != old.value.covered_through_uid
-                || page.uid_validity() != old.value.uid_validity
-                || page.uid_next_at_start() < old.value.uid_next_at_start
-                || old.endpoint_hash != eh
-                || old.value.endpoint_version != endpoint.settings_version()
-            {
-                return Err(ErrorCode::Conflict);
-            }
-        }
+    }
+    if previous.is_none() {
+        crate::uid_epochs::check_quota(tx)?;
     }
     let (cursors,operations,messages):(i64,i64,i64)=db(tx.query_row("SELECT (SELECT count(*) FROM imap_uid_cursors),(SELECT count(*) FROM imap_uid_page_operations),(SELECT count(*) FROM imap_uid_messages)",[],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))))?;
     if cursors > 100000 || operations > 100000 || messages > 1000000 {
@@ -516,8 +600,22 @@ pub(crate) fn apply_tx(
         .map_err(|_| ErrorCode::InternalError)?;
         db(tx.execute("INSERT INTO imap_uid_messages(account_id,mailbox_key,mailbox_encoding,uid_validity,uid,metadata_json,metadata_hash,stored_at_utc_ms,operation_id) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9)",params![account,mailbox_key,enc,i64::from(page.uid_validity()),i64::from(message.uid()),raw,hash(raw.as_bytes())?.as_slice(),at,mutation.operation_id()]))?;
     }
-    // Validate the same strict reader before committing any of the three tables.
-    read_cursor(tx, account, mailbox)?.ok_or(ErrorCode::InternalError)?;
+    if previous.is_none() {
+        let initial =
+            read_operation(tx, mutation.operation_id())?.ok_or(ErrorCode::InternalError)?;
+        crate::uid_epochs::insert_initial(tx, &initial)?;
+    }
+    match mode {
+        ApplyMode::Append => {
+            read_cursor(tx, account, mailbox)?.ok_or(ErrorCode::InternalError)?;
+        }
+        ApplyMode::Recovery(evidence) => {
+            let operation =
+                read_operation(tx, mutation.operation_id())?.ok_or(ErrorCode::InternalError)?;
+            evidence.persist_boundary(tx, &operation)?;
+            // The outer recovery job writes its success and audit before strict epoch validation.
+        }
+    }
     Ok(ImapUidApplyReceipt {
         cursor_version: next,
         covered_through_uid: page.covered_through_uid(),

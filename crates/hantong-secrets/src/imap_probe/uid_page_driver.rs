@@ -1,6 +1,7 @@
 //! A single private authenticated metadata operation. No session escapes.
 use super::*;
 use crate::imap_probe::uid_page_gate::{Mode, Observation, Reply, UidPageGate};
+use hantong_domain::imap_sync::ImapMessageMetadata;
 use io_imap::{
     codec::{ResponseCodec, decode::Decoder, encode::Fragment},
     types::{core::LiteralMode, fetch::MessageDataItemName, response::Response},
@@ -157,6 +158,40 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Protocol<S> {
         }
         Err(MailProbeError::Protocol)
     }
+    async fn uid_messages(
+        &mut self,
+        after: u32,
+        through: u32,
+    ) -> Result<Vec<ImapMessageMetadata>, MailProbeError> {
+        if after > through {
+            return Err(MailProbeError::Protocol);
+        }
+        let mut messages = Vec::new();
+        if after == through {
+            return Ok(messages);
+        }
+        self.uid_fetch(after + 1, through).await?;
+        let mut statuses = 0;
+        loop {
+            match self.uid_frame(Mode::Fetch, "h7").await? {
+                Reply::Tagged(Observation::None) => return Ok(messages),
+                Reply::Status(Observation::None) if statuses < 128 => statuses += 1,
+                Reply::Message(message) => {
+                    if messages.len() == 64
+                        || message.uid() <= after
+                        || message.uid() > through
+                        || messages
+                            .iter()
+                            .any(|existing: &ImapMessageMetadata| existing.uid() == message.uid())
+                    {
+                        return Err(MailProbeError::Protocol);
+                    }
+                    messages.push(*message);
+                }
+                _ => return Err(MailProbeError::Protocol),
+            }
+        }
+    }
     pub(super) async fn uid_page(
         &mut self,
         request: &ImapUidPageRequest,
@@ -177,32 +212,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Protocol<S> {
             return Err(ImapUidPageError::CursorInvalid);
         }
         let through = (u64::from(request.after_uid()) + 64).min(u64::from(ceiling)) as u32;
-        let mut messages = Vec::new();
-        if through > request.after_uid() {
-            self.uid_fetch(request.after_uid() + 1, through).await?;
-            let mut statuses = 0;
-            loop {
-                match self.uid_frame(Mode::Fetch, "h7").await? {
-                    Reply::Tagged(Observation::None) => break,
-                    Reply::Status(Observation::None) if statuses < 128 => statuses += 1,
-                    Reply::Message(message) => {
-                        if messages.len() == 64
-                            || message.uid() <= request.after_uid()
-                            || message.uid() > through
-                            || messages.iter().any(
-                                |existing: &hantong_domain::imap_sync::ImapMessageMetadata| {
-                                    existing.uid() == message.uid()
-                                },
-                            )
-                        {
-                            return Err(MailProbeError::Protocol.into());
-                        }
-                        messages.push(*message);
-                    }
-                    _ => return Err(MailProbeError::Protocol.into()),
-                }
-            }
-        }
+        let messages = self.uid_messages(request.after_uid(), through).await?;
         let (final_validity, final_next) = self.examine("h8", request.mailbox()).await?;
         if final_validity != validity {
             return Err(ImapUidPageError::UidValidityChanged);
@@ -230,31 +240,9 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Protocol<S> {
             return Err(ImapUidPageError::CursorInvalid);
         }
         // The source range is fixed before connecting; UIDNEXT never widens it.
-        self.uid_fetch(request.after_uid() + 1, request.through_uid())
+        let messages = self
+            .uid_messages(request.after_uid(), request.through_uid())
             .await?;
-        let mut messages = Vec::new();
-        let mut statuses = 0;
-        loop {
-            match self.uid_frame(Mode::Fetch, "h7").await? {
-                Reply::Tagged(Observation::None) => break,
-                Reply::Status(Observation::None) if statuses < 128 => statuses += 1,
-                Reply::Message(message) => {
-                    if messages.len() == 64
-                        || message.uid() <= request.after_uid()
-                        || message.uid() > request.through_uid()
-                        || messages.iter().any(
-                            |existing: &hantong_domain::imap_sync::ImapMessageMetadata| {
-                                existing.uid() == message.uid()
-                            },
-                        )
-                    {
-                        return Err(MailProbeError::Protocol.into());
-                    }
-                    messages.push(*message);
-                }
-                _ => return Err(MailProbeError::Protocol.into()),
-            }
-        }
         let (final_validity, final_next) = self.examine("h8", request.mailbox()).await?;
         if final_validity != validity {
             return Err(ImapUidPageError::UidValidityChanged);
@@ -264,5 +252,40 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Protocol<S> {
         }
         ImapUidReconcilePage::new(request.clone(), next, messages)
             .map_err(|_| MailProbeError::Protocol.into())
+    }
+
+    pub(super) async fn uid_recovery_page(
+        &mut self,
+        request: &ImapUidRecoveryRequest,
+        encoding: MailboxEncoding,
+    ) -> Result<ImapUidRecoveryPage, ImapUidPageError> {
+        if request.mailbox().encoding() != encoding {
+            return Err(MailProbeError::Protocol.into());
+        }
+        let (validity, next) = self.examine("h6", request.mailbox()).await?;
+        if validity == request.previous_uid_validity() {
+            return Err(ImapUidPageError::CursorInvalid);
+        }
+        // The old namespace's UIDNEXT is irrelevant after an epoch change.
+        // Bind the first page to the newly observed validity, never to None.
+        let first = ImapUidPageRequest::new(
+            request.account_id(),
+            request.endpoint_version(),
+            request.mailbox().clone(),
+            Some(validity),
+            0,
+        )
+        .map_err(|_| MailProbeError::Protocol)?;
+        let messages = self.uid_messages(0, (next - 1).min(64)).await?;
+        let (final_validity, final_next) = self.examine("h8", request.mailbox()).await?;
+        if final_validity != validity {
+            return Err(ImapUidPageError::UidValidityChanged);
+        }
+        if final_next < next {
+            return Err(ImapUidPageError::CursorInvalid);
+        }
+        let page = ImapUidPage::new(first, validity, next, messages)
+            .map_err(|_| MailProbeError::Protocol)?;
+        ImapUidRecoveryPage::new(request.clone(), page).map_err(|_| MailProbeError::Protocol.into())
     }
 }

@@ -6,6 +6,7 @@ use crate::{AccountsListRequest, FolderRefreshAction, ToolRequest, UidPageAction
 use hantong_contracts::folders::{FolderListRequest, FolderRefreshStatusRequest};
 use hantong_contracts::uid_page::{UidCursorRequest, UidPageRequest, UidPageStatusRequest};
 use hantong_contracts::uid_reconcile::UidReconcileRequest;
+use hantong_contracts::uid_recovery::UidRecoveryRequest;
 
 /// A bounded service result. The service owns the value and optional count;
 /// callers cannot manufacture an invalid count through this type.
@@ -109,6 +110,19 @@ pub trait ExecutionContext {
     ) -> Result<AuditHandoff<Self::Output>, ErrorCode> {
         Err(ErrorCode::CapabilityUnsupported)
     }
+    fn read_uid_recovery_status(
+        &mut self,
+        _request: &UidPageStatusRequest,
+    ) -> Result<ReadResult<Self::Output>, ErrorCode> {
+        Err(ErrorCode::CapabilityUnsupported)
+    }
+    fn request_uid_recovery(
+        &mut self,
+        _audit_id: [u8; 32],
+        _request: &UidRecoveryRequest,
+    ) -> Result<AuditHandoff<Self::Output>, ErrorCode> {
+        Err(ErrorCode::CapabilityUnsupported)
+    }
     fn finish_audit(&mut self, id: [u8; 32], terminal: AuditTerminal) -> Result<(), ErrorCode>;
 }
 
@@ -180,6 +194,13 @@ pub fn execute_tool<C: ExecutionContext>(
                     Err(error) => finish_failure(context, audit_id, error),
                 }
             }
+            UidPageAction::Recover(request) => {
+                match context.request_uid_recovery(audit_id, &request) {
+                    Ok(AuditHandoff::Response(value)) => Ok(value),
+                    Ok(AuditHandoff::Error(error)) => Err(error),
+                    Err(error) => finish_failure(context, audit_id, error),
+                }
+            }
             other => {
                 let result = match other {
                     UidPageAction::Cursor(request) => context.read_uid_cursor(&request),
@@ -187,7 +208,12 @@ pub fn execute_tool<C: ExecutionContext>(
                     UidPageAction::ReconcileStatus(request) => {
                         context.read_uid_reconcile_status(&request)
                     }
-                    UidPageAction::Request(_) | UidPageAction::Reconcile(_) => {
+                    UidPageAction::RecoverStatus(request) => {
+                        context.read_uid_recovery_status(&request)
+                    }
+                    UidPageAction::Request(_)
+                    | UidPageAction::Reconcile(_)
+                    | UidPageAction::Recover(_) => {
                         unreachable!("handled above")
                     }
                 };

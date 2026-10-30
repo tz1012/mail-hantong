@@ -7,6 +7,7 @@ pub mod accounts;
 pub mod capabilities;
 pub mod config;
 pub mod imap_reconcile;
+pub mod imap_recovery;
 pub mod imap_sync;
 pub mod mail_connection;
 pub mod mailboxes;

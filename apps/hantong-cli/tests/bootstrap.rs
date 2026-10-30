@@ -19,6 +19,37 @@ fn cli16_help_uses_english_by_default_and_korean_after_all_flags() {
     let ko2 = cli(&["--lang", "ko", "--help"]);
     assert!(String::from_utf8_lossy(&ko2.stdout).contains("사용법:"));
 }
+#[test]
+fn cli01_recovery_help_explains_preservation_and_invalid_commands_stop_before_profiles() {
+    for (lang, word) in [
+        ("en", "preserving existing records"),
+        ("ko", "기존 기록을 보존"),
+    ] {
+        let output = cli(&["--lang", lang, "--help"]);
+        assert_eq!(output.status.code(), Some(0));
+        let text = String::from_utf8_lossy(&output.stdout);
+        assert!(text.contains("sync recover"));
+        assert!(text.contains("sync recover-status"));
+        assert!(text.contains(word));
+    }
+    for args in [
+        vec!["--json", "sync", "recover", "--account", "acct"],
+        vec![
+            "--json",
+            "sync",
+            "recover-status",
+            "--account",
+            "acct",
+            "--execution-id",
+            "00",
+        ],
+    ] {
+        let output = cli(&args);
+        assert_eq!(output.status.code(), Some(2));
+        assert!(String::from_utf8_lossy(&output.stdout).contains("INVALID_INPUT"));
+        assert!(output.stderr.is_empty());
+    }
+}
 
 #[test]
 fn cli01_reconcile_help_and_invalid_commands_do_not_load_profiles() {

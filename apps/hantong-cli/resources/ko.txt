@@ -1,5 +1,5 @@
 usage=사용법: hantong [--lang en|ko] [--json] [--no-input] <명령>
-commands=명령: core status, clients register, clients status <request_id>, clients verify, clients refresh, clients refresh-status <refresh_id>, setup imap request, setup imap status <request_id>, setup imap resume <request_id>, accounts list, sync cursor, sync page, sync status, sync reconcile, sync reconcile-status, send execute, approvals get
+commands=명령: core status, clients register, clients status <request_id>, clients verify, clients refresh, clients refresh-status <refresh_id>, setup imap request, setup imap status <request_id>, setup imap resume <request_id>, accounts list, sync cursor, sync page, sync status, sync reconcile, sync reconcile-status, sync recover, sync recover-status, send execute, approvals get
 folder_name=폴더
 sync_cursor=로컬 UID 커서
 sync_catalog_generation=폴더 목록 세대
@@ -90,3 +90,7 @@ sync_reconcile_absent=새 원격 부재 관측 수
 sync_reconcile_remaining=남은 원본 페이지
 sync_reconcile_complete=고정 범위 대조 관측 완료. 새 페이지는 다음 회차를 명시적으로 요청해야 합니다.
 sync_reconcile_pending=원본 페이지가 남았습니다. 다음 페이지마다 명시적으로 요청하세요.
+sync_recovery_state=UID 복구 상태
+sync_recovery_epoch=사서함 식별 세대
+sync_recovery_first_page=첫 메타데이터 페이지 저장, 기존 기록 보존. 추가 페이지는 명시적으로 요청해야 합니다.
+sync_recovery_help=sync recover는 서버 사서함 식별 정보 변경 후 첫 메타데이터 페이지를 명시적으로 읽고 기존 기록을 보존합니다. recover-status는 기록된 결과만 조회합니다.

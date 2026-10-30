@@ -17,6 +17,8 @@ use hantong_test_support::policy_store::{PolicyFixtureMutation, PolicyStoreFixtu
 use serde_json::Value;
 use std::rc::Rc;
 use tokio::sync::Notify;
+#[path = "uid_recovery_integration_tests.rs"]
+mod recovery;
 
 fn mailbox() -> UidMailboxIdentity {
     UidMailboxIdentity::new("494e424f58", UidMailboxEncoding::ModifiedUtf7).unwrap()
@@ -445,6 +447,7 @@ pub(super) async fn run_uid_scenarios(
         }
     }
     run_reconcile_scenarios(listener, client, server, instance).await;
+    recovery::run_scenarios(listener, client, server, instance).await;
 }
 
 use hantong_contracts::uid_reconcile::{UidReconcileReceipt, UidReconcileRequest};

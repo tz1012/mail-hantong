@@ -23,12 +23,12 @@ use hantong_domain::{
 };
 use std::{fs, path::PathBuf};
 
-struct Fixture {
+pub(crate) struct Fixture {
     store: Option<Store>,
     root: PathBuf,
 }
 impl Fixture {
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         let root = std::env::temp_dir().join(format!(
             "hantong-reconcile-job-{}",
             hantong_contracts::wire_hex::encode(&hantong_platform::random_nonce().unwrap())
@@ -56,10 +56,10 @@ impl Fixture {
         f.add_registration(9);
         f
     }
-    fn store(&self) -> &Store {
+    pub(crate) fn store(&self) -> &Store {
         self.store.as_ref().unwrap()
     }
-    fn catalog(&self, previous: u64) {
+    pub(crate) fn catalog(&self, previous: u64) {
         let snapshot = ImapMailboxSnapshot::new(
             "acct",
             1,
@@ -89,7 +89,7 @@ impl Fixture {
             .replace_imap_mailbox_snapshot(2, &endpoint(), &snapshot, &mutation)
             .unwrap();
     }
-    fn add_registration(&self, id: u8) {
+    pub(crate) fn add_registration(&self, id: u8) {
         self.store().with_connection(|c| {
             c.execute("INSERT INTO client_registration_requests(request_id,client_kind,display_label,requested_accounts_json,requested_tools_json,state,decision_channel,version,created_at_utc_ms,expires_at_utc_ms,decided_at_utc_ms) VALUES(?1,'cli','uid-fixture','[\"acct\"]','[\"mail.sync.page\"]','approved','gui',1,1,300001,2)",[vec![id;32]])?;
             let mut key=vec![0u8;72];key[..8].copy_from_slice(b"ECS1\x20\0\0\0");key[8]=id;
@@ -99,7 +99,7 @@ impl Fixture {
             Ok(())
         }).unwrap();
     }
-    fn begin_for(&self, id: u8, owner: u8) {
+    pub(crate) fn begin_for(&self, id: u8, owner: u8) {
         self.store()
             .begin_audit(
                 &AuditBegin::new(
@@ -113,7 +113,7 @@ impl Fixture {
             )
             .unwrap();
     }
-    fn admit(
+    pub(crate) fn admit(
         &self,
         id: u8,
         request: &UidReconcileRequest,
@@ -124,26 +124,26 @@ impl Fixture {
             .admit_uid_reconcile([id; 32], request, queue)
             .unwrap()
     }
-    fn start(&self, id: u8) -> UidReconcileJob {
+    pub(crate) fn start(&self, id: u8) -> UidReconcileJob {
         let UidReconcileStart::Ready(job) = self.store().start_uid_reconcile([id; 32]).unwrap()
         else {
             panic!("expected job")
         };
         *job
     }
-    fn sql(&self, s: &str) {
+    pub(crate) fn sql(&self, s: &str) {
         self.store()
             .with_connection(|c| c.execute_batch(s))
             .unwrap()
     }
-    fn count(&self, table: &str) -> i64 {
+    pub(crate) fn count(&self, table: &str) -> i64 {
         self.store()
             .with_connection(|c| {
                 c.query_row(&format!("SELECT count(*) FROM {table}"), [], |r| r.get(0))
             })
             .unwrap()
     }
-    fn receipt(&self, id: u8) -> UidReconcileReceipt {
+    pub(crate) fn receipt(&self, id: u8) -> UidReconcileReceipt {
         self.store()
             .load_uid_reconcile_receipt(
                 [9; 16],
@@ -151,7 +151,7 @@ impl Fixture {
             )
             .unwrap()
     }
-    fn error(&self, id: u8) -> Option<ErrorCode> {
+    pub(crate) fn error(&self, id: u8) -> Option<ErrorCode> {
         self.store()
             .load_audit([id; 32])
             .unwrap()
@@ -161,9 +161,14 @@ impl Fixture {
             .terminal()
             .error()
     }
-    fn reopen(&mut self) {
+    pub(crate) fn reopen(&mut self) {
         self.store.take();
         self.store = Some(Store::open(self.root.join("data"), self.root.join("keys")).unwrap())
+    }
+    pub(crate) fn try_reopen(&mut self) -> Result<(), ErrorCode> {
+        self.store.take();
+        self.store = Some(Store::open(self.root.join("data"), self.root.join("keys"))?);
+        Ok(())
     }
 }
 impl Drop for Fixture {
@@ -172,13 +177,13 @@ impl Drop for Fixture {
         let _ = fs::remove_dir_all(&self.root);
     }
 }
-fn endpoint() -> ImapEndpointConfig {
+pub(crate) fn endpoint() -> ImapEndpointConfig {
     MailConnectionConfig::from_json(br#"{"schema_version":1,"account_id":"acct","imap":{"settings_version":1,"host":"imap.fixture.invalid","port":993,"tls":"implicit_tls","login_name":"synthetic-uid","authentication":"app_password"}}"#).unwrap().imap().clone()
 }
-fn mailbox() -> ImapMailboxName {
+pub(crate) fn mailbox() -> ImapMailboxName {
     ImapMailboxName::from_wire(b"INBOX", MailboxEncoding::ModifiedUtf7).unwrap()
 }
-fn identity(wire: &[u8]) -> UidMailboxIdentity {
+pub(crate) fn identity(wire: &[u8]) -> UidMailboxIdentity {
     UidMailboxIdentity::new(
         &hantong_contracts::wire_hex::encode(wire),
         UidMailboxEncoding::ModifiedUtf7,
@@ -186,7 +191,7 @@ fn identity(wire: &[u8]) -> UidMailboxIdentity {
     .unwrap()
 }
 
-fn request(op: &str, cv: u64) -> UidReconcileRequest {
+pub(crate) fn request(op: &str, cv: u64) -> UidReconcileRequest {
     let raw = UidReconcileRequest::new("acct", identity(b"INBOX"), op, op, 1, cv, &"0".repeat(64))
         .unwrap();
     let digest = hantong_contracts::wire_hex::encode(
@@ -194,7 +199,7 @@ fn request(op: &str, cv: u64) -> UidReconcileRequest {
     );
     UidReconcileRequest::new("acct", identity(b"INBOX"), op, op, 1, cv, &digest).unwrap()
 }
-fn metadata(uid: u32, flags: &[&str]) -> ImapMessageMetadata {
+pub(crate) fn metadata(uid: u32, flags: &[&str]) -> ImapMessageMetadata {
     ImapMessageMetadata::new(
         uid,
         flags.iter().map(|v| v.to_string()).collect(),
@@ -204,7 +209,7 @@ fn metadata(uid: u32, flags: &[&str]) -> ImapMessageMetadata {
     )
     .unwrap()
 }
-fn append(f: &Fixture, cv: u64, after: u32, next: u32, uids: &[u32], op: &str) {
+pub(crate) fn append(f: &Fixture, cv: u64, after: u32, next: u32, uids: &[u32], op: &str) {
     let page = ImapUidPage::new(
         ImapUidPageRequest::new("acct", 1, mailbox(), (cv > 0).then_some(7), after).unwrap(),
         7,
@@ -223,7 +228,12 @@ fn append(f: &Fixture, cv: u64, after: u32, next: u32, uids: &[u32], op: &str) {
         .apply_imap_uid_page(2, 1, &endpoint(), &page, &mutation)
         .unwrap();
 }
-fn reconcile(f: &Fixture, id: u8, cv: u64, uids: &[(u32, &[&str])]) -> UidReconcileReceipt {
+pub(crate) fn reconcile(
+    f: &Fixture,
+    id: u8,
+    cv: u64,
+    uids: &[(u32, &[&str])],
+) -> UidReconcileReceipt {
     assert!(matches!(
         f.admit(
             id,
@@ -563,7 +573,11 @@ fn m204_reconcile_current_catalog_cursor_epoch_and_account_are_rechecked() {
         assert_eq!(f.count("imap_uid_reconcile_messages"), 0);
     }
 }
-fn append_request(op: &str, key: &str, cv: u64) -> hantong_contracts::uid_page::UidPageRequest {
+pub(crate) fn append_request(
+    op: &str,
+    key: &str,
+    cv: u64,
+) -> hantong_contracts::uid_page::UidPageRequest {
     use hantong_contracts::uid_page::UidPageRequest;
     let r =
         UidPageRequest::new("acct", identity(b"INBOX"), op, key, 1, cv, &"0".repeat(64)).unwrap();
@@ -571,7 +585,7 @@ fn append_request(op: &str, key: &str, cv: u64) -> hantong_contracts::uid_page::
         hantong_contracts::wire_hex::encode(&hantong_platform::sha256(&r.intent_bytes()).unwrap());
     UidPageRequest::new("acct", identity(b"INBOX"), op, key, 1, cv, &hash).unwrap()
 }
-fn reconcile_request(op: &str, key: &str) -> UidReconcileRequest {
+pub(crate) fn reconcile_request(op: &str, key: &str) -> UidReconcileRequest {
     let r = UidReconcileRequest::new("acct", identity(b"INBOX"), op, key, 1, 1, &"0".repeat(64))
         .unwrap();
     let hash =

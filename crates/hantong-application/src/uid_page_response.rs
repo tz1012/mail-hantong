@@ -2,6 +2,7 @@ use hantong_contracts::{
     ErrorCode,
     uid_page::{UidCursorSnapshot, UidMailboxEncoding, UidMailboxIdentity, UidPageReceipt},
     uid_reconcile::UidReconcileReceipt,
+    uid_recovery::UidRecoveryReceipt,
 };
 use hantong_domain::mailboxes::{ImapMailboxName, MailboxEncoding};
 use serde_json::{Value, json};
@@ -26,5 +27,9 @@ pub fn render_uid_receipt(v: &UidPageReceipt) -> Value {
 }
 pub fn render_uid_reconcile_receipt(v: &UidReconcileReceipt) -> Value {
     let result=v.result().map(|r|json!({"generation":r.generation(),"frozen_cursor_version":r.frozen_cursor_version(),"source_cursor_version":r.source_cursor_version(),"after_uid":r.after_uid(),"through_uid":r.through_uid(),"observed_count":r.observed_count(),"flags_changed_count":r.flags_changed_count(),"newly_absent_count":r.newly_absent_count(),"remaining_pages":r.remaining_pages(),"pass_complete":r.pass_complete()}));
+    json!({"schema_version":1,"ok":true,"account_id":v.account_id(),"execution_id":hantong_contracts::wire_hex::encode(v.execution_id()),"state":v.state().as_str(),"result":result,"error_code":v.error().map(ErrorCode::as_str)})
+}
+pub fn render_uid_recovery_receipt(v: &UidRecoveryReceipt) -> Value {
+    let result=v.result().map(|r|json!({"epoch_generation":r.epoch_generation(),"cursor_version":r.cursor_version(),"covered_through_uid":r.covered_through_uid(),"inserted_count":r.inserted_count()}));
     json!({"schema_version":1,"ok":true,"account_id":v.account_id(),"execution_id":hantong_contracts::wire_hex::encode(v.execution_id()),"state":v.state().as_str(),"result":result,"error_code":v.error().map(ErrorCode::as_str)})
 }

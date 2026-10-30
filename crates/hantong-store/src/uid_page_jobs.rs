@@ -142,6 +142,6 @@ impl Store {
 #[cfg(windows)]
 pub(crate) mod storage;
 #[cfg(windows)]
-pub(super) use storage::{operation_reserved, validate_history};
+pub(super) use storage::{execution_reserved, operation_reserved, validate_history};
 #[cfg(all(test, windows))]
 mod tests;
