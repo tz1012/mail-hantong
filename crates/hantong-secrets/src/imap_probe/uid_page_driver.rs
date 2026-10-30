@@ -192,6 +192,19 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Protocol<S> {
             }
         }
     }
+    pub(super) async fn uid_observation(
+        &mut self,
+        request: &ImapUidObservationRequest,
+        encoding: MailboxEncoding,
+    ) -> Result<ImapUidObservation, ImapUidPageError> {
+        if request.mailbox().encoding() != encoding {
+            return Err(MailProbeError::Protocol.into());
+        }
+        let (validity, next) = self.examine("h6", request.mailbox()).await?;
+        ImapUidObservation::new(request.clone(), validity, next)
+            .map_err(|_| MailProbeError::Protocol.into())
+    }
+
     pub(super) async fn uid_page(
         &mut self,
         request: &ImapUidPageRequest,

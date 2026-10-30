@@ -1,6 +1,7 @@
 //! Bounded IMAP diagnostics and folder discovery without a public session escape.
 use crate::{MailProbeError, SecretStore, validate_account};
 pub use hantong_domain::capabilities::ImapCapabilities;
+use hantong_domain::imap_observation::{ImapUidObservation, ImapUidObservationRequest};
 use hantong_domain::imap_reconcile::{ImapUidReconcilePage, ImapUidReconcileRequest};
 use hantong_domain::imap_recovery::{ImapUidRecoveryPage, ImapUidRecoveryRequest};
 use hantong_domain::imap_sync::{ImapUidPage, ImapUidPageRequest};
@@ -53,6 +54,29 @@ impl ImapProbeReceipt {
     }
 }
 impl SecretStore {
+    /// Observes UIDVALIDITY/UIDNEXT through one bounded, read-only EXAMINE.
+    /// No messages are fetched and no provider session leaves Secrets.
+    pub async fn fetch_imap_uid_observation(
+        &self,
+        request: &ImapUidObservationRequest,
+        endpoint: &ImapEndpointConfig,
+    ) -> Result<ImapUidObservation, ImapUidPageError> {
+        if request.endpoint_version() != endpoint.settings_version() {
+            return Err(ImapUidPageError::CursorInvalid);
+        }
+        validate_account(request.account_id())
+            .map_err(|_| ImapUidPageError::Probe(MailProbeError::InvalidAccount))?;
+        #[cfg(windows)]
+        {
+            windows::fetch_uid_observation(self, request, endpoint).await
+        }
+        #[cfg(not(windows))]
+        {
+            let _ = endpoint;
+            Err(ImapUidPageError::Probe(MailProbeError::UnsupportedPlatform))
+        }
+    }
+
     /// Reads only the first metadata page after an explicitly expected epoch change.
     pub async fn fetch_imap_uid_recovery_page(
         &self,

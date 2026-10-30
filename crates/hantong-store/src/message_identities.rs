@@ -22,7 +22,7 @@ fn frame(bytes: &mut Vec<u8>, value: &[u8]) -> Result<(), ErrorCode> {
     bytes.extend_from_slice(value);
     Ok(())
 }
-fn location_id(
+pub(crate) fn location_id(
     account: &str,
     mailbox: &ImapMailboxName,
     validity: u32,
@@ -51,6 +51,24 @@ fn stored_name(key: &str, encoding: &str) -> rusqlite::Result<ImapMailboxName> {
     )
     .map_err(|_| rusqlite::Error::InvalidQuery)?;
     crate::uid_page_jobs::storage::mailbox(&identity).map_err(|_| rusqlite::Error::InvalidQuery)
+}
+
+fn validate_preview_identity(
+    c: &Connection,
+    id: &str,
+    account: &str,
+    mailbox: &ImapMailboxName,
+    validity: u32,
+    uid: u32,
+) -> Result<(), ErrorCode> {
+    let collision: bool = db(c.query_row(
+        "SELECT EXISTS(SELECT 1 FROM imap_initial_preview_messages WHERE (internal_message_id=?1 AND (account_id<>?2 OR mailbox_key<>?3 OR mailbox_encoding<>?4 OR uid_validity<>?5 OR uid<>?6)) OR (account_id=?2 AND mailbox_key=?3 AND mailbox_encoding=?4 AND uid_validity=?5 AND uid=?6 AND internal_message_id<>?1))",
+        params![id, account, crate::uid_epochs::key(mailbox), crate::uid_epochs::encoding(mailbox), i64::from(validity), i64::from(uid)], |r| r.get(0),
+    ))?;
+    if collision {
+        return Err(ErrorCode::InternalError);
+    }
+    Ok(())
 }
 
 /// Streams scalar locators only. The caller owns the migration transaction.
@@ -131,6 +149,14 @@ pub(crate) fn insert_page(c: &Transaction<'_>, page: &ImapUidPage) -> Result<(),
             page.uid_validity(),
             message.uid(),
         )?;
+        validate_preview_identity(
+            c,
+            &id,
+            r.account_id(),
+            r.mailbox(),
+            page.uid_validity(),
+            message.uid(),
+        )?;
         if db(insert.execute(params![
             id,
             r.account_id(),
@@ -173,6 +199,14 @@ pub(crate) fn validate_page(c: &Connection, page: &ImapUidPage) -> Result<Vec<St
         {
             return Err(ErrorCode::InternalError);
         }
+        validate_preview_identity(
+            c,
+            &id,
+            r.account_id(),
+            r.mailbox(),
+            page.uid_validity(),
+            uid,
+        )?;
         ids.push(id);
     }
     Ok(ids)

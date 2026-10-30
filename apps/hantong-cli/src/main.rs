@@ -14,6 +14,7 @@ use hantong_contracts::scope_refresh::{
 use std::env;
 use std::io::{self, Write};
 mod diagnostics;
+mod initial_sync;
 mod search;
 mod sync;
 
@@ -292,11 +293,12 @@ fn message(code: ErrorCode, lang: Lang) -> &'static str {
 
 fn help(lang: Lang) -> String {
     format!(
-        "mail-hantong / hantong\n{}\n{}\n{}\n{}\n{}\n{}\n{}",
+        "mail-hantong / hantong\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}",
         resource(lang, "usage"),
         resource(lang, "commands"),
         resource(lang, "sync_recovery_help"),
         resource(lang, "sync_inspection_help"),
+        resource(lang, "sync_initial_help"),
         resource(lang, "message_search_help"),
         resource(lang, "protected"),
         resource(lang, "help_language")
@@ -685,6 +687,10 @@ fn run_with_mail_actions(
             | "--hours"
             | "--expected-catalog-generation"
             | "--expected-cursor-version"
+            | "--expected-preview-generation"
+            | "--recent-pages"
+            | "--plan-id"
+            | "--expected-plan-version"
             | "--execution-id" => {
                 let Some(value) = it.next() else {
                     return emit_error(ErrorCode::InvalidInput, lang, json);

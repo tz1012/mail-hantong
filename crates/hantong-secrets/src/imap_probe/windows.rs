@@ -74,6 +74,7 @@ pub(super) async fn probe(
 enum ReadOperation<'a> {
     Probe,
     Mailboxes,
+    UidObservation(&'a ImapUidObservationRequest),
     UidPage(&'a ImapUidPageRequest),
     UidReconcile(&'a ImapUidReconcileRequest),
     UidRecovery(&'a ImapUidRecoveryRequest),
@@ -81,6 +82,7 @@ enum ReadOperation<'a> {
 enum ReadReceipt {
     Probe(ImapProbeReceipt),
     Mailboxes(ImapMailboxSnapshot),
+    UidObservation(Result<ImapUidObservation, ImapUidPageError>),
     UidPage(Result<ImapUidPage, ImapUidPageError>),
     UidReconcile(Result<ImapUidReconcilePage, ImapUidPageError>),
     UidRecovery(Result<ImapUidRecoveryPage, ImapUidPageError>),
@@ -139,6 +141,47 @@ pub(super) async fn discover(
     match connect(store, account, endpoint, ReadOperation::Mailboxes).await? {
         ReadReceipt::Mailboxes(receipt) => Ok(receipt),
         _ => Err(MailProbeError::Protocol),
+    }
+}
+
+pub(super) async fn fetch_uid_observation(
+    store: &SecretStore,
+    request: &ImapUidObservationRequest,
+    endpoint: &ImapEndpointConfig,
+) -> Result<ImapUidObservation, ImapUidPageError> {
+    match connect(
+        store,
+        request.account_id(),
+        endpoint,
+        ReadOperation::UidObservation(request),
+    )
+    .await?
+    {
+        ReadReceipt::UidObservation(observation) => observation,
+        _ => Err(MailProbeError::Protocol.into()),
+    }
+}
+
+#[cfg(test)]
+pub(super) async fn run_uid_observation_connected<S>(
+    source: Source<'_>,
+    stream: S,
+    tls: Arc<ClientConfig>,
+    request: &ImapUidObservationRequest,
+) -> Result<ImapUidObservation, ImapUidPageError>
+where
+    S: AsyncRead + AsyncWrite + Send + Unpin + 'static,
+{
+    match with_deadline(run_operation(
+        source,
+        stream,
+        tls,
+        ReadOperation::UidObservation(request),
+    ))
+    .await?
+    {
+        ReadReceipt::UidObservation(observation) => observation,
+        _ => Err(MailProbeError::Protocol.into()),
     }
 }
 
@@ -594,6 +637,14 @@ where
     S: AsyncRead + AsyncWrite + Send + Unpin + 'static,
 {
     validate_account(source.account).map_err(|_| MailProbeError::InvalidAccount)?;
+    if let ReadOperation::UidObservation(request) = operation
+        && (source.account != request.account_id()
+            || source.endpoint.settings_version() != request.endpoint_version())
+    {
+        return Ok(ReadReceipt::UidObservation(Err(
+            ImapUidPageError::CursorInvalid,
+        )));
+    }
     if let ReadOperation::UidPage(request) = operation
         && (source.account != request.account_id()
             || source.endpoint.settings_version() != request.endpoint_version())
@@ -619,7 +670,8 @@ where
     let (wire_limit, plaintext_limit) = match operation {
         ReadOperation::Probe => (256 * 1024, 256 * 1024),
         ReadOperation::Mailboxes => (4 * 1024 * 1024, 2 * 1024 * 1024),
-        ReadOperation::UidPage(_)
+        ReadOperation::UidObservation(_)
+        | ReadOperation::UidPage(_)
         | ReadOperation::UidReconcile(_)
         | ReadOperation::UidRecovery(_) => (16 * 1024 * 1024, 8 * 1024 * 1024),
     };
@@ -656,7 +708,8 @@ where
         written: plain.written,
         remaining: if matches!(
             operation,
-            ReadOperation::UidPage(_)
+            ReadOperation::UidObservation(_)
+                | ReadOperation::UidPage(_)
                 | ReadOperation::UidReconcile(_)
                 | ReadOperation::UidRecovery(_)
         ) {
@@ -700,6 +753,18 @@ where
             )
             .map_err(|_| MailProbeError::Protocol)?;
             (ReadReceipt::Mailboxes(snapshot), "h7")
+        }
+        ReadOperation::UidObservation(request) => {
+            let encoding = if has(&caps, "IMAP4REV2") && !has(&caps, "IMAP4REV1") {
+                MailboxEncoding::Utf8
+            } else {
+                MailboxEncoding::ModifiedUtf7
+            };
+            let observation = verified.uid_observation(request, encoding).await;
+            if observation.is_err() {
+                return Ok(ReadReceipt::UidObservation(observation));
+            }
+            (ReadReceipt::UidObservation(observation), "h7")
         }
         ReadOperation::UidPage(request) => {
             let encoding = if has(&caps, "IMAP4REV2") && !has(&caps, "IMAP4REV1") {

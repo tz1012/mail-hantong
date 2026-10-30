@@ -4,6 +4,7 @@ use hantong_contracts::{ErrorCode, audit::AuditTerminal};
 
 use crate::{AccountsListRequest, FolderRefreshAction, ToolRequest, UidPageAction};
 use hantong_contracts::folders::{FolderListRequest, FolderRefreshStatusRequest};
+use hantong_contracts::initial_sync::{InitialSyncPlanRequest, InitialSyncRequest};
 use hantong_contracts::message_search::ImapMetadataSearchRequest;
 use hantong_contracts::uid_page::{UidCursorRequest, UidPageRequest, UidPageStatusRequest};
 use hantong_contracts::uid_reconcile::UidReconcileRequest;
@@ -147,6 +148,25 @@ pub trait ExecutionContext {
         Err(ErrorCode::CapabilityUnsupported)
     }
     fn finish_audit(&mut self, id: [u8; 32], terminal: AuditTerminal) -> Result<(), ErrorCode>;
+    fn request_initial_sync(
+        &mut self,
+        _audit_id: [u8; 32],
+        _request: &InitialSyncRequest,
+    ) -> Result<AuditHandoff<Self::Output>, ErrorCode> {
+        Err(ErrorCode::CapabilityUnsupported)
+    }
+    fn read_initial_sync_status(
+        &mut self,
+        _request: &UidPageStatusRequest,
+    ) -> Result<ReadResult<Self::Output>, ErrorCode> {
+        Err(ErrorCode::CapabilityUnsupported)
+    }
+    fn read_initial_sync_plan(
+        &mut self,
+        _request: &InitialSyncPlanRequest,
+    ) -> Result<ReadResult<Self::Output>, ErrorCode> {
+        Err(ErrorCode::CapabilityUnsupported)
+    }
 }
 
 fn finish_global_read<C: ExecutionContext>(
@@ -239,6 +259,13 @@ pub fn execute_tool<C: ExecutionContext>(
             }
         },
         ToolRequest::SyncPage { action, .. } => match action {
+            UidPageAction::Initial(request) => {
+                match context.request_initial_sync(audit_id, &request) {
+                    Ok(AuditHandoff::Response(value)) => Ok(value),
+                    Ok(AuditHandoff::Error(error)) => Err(error),
+                    Err(error) => finish_failure(context, audit_id, error),
+                }
+            }
             UidPageAction::Request(request) => match context.request_uid_page(audit_id, &request) {
                 Ok(AuditHandoff::Response(value)) => Ok(value),
                 Ok(AuditHandoff::Error(error)) => Err(error),
@@ -263,6 +290,10 @@ pub fn execute_tool<C: ExecutionContext>(
                     UidPageAction::Inspect(request) => context.read_uid_inspection(&request),
                     UidPageAction::Cursor(request) => context.read_uid_cursor(&request),
                     UidPageAction::Status(request) => context.read_uid_page_status(&request),
+                    UidPageAction::InitialStatus(request) => {
+                        context.read_initial_sync_status(&request)
+                    }
+                    UidPageAction::InitialPlan(request) => context.read_initial_sync_plan(&request),
                     UidPageAction::ReconcileStatus(request) => {
                         context.read_uid_reconcile_status(&request)
                     }
@@ -271,7 +302,8 @@ pub fn execute_tool<C: ExecutionContext>(
                     }
                     UidPageAction::Request(_)
                     | UidPageAction::Reconcile(_)
-                    | UidPageAction::Recover(_) => {
+                    | UidPageAction::Recover(_)
+                    | UidPageAction::Initial(_) => {
                         unreachable!("handled above")
                     }
                 };

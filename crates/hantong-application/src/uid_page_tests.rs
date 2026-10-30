@@ -3,6 +3,55 @@ use hantong_contracts::{ErrorCode, audit::AuditTool};
 use serde_json::{Value, json};
 
 #[test]
+fn sync01_initial_inputs_reject_caller_selected_target_or_runtime_authority() {
+    let initial = json!({"action":"initial-start","account_id":"acct","wire_hex":"494e424f58","encoding":"modified_utf7","operation_id":"op","idempotency_key":"key","expected_catalog_generation":1,"expected_preview_generation":0,"recent_pages":2,"intent_hash":"00".repeat(32)});
+    assert!(ToolRequest::validate(&envelope(initial.clone())).is_ok());
+    for field in [
+        "instance_id",
+        "uid_validity",
+        "uid_next",
+        "after_uid",
+        "through_uid",
+        "model_version",
+        "approved",
+        "owner_registration_id",
+        "execution_id",
+    ] {
+        let mut invalid = initial.clone();
+        invalid[field] = json!(1);
+        assert_eq!(
+            ToolRequest::validate(&envelope(invalid)),
+            Err(ErrorCode::InvalidInput)
+        );
+    }
+    for (field, value) in [
+        ("expected_preview_generation", json!(-1)),
+        ("expected_catalog_generation", json!(0)),
+        ("recent_pages", json!(0)),
+        ("recent_pages", json!(9)),
+        ("recent_pages", json!(258)),
+        ("recent_pages", json!(1.0)),
+        ("wire_hex", json!("696e626f78")),
+        ("intent_hash", json!("AA".repeat(32))),
+    ] {
+        let mut invalid = initial.clone();
+        invalid[field] = value;
+        assert_eq!(
+            ToolRequest::validate(&envelope(invalid)),
+            Err(ErrorCode::InvalidInput)
+        );
+    }
+    for key in initial.as_object().unwrap().keys() {
+        let mut invalid = initial.clone();
+        invalid.as_object_mut().unwrap().remove(key);
+        assert_eq!(
+            ToolRequest::validate(&envelope(invalid)),
+            Err(ErrorCode::InvalidInput)
+        );
+    }
+}
+
+#[test]
 fn sync02_inspection_renderer_preserves_absent_empty_and_sparse_observations() {
     use hantong_contracts::{
         uid_inspection::{UidInspectionSnapshot, UidObservationSummary},

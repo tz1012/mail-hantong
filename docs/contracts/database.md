@@ -85,3 +85,8 @@ schema12~14는 frozen max3 scope validator, schema15는 max4 validator를 사용
 ## v16 앱 읽기와 명시 권한 갱신
 
 [앱 실행 계약](app-read-execution.md)에 따라 `schema-v15.sql`을 동결하고 `015-to-016.sql`에서 기존 audit FK closure와 scope ledger를 재구축한다. 새 표 없이 31개 표를 유지하며 두 앱 조회 tool과 scope hash v5/A만 추가한다. v15의 max4 validator는 동결하고 v16에서 max5를 사용한다. 기존 행·scope v1~v4 hash·pending/staged 의도·message ID·미완료 job·audit capacity·sequence 부재/최대값을 보존하며 자동 권한 확대나 재개를 하지 않는다. 보호된 backup 및 단일 transaction 실패 시 원본 v15로 rollback한다. 새 global audit는 계정 참조0개와 result_count=NULL을 요구하며 기존 mail audit의 빈 계정 금지는 유지한다. **사람 검토 필요**.
+
+
+## v17 최근 UID 미리보기 원장
+
+[초기 동기화 미리보기 계약](imap-initial-sync-preview.md)에 따라 v16 DDL을 `schema-v16.sql`로 동결하고 `016-to-017.sql`로 계획·요청·페이지·메시지 표 네 개를 추가한다. 전체35개 표이며 기존31개 표·행·scope·audit sequence·base UID cursor/epoch/identity는 변경하지 않는다. 기존 보호 백업·단일 트랜잭션·schema/FK 검증과 실패 rollback 규칙을 유지한다. 이전 과정은 외부 접속, 자동 계획 생성 또는 미완료 작업 재개를 하지 않는다. preview 메시지는 base와 같은 locator ID namespace를 사용하지만 별도 자식 표에 저장한다. 양방향 ID/locator 충돌은 저장과 선택 조회 및 시작 무결성 검사에서 실패 처리한다. **사람 검토 필요**.

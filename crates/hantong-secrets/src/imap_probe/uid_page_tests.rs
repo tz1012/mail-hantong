@@ -1,4 +1,6 @@
 use super::*;
+#[path = "uid_observation_tests.rs"]
+mod observation;
 #[path = "uid_reconcile_tests.rs"]
 mod reconcile;
 #[path = "uid_recovery_tests.rs"]

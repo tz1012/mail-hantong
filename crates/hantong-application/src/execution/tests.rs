@@ -237,6 +237,28 @@ impl Fake {
     }
 }
 impl ExecutionContext for Fake {
+    fn request_initial_sync(
+        &mut self,
+        _: [u8; 32],
+        _: &InitialSyncRequest,
+    ) -> Result<AuditHandoff<u32>, ErrorCode> {
+        self.events.push("initial_handoff");
+        std::mem::replace(&mut self.handoff, Err(ErrorCode::InternalError))
+    }
+    fn read_initial_sync_status(
+        &mut self,
+        _: &UidPageStatusRequest,
+    ) -> Result<ReadResult<u32>, ErrorCode> {
+        self.events.push("initial_status");
+        ReadResult::new(20, None)
+    }
+    fn read_initial_sync_plan(
+        &mut self,
+        _: &InitialSyncPlanRequest,
+    ) -> Result<ReadResult<u32>, ErrorCode> {
+        self.events.push("initial_plan");
+        ReadResult::new(21, None)
+    }
     type Output = u32;
     fn revalidate(&mut self) -> Result<(), ErrorCode> {
         self.events.push("revalidate");
@@ -370,6 +392,86 @@ impl ExecutionContext for Fake {
     ) -> Result<ReadResult<u32>, ErrorCode> {
         self.events.push("recovery_status");
         ReadResult::new(14, None)
+    }
+}
+
+#[test]
+fn sync01_sec03_initial_mutations_use_common_grants_and_owned_terminal_handoff() {
+    let base = json!({"action":"initial-start","account_id":"a","wire_hex":"494e424f58","encoding":"utf8","operation_id":"op","idempotency_key":"key","intent_hash":"00".repeat(32),"expected_catalog_generation":1,"expected_preview_generation":0,"recent_pages":2});
+    let mut resume = base.clone();
+    resume["action"] = json!("initial-resume");
+    resume
+        .as_object_mut()
+        .unwrap()
+        .remove("expected_preview_generation");
+    resume.as_object_mut().unwrap().remove("recent_pages");
+    resume["plan_id"] = json!("01".repeat(32));
+    resume["expected_plan_version"] = json!(1);
+    let mut pause = resume.clone();
+    pause["action"] = json!("initial-pause");
+    pause
+        .as_object_mut()
+        .unwrap()
+        .remove("expected_catalog_generation");
+    for params in [base, resume, pause] {
+        let envelope =
+            json!({"schema_version":1,"request_id":"r","tool":"mail.sync.page","params":params});
+        let mut fake = Fake::ok();
+        assert_eq!(execute_tool(&mut fake, "mail.sync.page", &envelope), Ok(10));
+        assert_eq!(
+            fake.events,
+            ["revalidate", "begin", "scope", "policy", "initial_handoff"]
+        );
+        assert!(fake.terminals.is_empty());
+        assert_eq!(fake.scoped_accounts, vec![vec!["a"]]);
+        for scope in [true, false] {
+            let mut denied = Fake::ok();
+            if scope {
+                denied.fail_scope = Some(ErrorCode::ScopeDenied)
+            } else {
+                denied.fail_policy = Some(ErrorCode::PolicyBlocked)
+            }
+            assert!(execute_tool(&mut denied, "mail.sync.page", &envelope).is_err());
+            assert!(!denied.events.contains(&"initial_handoff"));
+            assert_eq!(denied.terminals.len(), 1);
+        }
+        let mut handed = Fake::ok();
+        handed.handoff = Ok(AuditHandoff::error(ErrorCode::InternalError));
+        assert_eq!(
+            execute_tool(&mut handed, "mail.sync.page", &envelope),
+            Err(ErrorCode::InternalError)
+        );
+        assert!(handed.terminals.is_empty());
+    }
+}
+
+#[test]
+fn sync01_initial_status_and_plan_finish_only_the_new_read_audit() {
+    for (params, event, result) in [
+        (
+            json!({"action":"initial-status","account_id":"a","execution_id":"01".repeat(32)}),
+            "initial_status",
+            20,
+        ),
+        (
+            json!({"action":"initial-plan","account_id":"a","wire_hex":"494e424f58","encoding":"utf8","plan_id":"01".repeat(32)}),
+            "initial_plan",
+            21,
+        ),
+    ] {
+        let envelope =
+            json!({"schema_version":1,"request_id":"r","tool":"mail.sync.page","params":params});
+        let mut fake = Fake::ok();
+        assert_eq!(
+            execute_tool(&mut fake, "mail.sync.page", &envelope),
+            Ok(result)
+        );
+        assert_eq!(
+            fake.events,
+            ["revalidate", "begin", "scope", "policy", event, "finish_ok"]
+        );
+        assert_eq!(fake.terminals.len(), 1);
+        assert_eq!(fake.terminals[0].1.result_count(), None);
     }
 }
 

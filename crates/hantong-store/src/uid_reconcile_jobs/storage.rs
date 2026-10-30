@@ -763,13 +763,13 @@ pub(super) fn admit(
         let audit=db(read_audit(tx,&id))?.ok_or(ErrorCode::NotFound)?;
         // Never finish another durable operation's unresolved audit on an attempted reuse.
         let occupied:bool=db(tx.query_row("SELECT EXISTS(SELECT 1 FROM imap_uid_page_requests WHERE execution_id=?1)",[id.as_slice()],|r|r.get(0)))?;
-        if audit.completion().is_some() || execution_reserved(tx,id)? || occupied || crate::uid_recovery_jobs::execution_reserved(tx,id)?{return Err(ErrorCode::Conflict)}
+        if audit.completion().is_some() || execution_reserved(tx,id)? || crate::initial_sync::execution_reserved(tx,id)? || occupied || crate::uid_recovery_jobs::execution_reserved(tx,id)?{return Err(ErrorCode::Conflict)}
         if id==[0;32] || audit.tool()!=AuditTool::SyncPage || audit.account_ids()!=[request.account_id()]{return Err(ErrorCode::InvalidInput)}
         if let Err(e)=current_grants(tx,&audit){return reject(tx,id,e)}
         if let Err(e)=mailbox(request.mailbox()){return reject(tx,id,e)}
         let intent=hash(&request.intent_bytes())?;
         if hantong_contracts::wire_hex::encode(&intent)!=request.intent_hash(){return reject(tx,id,ErrorCode::InvalidInput)}
-        if crate::uid_recovery_jobs::operation_reserved(tx,request.account_id(),request.operation_id(),request.idempotency_key())? || crate::uid_page_jobs::operation_reserved(tx,request.account_id(),request.operation_id(),request.idempotency_key())? || page_operation_exists(tx,request.account_id(),request.operation_id(),request.idempotency_key())? {return reject(tx,id,ErrorCode::Conflict)}
+        if crate::uid_recovery_jobs::operation_reserved(tx,request.account_id(),request.operation_id(),request.idempotency_key())? || crate::initial_sync::operation_reserved(tx,request.account_id(),request.operation_id(),request.idempotency_key())? || crate::uid_page_jobs::operation_reserved(tx,request.account_id(),request.operation_id(),request.idempotency_key())? || page_operation_exists(tx,request.account_id(),request.operation_id(),request.idempotency_key())? {return reject(tx,id,ErrorCode::Conflict)}
         let ids={let mut stmt=db(tx.prepare("SELECT execution_id FROM imap_uid_reconcile_requests WHERE operation_id=?1 OR (account_id=?2 AND idempotency_key=?3) LIMIT 2"))?;
             db(db(stmt.query_map(params![request.operation_id(),request.account_id(),request.idempotency_key()],|r|blob_column::<32>(r,0)))?.collect::<rusqlite::Result<Vec<_>>>())?};
         if !ids.is_empty(){

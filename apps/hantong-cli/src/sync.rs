@@ -9,6 +9,9 @@ use hantong_ipc_client::uid_page as client;
 use hantong_ipc_client::uid_reconcile as reconcile_client;
 use hantong_ipc_client::uid_recovery as recovery_client;
 pub(super) enum Action {
+    InitialMutation(hantong_contracts::initial_sync::InitialSyncRequest),
+    InitialStatus(UidPageStatusRequest),
+    InitialPlan(hantong_contracts::initial_sync::InitialSyncPlanRequest),
     Inspect(UidCursorRequest),
     Cursor(UidCursorRequest),
     Page(UidPageRequest),
@@ -19,6 +22,8 @@ pub(super) enum Action {
     RecoverStatus(UidPageStatusRequest),
 }
 pub(super) enum ResultValue {
+    InitialReceipt(hantong_contracts::initial_sync::InitialSyncReceipt),
+    InitialPlan(hantong_contracts::initial_sync::InitialSyncPlanSnapshot),
     Inspection(UidInspectionSnapshot),
     Cursor(UidCursorSnapshot),
     Receipt(UidPageReceipt),
@@ -27,6 +32,15 @@ pub(super) enum ResultValue {
 }
 pub(super) fn real_action(action: Action) -> Result<ResultValue, ErrorCode> {
     match action {
+        Action::InitialMutation(request) => hantong_ipc_client::initial_sync::mutate_default(
+            hantong_ipc_client::initial_sync::prepare_request(request)?,
+        )
+        .map(ResultValue::InitialReceipt),
+        Action::InitialStatus(request) => hantong_ipc_client::initial_sync::status_default(request)
+            .map(ResultValue::InitialReceipt),
+        Action::InitialPlan(request) => {
+            hantong_ipc_client::initial_sync::plan_default(request).map(ResultValue::InitialPlan)
+        }
         Action::Inspect(request) => {
             inspection_client::inspect_default(request).map(ResultValue::Inspection)
         }
@@ -85,6 +99,9 @@ fn number(value: &str) -> Result<u64, ErrorCode> {
 fn parse(command: &[String], options: &[(String, String)]) -> Result<Action, ErrorCode> {
     if command.len() != 2 || command[0] != "sync" {
         return Err(ErrorCode::InvalidInput);
+    }
+    if command[1].starts_with("initial-") {
+        return crate::initial_sync::parse(command, options);
     }
     let mut values = std::collections::BTreeMap::new();
     for (key, value) in options {
@@ -185,11 +202,32 @@ pub(super) fn run(
         Err(e) => return emit_error(e, lang, json),
     };
     let lang = resolve_lang();
+    let initial = matches!(
+        &request,
+        Action::InitialMutation(_) | Action::InitialStatus(_)
+    );
+    let initial_plan = matches!(&request, Action::InitialPlan(_));
     let cursor = matches!(&request, Action::Cursor(_));
     let inspection = matches!(&request, Action::Inspect(_));
     let reconcile = matches!(&request, Action::Reconcile(_) | Action::ReconcileStatus(_));
     let recovery = matches!(&request, Action::Recover(_) | Action::RecoverStatus(_));
     match action(request) {
+        Ok(ResultValue::InitialReceipt(value)) if initial => {
+            if json {
+                println!("{}", hantong_ipc_client::initial_sync::receipt_json(&value));
+            } else {
+                print!("{}", crate::initial_sync::receipt_human(&value, lang));
+            }
+            0
+        }
+        Ok(ResultValue::InitialPlan(value)) if initial_plan => {
+            if json {
+                println!("{}", hantong_ipc_client::initial_sync::plan_json(&value));
+            } else {
+                print!("{}", crate::initial_sync::plan_human(&value, lang));
+            }
+            0
+        }
         Ok(ResultValue::Inspection(value)) if inspection => {
             if json {
                 println!("{}", inspection_client::inspection_json(&value))
@@ -206,7 +244,9 @@ pub(super) fn run(
             }
             0
         }
-        Ok(ResultValue::Receipt(value)) if !cursor && !inspection && !reconcile && !recovery => {
+        Ok(ResultValue::Receipt(value))
+            if !cursor && !inspection && !reconcile && !recovery && !initial && !initial_plan =>
+        {
             if json {
                 println!("{}", client::receipt_json(&value))
             } else {

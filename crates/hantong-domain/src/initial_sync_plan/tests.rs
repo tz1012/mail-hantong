@@ -343,3 +343,118 @@ fn sync01_public_debug_and_errors_are_fixed_and_redacted() {
         assert!(dynamic.source().is_none());
     }
 }
+
+#[test]
+fn sync01_stored_plan_roundtrips_reachable_states_and_rejects_impossible_parts() {
+    for recent in 1..=3 {
+        let mut reachable = vec![InitialSyncPlan::new(29, 194, recent).unwrap()];
+        let mut index = 0;
+        while index < reachable.len() {
+            let before = reachable[index].clone();
+            index += 1;
+            if before.version() == 12 {
+                continue;
+            }
+            for action in 0..8 {
+                let mut candidate = before.clone();
+                let version = candidate.version();
+                let result = match action {
+                    0 => candidate.begin(version).map(|_| ()),
+                    1 => candidate.pause(version),
+                    2 => candidate.acknowledge_pause(version),
+                    3 => candidate.interrupt(version),
+                    4 => candidate.fail(version),
+                    5 => candidate.invalidate(version, false),
+                    6 => candidate.invalidate(version, true),
+                    _ => match candidate.active_step() {
+                        Some(step) => candidate.complete_step(&step, 29),
+                        None => Err(InitialSyncPlanError::Conflict),
+                    },
+                };
+                if result.is_ok() && !reachable.contains(&candidate) {
+                    reachable.push(candidate);
+                }
+            }
+        }
+        for original in &reachable {
+            let restored = InitialSyncPlan::from_stored_parts(
+                29,
+                194,
+                recent,
+                original.completed_page_count(),
+                original.state(),
+                original.version(),
+            )
+            .unwrap();
+            assert_eq!(&restored, original);
+            assert_eq!(restored.active_step(), original.active_step());
+        }
+        for completed in 0..=recent {
+            for state in STATES {
+                for version in 1..=12 {
+                    let restored = InitialSyncPlan::from_stored_parts(
+                        29, 194, recent, completed, state, version,
+                    );
+                    let possible = reachable.iter().any(|p| {
+                        p.completed_page_count() == completed
+                            && p.state() == state
+                            && p.version() == version
+                    });
+                    assert_eq!(
+                        restored.is_ok(),
+                        possible,
+                        "recent {recent}, completed {completed}, state {state:?}, version {version}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn sync01_restoration_empty_limits_and_active_step_remain_validated() {
+    assert_eq!(
+        InitialSyncPlan::from_stored_parts(1, 1, 8, 0, InitialSyncState::Complete, 1).unwrap(),
+        InitialSyncPlan::new(1, 1, 8).unwrap()
+    );
+    for state in STATES {
+        assert!(InitialSyncPlan::from_stored_parts(1, 1, 8, 0, state, 2).is_err());
+    }
+    for (completed, state, version) in [
+        (9, InitialSyncState::Complete, 19),
+        (0, InitialSyncState::Ready, 0),
+        (0, InitialSyncState::Running, MAX_VERSION + 1),
+        (0, InitialSyncState::Running, u64::MAX),
+        (0, InitialSyncState::Complete, 1),
+        (8, InitialSyncState::Running, 18),
+        (0, InitialSyncState::PausedBudget, 100),
+        (1, InitialSyncState::Ready, 100),
+    ] {
+        assert_eq!(
+            InitialSyncPlan::from_stored_parts(1, u32::MAX, 8, completed, state, version),
+            Err(InitialSyncPlanError::InvalidInput)
+        );
+    }
+    let mut plan = InitialSyncPlan::from_stored_parts(
+        29,
+        u32::MAX,
+        8,
+        0,
+        InitialSyncState::Running,
+        MAX_VERSION,
+    )
+    .unwrap();
+    assert_eq!(plan.remaining_uid_span(), 510);
+    let step = plan.active_step().unwrap();
+    assert_eq!(step.plan_version(), MAX_VERSION);
+    unchanged(&mut plan, |p| p.complete_step(&step, 29));
+    let mut plan =
+        InitialSyncPlan::from_stored_parts(29, 194, 3, 1, InitialSyncState::Running, 4).unwrap();
+    let step = plan.active_step().unwrap();
+    assert_eq!(step.ordinal(), 1);
+    assert_eq!(step.after_uid(), 128);
+    assert_eq!(step.covered_through_uid(), 192);
+    plan.complete_step(&step, 29).unwrap();
+    assert_eq!(plan.completed_page_count(), 2);
+    assert!(plan.active_step().is_none());
+}

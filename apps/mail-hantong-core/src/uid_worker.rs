@@ -1,10 +1,15 @@
 //! One-shot UID observation sharing the global IMAP operation slot.
+use hantong_contracts::initial_sync::{InitialSyncAction, InitialSyncRequest};
 use hantong_contracts::uid_reconcile::UidReconcileRequest;
 use hantong_contracts::uid_recovery::UidRecoveryRequest;
 use hantong_contracts::{ErrorCode, uid_page::UidPageRequest};
+use hantong_domain::imap_observation::ImapUidObservation;
 use hantong_domain::imap_reconcile::ImapUidReconcilePage;
 use hantong_domain::imap_recovery::ImapUidRecoveryPage;
 use hantong_domain::imap_sync::ImapUidPage;
+use hantong_store::initial_sync::{
+    InitialSyncAdmission, InitialSyncFetch, InitialSyncJob, InitialSyncStart,
+};
 use hantong_store::uid_reconcile_jobs::{
     UidReconcileAdmission, UidReconcileJob, UidReconcileStart,
 };
@@ -19,6 +24,7 @@ use tokio::sync::mpsc;
 type Job = [u8; 32];
 #[derive(Debug, Eq, PartialEq)]
 enum QueuedJob {
+    Initial(Job),
     Page(Job),
     Reconcile(Job),
     Recovery(Job),
@@ -43,6 +49,12 @@ impl Drop for Slot {
     }
 }
 impl Slot {
+    fn submit_initial(mut self) {
+        self.permit
+            .take()
+            .expect("owned queue permit")
+            .send(QueuedJob::Initial(self.id));
+    }
     fn submit(mut self) {
         self.permit
             .take()
@@ -103,6 +115,7 @@ fn queue(shared: Rc<Cell<Option<Job>>>) -> (Queue, mpsc::Receiver<QueuedJob>) {
 pub(crate) struct UidWorkerHandle<'a> {
     store: &'a Store,
     queue: Queue,
+    instance: [u8; 32],
 }
 pub(crate) struct UidWorker<'a, D> {
     store: &'a Store,
@@ -112,6 +125,9 @@ pub(crate) struct UidWorker<'a, D> {
     discovery: D,
 }
 pub(crate) trait Discovery {
+    async fn initial(&self, _job: &InitialSyncJob) -> Result<InitialObservation, ErrorCode> {
+        Err(ErrorCode::CapabilityUnsupported)
+    }
     fn discover(&self, job: &UidPageJob) -> impl Future<Output = Result<ImapUidPage, ErrorCode>>;
     async fn reconcile(&self, _job: &UidReconcileJob) -> Result<ImapUidReconcilePage, ErrorCode> {
         Err(ErrorCode::CapabilityUnsupported)
@@ -120,10 +136,30 @@ pub(crate) trait Discovery {
         Err(ErrorCode::CapabilityUnsupported)
     }
 }
+pub(crate) enum InitialObservation {
+    Target(ImapUidObservation),
+    Page(ImapUidReconcilePage),
+}
 pub(crate) struct NativeDiscovery<'a> {
     secrets_root: &'a Path,
 }
 impl Discovery for NativeDiscovery<'_> {
+    async fn initial(&self, job: &InitialSyncJob) -> Result<InitialObservation, ErrorCode> {
+        let secrets = hantong_secrets::SecretStore::open(self.secrets_root)
+            .map_err(|_| ErrorCode::InternalError)?;
+        match job.fetch_request() {
+            InitialSyncFetch::Observe(request) => secrets
+                .fetch_imap_uid_observation(request, job.endpoint())
+                .await
+                .map(InitialObservation::Target)
+                .map_err(uid_error),
+            InitialSyncFetch::Page(request) => secrets
+                .fetch_imap_uid_reconcile_page(request, job.endpoint())
+                .await
+                .map(InitialObservation::Page)
+                .map_err(uid_error),
+        }
+    }
     async fn reconcile(&self, job: &UidReconcileJob) -> Result<ImapUidReconcilePage, ErrorCode> {
         let secrets = hantong_secrets::SecretStore::open(self.secrets_root)
             .map_err(|_| ErrorCode::InternalError)?;
@@ -172,19 +208,38 @@ pub(crate) fn coordinator_for_store<'a>(
     store: &'a Store,
     secrets_root: &'a Path,
     shared: Rc<Cell<Option<Job>>>,
+    instance: [u8; 32],
 ) -> (UidWorkerHandle<'a>, UidWorker<'a, NativeDiscovery<'a>>) {
-    coordinator_with_discovery(store, NativeDiscovery { secrets_root }, shared)
+    coordinator_with_instance(store, NativeDiscovery { secrets_root }, shared, instance)
 }
+#[cfg(test)]
 pub(crate) fn coordinator_with_discovery<D: Discovery>(
     store: &Store,
     discovery: D,
     shared: Rc<Cell<Option<Job>>>,
 ) -> (UidWorkerHandle<'_>, UidWorker<'_, D>) {
+    coordinator_with_instance(
+        store,
+        discovery,
+        shared,
+        hantong_platform::random_nonce().expect("fixture worker instance"),
+    )
+}
+pub(crate) fn coordinator_with_instance<D: Discovery>(
+    store: &Store,
+    discovery: D,
+    shared: Rc<Cell<Option<Job>>>,
+    instance: [u8; 32],
+) -> (UidWorkerHandle<'_>, UidWorker<'_, D>) {
     let (queue, receiver) = queue(shared);
     let scheduled = queue.scheduled.clone();
     let owned = queue.owned.clone();
     (
-        UidWorkerHandle { store, queue },
+        UidWorkerHandle {
+            store,
+            queue,
+            instance,
+        },
         UidWorker {
             store,
             receiver,
@@ -195,6 +250,27 @@ pub(crate) fn coordinator_with_discovery<D: Discovery>(
     )
 }
 impl UidWorkerHandle<'_> {
+    pub(crate) fn admit_initial(
+        &self,
+        id: Job,
+        request: &InitialSyncRequest,
+    ) -> Result<InitialSyncAdmission, ErrorCode> {
+        if request.action() == InitialSyncAction::Pause {
+            return self.store.pause_initial_sync(id, request, self.instance);
+        }
+        let (slot, queue) = match self.queue.reserve(id) {
+            Ok(slot) => (Some(slot), UidQueueAdmission::Reserved),
+            Err(queue) => (None, queue),
+        };
+        let result = self
+            .store
+            .admit_initial_sync(id, request, queue, self.instance)?;
+        if matches!(result, InitialSyncAdmission::Admitted(_)) {
+            slot.expect("Store admits only a reserved queue slot")
+                .submit_initial();
+        }
+        Ok(result)
+    }
     pub(crate) fn admit_reconcile(
         &self,
         id: Job,
@@ -259,6 +335,10 @@ impl<D: Discovery> UidWorker<'_, D> {
     pub(crate) async fn run(mut self) -> Result<(), ErrorCode> {
         while let Some(queued) = self.receiver.recv().await {
             let id = match queued {
+                QueuedJob::Initial(id) => {
+                    self.run_initial(id).await?;
+                    id
+                }
                 QueuedJob::Page(id) => {
                     self.run_one(id).await?;
                     id
@@ -278,6 +358,48 @@ impl<D: Discovery> UidWorker<'_, D> {
             self.owned.set(None);
         }
         Ok(())
+    }
+    async fn run_initial(&self, id: Job) -> Result<(), ErrorCode> {
+        let job = match self.store.start_initial_sync(id)? {
+            InitialSyncStart::Ready(job) => job,
+            InitialSyncStart::Finished(_) => return Ok(()),
+        };
+        let outcome = if let Err(error) = self.store.check_initial_sync(id) {
+            if error == ErrorCode::InternalError {
+                return Err(error);
+            }
+            Err(error)
+        } else {
+            let discovery =
+                tokio::time::timeout(Duration::from_secs(30), self.discovery.initial(&job));
+            tokio::pin!(discovery);
+            let mut ticker = tokio::time::interval_at(
+                tokio::time::Instant::now() + Duration::from_millis(500),
+                Duration::from_millis(500),
+            );
+            loop {
+                tokio::select! {
+                    biased;
+                    _=ticker.tick()=>{if let Err(error)=self.store.check_initial_sync(id){if error==ErrorCode::InternalError{return Err(error)}break Err(error)}},
+                    result=&mut discovery=>break result.unwrap_or(Err(ErrorCode::Offline)),
+                }
+            }
+        };
+        // Drop the provider future before terminal storage; never retry an uncertain commit.
+        match outcome {
+            Ok(InitialObservation::Target(value)) => self
+                .store
+                .complete_initial_sync_observation(id, &value)
+                .map(|_| ()),
+            Ok(InitialObservation::Page(value)) => self
+                .store
+                .complete_initial_sync_page(id, &value)
+                .map(|_| ()),
+            Err(error) => self
+                .store
+                .complete_initial_sync_failure(id, error)
+                .map(|_| ()),
+        }
     }
     async fn run_reconcile(&self, id: Job) -> Result<(), ErrorCode> {
         let job = match self.store.start_uid_reconcile(id)? {
@@ -403,6 +525,13 @@ impl Discovery for NoDiscovery {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test(flavor = "current_thread")]
+    async fn sync01_initial_preview_shares_the_single_imap_network_slot() {
+        let (q, mut receiver) = queue(Rc::new(Cell::new(None)));
+        q.reserve([9; 32]).unwrap().submit_initial();
+        assert_eq!(receiver.recv().await, Some(QueuedJob::Initial([9; 32])));
+        assert!(matches!(q.reserve([8; 32]), Err(UidQueueAdmission::Full)));
+    }
     #[tokio::test(flavor = "current_thread")]
     async fn sync02_recovery_retains_the_shared_network_slot_until_completion() {
         let (q, mut receiver) = queue(Rc::new(Cell::new(None)));

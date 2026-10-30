@@ -15,6 +15,8 @@ use hantong_domain::{
     mailboxes::ImapMailboxName,
 };
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
+#[path = "preview.rs"]
+mod preview;
 
 fn db<T>(r: rusqlite::Result<T>) -> Result<T, ErrorCode> {
     r.map_err(|_| ErrorCode::InternalError)
@@ -213,8 +215,34 @@ pub(super) fn search(
         }) {
             return Err(missing(r));
         }
+        let endpoint_hash = crate::imap_catalog::endpoint_hash(r.account_id(), &endpoint)?;
+        let catalog_hash = db(tx.query_row(
+            "SELECT snapshot_hash FROM imap_mailbox_catalogs WHERE account_id=?1",
+            [r.account_id()],
+            |row| blob_column::<32>(row, 0),
+        ))?;
+        let mut common = Vec::new();
+        for bytes in [
+            r.account_id().as_bytes(),
+            name.wire_name(),
+            r.mailbox().encoding().as_str().as_bytes(),
+            account.status.as_str().as_bytes(),
+            account.provider.as_str().as_bytes(),
+        ] {
+            frame(&mut common, bytes)?;
+        }
+        common.extend_from_slice(&account.version.to_be_bytes());
+        common.extend_from_slice(&endpoint.settings_version().to_be_bytes());
+        common.extend_from_slice(&endpoint_hash);
+        common.extend_from_slice(&catalog.generation().to_be_bytes());
+        common.extend_from_slice(&catalog_hash);
+        let preview =
+            crate::initial_sync::storage::current_preview(tx, r.account_id(), r.mailbox())?;
         let Some(cursor) = read_cursor(tx, r.account_id(), &name)? else {
             no_history(tx, r)?;
+            if let Some(plan) = preview {
+                return preview::search(tx, r, &name, None, plan, &common, catalog.generation());
+            }
             if r.cursor().is_some() {
                 return Err(ErrorCode::CursorExpired);
             }
@@ -242,28 +270,9 @@ pub(super) fn search(
             r.mailbox(),
             epoch.validity,
         )?;
-        let endpoint_hash = crate::imap_catalog::endpoint_hash(r.account_id(), &endpoint)?;
-        let catalog_hash = db(tx.query_row(
-            "SELECT snapshot_hash FROM imap_mailbox_catalogs WHERE account_id=?1",
-            [r.account_id()],
-            |row| blob_column::<32>(row, 0),
-        ))?;
         let binding_current = catalog.binding_current() && cursor.value.binding_current();
         let mut prefix = b"mail-hantong.imap-metadata-search-cursor.v1\0".to_vec();
-        for bytes in [
-            r.account_id().as_bytes(),
-            name.wire_name(),
-            r.mailbox().encoding().as_str().as_bytes(),
-            account.status.as_str().as_bytes(),
-            account.provider.as_str().as_bytes(),
-        ] {
-            frame(&mut prefix, bytes)?;
-        }
-        prefix.extend_from_slice(&account.version.to_be_bytes());
-        prefix.extend_from_slice(&endpoint.settings_version().to_be_bytes());
-        prefix.extend_from_slice(&endpoint_hash);
-        prefix.extend_from_slice(&catalog.generation().to_be_bytes());
-        prefix.extend_from_slice(&catalog_hash);
+        prefix.extend_from_slice(&common);
         for n in [
             cursor.value.account_version(),
             cursor.value.catalog_generation(),
@@ -295,7 +304,24 @@ pub(super) fn search(
             catalog_generation: catalog.generation(),
             binding_current,
         };
-        consume(tx, r, &name, &snapshot)
+        if let Some(plan) = preview {
+            preview::search(
+                tx,
+                r,
+                &name,
+                Some(&snapshot),
+                plan,
+                &common,
+                catalog.generation(),
+            )
+        } else {
+            if r.cursor()
+                .is_some_and(|cursor| cursor.source_kind().is_some())
+            {
+                return Err(ErrorCode::CursorExpired);
+            }
+            consume(tx, r, &name, &snapshot, None)
+        }
     })
 }
 
@@ -304,6 +330,7 @@ fn consume(
     r: &ImapMetadataSearchRequest,
     name: &ImapMailboxName,
     snapshot: &Snapshot,
+    preview: Option<&preview::PreviewContext>,
 ) -> Result<ImapMetadataSearchPage, ErrorCode> {
     let now = db(crate::utc_millis())?;
     let (version, resume, expiry) = if let Some(cursor) = r.cursor() {
@@ -377,7 +404,7 @@ fn consume(
         return Err(ErrorCode::CursorExpired);
     }
     if let Some(cursor) = r.cursor()
-        && &token(snapshot, &selected, resume, expiry)? != cursor
+        && &source_token(snapshot, &selected, resume, expiry, preview)? != cursor
     {
         return Err(ErrorCode::CursorExpired);
     }
@@ -449,22 +476,47 @@ fn consume(
         checkpoint = message.uid();
     }
     let next = if remaining {
-        Some(token(snapshot, &selected, checkpoint, expiry)?)
+        Some(source_token(
+            snapshot, &selected, checkpoint, expiry, preview,
+        )?)
     } else {
         previous
             .as_ref()
-            .map(|old| token(snapshot, old, u32::MAX, expiry))
+            .map(|old| source_token(snapshot, old, u32::MAX, expiry, preview))
             .transpose()?
     };
     ImapMetadataSearchPage::new(
         r.account_id(),
         r.mailbox().clone(),
         snapshot.catalog_generation,
-        snapshot.binding_current,
-        Some(snapshot.cursor.value.stored_at_utc_ms()),
+        preview.map_or(snapshot.binding_current, |context| context.binding_current),
+        Some(
+            preview.map_or(snapshot.cursor.value.stored_at_utc_ms(), |context| {
+                context.observed_at
+            }),
+        ),
         items,
         headers,
         next,
     )
     .map_err(|_| ErrorCode::InternalError)
+}
+
+fn source_token(
+    snapshot: &Snapshot,
+    source: &Source,
+    resume: u32,
+    expiry: i64,
+    preview: Option<&preview::PreviewContext>,
+) -> Result<ImapMetadataSearchCursor, ErrorCode> {
+    match preview {
+        Some(context) => context.token(
+            hantong_contracts::message_search::ImapMetadataSource::Base,
+            source.version,
+            &source.page_hash,
+            resume,
+            expiry,
+        ),
+        None => token(snapshot, source, resume, expiry),
+    }
 }

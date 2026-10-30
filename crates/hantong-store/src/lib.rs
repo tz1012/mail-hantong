@@ -20,6 +20,7 @@ pub mod imap_catalog;
 mod imap_catalog_security_tests;
 pub mod imap_setup;
 pub mod imap_sync;
+pub mod initial_sync;
 pub mod mail_connection;
 #[cfg(windows)]
 mod message_identities;
@@ -42,7 +43,7 @@ pub use registrations::{
 pub use server_identity::ServerIdentity;
 
 #[cfg(windows)]
-const CURRENT_SCHEMA_VERSION: u32 = 16;
+const CURRENT_SCHEMA_VERSION: u32 = 17;
 #[cfg(windows)]
 const DATABASE_FORMAT: &str = "mail-hantong";
 #[cfg(windows)]
@@ -71,6 +72,11 @@ const SCHEMA_V12: &str = include_str!("../../../docs/contracts/migrations/schema
 const SCHEMA_V13: &str = include_str!("../../../docs/contracts/migrations/schema-v13.sql");
 #[cfg(windows)]
 const SCHEMA_V14: &str = include_str!("../../../docs/contracts/migrations/schema-v14.sql");
+#[cfg(windows)]
+const SCHEMA_V16: &str = include_str!("../../../docs/contracts/migrations/schema-v16.sql");
+#[cfg(windows)]
+const MIGRATION_V16_TO_V17: &str =
+    include_str!("../../../docs/contracts/migrations/016-to-017.sql");
 #[cfg(windows)]
 const SCHEMA_V15: &str = include_str!("../../../docs/contracts/migrations/schema-v15.sql");
 #[cfg(windows)]
@@ -307,6 +313,7 @@ impl Store {
                 (13, _) => Ok(SchemaState::V13),
                 (14, _) => Ok(SchemaState::V14),
                 (15, _) => Ok(SchemaState::V15),
+                (16, _) => Ok(SchemaState::V16),
                 (CURRENT_SCHEMA_VERSION, _) => Ok(SchemaState::Current),
                 _ => Ok(SchemaState::Unsupported),
             }
@@ -329,7 +336,8 @@ impl Store {
                 self.migrate_v12_to_v13()?;
                 self.migrate_v13_to_v14()?;
                 self.migrate_v14_to_v15()?;
-                self.migrate_v15_to_v16()
+                self.migrate_v15_to_v16()?;
+                self.migrate_v16_to_v17()
             }
             SchemaState::V2 => {
                 self.with_connection(|connection| validate_schema(connection, SCHEMA_V2, 2))?;
@@ -346,7 +354,8 @@ impl Store {
                 self.migrate_v12_to_v13()?;
                 self.migrate_v13_to_v14()?;
                 self.migrate_v14_to_v15()?;
-                self.migrate_v15_to_v16()
+                self.migrate_v15_to_v16()?;
+                self.migrate_v16_to_v17()
             }
             SchemaState::V3 => {
                 self.with_connection(|connection| validate_schema(connection, SCHEMA_V3, 3))?;
@@ -362,7 +371,8 @@ impl Store {
                 self.migrate_v12_to_v13()?;
                 self.migrate_v13_to_v14()?;
                 self.migrate_v14_to_v15()?;
-                self.migrate_v15_to_v16()
+                self.migrate_v15_to_v16()?;
+                self.migrate_v16_to_v17()
             }
             SchemaState::V4 => {
                 self.with_connection(|connection| validate_schema(connection, SCHEMA_V4, 4))?;
@@ -377,7 +387,8 @@ impl Store {
                 self.migrate_v12_to_v13()?;
                 self.migrate_v13_to_v14()?;
                 self.migrate_v14_to_v15()?;
-                self.migrate_v15_to_v16()
+                self.migrate_v15_to_v16()?;
+                self.migrate_v16_to_v17()
             }
             SchemaState::V5 => {
                 self.with_connection(|connection| validate_schema(connection, SCHEMA_V5, 5))?;
@@ -391,7 +402,8 @@ impl Store {
                 self.migrate_v12_to_v13()?;
                 self.migrate_v13_to_v14()?;
                 self.migrate_v14_to_v15()?;
-                self.migrate_v15_to_v16()
+                self.migrate_v15_to_v16()?;
+                self.migrate_v16_to_v17()
             }
             SchemaState::V6 => {
                 self.with_connection(|connection| validate_schema(connection, SCHEMA_V6, 6))?;
@@ -404,7 +416,8 @@ impl Store {
                 self.migrate_v12_to_v13()?;
                 self.migrate_v13_to_v14()?;
                 self.migrate_v14_to_v15()?;
-                self.migrate_v15_to_v16()
+                self.migrate_v15_to_v16()?;
+                self.migrate_v16_to_v17()
             }
             SchemaState::V7 => {
                 self.with_connection(|connection| validate_schema(connection, SCHEMA_V7, 7))?;
@@ -416,7 +429,8 @@ impl Store {
                 self.migrate_v12_to_v13()?;
                 self.migrate_v13_to_v14()?;
                 self.migrate_v14_to_v15()?;
-                self.migrate_v15_to_v16()
+                self.migrate_v15_to_v16()?;
+                self.migrate_v16_to_v17()
             }
             SchemaState::V8 => {
                 self.with_connection(|connection| validate_schema(connection, SCHEMA_V8, 8))?;
@@ -427,7 +441,8 @@ impl Store {
                 self.migrate_v12_to_v13()?;
                 self.migrate_v13_to_v14()?;
                 self.migrate_v14_to_v15()?;
-                self.migrate_v15_to_v16()
+                self.migrate_v15_to_v16()?;
+                self.migrate_v16_to_v17()
             }
             SchemaState::V9 => {
                 self.with_connection(|connection| validate_schema(connection, SCHEMA_V9, 9))?;
@@ -437,7 +452,8 @@ impl Store {
                 self.migrate_v12_to_v13()?;
                 self.migrate_v13_to_v14()?;
                 self.migrate_v14_to_v15()?;
-                self.migrate_v15_to_v16()
+                self.migrate_v15_to_v16()?;
+                self.migrate_v16_to_v17()
             }
             SchemaState::V10 => {
                 self.with_connection(|connection| validate_schema(connection, SCHEMA_V10, 10))?;
@@ -446,7 +462,8 @@ impl Store {
                 self.migrate_v12_to_v13()?;
                 self.migrate_v13_to_v14()?;
                 self.migrate_v14_to_v15()?;
-                self.migrate_v15_to_v16()
+                self.migrate_v15_to_v16()?;
+                self.migrate_v16_to_v17()
             }
             SchemaState::V11 => {
                 self.with_connection(|c| validate_schema(c, SCHEMA_V11, 11))?;
@@ -454,29 +471,38 @@ impl Store {
                 self.migrate_v12_to_v13()?;
                 self.migrate_v13_to_v14()?;
                 self.migrate_v14_to_v15()?;
-                self.migrate_v15_to_v16()
+                self.migrate_v15_to_v16()?;
+                self.migrate_v16_to_v17()
             }
             SchemaState::V12 => {
                 self.with_connection(|c| validate_schema(c, SCHEMA_V12, 12))?;
                 self.migrate_v12_to_v13()?;
                 self.migrate_v13_to_v14()?;
                 self.migrate_v14_to_v15()?;
-                self.migrate_v15_to_v16()
+                self.migrate_v15_to_v16()?;
+                self.migrate_v16_to_v17()
             }
             SchemaState::V13 => {
                 self.with_connection(|c| validate_schema(c, SCHEMA_V13, 13))?;
                 self.migrate_v13_to_v14()?;
                 self.migrate_v14_to_v15()?;
-                self.migrate_v15_to_v16()
+                self.migrate_v15_to_v16()?;
+                self.migrate_v16_to_v17()
             }
             SchemaState::V14 => {
                 self.with_connection(|c| validate_schema(c, SCHEMA_V14, 14))?;
                 self.migrate_v14_to_v15()?;
-                self.migrate_v15_to_v16()
+                self.migrate_v15_to_v16()?;
+                self.migrate_v16_to_v17()
             }
             SchemaState::V15 => {
                 self.with_connection(|c| validate_schema(c, SCHEMA_V15, 15))?;
-                self.migrate_v15_to_v16()
+                self.migrate_v15_to_v16()?;
+                self.migrate_v16_to_v17()
+            }
+            SchemaState::V16 => {
+                self.with_connection(|c| validate_schema(c, SCHEMA_V16, 16))?;
+                self.migrate_v16_to_v17()
             }
             SchemaState::Current => self.with_connection(|connection| {
                 validate_schema(connection, SCHEMA, CURRENT_SCHEMA_VERSION)
@@ -575,7 +601,12 @@ impl Store {
 
     #[cfg(windows)]
     fn migrate_v15_to_v16(&self) -> Result<(), ErrorCode> {
-        self.migrate_with_backup(15, 16, SCHEMA, apply_v16_migration)
+        self.migrate_with_backup(15, 16, SCHEMA_V16, apply_v16_migration)
+    }
+
+    #[cfg(windows)]
+    fn migrate_v16_to_v17(&self) -> Result<(), ErrorCode> {
+        self.migrate_with_backup(16, 17, SCHEMA, |c| c.execute_batch(MIGRATION_V16_TO_V17))
     }
 
     #[cfg(windows)]
@@ -679,6 +710,7 @@ enum SchemaState {
     V13,
     V14,
     V15,
+    V16,
     Newer,
     Unsupported,
     Corrupt,
@@ -814,6 +846,9 @@ fn validate_schema(
     if schema_version >= 15 {
         crate::message_identities::validate_history(connection)?;
     }
+    if schema_version >= 17 {
+        crate::initial_sync::validate_history(connection)?;
+    }
     Ok(())
 }
 
@@ -893,6 +928,7 @@ fn utc_millis() -> rusqlite::Result<i64> {
 
 #[cfg(all(test, windows))]
 mod tests {
+    include!("initial_migration_tests.rs");
     use super::*;
     include!("migration_v15_tests.rs");
     include!("migration_v16_tests.rs");
@@ -1239,7 +1275,7 @@ mod tests {
                     |row| row.get::<_, i64>(0)
                 ))
                 .unwrap(),
-            31
+            35
         );
     }
 

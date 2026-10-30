@@ -127,6 +127,88 @@ impl InitialSyncPlan {
         })
     }
 
+    /// Validates persisted data; this is not an execution or authorization proof.
+    pub fn from_stored_parts(
+        uid_validity: u32,
+        uid_next: u32,
+        recent_pages: u8,
+        completed_pages: u8,
+        state: InitialSyncState,
+        model_version: u64,
+    ) -> Result<Self, InitialSyncPlanError> {
+        let mut plan = Self::new(uid_validity, uid_next, recent_pages)?;
+        let selected = plan.selected_page_count();
+        if !(1..=MAX_VERSION).contains(&model_version) || completed_pages > selected {
+            return Err(InitialSyncPlanError::InvalidInput);
+        }
+        if selected == 0 {
+            return if completed_pages == 0
+                && state == InitialSyncState::Complete
+                && model_version == 1
+            {
+                Ok(plan)
+            } else {
+                Err(InitialSyncPlanError::InvalidInput)
+            };
+        }
+        if (state == InitialSyncState::Complete) != (completed_pages == selected) {
+            return Err(InitialSyncPlanError::InvalidInput);
+        }
+        let completed_version = 1 + 2 * u64::from(completed_pages);
+        let minimum_version = match state {
+            InitialSyncState::Ready => {
+                if completed_pages != 0 || model_version != 1 {
+                    return Err(InitialSyncPlanError::InvalidInput);
+                }
+                1
+            }
+            InitialSyncState::Complete => completed_version,
+            InitialSyncState::Running => completed_version + 1,
+            InitialSyncState::PausedBudget => {
+                if completed_pages == 0 {
+                    return Err(InitialSyncPlanError::InvalidInput);
+                }
+                completed_version
+            }
+            InitialSyncState::PausedUser => {
+                // Ready -> PausedUser takes one transition. A second change
+                // must leave PausedUser; returning takes at least two more.
+                if completed_pages == 0 && model_version == 3 {
+                    return Err(InitialSyncPlanError::InvalidInput);
+                }
+                completed_version + 1
+            }
+            InitialSyncState::Pausing
+            | InitialSyncState::Interrupted
+            | InitialSyncState::Failed => completed_version + 2,
+            InitialSyncState::StaleBinding | InitialSyncState::NeedsRecovery => {
+                completed_version + 1
+            }
+        };
+        if model_version < minimum_version {
+            return Err(InitialSyncPlanError::InvalidInput);
+        }
+        plan.completed = completed_pages;
+        plan.version = model_version;
+        plan.state = state;
+        Ok(plan)
+    }
+
+    /// Reconstructs only the currently running, version-bound range.
+    pub fn active_step(&self) -> Option<InitialSyncStep> {
+        if self.state != InitialSyncState::Running {
+            return None;
+        }
+        let range = self.ranges.get(usize::from(self.completed))?;
+        Some(InitialSyncStep {
+            plan_version: self.version,
+            ordinal: self.completed,
+            uid_validity: self.uid_validity,
+            after_uid: range.after,
+            covered_through_uid: range.covered,
+        })
+    }
+
     pub fn version(&self) -> u64 {
         self.version
     }

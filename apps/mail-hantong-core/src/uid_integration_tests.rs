@@ -17,6 +17,8 @@ use hantong_test_support::policy_store::{PolicyFixtureMutation, PolicyStoreFixtu
 use serde_json::Value;
 use std::rc::Rc;
 use tokio::sync::Notify;
+#[path = "initial_integration_tests.rs"]
+mod initial;
 #[path = "uid_recovery_integration_tests.rs"]
 mod recovery;
 

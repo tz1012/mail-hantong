@@ -2,6 +2,9 @@ use super::*;
 use crate::uid_reconcile_jobs::tests::{Fixture, append, identity, reconcile};
 use hantong_contracts::message_search::{ImapMetadataFilter, ImapMetadataSearchCursor};
 
+#[path = "preview_tests.rs"]
+mod preview_tests;
+
 fn request(
     filter: ImapMetadataFilter,
     limit: u32,

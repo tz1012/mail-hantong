@@ -8,6 +8,7 @@ use hantong_contracts::{
     ErrorCode,
     audit::AuditTool,
     folders::{FolderCursor, FolderListRequest, FolderRefreshRequest, FolderRefreshStatusRequest},
+    initial_sync::{InitialSyncMutation, InitialSyncPlanRequest, InitialSyncRequest},
     message_search::{ImapMetadataFilter, ImapMetadataSearchCursor, ImapMetadataSearchRequest},
     uid_page::{
         UidCursorRequest, UidMailboxEncoding, UidMailboxIdentity, UidPageRequest,
@@ -63,6 +64,9 @@ pub enum UidPageAction {
     ReconcileStatus(UidPageStatusRequest),
     Recover(UidRecoveryRequest),
     RecoverStatus(UidPageStatusRequest),
+    Initial(InitialSyncRequest),
+    InitialStatus(UidPageStatusRequest),
+    InitialPlan(InitialSyncPlanRequest),
 }
 
 #[derive(Clone, Eq, PartialEq)]
@@ -209,6 +213,9 @@ impl ToolRequest {
                 UidPageAction::ReconcileStatus(v) => v.account_ids(),
                 UidPageAction::Recover(v) => v.account_ids(),
                 UidPageAction::RecoverStatus(v) => v.account_ids(),
+                UidPageAction::Initial(v) => v.account_ids(),
+                UidPageAction::InitialStatus(v) => v.account_ids(),
+                UidPageAction::InitialPlan(v) => v.account_ids(),
             },
             Self::SendExecute(value) => std::slice::from_ref(&value.account_id),
             Self::MessagesSearch { request, .. } => request.account_ids(),
@@ -495,6 +502,20 @@ fn parse_uid_page(params: &Map<String, Value>) -> Result<UidPageAction, ErrorCod
         Ok::<_, ErrorCode>(identity)
     };
     match text("action")? {
+        "initial-start" | "initial-resume" | "initial-pause" => {
+            parse_initial_mutation(params, mailbox()?).map(UidPageAction::Initial)
+        }
+        "initial-plan" => {
+            exact_keys(
+                params,
+                &["action", "account_id", "wire_hex", "encoding", "plan_id"],
+            )?;
+            Ok(UidPageAction::InitialPlan(InitialSyncPlanRequest::new(
+                text("account_id")?,
+                mailbox()?,
+                hantong_contracts::wire_hex::decode_fixed(text("plan_id")?)?,
+            )?))
+        }
         "cursor" | "inspect" => {
             exact_keys(params, &["action", "account_id", "wire_hex", "encoding"])?;
             let request = UidCursorRequest::new(text("account_id")?, mailbox()?)?;
@@ -557,13 +578,15 @@ fn parse_uid_page(params: &Map<String, Value>) -> Result<UidPageAction, ErrorCod
                 text("intent_hash")?,
             )?))
         }
-        "status" | "reconcile-status" | "recover-status" => {
+        "status" | "reconcile-status" | "recover-status" | "initial-status" => {
             exact_keys(params, &["action", "account_id", "execution_id"])?;
             let request = UidPageStatusRequest::new(
                 text("account_id")?,
                 hantong_contracts::wire_hex::decode_fixed(text("execution_id")?)?,
             )?;
-            Ok(if text("action")? == "recover-status" {
+            Ok(if text("action")? == "initial-status" {
+                UidPageAction::InitialStatus(request)
+            } else if text("action")? == "recover-status" {
                 UidPageAction::RecoverStatus(request)
             } else if text("action")? == "reconcile-status" {
                 UidPageAction::ReconcileStatus(request)
@@ -572,6 +595,75 @@ fn parse_uid_page(params: &Map<String, Value>) -> Result<UidPageAction, ErrorCod
             })
         }
         _ => Err(ErrorCode::InvalidInput),
+    }
+}
+fn parse_initial_mutation(
+    params: &Map<String, Value>,
+    mailbox: UidMailboxIdentity,
+) -> Result<InitialSyncRequest, ErrorCode> {
+    let text = |key: &str| string(params.get(key).ok_or(ErrorCode::InvalidInput)?);
+    let number = |key: &str| {
+        params
+            .get(key)
+            .and_then(Value::as_u64)
+            .ok_or(ErrorCode::InvalidInput)
+    };
+    let action = text("action")?;
+    let mut keys = vec![
+        "action",
+        "account_id",
+        "wire_hex",
+        "encoding",
+        "operation_id",
+        "idempotency_key",
+        "intent_hash",
+    ];
+    match action {
+        "initial-start" => keys.extend([
+            "expected_catalog_generation",
+            "expected_preview_generation",
+            "recent_pages",
+        ]),
+        "initial-resume" => keys.extend([
+            "plan_id",
+            "expected_plan_version",
+            "expected_catalog_generation",
+        ]),
+        "initial-pause" => keys.extend(["plan_id", "expected_plan_version"]),
+        _ => return Err(ErrorCode::InvalidInput),
+    }
+    exact_keys(params, &keys)?;
+    let mutation = InitialSyncMutation::new(
+        text("operation_id")?,
+        text("idempotency_key")?,
+        text("intent_hash")?,
+    )?;
+    let account = text("account_id")?;
+    match action {
+        "initial-start" => InitialSyncRequest::new_start(
+            account,
+            mailbox,
+            mutation,
+            number("expected_catalog_generation")?,
+            number("expected_preview_generation")?,
+            u8::try_from(number("recent_pages")?).map_err(|_| ErrorCode::InvalidInput)?,
+        ),
+        "initial-resume" => InitialSyncRequest::new_resume(
+            account,
+            mailbox,
+            mutation,
+            hantong_contracts::wire_hex::decode_fixed(text("plan_id")?)?,
+            number("expected_plan_version")?,
+            number("expected_catalog_generation")?,
+        ),
+        "initial-pause" => InitialSyncRequest::new_pause(
+            account,
+            mailbox,
+            mutation,
+            hantong_contracts::wire_hex::decode_fixed(text("plan_id")?)?,
+            number("expected_plan_version")?,
+        ),
+        _ => unreachable!(),
     }
 }
 fn parse_folder_refresh(params: &Map<String, Value>) -> Result<FolderRefreshAction, ErrorCode> {

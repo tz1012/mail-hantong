@@ -6,6 +6,7 @@ pub mod account_provisioning;
 pub mod accounts;
 pub mod capabilities;
 pub mod config;
+pub mod imap_observation;
 pub mod imap_reconcile;
 pub mod imap_recovery;
 pub mod imap_sync;

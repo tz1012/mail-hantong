@@ -378,7 +378,12 @@ pub(super) fn apply(
     mutation: &MailMutation,
 ) -> Result<ImapUidApplyReceipt, ErrorCode> {
     store.mail_transaction(TransactionBehavior::Immediate, |tx| {
-        if crate::uid_recovery_jobs::operation_reserved(
+        if crate::initial_sync::operation_reserved(
+            tx,
+            page.request().account_id(),
+            mutation.operation_id(),
+            mutation.idempotency_key(),
+        )? || crate::uid_recovery_jobs::operation_reserved(
             tx,
             page.request().account_id(),
             mutation.operation_id(),

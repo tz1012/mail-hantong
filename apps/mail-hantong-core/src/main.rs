@@ -106,8 +106,12 @@ fn start() -> Result<(), ErrorCode> {
         let shared_slot = std::rc::Rc::new(std::cell::Cell::new(None));
         let (folder_worker_handle, folder_worker) =
             folder_worker::coordinator_for_store(&store, &directories.secrets, shared_slot.clone());
-        let (uid_worker_handle, uid_worker) =
-            uid_worker::coordinator_for_store(&store, &directories.secrets, shared_slot);
+        let (uid_worker_handle, uid_worker) = uid_worker::coordinator_for_store(
+            &store,
+            &directories.secrets,
+            shared_slot,
+            server_instance,
+        );
         let server = hantong_ipc_server::authenticated_wire::serve_until_with_setup(
             shutdown,
             || event(EventKind::CoreTransportReady),

@@ -10,6 +10,7 @@ pub mod diagnostic_snapshot;
 pub mod display_settings;
 pub mod folders;
 pub mod imap_setup;
+pub mod initial_sync;
 pub mod message_search;
 pub mod platform;
 pub mod registration;

@@ -14,6 +14,8 @@ use hantong_domain::{
 use hantong_store::{imap_catalog::imap_catalog_payload_hash, mail_connection::MailMutation};
 use hantong_test_support::policy_store::{PolicyFixtureMutation, PolicyStoreFixture};
 use tokio::sync::Notify;
+#[path = "initial_worker_tests.rs"]
+mod initial_tests;
 struct Keys(
     Option<hantong_platform::ServerSigningKey>,
     Option<hantong_platform::ClientSigningKey>,

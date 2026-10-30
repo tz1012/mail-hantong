@@ -27,10 +27,24 @@ impl ImapMetadataFilter {
 
 #[derive(Clone, Eq, PartialEq)]
 pub struct ImapMetadataSearchCursor {
+    source_kind: Option<ImapMetadataSource>,
     digest: [u8; 32],
     source: u64,
     resume: u32,
     expires: i64,
+}
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ImapMetadataSource {
+    Preview,
+    Base,
+}
+impl ImapMetadataSource {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Preview => "p",
+            Self::Base => "b",
+        }
+    }
 }
 impl ImapMetadataSearchCursor {
     pub fn parse(v: &str) -> Result<Self, ErrorCode> {
@@ -38,9 +52,13 @@ impl ImapMetadataSearchCursor {
             return Err(ErrorCode::InvalidInput);
         };
         let p: Vec<_> = v.split(':').collect();
-        if p.len() != 5
-            || p[0] != "m1"
-            || p[1].len() != 64
+        let (source_kind, offset) = match p.as_slice() {
+            ["m1", ..] if p.len() == 5 => (None, 0),
+            ["m2", _, "p", ..] if p.len() == 6 => (Some(ImapMetadataSource::Preview), 1),
+            ["m2", _, "b", ..] if p.len() == 6 => (Some(ImapMetadataSource::Base), 1),
+            _ => return Err(ErrorCode::InvalidInput),
+        };
+        if p[1].len() != 64
             || !p[1]
                 .bytes()
                 .all(|b| b.is_ascii_digit() || matches!(b, b'a'..=b'f'))
@@ -61,12 +79,19 @@ impl ImapMetadataSearchCursor {
                 Ok(n)
             }
         };
-        let source = parse_u(p[2], i64::MAX as u64)?;
+        let source = parse_u(
+            p[2 + offset],
+            if source_kind == Some(ImapMetadataSource::Preview) {
+                8
+            } else {
+                i64::MAX as u64
+            },
+        )?;
         if source == 0 {
             return Err(ErrorCode::InvalidInput);
         };
-        let resume = parse_u(p[3], u32::MAX as u64)? as u32;
-        let expires = parse_u(p[4], i64::MAX as u64)? as i64;
+        let resume = parse_u(p[3 + offset], u32::MAX as u64)? as u32;
+        let expires = parse_u(p[4 + offset], i64::MAX as u64)? as i64;
         if expires <= 0 {
             return Err(ErrorCode::InvalidInput);
         };
@@ -75,6 +100,7 @@ impl ImapMetadataSearchCursor {
             digest[i] = u8::from_str_radix(std::str::from_utf8(b).unwrap(), 16).unwrap();
         }
         Ok(Self {
+            source_kind,
             digest,
             source,
             resume,
@@ -82,6 +108,16 @@ impl ImapMetadataSearchCursor {
         })
     }
     pub fn encode(&self) -> String {
+        if let Some(kind) = self.source_kind {
+            return format!(
+                "m2:{}:{}:{}:{}:{}",
+                crate::wire_hex::encode(&self.digest),
+                kind.as_str(),
+                self.source,
+                self.resume,
+                self.expires
+            );
+        }
         format!(
             "m1:{}:{}:{}:{}",
             crate::wire_hex::encode(&self.digest),
@@ -92,6 +128,12 @@ impl ImapMetadataSearchCursor {
     }
     pub fn digest(&self) -> &[u8; 32] {
         &self.digest
+    }
+    pub fn source_kind(&self) -> Option<ImapMetadataSource> {
+        self.source_kind
+    }
+    pub fn source_position(&self) -> u64 {
+        self.source
     }
     pub fn source_cursor_version(&self) -> u64 {
         self.source
@@ -106,6 +148,46 @@ impl ImapMetadataSearchCursor {
 impl fmt::Debug for ImapMetadataSearchCursor {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str("ImapMetadataSearchCursor(<redacted>)")
+    }
+}
+
+#[cfg(test)]
+mod cursor_tests {
+    use super::*;
+    #[test]
+    fn mail03_sync01_preview_cursors_keep_legacy_bytes_and_separate_source_kinds() {
+        let hash = "ab".repeat(32);
+        for (prefix, kind, position) in [
+            ("m1", None, 100),
+            ("m2", Some(ImapMetadataSource::Base), 100),
+            ("m2", Some(ImapMetadataSource::Preview), 8),
+        ] {
+            let text = match kind {
+                Some(k) => format!("{prefix}:{hash}:{}:{position}:4294967295:9000", k.as_str()),
+                None => format!("{prefix}:{hash}:{position}:4294967295:9000"),
+            };
+            let cursor = ImapMetadataSearchCursor::parse(&text).unwrap();
+            assert_eq!(cursor.encode(), text);
+            assert_eq!(cursor.source_kind(), kind);
+            assert_eq!(cursor.source_position(), position);
+        }
+        for tail in [
+            "p:9:0:9000",
+            "p:0:0:9000",
+            "b:01:0:9000",
+            "p:1:0:0",
+            "x:1:0:9000",
+            "b:1:4294967296:9000",
+            "p:1:0:9000:extra",
+        ] {
+            assert_eq!(
+                ImapMetadataSearchCursor::parse(&format!("m2:{hash}:{tail}")),
+                Err(ErrorCode::InvalidInput)
+            );
+        }
+        let old = ImapMetadataSearchCursor::parse(&format!("m1:{hash}:1:0:9000")).unwrap();
+        let new = ImapMetadataSearchCursor::parse(&format!("m2:{hash}:b:1:0:9000")).unwrap();
+        assert_ne!(old, new);
     }
 }
 

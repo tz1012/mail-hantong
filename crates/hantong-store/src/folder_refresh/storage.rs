@@ -318,7 +318,7 @@ pub(super) fn admit(
 ) -> Result<FolderRefreshAdmission, ErrorCode> {
     store.mail_transaction(TransactionBehavior::Immediate,|tx| {
         let audit=db(read_audit(tx,&id))?.ok_or(ErrorCode::NotFound)?;
-        if audit.completion().is_some() {return Err(ErrorCode::Conflict)}
+        if audit.completion().is_some() || crate::initial_sync::execution_reserved(tx,id)? {return Err(ErrorCode::Conflict)}
         if id==[0;32] || audit.tool()!=AuditTool::FoldersRefresh || audit.account_ids()!=[request.account_id()] {return Err(ErrorCode::InvalidInput)}
         if let Err(e)=current_grants(tx,&audit) {return reject(tx,id,e)}
         if hantong_contracts::wire_hex::encode(&db_hash(&request.intent_bytes())?)!=request.payload_hash() {return reject(tx,id,ErrorCode::InvalidInput)}
@@ -332,7 +332,7 @@ pub(super) fn admit(
             insert_audit_terminal_tx(tx,id,AuditTerminal::succeeded(None).map_err(|_|ErrorCode::InternalError)?,now()?)?;
             return Ok(FolderRefreshAdmission::Existing(row.receipt))
         }
-        if catalog_operation_exists(tx,request.account_id(),request.operation_id(),request.idempotency_key())? {return reject(tx,id,ErrorCode::Conflict)}
+        if catalog_operation_exists(tx,request.account_id(),request.operation_id(),request.idempotency_key())? || crate::initial_sync::operation_reserved(tx,request.account_id(),request.operation_id(),request.idempotency_key())? {return reject(tx,id,ErrorCode::Conflict)}
         let (av,endpoint,hash)=match binding(tx,request) {Ok(v)=>v,Err(e)=>return reject(tx,id,e)};
         let count:i64=db(tx.query_row("SELECT count(*) FROM folder_refresh_requests",[],|r|r.get(0)))?;
         if count>=100_000 {return reject(tx,id,ErrorCode::QuotaExceeded)}

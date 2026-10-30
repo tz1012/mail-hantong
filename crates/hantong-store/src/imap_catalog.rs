@@ -484,7 +484,12 @@ impl crate::Store {
         #[cfg(windows)]
         {
             self.mail_transaction(TransactionBehavior::Immediate, |tx| {
-                if crate::folder_refresh::operation_reserved(
+                if crate::initial_sync::operation_reserved(
+                    tx,
+                    snapshot.account_id(),
+                    mutation.operation_id(),
+                    mutation.idempotency_key(),
+                )? || crate::folder_refresh::operation_reserved(
                     tx,
                     snapshot.account_id(),
                     mutation.operation_id(),

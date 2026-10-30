@@ -80,6 +80,18 @@ cargo run -p hantong-cli -- sync recover --account ACCOUNT --wire-hex HEX --enco
 cargo run -p hantong-cli -- sync recover-status --account ACCOUNT --execution-id EXECUTION_HEX
 ```
 
+최근 메일부터 확인하려면 초기 미리보기 계획을 시작합니다. 첫 계획의 `--expected-preview-generation`은 `0`이며, `initial-start`는 메일함의 범위만 관측합니다. 작업 결과의 plan ID와 현재 plan version을 사용해 `initial-resume`를 실행하면 최근 UID 범위 한 페이지를 수집합니다. 저장한 메타데이터는 기존 메일 목록 검색에 나타납니다.
+
+```powershell
+cargo run -p hantong-cli -- sync initial-start --account ACCOUNT --wire-hex HEX --encoding utf8 --expected-catalog-generation 1 --expected-preview-generation 0 --recent-pages 2 --operation-id initial_1 --idempotency-key initial_1
+cargo run -p hantong-cli -- sync initial-status --account ACCOUNT --execution-id EXECUTION_HEX
+cargo run -p hantong-cli -- sync initial-plan --account ACCOUNT --wire-hex HEX --encoding utf8 --plan-id PLAN_HEX
+cargo run -p hantong-cli -- sync initial-resume --account ACCOUNT --wire-hex HEX --encoding utf8 --plan-id PLAN_HEX --expected-plan-version PLAN_VERSION --expected-catalog-generation 1 --operation-id resume_1 --idempotency-key resume_1
+cargo run -p hantong-cli -- sync initial-pause --account ACCOUNT --wire-hex HEX --encoding utf8 --plan-id PLAN_HEX --expected-plan-version PLAN_VERSION --operation-id pause_1 --idempotency-key pause_1
+```
+
+최근 범위는 최대8페이지이며 페이지당 UID 폭은64입니다. 페이지 완료는 선택한 최근 범위의 진행 상태를 뜻하며 전체 메일함 동기화 완료가 아닙니다. `initial-status`는 요청 당시의 저장된 작업 결과, `initial-plan`은 현재 진행 상태를 보여줍니다. 같은 작업을 다시 요청해도 자동으로 다음 페이지를 수집하지 않습니다. 다음 페이지는 현재 버전과 새 operation/idempotency 값을 사용한 명시 요청으로 진행합니다.
+
 위 계정·HEX·encoding·버전은 실제 조회 값으로 바꾸는 예시입니다. `inspect`는 저장된 UID 범위·해당 페이지의 관측 상한·로컬 저장 시각을 조회합니다. 미관측과 관측된 빈 메일함을 구분하며, UID 범위는 메일 건수나 현재 서버의 최신 상태를 뜻하지 않습니다. 기존 프로필에 새 권한이 없으면 명시 `clients refresh`와 보호 확인이 필요합니다. 한 번에 UID 폭 최대64를 관측하며 중복 요청은 기존 receipt만 반환합니다. `reconcile`은 이미 저장한 한 페이지의 FLAGS와 원격 부재 관측을 별도로 기록하고 원본 메일은 보존합니다. 다음 페이지도 새 명시 요청으로 진행하며, pass 완료는 시작 때 고정한 기존 페이지 묶음의 관측 완료만 뜻합니다. 종료 후 미완료 작업은 자동 재실행하지 않습니다. UIDVALIDITY가 바뀌면 `recover`로 새 식별 체계의 첫 페이지를 명시 수집합니다. 기존 원본·관측·작업 이력은 보존하고 cursor version은 계속 증가합니다. 복구 성공은 전체 mailbox 수집 완료가 아닙니다. 설정/세대/cursor 충돌은 무반영 실패하며 자동 reset하지 않습니다. 본문·첨부·전체 mailbox 목록과 실제 제공자 상호 운용성은 후속 구현/검증입니다. [공개 계약](docs/contracts/imap-uid-tools.md), [상태 대조 계약](docs/contracts/imap-uid-reconcile.md), [복구 계약](docs/contracts/imap-uid-recovery.md), [관측 요약 계약](docs/contracts/imap-uid-inspection.md), [진행 기록](docs/latest/PROGRESS.md)에 현재 증거와 남은 범위를 기록합니다.
 
 저장된 메일의 제목·발신자는 로컬 메타데이터 조회로 확인합니다. 처음 등록한 CLI나 기존 폴더/UID 권한은 헤더를 읽을 수 없습니다. 사용자가 `clients refresh`의 보호 확인에서 메타데이터 공개 범위를 명시적으로 허용한 뒤 사용할 수 있습니다.

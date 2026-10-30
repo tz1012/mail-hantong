@@ -11,6 +11,8 @@ use hantong_application::{
     render_account_list, render_folder_page, render_folder_refresh_receipt, render_uid_cursor,
     render_uid_receipt, validated_uid_mailbox,
 };
+use hantong_application::{render_initial_sync_plan, render_initial_sync_receipt};
+use hantong_contracts::initial_sync::{InitialSyncPlanRequest, InitialSyncRequest};
 use hantong_contracts::uid_reconcile::UidReconcileRequest;
 use hantong_contracts::uid_recovery::UidRecoveryRequest;
 use hantong_contracts::{
@@ -422,6 +424,44 @@ impl<'a, 'server> ExecutionContext for CoreExecutionAdapter<'a, 'server> {
     }
     fn finish_audit(&mut self, id: [u8; 32], terminal: AuditTerminal) -> Result<(), ErrorCode> {
         self.store.finish_audit(id, terminal)
+    }
+    fn read_initial_sync_status(
+        &mut self,
+        request: &UidPageStatusRequest,
+    ) -> Result<ReadResult<Value>, ErrorCode> {
+        let receipt = self
+            .store
+            .load_initial_sync_receipt(*self.connection.registration_id(), request)?;
+        ReadResult::new(render_initial_sync_receipt(&receipt), None)
+    }
+    fn read_initial_sync_plan(
+        &mut self,
+        request: &InitialSyncPlanRequest,
+    ) -> Result<ReadResult<Value>, ErrorCode> {
+        let plan = self
+            .store
+            .load_initial_sync_plan(*self.connection.registration_id(), request)?;
+        ReadResult::new(render_initial_sync_plan(&plan), None)
+    }
+    fn request_initial_sync(
+        &mut self,
+        id: [u8; 32],
+        request: &InitialSyncRequest,
+    ) -> Result<AuditHandoff<Value>, ErrorCode> {
+        use hantong_store::initial_sync::InitialSyncAdmission;
+        let worker = self.uid_worker.ok_or(ErrorCode::CoreUnavailable)?;
+        let admission = match durable_admission(worker.admit_initial(id, request)) {
+            Ok(value) => value,
+            Err(handoff) => return Ok(handoff),
+        };
+        match admission {
+            InitialSyncAdmission::Admitted(receipt)
+            | InitialSyncAdmission::Existing(receipt)
+            | InitialSyncAdmission::Failed(receipt) => Ok(AuditHandoff::response(
+                render_initial_sync_receipt(&receipt),
+            )),
+            InitialSyncAdmission::Rejected(error) => Ok(AuditHandoff::error(error)),
+        }
     }
 }
 
