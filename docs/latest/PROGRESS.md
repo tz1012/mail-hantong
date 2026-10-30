@@ -9,8 +9,8 @@
 | 항목 | 상태와 근거 |
 | --- | --- |
 | 기준 자료 | 사용자 승인으로 채택한 [Markdown 기준 요건](../requirements/README.md): 요건 170개·1단계 P0 144개·문장별 AC ID 341개. 작업 카드 정의 151개는 보존한다. |
-| 현재 카드 | **M2-03 폴더 공개 도구·v10 작업 원장**. Core worker·정책/감사·저장소·실제 IPC 연결과 전체 자동 회귀를 마쳤다. 다음 M2-04 UID 증분 동기화의 계약과 병렬 작업 경계를 준비한다. |
-| 최신 검증 | **892개 통과**(문서 29·빌드 도구 63·Rust 800). 전체 build/test/fmt/Clippy·의존/문서/추적 검사와 같은 소스의 Linux x86_64·macOS arm64 교차 Clippy 통과. 아래 폴더 v10 snapshot에 로그·hash가 있다. 실제 Mac 실행·전체 기능 완료를 뜻하지 않는다. |
+| 현재 카드 | **M2-04 UID 페이지 공개 연결 준비**. 공통 타입·private IMAP 전송·v11 cursor 저장의 전체 자동 검사와 독립 검토를 마쳤다. 공개 요청/CLI·권한 갱신·영속 작업을 다음 병렬 묶음으로 연결한다. |
+| 최신 검증 | **958개 통과**(문서 29·빌드 도구 63·Rust 866). 전체 build/test/fmt/Clippy·의존/문서/추적 검사와 같은 소스의 Linux x86_64·macOS arm64 교차 Clippy 통과. 아래 UID v11 snapshot에 로그·hash가 있다. 실제 Mac 실행·전체 기능 완료를 뜻하지 않는다. |
 | 제품 구현 | Rust workspace·영/한 CLI·Windows 코어/IPC·DPAPI·SQLCipher·설정 검증·감사·기본 등록/프로필·권한이 있는 계정 목록 조회·IMAP/SMTP TLS/AUTH probe·CI/추적 도구 구현. 신규 IMAP 설정·명시 재개와 기본 CLI 계정 범위 갱신의 보호 확인·중단 복구를 연결했다. 발송은 차단하며 실제 메일 수신·전체 GUI·설치 패키지는 미완료다. |
 | GitHub | 로컬 Git main 저장소를 초기화해 개발 기준선을 기록한다. 공개 저장소 주소·remote·릴리스·패키지 ID는 아직 없음. 빌드 산출물·실행 데이터·에이전트 상태는 제외한다. |
 | 새 사용자 요청 | 진행 상황을 이 문서에 누적하고, GitHub에서 명령어로 설치 및 개발을 시작할 수 있는 경로를 마련한다. 상세 범위는 [공개와 설치 계획](DISTRIBUTION.md)에 기록한다. |
@@ -19,7 +19,7 @@
 | 런타임 결정 | **코어·CLI Rust 확정** — 2026-10-29 사용자 선택, [ADR-001](../adr/ADR-001-core-runtime.md). 비교 실험에서 .NET은 프로세스 시작, Rust는 메모리에 유리했고 검색은 혼재했다. [실측 보고서](RUNTIME-BENCHMARK.md)는 보존하며 제품의 1초 목표는 아직 검증 전이다. |
 | Mac 지원 방향 | 사용자 승인으로 정식 후속 목표에 포함했다. Windows 우선 출시 후 Mac 코어·CLI·최소 승인 도우미부터 제공하고 전체 GUI를 후속 제공한다. 구체적인 단계·일정·패키지는 미정이며 현재 제품은 미구현이다. |
 | 공개 사용 정책 | **[LICENSE Version 1.0](../../LICENSE) 정식 채택** — 개인·회사 내부 업무용 사용, 수정본 비공개 및 원본·수정본 무료 재배포 허용. 프로그램 판매·유료 제공 금지. 고지 유지·수정 표시·보증과 책임 조항 포함. 저작권자는 **Andrew Cho**, 웹사이트 **https://tzt.kr**, 연락처 **andrew@tzt.kr**이다. [한국어 안내](LICENSING.md), [ADR-016](../adr/ADR-016-license.md). |
-| 다음 제품 작업 | 폴더 v10의 전체 회귀를 고정한 뒤 M2-04 UID 증분 동기화의 공통 타입·원자 cursor 저장·IMAP transport를 분리한다. root가 계약과 통합을 소유하고 구현과 교차 검토를 분리한다. |
+| 다음 제품 작업 | v11 기준선 다음으로 명시적인 단일 mailbox UID page 요청과 cursor/status 조회를 연결한다. 공개 계약/CLI·명시 scope 갱신·원자 job 저장을 병렬 배정하고 root가 migration/Core/통합을 소유한다. |
 
 ## 기능별 현재 상태
 
@@ -786,3 +786,29 @@ v9 DDL은 직전 커밋과 byte-normalized 대조로 고정했다. 9→10은 기
 `scripts/check_all.py` 종료 코드 **0**: **892개**(문서29·빌드 도구63·Rust800). Core **50개**, Store **213개**를 포함하여 전체 build/test/fmt/Clippy·아키텍처·기준 문서·추적 검사가 통과했다. 로그 `target/folder-v10-full-check.log`, SHA-256 `05005BFCDD8ADD5BD103D476FBAE9317CBB0DBCA49C8C7457DBF5AB8965BB237`, source hash `998a9125ee61725ca5b71a07b9ff441282648cf06daa258c79c2af897c27e999`. 같은 소스의 Linux x86_64/macOS arm64 all-target Clippy도 종료 코드 0(`target/folder-v10-linux-check.log`, `target/folder-v10-macos-check.log`)이다. 실제 Mac 실행 검증은 아니다.
 
 CNG 제품 키 **1개**, names hash `3B692D49F1D08F7D3442806CF17694CDC02AF36B44839930FC18EB9C83CE9D4D`로 유지됐다. 신규 의존성은 없다. 실제 사용자 Core/DB/profile/Hello/계정/메일은 실행하지 않았다. 계약·정책·감사 변경은 **[사람 검토 필요]**, 제품 전체 AC 완료는 **0개**다. 다음은 M2-04의 읽기 전용 UID 메타데이터 페이지·원자 cursor 저장이며, 기존 메시지 FLAGS/expunge 대조·UIDVALIDITY 재동기화·전체 메일 UI는 후속으로 구분한다.
+
+
+## 2026-10-30 UID 메타데이터 페이지와 v11 cursor (진행 중)
+
+폴더 연결은 로컬 커밋 `a946075`로 보존했다. [UID 페이지 계약](../contracts/imap-uid-page.md)을 먼저 작성하고, RFC3501/RFC4549·고정 io-imap0.7.1 근거와 별도 설계 검토를 거쳤다. Domain DTO, private IMAP transport, Store 저장/시험을 분리했으며 root는 DDL/migration과 통합을 맡는다. 초안에서 실제 통신·strict reader·DB 시험이 누락된 부분은 완료로 표시하지 않고 재배정·보완한다.
+
+범위는 EXAMINE→고정 폭64 UID의 metadata FETCH 한 번→EXAMINE 재검증이다. UIDVALIDITY 변화와 UIDNEXT 역행은 전체 페이지를 폐기한다. UID gaps/빈 페이지도 covered-through cursor를 전진시키며 본문/첨부나 기존 메일 FLAGS/expunge 대조·재동기화 완료를 주장하지 않는다. Message-ID와 sequence number는 identity로 쓰지 않는다. 공개 도구나 자동 실행은 아직 연결하지 않는다.
+
+Domain 초기 구현의 범위 밖 UID 허용·Recent 제거 전 입력 한도 누락을 실패 시험으로 확인했다(`target/uid-domain-review-red.log`). 별도 검토가 찾은 mixed-case INBOX 왕복 불일치·크기 오류 분류도 재현했다(`target/uid-domain-canonical-red.log`). canonical wire+encoding으로 identity를 고정하고 standalone metadata codec·NIL/empty/group/raw bytes 보존·비정규 JSON 거부 시험을 추가했다. Domain **53개 통과**(`target/uid-domain-canonical-green.log`), Clippy도 수정 후 통과(`target/uid-domain-clippy-fixed.log`).
+
+v11은 기존 v10 DDL을 고정하고 operation/cursor/message 세 표를 추가한다. 원자성·보존 migration 시험은 구현 전 3개 중2개 실패를 확인했다(`target/uid-v11-migration-red.log`). Python in-memory SQLite의 전체 DDL 대조에서 v10+incrementalDDL과 freshv11이 같고 FK 오류가 없었다. 메시지 operation 조회에는 전용 (operation_id,uid) covering index를 추가해 전체 메타데이터 스캔을 피한다. 이 대조는 제품 SQLCipher migration 시험을 대신하지 않는다.
+
+실제 격리 SQLCipher/DPAPI Store 시험 **19개를 작성**했고 실행은 전송 모듈 컴파일 연결 뒤 진행한다. 과거 receipt와 이후 cursor 보존, endpoint/계정/encoding/CAS, page+metadata hash와 원본 snapshot 연결, 세 표 쓰기 실패 rollback, quota·시계 역행·고아 replay를 포함한다. 현재 작성 개수는 통과 개수가 아니다. 제품 Store는 canonical metadata·cursor·operation을 한 Immediate transaction으로 적용하고, 시작 시에는 DDL/FK/개수만 검사하며 각 읽기/적용에서 해당 JSON/hash/연결을 검증한다.
+
+현재 전체 회귀·실제 전송 통합 시험은 아직 미완료다. 최신 전체 **892개** 증거는 v10 기준선이며 이 v11 변경의 완료 증거가 아니다. 실제 사용자 DB·계정·메일·Hello와 외부 공개는 실행하지 않는다. 계약·Secrets·저장 보안은 **[사람 검토 필요]**다.
+
+
+### UID v11 최종 자동 검증 snapshot
+
+실제 격리 SQLCipher/DPAPI UID 저장 시험 **21개**가 통과했다. 초기 19개는 fixture의 중복 synthetic login을 수정한 뒤 통과했고, 독립 검토가 지적한 삭제된 metadata 행과 정상 UID gap 구분을 2개 회귀로 보완했다(`target/uid-store-missing-row-red.log`, `target/uid-store-missing-row-green.log`). 관측 범위의 누락은 covering operation snapshot과 자식 행으로 대조한다. 새 coverage index는 fresh/migration DDL에 동일하게 포함된다. 전체 Store **237개**가 통과했다.
+
+Private IMAP UID 전송/경계 시험 **32개**가 통과했다. finite UID 범위, 단일/상한 근처 UID, EXAMINE 재검증, TLS/STARTTLS, UTF-8 mailbox literal, 총 8MiB·30초 deadline·취소와 hostile 응답을 검사했다. pinned codec의 상한 근처 `*` 변환은 좁은 typed command 검증으로 보완했다. literal 마지막 CR 뒤의 LF가 panic을 유발하는 독립 검토 지적을 실제 RED로 재현하고 boundary 검사로 수정했다(`target/uid-literal-newline-red.log`, `target/uid-literal-newline-green.log`). 최종 별도 정적 재검토에 잔여 HIGH/MEDIUM은 없었다.
+
+`scripts/check_all.py` 종료 코드 **0**: **958개**(문서29·빌드 도구63·Rust866). 전체 build/test/fmt/Clippy·아키텍처·문서·추적 검사 통과. 로그 `target/uid-v11-full-check.log`, SHA-256 `8FFFA26D92BEA4B9265F2D15CEAB12DEEE34C66BEDB8B8EED8C831DF2F41AE61`, source hash `c164b5247171a129c755d81541c343fc565e391cd1c1cd6845e77e2287ed3431`. 같은 소스의 Linux x86_64/macOS arm64 all-target Clippy 종료 코드0(`target/uid-v11-linux-check.log`, `target/uid-v11-macos-check.log`). 실제 Mac 실행은 아니다.
+
+CNG 제품 키 **1개**, names hash `3B692D49F1D08F7D3442806CF17694CDC02AF36B44839930FC18EB9C83CE9D4D` 유지. 새 의존성 없음. 실제 사용자 DB/Core/profile/Hello/계정/메일은 사용하지 않았다. Store와 transport는 각각 실제 구현의 격리 fixture로 확인했으며 공개 sync 요청부터의 종단 연결은 후속이다. 기존 FLAGS/expunge 대조·UIDVALIDITY 복구·본문/첨부·메일 UI도 남아 있다. **[사람 검토 필요]**, 전체 제품 AC 완료 **0개**를 유지한다.

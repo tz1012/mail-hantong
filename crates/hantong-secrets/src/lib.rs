@@ -18,7 +18,7 @@ mod mail_transport;
 mod protected_input;
 mod smtp_probe;
 pub use database::{DatabaseError, KeyedConnection};
-pub use imap_probe::{ImapCapabilities, ImapProbeReceipt};
+pub use imap_probe::{ImapCapabilities, ImapProbeReceipt, ImapUidPageError};
 pub use protected_input::{ImapPasswordCapturePlan, PasswordInput, PendingImapCredential};
 pub use smtp_probe::{MailProbeError, SmtpProbeReceipt};
 

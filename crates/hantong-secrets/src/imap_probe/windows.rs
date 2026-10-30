@@ -1,9 +1,11 @@
+use super::ImapUidPageError;
 use super::list_gate::{ListGate, ListReply, RawMailbox};
 use super::{
     gate::{GateMode, ReplyKind, StrictResponseGate},
     *,
 };
 use crate::{SensitiveBuffer, mail_transport::BoundedAsyncStream};
+use hantong_domain::imap_sync::{ImapUidPage, ImapUidPageRequest};
 use hantong_domain::mail_connection::{Authentication, TlsMode};
 use hantong_domain::mailboxes::{
     ImapMailboxDescriptor, ImapMailboxName, ImapMailboxSnapshot, MailboxChildren, MailboxEncoding,
@@ -27,6 +29,9 @@ use tokio::{
     time::timeout,
 };
 use tokio_rustls::TlsConnector;
+
+#[path = "uid_page_driver.rs"]
+mod uid_page_driver;
 
 pub(super) struct Source<'a> {
     pub(super) store: &'a SecretStore,
@@ -64,19 +69,21 @@ pub(super) async fn probe(
     }
 }
 #[derive(Clone, Copy)]
-enum ReadOperation {
+enum ReadOperation<'a> {
     Probe,
     Mailboxes,
+    UidPage(&'a ImapUidPageRequest),
 }
 enum ReadReceipt {
     Probe(ImapProbeReceipt),
     Mailboxes(ImapMailboxSnapshot),
+    UidPage(Result<ImapUidPage, ImapUidPageError>),
 }
 async fn connect(
     store: &SecretStore,
     account: &str,
     endpoint: &ImapEndpointConfig,
-    operation: ReadOperation,
+    operation: ReadOperation<'_>,
 ) -> Result<ReadReceipt, MailProbeError> {
     with_deadline(async {
         let tls = Arc::new(
@@ -126,6 +133,47 @@ pub(super) async fn discover(
     match connect(store, account, endpoint, ReadOperation::Mailboxes).await? {
         ReadReceipt::Mailboxes(receipt) => Ok(receipt),
         _ => Err(MailProbeError::Protocol),
+    }
+}
+
+pub(super) async fn fetch_uid_page(
+    store: &SecretStore,
+    request: &ImapUidPageRequest,
+    endpoint: &ImapEndpointConfig,
+) -> Result<ImapUidPage, ImapUidPageError> {
+    match connect(
+        store,
+        request.account_id(),
+        endpoint,
+        ReadOperation::UidPage(request),
+    )
+    .await?
+    {
+        ReadReceipt::UidPage(page) => page,
+        _ => Err(MailProbeError::Protocol.into()),
+    }
+}
+
+#[cfg(test)]
+pub(super) async fn run_uid_connected<S>(
+    source: Source<'_>,
+    stream: S,
+    tls: Arc<ClientConfig>,
+    request: &ImapUidPageRequest,
+) -> Result<ImapUidPage, ImapUidPageError>
+where
+    S: AsyncRead + AsyncWrite + Send + Unpin + 'static,
+{
+    match with_deadline(run_operation(
+        source,
+        stream,
+        tls,
+        ReadOperation::UidPage(request),
+    ))
+    .await?
+    {
+        ReadReceipt::UidPage(page) => page,
+        _ => Err(MailProbeError::Protocol.into()),
     }
 }
 
@@ -452,15 +500,22 @@ async fn run_operation<S>(
     source: Source<'_>,
     stream: S,
     tls: Arc<ClientConfig>,
-    operation: ReadOperation,
+    operation: ReadOperation<'_>,
 ) -> Result<ReadReceipt, MailProbeError>
 where
     S: AsyncRead + AsyncWrite + Send + Unpin + 'static,
 {
     validate_account(source.account).map_err(|_| MailProbeError::InvalidAccount)?;
+    if let ReadOperation::UidPage(request) = operation
+        && (source.account != request.account_id()
+            || source.endpoint.settings_version() != request.endpoint_version())
+    {
+        return Ok(ReadReceipt::UidPage(Err(ImapUidPageError::CursorInvalid)));
+    }
     let (wire_limit, plaintext_limit) = match operation {
         ReadOperation::Probe => (256 * 1024, 256 * 1024),
         ReadOperation::Mailboxes => (4 * 1024 * 1024, 2 * 1024 * 1024),
+        ReadOperation::UidPage(_) => (16 * 1024 * 1024, 8 * 1024 * 1024),
     };
     // Prefetch remains BELOW TLS, including bytes following STARTTLS OK.
     let mut plain = Protocol {
@@ -481,6 +536,7 @@ where
         plain.command("h2", CommandBody::StartTLS).await?;
         plain.finish(GateMode::StartTls, "h2", &mut 32).await?;
     }
+    let plain_consumed = wire_limit - plain.remaining;
     let secure = TlsConnector::from(tls)
         .connect(
             ServerName::try_from(source.endpoint.host().to_owned())
@@ -492,7 +548,11 @@ where
     let mut verified = Protocol {
         io: BufReader::new(BoundedAsyncStream::with_limit(secure, plaintext_limit)),
         written: plain.written,
-        remaining: plaintext_limit,
+        remaining: if matches!(operation, ReadOperation::UidPage(_)) {
+            plaintext_limit.saturating_sub(plain_consumed)
+        } else {
+            plaintext_limit
+        },
     };
     if source.endpoint.tls() == TlsMode::ImplicitTls
         && !matches!(
@@ -529,6 +589,20 @@ where
             )
             .map_err(|_| MailProbeError::Protocol)?;
             (ReadReceipt::Mailboxes(snapshot), "h7")
+        }
+        ReadOperation::UidPage(request) => {
+            let encoding = if has(&caps, "IMAP4REV2") && !has(&caps, "IMAP4REV1") {
+                MailboxEncoding::Utf8
+            } else {
+                MailboxEncoding::ModifiedUtf7
+            };
+            let page = verified.uid_page(request, encoding).await;
+            if page.is_err() {
+                // Any failed exchange drops the connection; never retry or
+                // return metadata collected before the failure.
+                return Ok(ReadReceipt::UidPage(page));
+            }
+            (ReadReceipt::UidPage(page), "h9")
         }
     };
     verified.command(logout_tag, CommandBody::Logout).await?;

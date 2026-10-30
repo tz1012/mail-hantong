@@ -1,5 +1,11 @@
 # ADR-006 메일 연결 모델과 전송 라이브러리
 
+## 2026-10-30 UID metadata FETCH의 유한 범위 보존
+
+M2-04의 좁은 읽기 전용 전송은 [UID 페이지 계약](../contracts/imap-uid-page.md)을 따른다. Cargo.lock에 고정된 imap-codec 2.0.0-alpha.9의 `src/codec/encode.rs` sequence-set encoder와 imap-types 2.0.0-alpha.7의 `src/sequence.rs` 정규화에서 단일 범위 축약과 상한 근처 `*` 변환을 확인했다. 페이지 시작 시 관측한 UIDNEXT ceiling을 유지하려면 이 정규화 결과를 그대로 보낼 수 없다.
+
+제품은 typed 고정 FETCH 인코딩의 prefix/suffix를 검사한 뒤 검증된 UID token만 유한 십진수 범위로 복원하고, 전체 decode/typed equality/잔여 bytes 없음/별표 없음 검사를 거친다. 의존성 fork·새 의존성·임의 명령 API는 추가하지 않는다. 단일 UID와 최대값 근처의 in-memory TLS 회귀 시험으로 실제 전송 bytes를 확인한다. 라이브러리 갱신 시 이 보완의 필요성과 범위 보존을 다시 검증한다. 제한된 EXAMINE/FETCH 응답 문법이므로 모든 제공자 상호 운용성을 보장하지 않는다.
+
 상태: 2026-10-30 순수 연결 설정 모델·TLS 원칙 채택. 분리 실험의 Rust 1.95 호환성과 in-memory TLS/AUTH 시험을 바탕으로 SMTP/직접 TLS 의존성을 Windows Secrets에 통합한다. IMAP/MIME 제품 의존성은 후속이다. 사람 보안 검토 필요.
 
 M2-01의 설정은 네트워크·OS에 의존하지 않는 `hantong-domain`에 두고 기존 serde/serde_json만 사용한다. 연결 설정의 JSON 경계·크기·TLS enum은 [연결 계약](../contracts/mail-connection.md)을 따른다. host/login/authentication은 IMAP·SMTP별로 독립 저장하며 TLS를 끄는 값은 제공하지 않는다. 설정 객체는 SecretHandle·토큰·비밀번호를 포함하지 않는다.

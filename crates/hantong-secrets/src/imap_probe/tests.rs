@@ -176,11 +176,22 @@ async fn server(
     server_with_list(stream, implicit, mode, log, None).await
 }
 async fn server_with_list(
+    stream: DuplexStream,
+    implicit: bool,
+    mode: Mode,
+    log: Transcript,
+    list: Option<Vec<u8>>,
+) -> io::Result<()> {
+    server_with_operations(stream, implicit, mode, log, list, None).await
+}
+type Script = Vec<(Vec<u8>, Vec<u8>)>;
+async fn server_with_operations(
     mut stream: DuplexStream,
     implicit: bool,
     mode: Mode,
     log: Transcript,
     list: Option<Vec<u8>>,
+    script: Option<Script>,
 ) -> io::Result<()> {
     if mode == Mode::Stall {
         tokio::time::sleep(Duration::from_secs(20)).await;
@@ -310,6 +321,19 @@ async fn server_with_list(
     }
     assert_eq!(cmd, b"h5 CAPABILITY\r\n");
     cap_reply(&mut wire, "h5", mode).await?;
+    if let Some(script) = script {
+        for (expected, reply) in script {
+            let command = read_command(&mut wire, &log).await?;
+            if command.is_empty() {
+                return Ok(());
+            }
+            assert_eq!(command, expected);
+            wire.get_mut().write_all(&reply).await?;
+            wire.get_mut().flush().await?;
+        }
+        assert!(read_command(&mut wire, &log).await?.is_empty());
+        return Ok(());
+    }
     let mut logout = read_command(&mut wire, &log).await?;
     if mode == Mode::RejectPostAuthCapability {
         assert!(logout.is_empty());
@@ -345,6 +369,8 @@ async fn server_with_list(
 
 #[path = "discovery_tests.rs"]
 mod discovery;
+#[path = "uid_page_tests.rs"]
+mod uid_page;
 async fn run(
     implicit: bool,
     mode: Mode,
