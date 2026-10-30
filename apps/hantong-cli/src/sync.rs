@@ -1,12 +1,15 @@
 //! CLI syntax for one explicitly requested UID metadata page.
 use crate::{ErrorCode, Lang, emit_error, resource};
+use hantong_contracts::uid_inspection::UidInspectionSnapshot;
 use hantong_contracts::uid_page::*;
 use hantong_contracts::uid_reconcile::{UidReconcileReceipt, UidReconcileRequest};
 use hantong_contracts::uid_recovery::{UidRecoveryReceipt, UidRecoveryRequest};
+use hantong_ipc_client::uid_inspection as inspection_client;
 use hantong_ipc_client::uid_page as client;
 use hantong_ipc_client::uid_reconcile as reconcile_client;
 use hantong_ipc_client::uid_recovery as recovery_client;
 pub(super) enum Action {
+    Inspect(UidCursorRequest),
     Cursor(UidCursorRequest),
     Page(UidPageRequest),
     Status(UidPageStatusRequest),
@@ -16,6 +19,7 @@ pub(super) enum Action {
     RecoverStatus(UidPageStatusRequest),
 }
 pub(super) enum ResultValue {
+    Inspection(UidInspectionSnapshot),
     Cursor(UidCursorSnapshot),
     Receipt(UidPageReceipt),
     ReconcileReceipt(UidReconcileReceipt),
@@ -23,6 +27,9 @@ pub(super) enum ResultValue {
 }
 pub(super) fn real_action(action: Action) -> Result<ResultValue, ErrorCode> {
     match action {
+        Action::Inspect(request) => {
+            inspection_client::inspect_default(request).map(ResultValue::Inspection)
+        }
         Action::Cursor(request) => client::cursor_default(request).map(ResultValue::Cursor),
         Action::Status(request) => client::status_default(request).map(ResultValue::Receipt),
         Action::ReconcileStatus(request) => {
@@ -87,7 +94,7 @@ fn parse(command: &[String], options: &[(String, String)]) -> Result<Action, Err
     }
     let get = |key: &str| values.get(key).copied().ok_or(ErrorCode::InvalidInput);
     let allowed: &[&str] = match command[1].as_str() {
-        "cursor" => &["--account", "--wire-hex", "--encoding"],
+        "cursor" | "inspect" => &["--account", "--wire-hex", "--encoding"],
         "page" | "reconcile" | "recover" => &[
             "--account",
             "--wire-hex",
@@ -126,6 +133,9 @@ fn parse(command: &[String], options: &[(String, String)]) -> Result<Action, Err
     )?;
     if command[1] == "cursor" {
         return UidCursorRequest::new(account, mailbox).map(Action::Cursor);
+    }
+    if command[1] == "inspect" {
+        return UidCursorRequest::new(account, mailbox).map(Action::Inspect);
     }
     if command[1] == "reconcile" {
         return UidReconcileRequest::new(
@@ -174,9 +184,18 @@ pub(super) fn run(
         Err(e) => return emit_error(e, lang, json),
     };
     let cursor = matches!(&request, Action::Cursor(_));
+    let inspection = matches!(&request, Action::Inspect(_));
     let reconcile = matches!(&request, Action::Reconcile(_) | Action::ReconcileStatus(_));
     let recovery = matches!(&request, Action::Recover(_) | Action::RecoverStatus(_));
     match action(request) {
+        Ok(ResultValue::Inspection(value)) if inspection => {
+            if json {
+                println!("{}", inspection_client::inspection_json(&value))
+            } else {
+                print!("{}", inspection_human(&value, lang))
+            }
+            0
+        }
         Ok(ResultValue::Cursor(value)) if cursor => {
             if json {
                 println!("{}", client::cursor_json(&value))
@@ -185,7 +204,7 @@ pub(super) fn run(
             }
             0
         }
-        Ok(ResultValue::Receipt(value)) if !cursor && !reconcile && !recovery => {
+        Ok(ResultValue::Receipt(value)) if !cursor && !inspection && !reconcile && !recovery => {
             if json {
                 println!("{}", client::receipt_json(&value))
             } else {
@@ -233,6 +252,63 @@ fn cursor_human(value: &UidCursorSnapshot, lang: Lang) -> String {
             }
         )
     )
+}
+fn inspection_human(value: &UidInspectionSnapshot, lang: Lang) -> String {
+    let mut out = format!(
+        "{}\n{}: {}\n{}: {}\n",
+        resource(lang, "sync_inspection"),
+        resource(lang, "sync_catalog_generation"),
+        value.catalog_generation(),
+        resource(lang, "sync_binding"),
+        resource(
+            lang,
+            if value.binding_current() {
+                "sync_current"
+            } else {
+                "sync_stale"
+            }
+        )
+    );
+    if let Some(observation) = value.observation() {
+        let range = if observation.covered_through_uid() == 0 {
+            resource(lang, "sync_inspection_empty").to_owned()
+        } else {
+            format!("1..{}", observation.covered_through_uid())
+        };
+        out.push_str(&format!(
+            "{}: {range}\n",
+            resource(lang, "sync_inspection_range")
+        ));
+        for (key, number) in [
+            (
+                "sync_inspection_ceiling",
+                u64::from(observation.observed_uid_ceiling()),
+            ),
+            ("sync_recovery_epoch", observation.epoch_generation()),
+            ("sync_cursor_version", observation.cursor_version()),
+        ] {
+            out.push_str(&format!("{}: {number}\n", resource(lang, key)));
+        }
+        out.push_str(&format!(
+            "{}: {}\n",
+            resource(lang, "sync_inspection_stored_at"),
+            observation.stored_at_utc_ms()
+        ));
+        out.push_str(resource(
+            lang,
+            if observation.coverage_at_observed_ceiling() {
+                "sync_inspection_at_ceiling"
+            } else {
+                "sync_inspection_below_ceiling"
+            },
+        ));
+    } else {
+        out.push_str(resource(lang, "sync_inspection_unobserved"));
+    }
+    out.push('\n');
+    out.push_str(resource(lang, "sync_inspection_scope"));
+    out.push('\n');
+    out
 }
 fn receipt_human(value: &UidPageReceipt, lang: Lang) -> String {
     let state = match value.state() {

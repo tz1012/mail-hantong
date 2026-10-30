@@ -22,7 +22,7 @@ pub use tool_request::{
 };
 mod uid_page_response;
 pub use uid_page_response::{
-    render_uid_cursor, render_uid_receipt, render_uid_reconcile_receipt,
+    render_uid_cursor, render_uid_inspection, render_uid_receipt, render_uid_reconcile_receipt,
     render_uid_recovery_receipt, validated_uid_mailbox,
 };
 

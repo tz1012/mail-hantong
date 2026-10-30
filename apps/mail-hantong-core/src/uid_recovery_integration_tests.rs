@@ -171,6 +171,7 @@ pub(super) async fn run_scenarios(
             ErrorCode::ScopeDenied,
         );
         error(&h.rpc("mail.sync.page",json!({"action":"recover-status","account_id":"account_a","execution_id":"01".repeat(32)})).await,ErrorCode::ScopeDenied);
+        error(&h.rpc("mail.sync.page",json!({"action":"inspect","account_id":"account_a","wire_hex":"494e424f58","encoding":"modified_utf7"})).await,ErrorCode::ScopeDenied);
     }
     let fixture = PolicyStoreFixture::new(server, client.public_key().unwrap()).unwrap();
     fixture.mutate(PolicyFixtureMutation::AllowUidPage).unwrap();
@@ -217,7 +218,44 @@ pub(super) async fn run_scenarios(
     let name = ImapMailboxName::from_wire(b"INBOX", MailboxEncoding::ModifiedUtf7).unwrap();
     {
         let flow = async {
+            let unobserved = h.inspect().await;
+            assert!(unobserved.observation().is_none());
+            assert!(unobserved.binding_current());
+            assert_eq!(unobserved.catalog_generation(), 1);
+            assert_eq!(
+                (
+                    append_calls.get(),
+                    reconcile_calls.get(),
+                    recovery_calls.get()
+                ),
+                (0, 0, 0)
+            );
+            assert_eq!(shared.get(), None);
+            error(&h.rpc("mail.sync.page",json!({"action":"inspect","account_id":"account_b","wire_hex":"494e424f58","encoding":"modified_utf7"})).await,ErrorCode::ScopeDenied);
             h.append_complete("recovery-old-page", 0).await;
+            let old_inspection = h.inspect().await;
+            let observed = old_inspection.observation().unwrap();
+            assert_eq!(
+                (
+                    observed.cursor_version(),
+                    observed.epoch_generation(),
+                    observed.covered_through_uid(),
+                    observed.observed_uid_ceiling()
+                ),
+                (1, 1, 64, 129)
+            );
+            assert!(!observed.coverage_at_observed_ceiling());
+            assert_eq!(
+                observed.stored_at_utc_ms(),
+                store
+                    .load_imap_uid_cursor("account_a", &name)
+                    .unwrap()
+                    .unwrap()
+                    .stored_at_utc_ms()
+            );
+            assert_eq!(append_calls.get(), 1);
+            assert_eq!(shared.get(), None);
+
             let old_source = store
                 .load_imap_uid_metadata("account_a", &name, 7, 1)
                 .unwrap()
@@ -238,6 +276,9 @@ pub(super) async fn run_scenarios(
                 UidPageState::Unresolved
             );
             assert_eq!(h.recover(&first_request).await.execution_id(), &id);
+            // A local read keeps the already-owned network permit and never invokes a provider.
+            assert_eq!(h.inspect().await, old_inspection);
+            assert_eq!(shared.get(), Some(id));
             assert_eq!(recovery_calls.get(), 1);
             assert_eq!(
                 h.page(&request("append-during-recovery", 1, 1))
@@ -292,6 +333,28 @@ pub(super) async fn run_scenarios(
                 (2, 2, 10, 2)
             );
             assert_eq!(h.cursor().await.cursor_version(), 2);
+            let recovered_inspection = h.inspect().await;
+            let observed = recovered_inspection.observation().unwrap();
+            assert_eq!(
+                (
+                    observed.cursor_version(),
+                    observed.epoch_generation(),
+                    observed.covered_through_uid(),
+                    observed.observed_uid_ceiling()
+                ),
+                (2, 2, 10, 10)
+            );
+            assert!(observed.coverage_at_observed_ceiling());
+            assert_eq!(
+                (
+                    append_calls.get(),
+                    reconcile_calls.get(),
+                    recovery_calls.get()
+                ),
+                (1, 1, 1)
+            );
+            assert_eq!(shared.get(), None);
+
             let current = store
                 .load_imap_uid_cursor("account_a", &name)
                 .unwrap()
@@ -366,7 +429,14 @@ pub(super) async fn run_scenarios(
             active_validity.set(11);
             let changing = h.recover(&recovery_request("recovery-cancel", 1, 3)).await;
             entered.notified().await;
+            let before_catalog = h.inspect().await;
             catalog(&store, 1);
+            let after_catalog = h.inspect().await;
+            assert_eq!(after_catalog.catalog_generation(), 2);
+            assert!(after_catalog.binding_current());
+            assert_eq!(after_catalog.observation(), before_catalog.observation());
+            assert_eq!(recovery_calls.get(), 2);
+
             assert_eq!(
                 h.recovery_terminal(*changing.execution_id()).await.error(),
                 Some(ErrorCode::Conflict)

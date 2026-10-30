@@ -331,6 +331,39 @@
               }
             }
           }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "action",
+            "account_id",
+            "wire_hex",
+            "encoding"
+          ],
+          "properties": {
+            "action": {
+              "const": "inspect"
+            },
+            "account_id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[A-Za-z0-9_-]+$"
+            },
+            "wire_hex": {
+              "type": "string",
+              "minLength": 2,
+              "maxLength": 2048,
+              "pattern": "^(?:[0-9a-f]{2})+$"
+            },
+            "encoding": {
+              "enum": [
+                "modified_utf7",
+                "utf8"
+              ]
+            }
+          }
         }
       ]
     }

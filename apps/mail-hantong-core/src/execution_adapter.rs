@@ -222,6 +222,13 @@ impl<'a, 'server> ExecutionContext for CoreExecutionAdapter<'a, 'server> {
         }
     }
 
+    fn read_uid_inspection(
+        &mut self,
+        request: &UidCursorRequest,
+    ) -> Result<ReadResult<Value>, ErrorCode> {
+        let snapshot = self.store.inspect_imap_uid(request)?;
+        ReadResult::new(hantong_application::render_uid_inspection(&snapshot), None)
+    }
     fn read_uid_cursor(
         &mut self,
         request: &UidCursorRequest,

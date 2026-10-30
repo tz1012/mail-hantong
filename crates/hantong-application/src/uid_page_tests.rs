@@ -1,6 +1,71 @@
 use crate::ToolRequest;
 use hantong_contracts::{ErrorCode, audit::AuditTool};
 use serde_json::{Value, json};
+
+#[test]
+fn sync02_inspection_renderer_preserves_absent_empty_and_sparse_observations() {
+    use hantong_contracts::{
+        uid_inspection::{UidInspectionSnapshot, UidObservationSummary},
+        uid_page::{UidMailboxEncoding, UidMailboxIdentity},
+    };
+    let mailbox = UidMailboxIdentity::new("494e424f58", UidMailboxEncoding::ModifiedUtf7).unwrap();
+    for observation in [
+        None,
+        Some(UidObservationSummary::new(1, 1, 0, 0, 1).unwrap()),
+        Some(UidObservationSummary::new(3, 2, 64, 500, 1767225600000).unwrap()),
+    ] {
+        let snapshot =
+            UidInspectionSnapshot::new("acct", mailbox.clone(), 4, false, observation.clone())
+                .unwrap();
+        let actual = crate::render_uid_inspection(&snapshot);
+        let nested = observation.map(|v| json!({"cursor_version":v.cursor_version(),"epoch_generation":v.epoch_generation(),"covered_through_uid":v.covered_through_uid(),"observed_uid_ceiling":v.observed_uid_ceiling(),"stored_at_utc_ms":v.stored_at_utc_ms(),"coverage_at_observed_ceiling":v.coverage_at_observed_ceiling()}));
+        assert_eq!(
+            actual,
+            json!({"schema_version":1,"ok":true,"account_id":"acct","wire_hex":"494e424f58","encoding":"modified_utf7","catalog_generation":4,"binding_current":false,"observation":nested})
+        );
+    }
+}
+
+#[test]
+fn sync02_inspection_accepts_only_canonical_read_identity() {
+    let p = json!({"action":"inspect","account_id":"acct","wire_hex":"494e424f58","encoding":"modified_utf7"});
+    let parsed = ToolRequest::validate(&envelope(p.clone())).unwrap();
+    assert_eq!(parsed.tool(), AuditTool::SyncPage);
+    assert_eq!(parsed.account_ids(), ["acct"]);
+    for field in ["action", "account_id", "wire_hex", "encoding"] {
+        let mut invalid = p.clone();
+        invalid.as_object_mut().unwrap().remove(field);
+        assert_eq!(
+            ToolRequest::validate(&envelope(invalid)),
+            Err(ErrorCode::InvalidInput)
+        );
+        for value in [Value::Null, json!(1), json!(false), json!([])] {
+            let mut invalid = p.clone();
+            invalid[field] = value;
+            assert_eq!(
+                ToolRequest::validate(&envelope(invalid)),
+                Err(ErrorCode::InvalidInput)
+            );
+        }
+    }
+    for (field, value) in [
+        ("account_id", json!("")),
+        ("wire_hex", json!("696e626f78")),
+        ("wire_hex", json!("494E424F58")),
+        ("encoding", json!("UTF8")),
+        ("operation_id", json!("op")),
+        ("expected_cursor_version", json!(1)),
+        ("uid_validity", json!(9)),
+        ("approved", json!(true)),
+    ] {
+        let mut invalid = p.clone();
+        invalid[field] = value;
+        assert_eq!(
+            ToolRequest::validate(&envelope(invalid)),
+            Err(ErrorCode::InvalidInput)
+        );
+    }
+}
 fn envelope(params: Value) -> Value {
     json!({"schema_version":1,"request_id":"uid-test","tool":"mail.sync.page","params":params})
 }

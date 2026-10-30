@@ -1,4 +1,128 @@
 use super::*;
+
+fn inspection_args() -> Vec<&'static str> {
+    vec![
+        "sync",
+        "inspect",
+        "--account",
+        "acct",
+        "--wire-hex",
+        "494e424f58",
+        "--encoding",
+        "modified_utf7",
+    ]
+}
+
+#[test]
+fn cli01_inspection_dispatches_one_read_and_distinguishes_absent_from_empty() {
+    use hantong_contracts::uid_inspection::UidObservationSummary;
+    let mailbox = UidMailboxIdentity::new("494e424f58", UidMailboxEncoding::ModifiedUtf7).unwrap();
+    for observation in [
+        None,
+        Some(UidObservationSummary::new(1, 1, 0, 0, 1).unwrap()),
+        Some(UidObservationSummary::new(3, 2, 64, 500, 1767225600000).unwrap()),
+    ] {
+        let snapshot =
+            UidInspectionSnapshot::new("acct", mailbox.clone(), 4, true, observation).unwrap();
+        for flags in [vec![], vec!["--lang", "ko", "--no-input", "--json"]] {
+            let mut args = inspection_args();
+            args.extend(flags);
+            let mut calls = 0;
+            assert_eq!(
+                invoke(args, |action| {
+                    calls += 1;
+                    let Action::Inspect(request) = action else {
+                        panic!("one inspection expected")
+                    };
+                    assert_eq!(request.account_id(), "acct");
+                    assert_eq!(request.mailbox(), &mailbox);
+                    Ok(ResultValue::Inspection(snapshot.clone()))
+                }),
+                0
+            );
+            assert_eq!(calls, 1);
+        }
+        let en = inspection_human(&snapshot, Lang::En);
+        let ko = inspection_human(&snapshot, Lang::Ko);
+        assert!(en.contains("Catalog generation: 4"));
+        assert!(ko.contains("폴더 목록 세대: 4"));
+        assert!(en.contains("Binding: Current"));
+        assert!(ko.contains("현재 설정과 일치"));
+        assert!(!en.contains("complete"));
+        assert!(!ko.contains("완료"));
+        if let Some(value) = snapshot.observation() {
+            assert!(en.contains(&format!(
+                "Local stored time (UTC milliseconds): {}",
+                value.stored_at_utc_ms()
+            )));
+            assert!(ko.contains(&format!(
+                "로컬 저장 시각(UTC 밀리초): {}",
+                value.stored_at_utc_ms()
+            )));
+            assert!(en.contains(&format!(
+                "Observed UID ceiling: {}",
+                value.observed_uid_ceiling()
+            )));
+            if value.covered_through_uid() == 0 {
+                assert!(en.contains("Stored UID range: empty"));
+                assert!(ko.contains("저장된 UID 범위: 비어 있음"));
+            } else {
+                assert!(en.contains("Stored UID range: 1..64"));
+                assert!(ko.contains("저장된 UID 범위: 1..64"));
+                assert!(en.contains("Mailbox identity generation: 2"));
+                assert!(en.contains("Cursor version: 3"));
+            }
+        } else {
+            assert!(en.contains("No stored UID observation."));
+            assert!(ko.contains("저장된 UID 관측 정보가 없습니다."));
+            assert!(!en.contains("Local stored time"));
+        }
+    }
+    let wrong = UidPageReceipt::new(
+        "acct",
+        [1; 32],
+        UidPageState::Unresolved,
+        None,
+        None,
+        None,
+        None,
+    )
+    .unwrap();
+    assert_eq!(
+        invoke(inspection_args(), |_| Ok(ResultValue::Receipt(
+            wrong.clone()
+        ))),
+        ErrorCode::InternalError.exit_code()
+    );
+    let stale = UidInspectionSnapshot::new("acct", mailbox, 1, false, None).unwrap();
+    assert!(inspection_human(&stale, Lang::En).contains("Binding: Stale"));
+    assert!(inspection_human(&stale, Lang::Ko).contains("설정 재확인 필요"));
+}
+#[test]
+fn cli01_inspection_requires_only_explicit_mailbox_identity() {
+    let command = vec!["sync".into(), "inspect".into()];
+    let options = vec![
+        ("--account".into(), "acct".into()),
+        ("--wire-hex".into(), "494e424f58".into()),
+        ("--encoding".into(), "utf8".into()),
+    ];
+    assert!(parse(&command, &options).is_ok());
+    for missing in 0..3 {
+        let mut invalid = options.clone();
+        invalid.remove(missing);
+        assert!(parse(&command, &invalid).is_err());
+    }
+    for extra in [
+        "--account",
+        "--operation-id",
+        "--expected-cursor-version",
+        "--uid-validity",
+    ] {
+        let mut invalid = options.clone();
+        invalid.push((extra.into(), "1".into()));
+        assert!(parse(&command, &invalid).is_err());
+    }
+}
 #[test]
 fn cli01_recovery_syntax_is_explicit_and_rejects_zero_cursor() {
     let command = vec!["sync".into(), "recover".into()];

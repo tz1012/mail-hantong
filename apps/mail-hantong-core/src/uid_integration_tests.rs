@@ -157,6 +157,12 @@ impl Harness<'_> {
         let raw=self.rpc("mail.sync.page",json!({"action":"status","account_id":"account_a","execution_id":hantong_contracts::wire_hex::encode(&id)})).await;
         parse_status_receipt(&raw, "uid-call", &request).unwrap()
     }
+    async fn inspect(&mut self) -> hantong_contracts::uid_inspection::UidInspectionSnapshot {
+        let request = UidCursorRequest::new("account_a", mailbox()).unwrap();
+        let raw = self.rpc("mail.sync.page", json!({"action":"inspect","account_id":"account_a","wire_hex":"494e424f58","encoding":"modified_utf7"})).await;
+        hantong_ipc_client::uid_inspection::parse_inspection_snapshot(&raw, "uid-call", &request)
+            .unwrap()
+    }
     async fn cursor(&mut self) -> UidCursorSnapshot {
         let request = UidCursorRequest::new("account_a", mailbox()).unwrap();
         let raw=self.rpc("mail.sync.page",json!({"action":"cursor","account_id":"account_a","wire_hex":"494e424f58","encoding":"modified_utf7"})).await;

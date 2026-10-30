@@ -49,6 +49,7 @@
 | `imap-uid-page.md`, `imap-uid-tools.md`, `imap-uid-jobs.md` | 고정 UID 페이지·공개 요청·영속 작업 | Core/CLI·인증 pipe와 원자 저장 검증, 사람 검토 필요 |
 | `imap-uid-reconcile.md` | 기존 메일 FLAGS/원격 부재 관측과 고정 pass | v13 자동 통합 검증, 원본 보존, 사람 검토 필요 |
 | `imap-uid-recovery.md` | 새 UIDVALIDITY 첫 페이지·과거 epoch 보존 | v14 구현, 검증 범위·남은 지적은 PROGRESS 참조, 사람 검토 필요 |
+| `imap-uid-inspection.md` | 단일 로컬 snapshot의 UID 수집 범위·관측 상한 | 구현·검증 범위는 PROGRESS 참조, 사람 검토 필요 |
 | `core-lifecycle.md` | 고정 HKCU 자동 시작 값·충돌 보존·재시작 예산 | 격리 registry/상태 시험, 설치·supervisor 연결 전 |
 | `diagnostic-export.md` | 선택한 비민감 진단 항목의 미리보기/내보내기 값 | 순수 직렬화 검증, 실제 수집·UI·파일 쓰기 미연결 |
 

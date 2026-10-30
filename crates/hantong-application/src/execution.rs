@@ -84,6 +84,12 @@ pub trait ExecutionContext {
     ) -> Result<ReadResult<Self::Output>, ErrorCode> {
         Err(ErrorCode::CapabilityUnsupported)
     }
+    fn read_uid_inspection(
+        &mut self,
+        _request: &UidCursorRequest,
+    ) -> Result<ReadResult<Self::Output>, ErrorCode> {
+        Err(ErrorCode::CapabilityUnsupported)
+    }
     fn read_uid_page_status(
         &mut self,
         _request: &UidPageStatusRequest,
@@ -203,6 +209,7 @@ pub fn execute_tool<C: ExecutionContext>(
             }
             other => {
                 let result = match other {
+                    UidPageAction::Inspect(request) => context.read_uid_inspection(&request),
                     UidPageAction::Cursor(request) => context.read_uid_cursor(&request),
                     UidPageAction::Status(request) => context.read_uid_page_status(&request),
                     UidPageAction::ReconcileStatus(request) => {

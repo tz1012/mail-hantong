@@ -9,8 +9,8 @@
 | 항목 | 상태와 근거 |
 | --- | --- |
 | 기준 자료 | 사용자 승인으로 채택한 [Markdown 기준 요건](../requirements/README.md): 요건 170개·1단계 P0 144개·문장별 AC ID 341개. 작업 카드 정의 151개는 보존한다. |
-| 현재 카드 | **M2-04 UIDVALIDITY 복구 기반 자동 검증 완료**. v14는 과거 namespace·관측·작업을 보존하며 명시 복구를 연결했다. 카드 전체 완료·사람 검토는 별도이며 다음은 로컬 동기화 관측 요약이다. |
-| 최신 검증 | **1,126개 통과**(문서 29·빌드 도구 63·Rust 1,034). 전체 build/test/fmt/Clippy·의존/문서/추적 검사와 같은 소스의 Linux x86_64·macOS arm64 교차 Clippy 통과. 아래 UID v14 snapshot에 로그·hash가 있다. 실제 Mac 실행·전체 기능 완료를 뜻하지 않는다. |
+| 현재 카드 | **M2-04 로컬 UID 관측 요약 자동 검증 완료**. `sync inspect`를 실제 인증 경로에 연결했다. 다음은 M2-05의 로컬 메일 메타데이터 목록과 명시 권한 갱신 계약이다. |
+| 최신 검증 | **1,150개 통과**(문서 29·빌드 도구 63·Rust 1,058). 전체 build/test/fmt/Clippy·의존/문서/추적 검사와 같은 소스의 Linux x86_64·macOS arm64 교차 Clippy 통과. 아래 UID 관측 요약 snapshot에 로그·hash가 있다. 실제 Mac 실행·전체 기능 완료를 뜻하지 않는다. |
 | 제품 구현 | Rust workspace·영/한 CLI·Windows 코어/IPC·DPAPI·SQLCipher·설정 검증·감사·기본 등록/프로필·권한이 있는 계정 목록 조회·IMAP/SMTP TLS/AUTH probe·CI/추적 도구 구현. 신규 IMAP 설정·명시 재개와 기본 CLI 계정 범위 갱신의 보호 확인·중단 복구를 연결했다. 발송은 차단하며 실제 메일 수신·전체 GUI·설치 패키지는 미완료다. |
 | GitHub | 로컬 Git main 저장소를 초기화해 개발 기준선을 기록한다. 공개 저장소 주소·remote·릴리스·패키지 ID는 아직 없음. 빌드 산출물·실행 데이터·에이전트 상태는 제외한다. |
 | 새 사용자 요청 | 진행 상황을 이 문서에 누적하고, GitHub에서 명령어로 설치 및 개발을 시작할 수 있는 경로를 마련한다. 상세 범위는 [공개와 설치 계획](DISTRIBUTION.md)에 기록한다. |
@@ -19,7 +19,7 @@
 | 런타임 결정 | **코어·CLI Rust 확정** — 2026-10-29 사용자 선택, [ADR-001](../adr/ADR-001-core-runtime.md). 비교 실험에서 .NET은 프로세스 시작, Rust는 메모리에 유리했고 검색은 혼재했다. [실측 보고서](RUNTIME-BENCHMARK.md)는 보존하며 제품의 1초 목표는 아직 검증 전이다. |
 | Mac 지원 방향 | 사용자 승인으로 정식 후속 목표에 포함했다. Windows 우선 출시 후 Mac 코어·CLI·최소 승인 도우미부터 제공하고 전체 GUI를 후속 제공한다. 구체적인 단계·일정·패키지는 미정이며 현재 제품은 미구현이다. |
 | 공개 사용 정책 | **[LICENSE Version 1.0](../../LICENSE) 정식 채택** — 개인·회사 내부 업무용 사용, 수정본 비공개 및 원본·수정본 무료 재배포 허용. 프로그램 판매·유료 제공 금지. 고지 유지·수정 표시·보증과 책임 조항 포함. 저작권자는 **Andrew Cho**, 웹사이트 **https://tzt.kr**, 연락처 **andrew@tzt.kr**이다. [한국어 안내](LICENSING.md), [ADR-016](../adr/ADR-016-license.md). |
-| 다음 제품 작업 | 현재 관측 상한·수집 범위를 읽는 요약을 다음 계약으로 연결하고, 메타데이터 우선 목록/진행 표시는 해당 카드 범위로 나눈다. 현재 공개 UID 도구의 권한을 묵시적으로 확대하지 않는다. |
+| 다음 제품 작업 | 단일 IMAP 사서함의 저장된 메타데이터 목록을 canonical `mail.messages.search`/`hantong search`에 연결하는 계약을 검토한다. 현재 공개 UID 도구의 권한을 묵시적으로 확대하지 않는다. |
 
 ## 기능별 현재 상태
 
@@ -907,3 +907,23 @@ Store 복구 시험26개에는 18개 ABORT/IGNORE 저장 실패 지점, 시계 �
 CNG 제품 키1개/names hash `3B692D49F1D08F7D3442806CF17694CDC02AF36B44839930FC18EB9C83CE9D4D` 유지. 새 의존성 없음. 실제 사용자 DB·Core·Hello·계정·메일과 외부 공개는 실행하지 않았다. **[사람 검토 필요]**, 전체 제품 AC 완료0개 유지. 아직 없는 알림·초안·대기 변경의 AC 완료를 주장하지 않는다.
 
 다음 묶음은 이미 연결된 복구 후 append/reconcile을 재구현하지 않고, 현재 저장 범위가 마지막 관측 상한까지 도달했는지 보여 주는 로컬 요약이다. 전체 목록·본문은 M2-05/M2-09 범위에 속하며 M2-04의 무조건 미완료 사유로 붙잡지 않는다. 요약은 실제 서버의 현재 최신성과 구분하며 자동 접속을 추가하지 않는다.
+
+## 2026-10-30 로컬 UID 관측 요약 병렬 묶음 (설계 검토)
+
+v14 기준선은 커밋 `1e332aa`로 저장했다(전체1,126개 통과, 작업 트리 clean 확인). [관측 요약 계약](../contracts/imap-uid-inspection.md)은 기존 cursor/recover 응답을 바꾸지 않고 `inspect`를 추가한다. Store 담당은 한 트랜잭션에서 현재 catalog/cursor/epoch를 읽고, 공개 담당은 strict DTO/IPC/영한CLI를, root는 Core와 실제 인증 pipe를 연결한다. 별도 담당자가 의미·권한·무변경 경계를 검토한다. migration/의존성/자동 네트워크를 추가하지 않는다.
+
+관측 요약 설계의 현재 catalog/binding 의미와 cursor 부재 시 orphan 이력 탐지를 명확히 한 뒤 독립 검토 CLEAR를 받았다. Store9개 시험은 구현 전 모두 기대한 행동 실패를 확인했다(`target/uid-inspection-store-red.log`). 공개 경계도 Application 행동 RED를 확인했고, CLI/응답 형식 1차 검토에서 HIGH/MEDIUM 없음이다. 현재 개별 GREEN·Core 연결과 전체 검증은 진행 중이다.
+
+관측 요약 공개 신규14개·관련6패키지310개, Store10개·양쪽 Clippy가 통과했다. Store 호출 전후 모든 제품 테이블 행이 같은지 확인하며 pending job만 있는 미관측 상태와 orphan 이력을 구분한다. 공개·Store 독립 검토는 CLEAR다.
+
+Core 실제 인증 pipe 시험은 연결 전 CAPABILITY_UNSUPPORTED로 RED(`target/inspection-core-red.log`)를 확인한 뒤 단일 Store API+renderer를 연결해 **63개 GREEN**(단위61·lifecycle2, 단위14.16초, `target/inspection-core-green.log`)이었다. 복구 중 inspect가 기존 slot을 유지하고 provider를 추가 호출하지 않음, 복구/append 후 요약, 같은 mailbox의 catalog 세대 증가, 잘못된 계정/F권한 거부, 감사 완료를 확인했다. Core 교차 검토도 CLEAR다.
+
+동결 소스의 Linux x86_64/macOS arm64 all-target Clippy 종료 코드0이다(`target/uid-inspection-linux-check.log`, `target/uid-inspection-macos-check.log`). Windows 전체 검사 진행 중이며 DB schema는 v14 그대로다.
+
+### UID 관측 요약 최종 자동 검증 snapshot
+
+`scripts/check_all.py` 종료 코드 **0**: **1,150개**(문서29·빌드 도구63·Rust1,058). 전체 build/test/fmt/Clippy·아키텍처·문서·추적 검사 통과. 로그 `target/uid-inspection-full-check.log`, SHA-256 `C0751375E81D1B05DE63CD822BE36D7E50E383345622985C86EA2F7B183131EA`, source hash `6622966c34defa4c1ebdd404d6357449a39655fcd6e096a667a94494a0eecf26`. 같은 소스의 Linux x86_64/macOS arm64 all-target Clippy 종료 코드0. 실제 Mac 실행 검증은 아니다.
+
+CNG 제품 키1개/names hash `3B692D49F1D08F7D3442806CF17694CDC02AF36B44839930FC18EB9C83CE9D4D` 유지. migration·새 의존성 없음. 실제 사용자 DB·Core·Hello·계정·메일과 외부 공개를 실행하지 않았다. **[사람 검토 필요]**, 전체 제품 AC 완료0개 유지.
+
+다음 목록의 표준 도구는 요건의 `mail.messages.search`/`hantong search`다. 첫 버전은 정확한 IMAP 사서함 하나의 로컬 metadata 조회로 한정하는 계약을 검토한다. 헤더 공개를 기존 U 권한에 몰래 추가하지 않고 새 명시 native 갱신 경로를 설계하며, 과거 v1~v3 scope 이력은 그대로 보존해야 한다. 이 계획은 새 기능의 구현 완료나 실제 권한 부여를 뜻하지 않는다.

@@ -43,6 +43,7 @@ pub enum FolderRefreshAction {
 }
 #[derive(Clone, Eq, PartialEq)]
 pub enum UidPageAction {
+    Inspect(UidCursorRequest),
     Cursor(UidCursorRequest),
     Request(UidPageRequest),
     Status(UidPageStatusRequest),
@@ -163,7 +164,7 @@ impl ToolRequest {
                 FolderRefreshAction::Status(value) => value.account_ids(),
             },
             Self::SyncPage { action, .. } => match action {
-                UidPageAction::Cursor(v) => v.account_ids(),
+                UidPageAction::Cursor(v) | UidPageAction::Inspect(v) => v.account_ids(),
                 UidPageAction::Request(v) => v.account_ids(),
                 UidPageAction::Status(v) => v.account_ids(),
                 UidPageAction::Reconcile(v) => v.account_ids(),
@@ -385,12 +386,14 @@ fn parse_uid_page(params: &Map<String, Value>) -> Result<UidPageAction, ErrorCod
         Ok::<_, ErrorCode>(identity)
     };
     match text("action")? {
-        "cursor" => {
+        "cursor" | "inspect" => {
             exact_keys(params, &["action", "account_id", "wire_hex", "encoding"])?;
-            Ok(UidPageAction::Cursor(UidCursorRequest::new(
-                text("account_id")?,
-                mailbox()?,
-            )?))
+            let request = UidCursorRequest::new(text("account_id")?, mailbox()?)?;
+            Ok(if text("action")? == "inspect" {
+                UidPageAction::Inspect(request)
+            } else {
+                UidPageAction::Cursor(request)
+            })
         }
         "request" | "reconcile" | "recover" => {
             exact_keys(

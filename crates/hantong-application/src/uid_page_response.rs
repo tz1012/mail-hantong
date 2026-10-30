@@ -1,5 +1,6 @@
 use hantong_contracts::{
     ErrorCode,
+    uid_inspection::UidInspectionSnapshot,
     uid_page::{UidCursorSnapshot, UidMailboxEncoding, UidMailboxIdentity, UidPageReceipt},
     uid_reconcile::UidReconcileReceipt,
     uid_recovery::UidRecoveryReceipt,
@@ -21,6 +22,10 @@ pub fn validated_uid_mailbox(value: &UidMailboxIdentity) -> Result<ImapMailboxNa
 }
 pub fn render_uid_cursor(v: &UidCursorSnapshot) -> Value {
     json!({"schema_version":1,"ok":true,"account_id":v.account_id(),"wire_hex":v.mailbox().wire_hex(),"encoding":v.mailbox().encoding().as_str(),"catalog_generation":v.catalog_generation(),"cursor_version":v.cursor_version(),"covered_through_uid":v.covered_through_uid(),"binding_current":v.binding_current()})
+}
+pub fn render_uid_inspection(v: &UidInspectionSnapshot) -> Value {
+    let observation = v.observation().map(|o| json!({"cursor_version":o.cursor_version(),"epoch_generation":o.epoch_generation(),"covered_through_uid":o.covered_through_uid(),"observed_uid_ceiling":o.observed_uid_ceiling(),"stored_at_utc_ms":o.stored_at_utc_ms(),"coverage_at_observed_ceiling":o.coverage_at_observed_ceiling()}));
+    json!({"schema_version":1,"ok":true,"account_id":v.account_id(),"wire_hex":v.mailbox().wire_hex(),"encoding":v.mailbox().encoding().as_str(),"catalog_generation":v.catalog_generation(),"binding_current":v.binding_current(),"observation":observation})
 }
 pub fn render_uid_receipt(v: &UidPageReceipt) -> Value {
     json!({"schema_version":1,"ok":true,"account_id":v.account_id(),"execution_id":hantong_contracts::wire_hex::encode(v.execution_id()),"state":v.state().as_str(),"cursor_version":v.cursor_version(),"covered_through_uid":v.covered_through_uid(),"inserted_count":v.inserted_count(),"error_code":v.error().map(ErrorCode::as_str)})

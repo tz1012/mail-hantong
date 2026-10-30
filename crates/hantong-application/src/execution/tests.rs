@@ -1,6 +1,62 @@
 use super::*;
 use serde_json::json;
 
+#[test]
+fn sec03_inspection_finishes_the_common_read_audit_without_job_handoff() {
+    let envelope = json!({"schema_version":1,"request_id":"r","tool":"mail.sync.page","params":{"action":"inspect","account_id":"a","wire_hex":"494e424f58","encoding":"utf8"}});
+    let mut fake = Fake::ok();
+    fake.read = ReadResult::new(15, None);
+    assert_eq!(execute_tool(&mut fake, "mail.sync.page", &envelope), Ok(15));
+    assert_eq!(
+        fake.events,
+        [
+            "revalidate",
+            "begin",
+            "scope",
+            "policy",
+            "uid_inspection",
+            "finish_ok"
+        ]
+    );
+    assert_eq!(fake.scoped_accounts, vec![vec!["a"]]);
+    assert_eq!(fake.terminals.len(), 1);
+    assert!(fake.terminals[0].1.is_success());
+    assert_eq!(fake.terminals[0].1.result_count(), None);
+    for error in [ErrorCode::NotFound, ErrorCode::InternalError] {
+        let mut fake = Fake::ok();
+        fake.read = Err(error);
+        assert_eq!(
+            execute_tool(&mut fake, "mail.sync.page", &envelope),
+            Err(error)
+        );
+        assert_eq!(fake.terminals.len(), 1);
+        assert_eq!(fake.terminals[0].1.error(), Some(error));
+    }
+    for policy in [false, true] {
+        let mut fake = Fake::ok();
+        let expected = if policy {
+            fake.fail_policy = Some(ErrorCode::PolicyBlocked);
+            ErrorCode::PolicyBlocked
+        } else {
+            fake.fail_scope = Some(ErrorCode::ScopeDenied);
+            ErrorCode::ScopeDenied
+        };
+        assert_eq!(
+            execute_tool(&mut fake, "mail.sync.page", &envelope),
+            Err(expected)
+        );
+        assert!(!fake.events.contains(&"uid_inspection"));
+        assert_eq!(fake.terminals.len(), 1);
+    }
+    let mut fake = Fake::ok();
+    fake.fail_finish = true;
+    assert_eq!(
+        execute_tool(&mut fake, "mail.sync.page", &envelope),
+        Err(ErrorCode::InternalError)
+    );
+    assert_eq!(fake.terminals.len(), 1);
+}
+
 struct Fake {
     events: Vec<&'static str>,
     audit_id: Option<[u8; 32]>,
@@ -121,6 +177,10 @@ impl ExecutionContext for Fake {
     fn read_uid_cursor(&mut self, _: &UidCursorRequest) -> Result<ReadResult<u32>, ErrorCode> {
         self.events.push("uid_cursor");
         ReadResult::new(11, None)
+    }
+    fn read_uid_inspection(&mut self, _: &UidCursorRequest) -> Result<ReadResult<u32>, ErrorCode> {
+        self.events.push("uid_inspection");
+        std::mem::replace(&mut self.read, Err(ErrorCode::InternalError))
     }
     fn read_uid_page_status(
         &mut self,

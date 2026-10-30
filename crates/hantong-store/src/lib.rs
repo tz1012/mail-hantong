@@ -25,6 +25,7 @@ mod registrations;
 pub mod scope_refresh;
 #[cfg(windows)]
 mod uid_epochs;
+pub mod uid_inspection;
 pub mod uid_page_jobs;
 pub mod uid_reconcile_jobs;
 pub mod uid_recovery_jobs;
