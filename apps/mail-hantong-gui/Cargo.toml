@@ -1,0 +1,19 @@
+[package]
+name = "mail-hantong-gui"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license-file.workspace = true
+publish = false
+
+[[bin]]
+name = "mail-hantong"
+path = "src/main.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+hantong-contracts = { path = "../../crates/hantong-contracts" }
+hantong-desktop = { path = "../../crates/hantong-desktop" }
+hantong-ipc-client = { path = "../../crates/hantong-ipc-client" }

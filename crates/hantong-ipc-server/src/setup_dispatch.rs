@@ -56,10 +56,13 @@ where
         }
         Ok(crate::scope_refresh_wire::result(&receipt))
     } else if request.method.starts_with("registration.") {
+        if !(1..=16_384).contains(&frame_length) {
+            return Err(ErrorCode::InvalidInput);
+        }
         let command = crate::registration_wire::parse(request)?;
         let expected_id = match command {
-            RegistrationCommand::Request => None,
-            RegistrationCommand::Status(id) => Some(id),
+            RegistrationCommand::Request | RegistrationCommand::GuiRequest => None,
+            RegistrationCommand::Status(id) | RegistrationCommand::GuiStatus(id) => Some(id),
         };
         let SetupReceipt::Registration(receipt) = callback(SetupCommand::Registration(command))?
         else {

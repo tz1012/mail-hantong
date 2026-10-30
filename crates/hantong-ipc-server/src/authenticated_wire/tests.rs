@@ -305,6 +305,24 @@ pub(crate) async fn run_fixture_cases() {
     }
     for (method, params, expected, expected_calls) in [
         (
+            "registration.gui.request",
+            json!({"protocol_version":1}),
+            "pending",
+            1,
+        ),
+        (
+            "registration.gui.status",
+            json!({"protocol_version":1,"request_id":wire_hex::encode(&[3;32])}),
+            "pending",
+            1,
+        ),
+        (
+            "registration.gui.request",
+            json!({"protocol_version":1,"approved":true}),
+            "INVALID_INPUT",
+            0,
+        ),
+        (
             "registration.request",
             json!({"protocol_version":1}),
             "pending",
@@ -341,11 +359,13 @@ pub(crate) async fn run_fixture_cases() {
                 &mut |_, _| panic!("registration cannot enter protected executor"),
                 &mut |command| {
                     calls.set(calls.get() + 1);
-                    if method == "registration.status" {
-                        assert_eq!(command, RegistrationCommand::Status([3; 32]));
-                    } else {
-                        assert_eq!(command, RegistrationCommand::Request);
-                    }
+                    let expected = match method {
+                        "registration.status" => RegistrationCommand::Status([3; 32]),
+                        "registration.gui.status" => RegistrationCommand::GuiStatus([3; 32]),
+                        "registration.gui.request" => RegistrationCommand::GuiRequest,
+                        _ => RegistrationCommand::Request,
+                    };
+                    assert_eq!(command, expected);
                     RegistrationReceipt::new(
                         [3; 32],
                         123,

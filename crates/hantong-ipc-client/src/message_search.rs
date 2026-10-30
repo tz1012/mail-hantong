@@ -372,6 +372,31 @@ pub fn search_default(
         Err(ErrorCode::CapabilityUnsupported)
     }
 }
+pub fn search_gui(
+    request: ImapMetadataSearchRequest,
+) -> Result<ValidatedMessageSearchResponse, ErrorCode> {
+    #[cfg(windows)]
+    {
+        tokio::runtime::Builder::new_current_thread().enable_io().enable_time().build()
+            .map_err(|_| ErrorCode::CoreUnavailable)?.block_on(async move {
+                let profile = crate::authenticate_gui().await?;
+                if !profile.scope().permits_account(request.account_id(),"mail.messages.search") { return Err(ErrorCode::ScopeDenied); }
+                let id = "gui-message-search-1";
+                let params = serde_json::json!({"mode":"imap_metadata","account_id":request.account_id(),
+                    "wire_hex":request.mailbox().wire_hex(),"encoding":request.mailbox().encoding().as_str(),
+                    "filter":request.filter().as_str(),"limit":request.limit(),"cursor":request.cursor().map(|c|c.encode())});
+                let envelope = serde_json::json!({"schema_version":1,"request_id":id,"tool":"mail.messages.search","params":params});
+                let raw = profile.exchange(id,"mail.messages.search",&envelope).await?;
+                parse_search_response(&raw,id,&request)
+            })
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = request;
+        Err(ErrorCode::CapabilityUnsupported)
+    }
+}
+
 #[cfg(test)]
 #[path = "message_search_tests.rs"]
 mod tests;

@@ -19,8 +19,10 @@ M0-01 구현 기준. 기존 논리 모듈을 아래 Rust package로 대응시킨
 | Ipc.Server / Auth | `crates/hantong-ipc-server` | 코어 IPC·인증 — 사람 검토 필요 |
 | Core daemon | `apps/mail-hantong-core` | 코어 수명과 의존성 조립 |
 | CLI | `apps/hantong-cli` | `hantong` 명령, 영어 기본·한국어 표시 |
+| GUI | `apps/mail-hantong-gui` | `mail-hantong` 창 진입점·IPC readiness·고유 GUI 등록과 로컬 계정/폴더/메타데이터 읽기 |
+| Desktop presentation | `crates/hantong-desktop` | 영·한 리소스·표시 모델·Native Win32 경계; 승인·비밀 경로 접근 없음 |
 
-GUI·MCP·승인 도우미는 각각의 구현 카드에서 추가한다. 승인 도우미의 별도 보안 검토 경계는 그대로 유지된다. 클라이언트는 IPC client와 계약 DTO에만 직접 의존하고, 저장소·비밀·공급자에 접근하지 않는다. Store가 Secrets의 키 경계를 호출하는 것은 허용하지만 원시 키를 반환받지 않는다. IPC 양쪽은 OS 경계 crate를 공유하며 플랫폼 crate는 계약 외 제품 계층에 의존하지 않는다. `scripts/check_architecture.py`가 이 구조를 검사한다.
+GUI·MCP·승인 도우미는 각각의 구현 카드에서 추가한다. 승인 도우미의 별도 보안 검토 경계는 그대로 유지된다. 클라이언트의 서비스 접근은 IPC client와 계약 DTO로 제한하며, GUI는 표시 전용 `hantong-desktop`에도 의존한다. 표시 crate는 계약 DTO만 참조하고 Windows native 모듈에만 unsafe를 제한한다. 클라이언트·표시 계층은 저장소·비밀·공급자·승인 발급 경로에 접근하지 않는다. Store가 Secrets의 키 경계를 호출하는 것은 허용하지만 원시 키를 반환받지 않는다. IPC 양쪽은 OS 경계 crate를 공유하며 플랫폼 crate는 계약 외 제품 계층에 의존하지 않는다. `scripts/check_architecture.py`가 이 구조를 검사한다.
 
 `cargo build --workspace --all-targets --locked --offline`, `cargo test --workspace --all-targets --locked --offline`, `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets --locked --offline -- -D warnings`를 공통 검사에서 사용한다. 문서/검사 도구는 Python 표준 라이브러리를 이용하며 제품 실행 시 Python을 요구하지 않는다.
 

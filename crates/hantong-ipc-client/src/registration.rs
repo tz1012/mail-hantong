@@ -22,12 +22,19 @@ pub fn request(id: &str, command: RegistrationCommand) -> Result<Vec<u8>, ErrorC
     }
     let (method, params) = match command {
         RegistrationCommand::Request => ("registration.request", json!({"protocol_version":1})),
-        RegistrationCommand::Status(request_id) => {
+        RegistrationCommand::GuiRequest => {
+            ("registration.gui.request", json!({"protocol_version":1}))
+        }
+        RegistrationCommand::Status(request_id) | RegistrationCommand::GuiStatus(request_id) => {
             if request_id == [0; 32] {
                 return Err(ErrorCode::InvalidInput);
             }
             (
-                "registration.status",
+                if matches!(command, RegistrationCommand::GuiStatus(_)) {
+                    "registration.gui.status"
+                } else {
+                    "registration.status"
+                },
                 json!({"protocol_version":1,"request_id":wire_hex::encode(&request_id)}),
             )
         }
@@ -57,7 +64,8 @@ pub fn parse_response(
         Body::Result(value) => value,
         Body::Error(code) => return Err(code),
     };
-    if let RegistrationCommand::Status(expected) = command
+    if let RegistrationCommand::Status(expected) | RegistrationCommand::GuiStatus(expected) =
+        command
         && receipt.request_id() != &expected
     {
         return Err(ErrorCode::CoreUnavailable);
@@ -264,6 +272,56 @@ mod tests {
             "r",
             RegistrationCommand::Status([1; 32]),
         )
+    }
+    #[test]
+    fn sec03_gui_registration_uses_distinct_methods_and_binds_status_id() {
+        for (command, method) in [
+            (RegistrationCommand::GuiRequest, "registration.gui.request"),
+            (
+                RegistrationCommand::GuiStatus([1; 32]),
+                "registration.gui.status",
+            ),
+        ] {
+            let encoded = request("r", command).unwrap();
+            let value: Value = serde_json::from_slice(&encoded).unwrap();
+            assert_eq!(value["method"], method);
+            assert_eq!(value["params"]["protocol_version"], 1);
+            assert_eq!(
+                value["params"].as_object().unwrap().len(),
+                if matches!(command, RegistrationCommand::GuiRequest) {
+                    1
+                } else {
+                    2
+                }
+            );
+            assert_eq!(
+                parse_response(&serde_json::to_vec(&response()).unwrap(), "r", command)
+                    .unwrap()
+                    .request_id(),
+                &[1; 32]
+            );
+        }
+        assert_eq!(
+            request("r", RegistrationCommand::GuiStatus([0; 32])),
+            Err(ErrorCode::InvalidInput)
+        );
+        let raw = serde_json::to_vec(&response()).unwrap();
+        assert_eq!(
+            parse_response(&raw, "r", RegistrationCommand::GuiStatus([2; 32])),
+            Err(ErrorCode::CoreUnavailable)
+        );
+        assert_eq!(
+            parse_response(&raw, "wrong", RegistrationCommand::GuiStatus([1; 32])),
+            Err(ErrorCode::CoreUnavailable)
+        );
+        let duplicate = String::from_utf8(raw).unwrap().replace(
+            "\"state\":\"pending\"",
+            "\"state\":\"pending\",\"state\":\"ready\"",
+        );
+        assert_eq!(
+            parse_response(duplicate.as_bytes(), "r", RegistrationCommand::GuiRequest),
+            Err(ErrorCode::CoreUnavailable)
+        );
     }
     #[test]
     fn cli15_registration_requests_only_fixed_request_or_opaque_status() {

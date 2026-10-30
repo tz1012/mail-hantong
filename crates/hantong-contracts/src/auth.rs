@@ -14,6 +14,18 @@ pub enum AppReadTool {
     DisplaySettingsGet,
     DiagnosticsSnapshot,
 }
+
+/// Fixed GUI local-read scope. This data does not grant authentication or approval.
+pub fn gui_read_tools() -> Vec<String> {
+    [
+        "mail.accounts.list",
+        "mail.folders.list",
+        "mail.messages.search",
+    ]
+    .into_iter()
+    .map(str::to_owned)
+    .collect()
+}
 impl AppReadTool {
     pub const fn as_str(self) -> &'static str {
         match self {

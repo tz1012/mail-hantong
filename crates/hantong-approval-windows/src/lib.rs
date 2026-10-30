@@ -49,6 +49,19 @@ pub fn publish_default_profile(bytes: &[u8]) -> Result<PublishedProfile, ErrorCo
     }
 }
 
+/// Core-only publication to the distinct fixed GUI profile after approved staging.
+pub fn publish_gui_profile(bytes: &[u8]) -> Result<PublishedProfile, ErrorCode> {
+    #[cfg(windows)]
+    {
+        profile_publication::publish_gui(bytes).map(|inner| PublishedProfile { _inner: inner })
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = bytes;
+        Err(ErrorCode::CapabilityUnsupported)
+    }
+}
+
 /// Publishes a new default profile while retaining the exact old profile as a
 /// request-bound backup until Store activation. This is not authorization.
 pub fn refresh_default_profile(

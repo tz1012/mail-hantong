@@ -40,6 +40,8 @@ publisher는 열린 임시 파일 handle에서 쓰기·flush 후 `SetFileInforma
 
 경로는 OS Known Folder로 구한 LocalAppData 아래 고정 `mail-hantong/profiles/default.json`이다. publisher/loader가 조상 reparse·경로 교체·권한을 검증하고 열린 handle로 수명을 고정해야 한다. 임시 파일은 loader가 읽지 않는다. 일반 CLI가 파일을 생성·복구·덮어쓰지 않는다. 경로 I/O 구현은 별도 보호 경계이며 순수 codec 완료를 배포 완료로 기록하지 않는다.
 
+GUI는 [GUI 등록 계약](gui-client-registration.md)의 고정 `profiles/gui.json`과 `profile: "gui"` 및 정확한 세 로컬 읽기 도구를 사용한다. default/GUI trusted loader는 codec selector까지 상호 구분하며 파일 내용을 교환해도 인증하지 않는다. 문자열 selector는 권한 증거가 아니며 실제 actor와 권한은 서명 인증된 registration_id의 Store 원장으로 결정한다.
+
 코어는 신뢰 창의 일회성 사람 확인과 현재 요청 결속을 검증한 뒤 Store에 approved request + provisioning registration을 같은 트랜잭션으로 저장한다. 기존 CNG 키/공개값을 검증하고 고정 경로에 원자적으로 프로필을 발행한 후에만 registration을 active로 CAS 전환한다. 기존 파일이 정확히 같은 프로필이면 복구에 재사용할 수 있지만 불일치하면 자동 덮어쓰기/재pin하지 않는다. 파일만 있고 active 등록이 없으면 메일 접근은 생기지 않는다.
 
 기본 CLI 범위 갱신은 [client-scope-refresh.md](client-scope-refresh.md)의 DB v7 전용 이력과 native 검토를 거친다. 갱신은 기존 최초 request ID·registration ID·client key·server pin·승인 metadata를 보존하고, 기존 read-only `accounts.list` 정책에 대해 현재 계정 snapshot만 새 범위로 검토한다. 원래 등록 request나 profile key를 교체하는 새 등록으로 처리하지 않으며, revoked 등록을 다시 active로 만들지 않는다. 새 프로필 bytes는 Core가 정확한 old/new snapshot을 확인하고 stage한 뒤 보호 배포하며, activate 전에는 기존 프로필과 grant를 성공 상태로 주장하지 않는다.

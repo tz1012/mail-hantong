@@ -12,6 +12,39 @@ use crate::{
 use rusqlite::{OptionalExtension, TransactionBehavior, params};
 
 pub const DEFAULT_CLI_LABEL: &str = "hantong CLI (default)";
+pub const DEFAULT_GUI_LABEL: &str = "mail-hantong GUI";
+
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum RegistrationFlavor {
+    Cli,
+    Gui,
+}
+impl RegistrationFlavor {
+    fn kind(self) -> ClientKind {
+        match self {
+            Self::Cli => ClientKind::Cli,
+            Self::Gui => ClientKind::Gui,
+        }
+    }
+    fn label(self) -> &'static str {
+        match self {
+            Self::Cli => DEFAULT_CLI_LABEL,
+            Self::Gui => DEFAULT_GUI_LABEL,
+        }
+    }
+    fn tools(self) -> Vec<String> {
+        match self {
+            Self::Cli => vec!["mail.accounts.list".into()],
+            Self::Gui => hantong_contracts::auth::gui_read_tools(),
+        }
+    }
+    fn matches_request(self, request: &RegistrationRequest) -> bool {
+        request.client_kind == self.kind()
+            && request.display_label == self.label()
+            && request.scope.accounts().len() <= 128
+            && request.scope.tools() == self.tools()
+    }
+}
 
 pub struct CliRegistrationStage {
     expected_request: RegistrationRequest,
@@ -32,7 +65,22 @@ impl CliRegistrationStage {
         client_public_key: [u8; 72],
         expected_server_public_key_hash: [u8; 32],
     ) -> Result<Self, ErrorCode> {
-        if !default_request(&expected_request)
+        Self::new_for(
+            RegistrationFlavor::Cli,
+            expected_request,
+            registration_id,
+            client_public_key,
+            expected_server_public_key_hash,
+        )
+    }
+    fn new_for(
+        flavor: RegistrationFlavor,
+        expected_request: RegistrationRequest,
+        registration_id: [u8; 16],
+        client_public_key: [u8; 72],
+        expected_server_public_key_hash: [u8; 32],
+    ) -> Result<Self, ErrorCode> {
+        if !flavor.matches_request(&expected_request)
             || expected_request.state != RegistrationRequestState::Pending
             || expected_request.request_id == [0; 32]
             || expected_request.version == 0
@@ -56,17 +104,58 @@ impl CliRegistrationStage {
         })
     }
 }
+pub struct GuiRegistrationStage {
+    inner: CliRegistrationStage,
+}
+impl fmt::Debug for GuiRegistrationStage {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("GuiRegistrationStage { <redacted> }")
+    }
+}
+impl GuiRegistrationStage {
+    /// Fixed GUI registration data; this value does not prove user presence.
+    pub fn new(
+        expected_request: RegistrationRequest,
+        registration_id: [u8; 16],
+        client_public_key: [u8; 72],
+        expected_server_public_key_hash: [u8; 32],
+    ) -> Result<Self, ErrorCode> {
+        Ok(Self {
+            inner: CliRegistrationStage::new_for(
+                RegistrationFlavor::Gui,
+                expected_request,
+                registration_id,
+                client_public_key,
+                expected_server_public_key_hash,
+            )?,
+        })
+    }
+}
 impl Store {
     pub fn list_orphan_cli_registration_requests(
         &self,
     ) -> Result<Vec<RegistrationRequest>, ErrorCode> {
+        self.list_orphan_registration_requests(RegistrationFlavor::Cli)
+    }
+    pub fn list_orphan_gui_registration_requests(
+        &self,
+    ) -> Result<Vec<RegistrationRequest>, ErrorCode> {
+        self.list_orphan_registration_requests(RegistrationFlavor::Gui)
+    }
+    fn list_orphan_registration_requests(
+        &self,
+        flavor: RegistrationFlavor,
+    ) -> Result<Vec<RegistrationRequest>, ErrorCode> {
         #[cfg(not(windows))]
         {
+            let _ = flavor;
             Err(ErrorCode::CapabilityUnsupported)
         }
         #[cfg(windows)]
         {
-            self.registration_transaction(TransactionBehavior::Deferred, orphan_requests)
+            self.registration_transaction(TransactionBehavior::Deferred, |tx| {
+                orphan_requests(tx, flavor)
+            })
         }
     }
     /// Returns ownership data, never permission to delete an arbitrary selector.
@@ -88,9 +177,10 @@ impl Store {
             self.registration_transaction(TransactionBehavior::Deferred,|tx| {
                 // Validate the bounded reservation set and all corresponding
                 // registration links before interpreting an absent match.
-                orphan_requests(tx)?;
+                orphan_requests(tx, RegistrationFlavor::Cli)?;
+                orphan_requests(tx, RegistrationFlavor::Gui)?;
                 let request=read_request(tx,&request_id).map_err(internal)?.ok_or(ErrorCode::NotFound)?;
-                if !default_request(&request) {return Err(ErrorCode::Conflict);}
+                if !RegistrationFlavor::Cli.matches_request(&request) && !RegistrationFlavor::Gui.matches_request(&request) {return Err(ErrorCode::Conflict);}
                 let mut statement=tx.prepare("SELECT registration_id FROM client_registrations WHERE registration_id=?1 OR request_id=?2 OR public_key=?3 LIMIT 4").map_err(internal)?;
                 let ids=statement.query_map(params![id.as_slice(),request_id.as_slice(),public_key.as_slice()],|r|blob_column::<16>(r,0)).map_err(internal)?.collect::<rusqlite::Result<Vec<_>>>().map_err(internal)?;
                 if ids.len()>3 {return Err(ErrorCode::InternalError);}
@@ -100,37 +190,57 @@ impl Store {
         }
     }
     pub fn load_default_cli_registration(&self) -> Result<Option<RegistrationRecord>, ErrorCode> {
+        self.load_fixed_registration(RegistrationFlavor::Cli)
+    }
+    pub fn load_gui_registration(&self) -> Result<Option<RegistrationRecord>, ErrorCode> {
+        self.load_fixed_registration(RegistrationFlavor::Gui)
+    }
+    fn load_fixed_registration(
+        &self,
+        flavor: RegistrationFlavor,
+    ) -> Result<Option<RegistrationRecord>, ErrorCode> {
         #[cfg(not(windows))]
         {
+            let _ = flavor;
             Err(ErrorCode::CapabilityUnsupported)
         }
         #[cfg(windows)]
         {
             self.registration_transaction(TransactionBehavior::Deferred, |tx| {
-                let mut statement=tx.prepare("SELECT registration_id FROM client_registrations WHERE client_kind='cli' AND display_label=?1 ORDER BY registration_id LIMIT 2").map_err(internal)?;
-                let ids=statement.query_map([DEFAULT_CLI_LABEL],|r|blob_column::<16>(r,0)).map_err(internal)?.collect::<rusqlite::Result<Vec<_>>>().map_err(internal)?;
+                let mut statement=tx.prepare("SELECT registration_id FROM client_registrations WHERE (client_kind=?1 AND display_label=?2) OR (?1='gui' AND (client_kind='gui' OR display_label=?2)) ORDER BY registration_id LIMIT 2").map_err(internal)?;
+                let ids=statement.query_map(params![flavor.kind().as_str(),flavor.label()],|r|blob_column::<16>(r,0)).map_err(internal)?.collect::<rusqlite::Result<Vec<_>>>().map_err(internal)?;
                 if ids.len()>1 {return Err(ErrorCode::Conflict);}
-                ids.first().map(|id|read_registration(tx,id).map_err(internal)?.ok_or(ErrorCode::InternalError)).transpose()
+                ids.first().map(|id|{let record=read_registration(tx,id).map_err(internal)?.ok_or(ErrorCode::InternalError)?;if record.client_kind!=flavor.kind() || record.display_label!=flavor.label(){return Err(ErrorCode::InternalError)}Ok(record)}).transpose()
             })
         }
     }
     pub fn load_pending_default_cli_request(
         &self,
     ) -> Result<Option<RegistrationRequest>, ErrorCode> {
+        self.load_pending_fixed_request(RegistrationFlavor::Cli)
+    }
+    pub fn load_pending_gui_request(&self) -> Result<Option<RegistrationRequest>, ErrorCode> {
+        self.load_pending_fixed_request(RegistrationFlavor::Gui)
+    }
+    fn load_pending_fixed_request(
+        &self,
+        flavor: RegistrationFlavor,
+    ) -> Result<Option<RegistrationRequest>, ErrorCode> {
         #[cfg(not(windows))]
         {
+            let _ = flavor;
             Err(ErrorCode::CapabilityUnsupported)
         }
         #[cfg(windows)]
         {
             self.registration_transaction(TransactionBehavior::Deferred, |tx| {
                 let now=crate::utc_millis().map_err(internal)?;
-                let mut statement=tx.prepare("SELECT request_id FROM client_registration_requests WHERE client_kind='cli' AND display_label=?1 AND state='pending' AND (expires_at_utc_ms>?2 OR created_at_utc_ms<=0 OR expires_at_utc_ms<=created_at_utc_ms OR expires_at_utc_ms-created_at_utc_ms>300000) ORDER BY request_id LIMIT 2").map_err(internal)?;
-                let ids=statement.query_map(params![DEFAULT_CLI_LABEL,now],|r|blob_column::<32>(r,0)).map_err(internal)?.collect::<rusqlite::Result<Vec<_>>>().map_err(internal)?;
+                let mut statement=tx.prepare("SELECT request_id FROM client_registration_requests WHERE ((client_kind=?1 AND display_label=?2) OR (?1='gui' AND (client_kind='gui' OR display_label=?2))) AND state='pending' AND (expires_at_utc_ms>?3 OR created_at_utc_ms<=0 OR expires_at_utc_ms<=created_at_utc_ms OR expires_at_utc_ms-created_at_utc_ms>300000) ORDER BY request_id LIMIT 2").map_err(internal)?;
+                let ids=statement.query_map(params![flavor.kind().as_str(),flavor.label(),now],|r|blob_column::<32>(r,0)).map_err(internal)?.collect::<rusqlite::Result<Vec<_>>>().map_err(internal)?;
                 if ids.len()>1 {return Err(ErrorCode::Conflict);}
                 ids.first().map(|id| {
                     let request=read_request(tx,id).map_err(internal)?.ok_or(ErrorCode::InternalError)?;
-                    if !default_request(&request) || request.request_id==[0;32] {return Err(ErrorCode::InternalError);}
+                    if !flavor.matches_request(&request) || request.request_id==[0;32] {return Err(ErrorCode::InternalError);}
                     request_clock(&request,now)?;
                     Ok(request)
                 }).transpose()
@@ -143,6 +253,22 @@ impl Store {
         &self,
         stage: &CliRegistrationStage,
     ) -> Result<RegistrationRecord, ErrorCode> {
+        self.stage_registration(stage, RegistrationFlavor::Cli)
+    }
+    pub fn stage_gui_registration(
+        &self,
+        stage: &GuiRegistrationStage,
+    ) -> Result<RegistrationRecord, ErrorCode> {
+        self.stage_registration(&stage.inner, RegistrationFlavor::Gui)
+    }
+    fn stage_registration(
+        &self,
+        stage: &CliRegistrationStage,
+        flavor: RegistrationFlavor,
+    ) -> Result<RegistrationRecord, ErrorCode> {
+        if !flavor.matches_request(&stage.expected_request) {
+            return Err(ErrorCode::InvalidInput);
+        }
         #[cfg(not(windows))]
         {
             let _ = (
@@ -178,8 +304,8 @@ impl Store {
                     if !exists { return Err(ErrorCode::NotFound); }
                 }
                 let duplicate: bool = tx.query_row(
-                    "SELECT EXISTS(SELECT 1 FROM client_registrations WHERE registration_id=?1 OR request_id=?2 OR public_key=?3 OR (client_kind='cli' AND display_label=?4))",
-                    params![stage.registration_id.as_slice(),request.request_id.as_slice(),stage.client_public_key.as_slice(),DEFAULT_CLI_LABEL], |r| r.get(0)
+                    "SELECT EXISTS(SELECT 1 FROM client_registrations WHERE registration_id=?1 OR request_id=?2 OR public_key=?3 OR (client_kind=?4 AND display_label=?5) OR (?4='gui' AND (client_kind='gui' OR display_label=?5)))",
+                    params![stage.registration_id.as_slice(),request.request_id.as_slice(),stage.client_public_key.as_slice(),flavor.kind().as_str(),flavor.label()], |r| r.get(0)
                 ).map_err(internal)?;
                 if duplicate { return Err(ErrorCode::Conflict); }
                 let changed = tx.execute(
@@ -188,13 +314,15 @@ impl Store {
                 ).map_err(internal)?;
                 if changed != 1 { return Err(ErrorCode::Conflict); }
                 tx.execute(
-                    "INSERT INTO client_registrations(registration_id,request_id,client_kind,display_label,public_key,profile_epoch,state,read_only,requests_per_minute,approved_channel,approved_at_utc_ms,updated_at_utc_ms,revoked_at_utc_ms,version) VALUES(?1,?2,'cli',?3,?4,1,'provisioning',1,60,'approval_helper',?5,?5,NULL,1)",
-                    params![stage.registration_id.as_slice(),request.request_id.as_slice(),DEFAULT_CLI_LABEL,stage.client_public_key.as_slice(),now]
+                    "INSERT INTO client_registrations(registration_id,request_id,client_kind,display_label,public_key,profile_epoch,state,read_only,requests_per_minute,approved_channel,approved_at_utc_ms,updated_at_utc_ms,revoked_at_utc_ms,version) VALUES(?1,?2,?3,?4,?5,1,'provisioning',1,60,'approval_helper',?6,?6,NULL,1)",
+                    params![stage.registration_id.as_slice(),request.request_id.as_slice(),flavor.kind().as_str(),flavor.label(),stage.client_public_key.as_slice(),now]
                 ).map_err(internal)?;
                 for account in request.scope.accounts() {
                     tx.execute("INSERT INTO client_registration_accounts(registration_id,account_id) VALUES(?1,?2)", params![stage.registration_id.as_slice(),account]).map_err(internal)?;
                 }
-                tx.execute("INSERT INTO client_registration_tools(registration_id,tool_id) VALUES(?1,'mail.accounts.list')", [stage.registration_id.as_slice()]).map_err(internal)?;
+                for tool in request.scope.tools() {
+                    tx.execute("INSERT INTO client_registration_tools(registration_id,tool_id) VALUES(?1,?2)", params![stage.registration_id.as_slice(),tool]).map_err(internal)?;
+                }
                 read_registration(tx, &stage.registration_id).map_err(internal)?.ok_or(ErrorCode::InternalError)
             })
         }
@@ -206,12 +334,40 @@ impl Store {
         expected_version: u64,
         expected_server_public_key_hash: [u8; 32],
     ) -> Result<RegistrationRecord, ErrorCode> {
+        self.activate_registration(
+            RegistrationFlavor::Cli,
+            registration_id,
+            expected_version,
+            expected_server_public_key_hash,
+        )
+    }
+    pub fn activate_gui_registration(
+        &self,
+        registration_id: [u8; 16],
+        expected_version: u64,
+        expected_server_public_key_hash: [u8; 32],
+    ) -> Result<RegistrationRecord, ErrorCode> {
+        self.activate_registration(
+            RegistrationFlavor::Gui,
+            registration_id,
+            expected_version,
+            expected_server_public_key_hash,
+        )
+    }
+    fn activate_registration(
+        &self,
+        flavor: RegistrationFlavor,
+        registration_id: [u8; 16],
+        expected_version: u64,
+        expected_server_public_key_hash: [u8; 32],
+    ) -> Result<RegistrationRecord, ErrorCode> {
         if registration_id == [0; 16] || expected_server_public_key_hash == [0; 32] {
             return Err(ErrorCode::InvalidInput);
         }
         incrementable_version(expected_version)?;
         #[cfg(not(windows))]
         {
+            let _ = flavor;
             Err(ErrorCode::CapabilityUnsupported)
         }
         #[cfg(windows)]
@@ -219,6 +375,9 @@ impl Store {
             let observed = self
                 .load_registration(registration_id)?
                 .ok_or(ErrorCode::NotFound)?;
+            if observed.client_kind != flavor.kind() || observed.display_label != flavor.label() {
+                return Err(ErrorCode::Conflict);
+            }
             provisioning_version(&observed, expected_version)?;
             hantong_platform::validate_public_key(&observed.public_key)
                 .map_err(|_| ErrorCode::InternalError)?;
@@ -228,9 +387,9 @@ impl Store {
                 provisioning_version(&registration, expected_version)?;
                 if registration != observed { return Err(ErrorCode::Conflict); }
                 let request = read_request(tx, &registration.request_id).map_err(internal)?.ok_or(ErrorCode::InternalError)?;
-                if !default_request(&request)
-                    || registration.client_kind != ClientKind::Cli
-                    || registration.display_label != DEFAULT_CLI_LABEL
+                if !flavor.matches_request(&request)
+                    || registration.client_kind != flavor.kind()
+                    || registration.display_label != flavor.label()
                     || !registration.read_only
                     || registration.requests_per_minute != 60
                     || registration.approved_channel != "approval_helper"
@@ -258,19 +417,35 @@ impl Store {
         request_id: [u8; 32],
         expected_version: u64,
     ) -> Result<(), ErrorCode> {
+        self.deny_registration_request(RegistrationFlavor::Cli, request_id, expected_version)
+    }
+    pub fn deny_gui_registration_request(
+        &self,
+        request_id: [u8; 32],
+        expected_version: u64,
+    ) -> Result<(), ErrorCode> {
+        self.deny_registration_request(RegistrationFlavor::Gui, request_id, expected_version)
+    }
+    fn deny_registration_request(
+        &self,
+        flavor: RegistrationFlavor,
+        request_id: [u8; 32],
+        expected_version: u64,
+    ) -> Result<(), ErrorCode> {
         if request_id == [0; 32] {
             return Err(ErrorCode::InvalidInput);
         }
         incrementable_version(expected_version)?;
         #[cfg(not(windows))]
         {
+            let _ = flavor;
             Err(ErrorCode::CapabilityUnsupported)
         }
         #[cfg(windows)]
         {
             self.registration_transaction(TransactionBehavior::Immediate, |tx| {
                 let request = read_request(tx,&request_id).map_err(internal)?.ok_or(ErrorCode::NotFound)?;
-                if request.state != RegistrationRequestState::Pending || request.version != expected_version || !default_request(&request) {
+                if request.state != RegistrationRequestState::Pending || request.version != expected_version || !flavor.matches_request(&request) {
                     return Err(ErrorCode::Conflict);
                 }
                 let now = crate::utc_millis().map_err(internal)?;
@@ -390,13 +565,6 @@ impl Store {
     }
 }
 
-fn default_request(request: &RegistrationRequest) -> bool {
-    request.client_kind == ClientKind::Cli
-        && request.display_label == DEFAULT_CLI_LABEL
-        && request.scope.accounts().len() <= 128
-        && request.scope.tools().len() == 1
-        && request.scope.tools()[0] == "mail.accounts.list"
-}
 fn public_header(public_key: &[u8; 72]) -> bool {
     &public_key[..8] == b"ECS1\x20\0\0\0"
 }
@@ -468,11 +636,45 @@ fn same_server(connection: &rusqlite::Connection, expected: &ServerPin) -> Resul
     Ok(())
 }
 
+/// Validates GUI provenance without calling the registration reader recursively.
 #[cfg(windows)]
-fn orphan_requests(tx: &rusqlite::Transaction<'_>) -> Result<Vec<RegistrationRequest>, ErrorCode> {
-    let mut defaults=tx.prepare("SELECT registration_id FROM client_registrations WHERE client_kind='cli' AND display_label=?1 LIMIT 2").map_err(internal)?;
+pub(super) fn validate_gui_registration(
+    connection: &rusqlite::Connection,
+    record: &RegistrationRecord,
+) -> rusqlite::Result<()> {
+    if record.client_kind != ClientKind::Gui && record.display_label != DEFAULT_GUI_LABEL {
+        return Ok(());
+    }
+    let request =
+        read_request(connection, &record.request_id)?.ok_or(rusqlite::Error::InvalidQuery)?;
+    if !RegistrationFlavor::Gui.matches_request(&request)
+        || request.state != RegistrationRequestState::Approved
+        || record.client_kind != ClientKind::Gui
+        || record.display_label != DEFAULT_GUI_LABEL
+        || record.scope != request.scope
+        || !record.read_only
+        || record.requests_per_minute != 60
+        || record.approved_channel != "approval_helper"
+        || record.profile_epoch != 1
+        || record.registration_id
+            != hantong_platform::registration_id_for_request(record.request_id)
+                .map_err(|_| rusqlite::Error::InvalidQuery)?
+    {
+        return Err(rusqlite::Error::InvalidQuery);
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn orphan_requests(
+    tx: &rusqlite::Transaction<'_>,
+    flavor: RegistrationFlavor,
+) -> Result<Vec<RegistrationRequest>, ErrorCode> {
+    let mut defaults=tx.prepare("SELECT registration_id FROM client_registrations WHERE (client_kind=?1 AND display_label=?2) OR (?1='gui' AND (client_kind='gui' OR display_label=?2)) LIMIT 2").map_err(internal)?;
     let default_ids = defaults
-        .query_map([DEFAULT_CLI_LABEL], |r| blob_column::<16>(r, 0))
+        .query_map(params![flavor.kind().as_str(), flavor.label()], |r| {
+            blob_column::<16>(r, 0)
+        })
         .map_err(internal)?
         .collect::<rusqlite::Result<Vec<_>>>()
         .map_err(internal)?;
@@ -484,9 +686,11 @@ fn orphan_requests(tx: &rusqlite::Transaction<'_>) -> Result<Vec<RegistrationReq
             .map_err(internal)?
             .ok_or(ErrorCode::InternalError)?;
     }
-    let mut statement=tx.prepare("SELECT request_id FROM client_registration_requests WHERE client_kind='cli' AND display_label=?1 ORDER BY request_id LIMIT 1025").map_err(internal)?;
+    let mut statement=tx.prepare("SELECT request_id FROM client_registration_requests WHERE (client_kind=?1 AND display_label=?2) OR (?1='gui' AND (client_kind='gui' OR display_label=?2)) ORDER BY request_id LIMIT 1025").map_err(internal)?;
     let ids = statement
-        .query_map([DEFAULT_CLI_LABEL], |r| blob_column::<32>(r, 0))
+        .query_map(params![flavor.kind().as_str(), flavor.label()], |r| {
+            blob_column::<32>(r, 0)
+        })
         .map_err(internal)?
         .collect::<rusqlite::Result<Vec<_>>>()
         .map_err(internal)?;
@@ -500,7 +704,7 @@ fn orphan_requests(tx: &rusqlite::Transaction<'_>) -> Result<Vec<RegistrationReq
         let request = read_request(tx, &id)
             .map_err(internal)?
             .ok_or(ErrorCode::InternalError)?;
-        if id == [0; 32] || !default_request(&request) {
+        if id == [0; 32] || !flavor.matches_request(&request) {
             return Err(ErrorCode::InternalError);
         }
         if request.created_at_utc_ms > now {
@@ -525,9 +729,12 @@ fn orphan_requests(tx: &rusqlite::Transaction<'_>) -> Result<Vec<RegistrationReq
                     .map_err(internal)?
                     .ok_or(ErrorCode::InternalError)?;
                 if record.registration_id != registration_id
-                    || record.client_kind != ClientKind::Cli
-                    || record.display_label != DEFAULT_CLI_LABEL
-                    || record.scope != request.scope
+                    || record.client_kind != flavor.kind()
+                    || record.display_label != flavor.label()
+                    // read_registration already validates every CLI scope-refresh
+                    // transition. Only its initial epoch still equals this request.
+                    || ((flavor == RegistrationFlavor::Gui || record.profile_epoch == 1)
+                        && record.scope != request.scope)
                 {
                     return Err(ErrorCode::InternalError);
                 }

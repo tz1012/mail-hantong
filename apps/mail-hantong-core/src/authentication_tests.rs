@@ -13,6 +13,8 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 #[path = "folder_integration_tests.rs"]
 mod folder_integration_tests;
+#[path = "gui_read_integration_tests.rs"]
+mod gui_read_integration_tests;
 #[path = "read_policy_tests.rs"]
 mod read_policy_tests;
 #[path = "uid_integration_tests.rs"]
@@ -68,6 +70,7 @@ async fn bind_fixture_pipe() -> LocalPipeServer {
 
 #[derive(Clone, Copy, Debug)]
 enum PipeScenario {
+    GuiReads,
     AppReads,
     Policy,
     Folders,
@@ -85,6 +88,15 @@ async fn run_isolated_pipe_scenario(scenario: PipeScenario) {
         let instance = random_nonce().unwrap();
         let mut listener = bind_fixture_pipe().await;
         match scenario {
+            PipeScenario::GuiReads => {
+                gui_read_integration_tests::run_gui_read_scenarios(
+                    &mut listener,
+                    client,
+                    server,
+                    instance,
+                )
+                .await;
+            }
             PipeScenario::AppReads => {
                 read_policy_tests::run_app_read_scenarios(&mut listener, client, server, instance)
                     .await;
@@ -128,6 +140,11 @@ async fn run_isolated_pipe_scenario(scenario: PipeScenario) {
     })
     .await
     .unwrap_or_else(|_| panic!("authenticated pipe scenario timed out: {scenario:?}"));
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn sec03_gui_local_reads_use_own_identity_scope_policy_and_audit_over_signed_pipe() {
+    run_isolated_pipe_scenario(PipeScenario::GuiReads).await;
 }
 
 #[tokio::test(flavor = "current_thread")]

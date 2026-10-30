@@ -481,6 +481,28 @@ pub fn list_default_accounts(_: bool) -> Result<AccountListResponse, ErrorCode> 
     Err(ErrorCode::CapabilityUnsupported)
 }
 
+pub fn list_gui_accounts(include_capabilities: bool) -> Result<AccountListResponse, ErrorCode> {
+    #[cfg(windows)]
+    {
+        tokio::runtime::Builder::new_current_thread().enable_io().enable_time().build()
+            .map_err(|_| ErrorCode::CoreUnavailable)?.block_on(async {
+                let profile = crate::authenticate_gui().await?;
+                let ids = profile.accounts().to_vec();
+                if ids.is_empty() { return Err(ErrorCode::ScopeDenied); }
+                let id = "gui-accounts-list-1";
+                let request = serde_json::json!({"schema_version":1,"request_id":id,
+                    "tool":"mail.accounts.list","params":{"account_ids":ids,"include_capabilities":include_capabilities}});
+                let raw = profile.exchange(id,"mail.accounts.list",&request).await?;
+                parse_account_list_response(&raw,id,&ids,include_capabilities)
+            })
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = include_capabilities;
+        Err(ErrorCode::CapabilityUnsupported)
+    }
+}
+
 #[cfg(test)]
 #[path = "accounts_tests.rs"]
 mod tests;

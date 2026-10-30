@@ -58,7 +58,197 @@ fn record() -> RegistrationRecord {
         scope: request().scope,
     }
 }
+fn gui_request() -> RegistrationRequest {
+    let mut value = request();
+    value.client_kind = ClientKind::Gui;
+    value.display_label = DEFAULT_GUI_LABEL.into();
+    value.scope =
+        RequestedScope::new(vec!["a".into()], hantong_contracts::auth::gui_read_tools()).unwrap();
+    value
+}
+fn gui_record() -> RegistrationRecord {
+    let mut value = record();
+    value.client_kind = ClientKind::Gui;
+    value.display_label = DEFAULT_GUI_LABEL.into();
+    value.scope = gui_request().scope;
+    value
+}
+fn gui_review() -> RegistrationReview {
+    review_snapshot(&gui_request(), hantong_platform::sha256(&public()).unwrap()).unwrap()
+}
+
+#[test]
+fn inst04_gui_and_cli_pending_requests_are_separate_and_share_the_native_queue() {
+    struct Key(Option<ServerSigningKey>);
+    impl Drop for Key {
+        fn drop(&mut self) {
+            self.0.take().unwrap().delete().unwrap();
+        }
+    }
+    struct Directory(std::path::PathBuf);
+    impl Drop for Directory {
+        fn drop(&mut self) {
+            std::fs::remove_dir_all(&self.0).unwrap();
+        }
+    }
+    let key = Key(Some(
+        ServerSigningKey::create(hantong_platform::random_nonce().unwrap()).unwrap(),
+    ));
+    let root = Directory(std::env::temp_dir().join(format!(
+        "hantong-gui-registration-{}",
+        hantong_contracts::wire_hex::encode(&hantong_platform::random_nonce().unwrap())
+    )));
+    std::fs::create_dir(&root.0).unwrap();
+    let store = Store::open(root.0.join("data"), root.0.join("keys")).unwrap();
+    let secrets = root.0.join("keys");
+    let (handle, mut worker) = coordinator(&store, key.0.as_ref().unwrap(), &secrets);
+    let first = handle.command(RegistrationCommand::GuiRequest).unwrap();
+    let id = *first.request_id();
+    assert_eq!(worker.receiver.try_recv().unwrap(), Job::Registration(id));
+    assert_eq!(
+        handle.command(RegistrationCommand::GuiRequest),
+        Ok(first.clone())
+    );
+    assert_eq!(
+        handle.command(RegistrationCommand::GuiStatus(id)),
+        Ok(first.clone())
+    );
+    assert!(worker.receiver.try_recv().is_err());
+    assert_eq!(
+        handle.command(RegistrationCommand::Status(id)),
+        Err(ErrorCode::NotFound)
+    );
+    assert_eq!(
+        handle.command(RegistrationCommand::Request),
+        Err(ErrorCode::RateLimited)
+    );
+    let stored = store.get_registration_request(id).unwrap().unwrap();
+    assert_eq!(stored.client_kind, ClientKind::Gui);
+    assert_eq!(stored.display_label, DEFAULT_GUI_LABEL);
+    assert!(stored.scope.accounts().is_empty());
+    assert_eq!(
+        stored.scope.tools(),
+        hantong_contracts::auth::gui_read_tools()
+    );
+    drop(worker);
+    drop(handle);
+    let (handle, mut worker) = coordinator(&store, key.0.as_ref().unwrap(), &secrets);
+    assert_eq!(
+        handle.command(RegistrationCommand::GuiStatus(id)),
+        Ok(first.clone())
+    );
+    assert!(worker.receiver.try_recv().is_err());
+    assert_eq!(handle.command(RegistrationCommand::GuiRequest), Ok(first));
+    assert_eq!(worker.receiver.try_recv().unwrap(), Job::Registration(id));
+    drop(worker);
+    drop(handle);
+    store
+        .deny_gui_registration_request(id, stored.version)
+        .unwrap();
+    let (handle, mut worker) = coordinator(&store, key.0.as_ref().unwrap(), &secrets);
+    let cli = handle.command(RegistrationCommand::Request).unwrap();
+    assert_ne!(cli.request_id(), &id);
+    assert_eq!(
+        worker.receiver.try_recv().unwrap(),
+        Job::Registration(*cli.request_id())
+    );
+    assert_eq!(
+        handle.command(RegistrationCommand::GuiStatus(*cli.request_id())),
+        Err(ErrorCode::NotFound)
+    );
+    assert_eq!(
+        handle
+            .command(RegistrationCommand::GuiStatus(id))
+            .unwrap()
+            .state(),
+        RegistrationProgress::Denied
+    );
+}
+
+#[test]
+fn sec03_gui_registration_binds_own_review_profile_and_recovery_without_new_key() {
+    let f = Fake::gui();
+    assert_eq!(
+        commit_consumed_review(&f, &gui_request(), &gui_review()),
+        Ok(())
+    );
+    assert_eq!(
+        f.events(),
+        [
+            "request",
+            "server",
+            "open",
+            "create",
+            "key_public",
+            "stage",
+            "publish",
+            "activate",
+            "release_publication"
+        ]
+    );
+    f.events.borrow_mut().clear();
+    f.current.borrow_mut().state = RegistrationRequestState::Approved;
+    assert_eq!(recover_record(&f, &gui_record()), Ok(()));
+    assert_eq!(
+        f.events(),
+        [
+            "request",
+            "server",
+            "open",
+            "key_public",
+            "publish",
+            "activate",
+            "release_publication"
+        ]
+    );
+}
+
+#[test]
+fn sec03_gui_and_cli_reviews_cannot_authorize_each_other_or_expand_tools() {
+    for (f, expected, wrong) in [
+        (Fake::gui(), gui_request(), review()),
+        (Fake::new(), request(), gui_review()),
+    ] {
+        assert_eq!(
+            commit_consumed_review(&f, &expected, &wrong),
+            Err(ErrorCode::Conflict)
+        );
+        assert!(!f.events().contains(&"create"));
+    }
+    let mut invalid = gui_request();
+    invalid.scope = RequestedScope::new(
+        vec!["a".into()],
+        hantong_contracts::auth::default_cli_metadata_tools(),
+    )
+    .unwrap();
+    assert_eq!(review_snapshot(&invalid, [2; 32]), Err(ErrorCode::Conflict));
+    invalid = gui_request();
+    invalid.display_label = DEFAULT_CLI_LABEL.into();
+    assert_eq!(review_snapshot(&invalid, [2; 32]), Err(ErrorCode::Conflict));
+}
+
+#[test]
+fn sec03_gui_failure_preserves_provisioning_key_and_never_replaces_missing_key() {
+    for failure in ["publish", "activate"] {
+        let mut f = Fake::gui();
+        f.fail = Some(failure);
+        assert_eq!(
+            commit_consumed_review(&f, &gui_request(), &gui_review()),
+            Err(ErrorCode::Conflict)
+        );
+        assert!(!f.events().contains(&"delete"));
+    }
+    let f = Fake::gui();
+    f.current.borrow_mut().state = RegistrationRequestState::Approved;
+    assert_eq!(recover_record(&f, &gui_record()), Err(ErrorCode::NotFound));
+    assert!(
+        !f.events()
+            .iter()
+            .any(|event| ["create", "publish", "activate"].contains(event))
+    );
+}
 struct Fake {
+    gui: bool,
     events: Rc<RefCell<Vec<&'static str>>>,
     fail: Option<&'static str>,
     current: RefCell<RegistrationRequest>,
@@ -73,6 +263,7 @@ struct Fake {
 impl Fake {
     fn new() -> Self {
         Self {
+            gui: false,
             events: Rc::new(RefCell::new(vec![])),
             fail: None,
             current: RefCell::new(request()),
@@ -92,6 +283,18 @@ impl Fake {
         } else {
             Ok(())
         }
+    }
+    fn gui() -> Self {
+        let mut value = Self::new();
+        value.gui = true;
+        *value.current.borrow_mut() = gui_request();
+        value
+    }
+    fn expected_request(&self) -> RegistrationRequest {
+        if self.gui { gui_request() } else { request() }
+    }
+    fn expected_record(&self) -> RegistrationRecord {
+        if self.gui { gui_record() } else { record() }
     }
     fn events(&self) -> Vec<&'static str> {
         self.events.borrow().clone()
@@ -173,7 +376,7 @@ impl Effects for Fake {
         key: [u8; 72],
         hash: [u8; 32],
     ) -> Result<RegistrationRecord, ErrorCode> {
-        assert_eq!(r, request());
+        assert_eq!(r, self.expected_request());
         assert_eq!(
             id,
             hantong_platform::registration_id_for_request([1; 32]).unwrap()
@@ -184,7 +387,7 @@ impl Effects for Fake {
             self.linked.set(true);
         }
         self.hit("stage")?;
-        Ok(record())
+        Ok(self.expected_record())
     }
     fn publish(&self, bytes: &[u8]) -> Result<Publication, ErrorCode> {
         let p = ParsedClientProfile::from_json(bytes).unwrap();
@@ -192,12 +395,16 @@ impl Effects for Fake {
             p.registration_id(),
             &hantong_platform::registration_id_for_request([1; 32]).unwrap()
         );
-        assert_eq!(p.scope(), &request().scope);
+        assert_eq!(p.scope(), &self.expected_request().scope);
+        assert_eq!(
+            p.profile().as_str(),
+            if self.gui { "gui" } else { "default" }
+        );
         self.hit("publish")?;
         Ok(Publication(self.events.clone()))
     }
     fn activate(&self, r: &RegistrationRecord, hash: [u8; 32]) -> Result<(), ErrorCode> {
-        assert_eq!(r, &record());
+        assert_eq!(r, &self.expected_record());
         assert_eq!(hash, *review().server_public_key_hash());
         self.hit("activate")
     }

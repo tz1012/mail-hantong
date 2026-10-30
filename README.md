@@ -4,9 +4,11 @@ A multi-account mail hub for Windows, with a shared core service, the `hantong` 
 
 **Status: active development. The Rust workspace and initial bilingual CLI run locally. Mail integration, GUI and production installers are not complete.**
 
+Windows GUI는 `cargo run -p mail-hantong-gui -- --lang ko --theme system`으로 실행합니다. 영어는 `--lang en`, 테마는 `light`, `dark`, `system`입니다. GUI는 CLI와 별도 등록을 사용하며, 사용자가 연결을 요청하고 보호된 확인 창에서 검토한 계정의 저장된 폴더·메일 메타데이터만 읽습니다. 표시 설정 저장·본문·첨부·작성·발송은 아직 개발 중입니다. 최신 검증 여부는 [진행 기록](docs/latest/PROGRESS.md)을 확인하세요.
+
 Windows ships first. Planned macOS support starts with the local core, CLI, and a minimal approval helper; the full GUI follows later.
 
-The core service and CLI use **Rust 1.95.0**, selected to balance startup speed and memory use. See [ADR-001](docs/adr/ADR-001-core-runtime.md) and the [workspace structure](docs/latest/RUST-STRUCTURE.md). The GUI framework remains a separate decision.
+The core service and CLI use **Rust 1.95.0**, selected to balance startup speed and memory use. The Windows GUI uses native Win32 controls. See [ADR-001](docs/adr/ADR-001-core-runtime.md), [ADR-002](docs/adr/ADR-002-desktop-ui.md), and the [workspace structure](docs/latest/RUST-STRUCTURE.md).
 
 여러 메일 계정을 함께 사용하는 메일 허브를 개발하고 있습니다. 원문 170개 요건을 보존한 [Markdown 분할본](docs/requirements/README.md)을 사용자 승인으로 개발 기준 문서에 채택했습니다. GitHub 공개와 명령어 설치·개발 환경 구성을 목표로 합니다.
 

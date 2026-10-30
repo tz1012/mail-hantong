@@ -116,17 +116,31 @@ pub(super) fn review_text(
     language: Language,
 ) -> Result<String, ErrorCode> {
     let t = |key| text(language, key);
+    let gui = review.client_kind() == hantong_contracts::client::ClientKind::Gui;
+    let tools = if gui {
+        format!(
+            "{}\r\n{}",
+            review.scope().tools().join("\r\n"),
+            t(TextKey::GuiTools)
+        )
+    } else {
+        format!("{} (mail.accounts.list)", t(TextKey::AccountsListTool))
+    };
     let accounts = if review.account_ids().is_empty() {
         t(TextKey::NoAccounts).to_owned()
     } else {
         review.account_ids().join("\r\n")
     };
     Ok(format!(
-        "{}: {}\r\n{}: {}\r\n{}: {}\r\n{}: {}\r\n\r\n{}\r\n{}\r\n\r\n{}\r\n{} (mail.accounts.list)\r\n\r\n{}\r\n{}\r\n\r\n{}: {}\r\n\r\n{}\r\n{}",
+        "{}: {}\r\n{}: {}\r\n{}: {}\r\n{}: {}\r\n\r\n{}\r\n{}\r\n\r\n{}\r\n{}\r\n\r\n{}\r\n{}\r\n\r\n{}: {}\r\n\r\n{}\r\n{}",
         t(TextKey::Client),
-        t(TextKey::ClientValue),
+        t(if gui {
+            TextKey::GuiClientValue
+        } else {
+            TextKey::ClientValue
+        }),
         t(TextKey::Profile),
-        t(TextKey::ProfileValue),
+        review.profile_name(),
         t(TextKey::Access),
         t(TextKey::ReadOnly),
         t(TextKey::RateLimit),
@@ -134,19 +148,47 @@ pub(super) fn review_text(
         t(TextKey::Accounts),
         accounts,
         t(TextKey::Tools),
-        t(TextKey::AccountsListTool),
+        tools,
         t(TextKey::ServerFingerprint),
         wire_hex::encode(review.server_public_key_hash()),
         t(TextKey::ExpiresAt),
         utc_display(review.expires_at_utc_ms())?,
         t(TextKey::ScopeNotice),
-        t(TextKey::VerificationRequired)
+        t(if gui {
+            TextKey::GuiVerificationRequired
+        } else {
+            TextKey::VerificationRequired
+        })
     ))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn inst04_gui_review_discloses_exact_local_header_scope_in_both_languages() {
+        let review = RegistrationReview::new_gui(
+            [1; 32],
+            1,
+            vec!["account_B".into(), "account_A".into()],
+            [2; 32],
+            1000,
+            2000,
+        )
+        .unwrap();
+        for language in [Language::En, Language::Ko] {
+            let rendered = review_text(&review, language).unwrap();
+            assert!(rendered.contains("account_A\r\naccount_B"));
+            assert!(rendered.contains(text(language, TextKey::GuiClientValue)));
+            assert!(rendered.contains(text(language, TextKey::GuiTools)));
+            assert!(rendered.contains(text(language, TextKey::GuiVerificationRequired)));
+            assert!(!rendered.contains(text(language, TextKey::ClientValue)));
+            assert!(!rendered.contains("default"));
+            for tool in review.scope().tools() {
+                assert!(rendered.contains(tool));
+            }
+        }
+    }
     #[test]
     fn inst04_review_text_displays_exact_frozen_scope_and_server_fingerprint() {
         let review = RegistrationReview::new(

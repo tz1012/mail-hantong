@@ -382,6 +382,14 @@ name = "hantong-contracts"
 version = "0.1.0"
 
 [[package]]
+name = "hantong-desktop"
+version = "0.1.0"
+dependencies = [
+ "hantong-contracts",
+ "windows",
+]
+
+[[package]]
 name = "hantong-domain"
 version = "0.1.0"
 dependencies = [
@@ -823,6 +831,15 @@ dependencies = [
  "hantong-test-support",
  "serde_json",
  "tokio",
+]
+
+[[package]]
+name = "mail-hantong-gui"
+version = "0.1.0"
+dependencies = [
+ "hantong-contracts",
+ "hantong-desktop",
+ "hantong-ipc-client",
 ]
 
 [[package]]

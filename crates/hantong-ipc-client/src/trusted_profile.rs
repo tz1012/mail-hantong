@@ -3,7 +3,7 @@
 use crate::{
     PendingClientAuthentication,
     authenticated_wire::{self, AuthenticatedClient},
-    profile::ParsedClientProfile,
+    profile::{ParsedClientProfile, ProfileSelector},
 };
 use hantong_contracts::ErrorCode;
 use hantong_contracts::auth::{AppReadTool, RequestedScope};
@@ -19,6 +19,28 @@ pub struct AuthenticatedDefaultProfile<S> {
     loaded: LoadedClientProfile,
     accounts: Vec<String>,
     scope: RequestedScope,
+}
+
+/// A connection authenticated exclusively from the fixed GUI profile.
+pub struct AuthenticatedGuiProfile<S>(AuthenticatedDefaultProfile<S>);
+impl<S: AsyncRead + AsyncWrite + Unpin> AuthenticatedGuiProfile<S> {
+    pub fn accounts(&self) -> &[String] {
+        self.0.accounts()
+    }
+    pub fn scope(&self) -> &RequestedScope {
+        self.0.scope()
+    }
+    pub fn tools(&self) -> &[String] {
+        self.0.tools()
+    }
+    pub async fn exchange(
+        self,
+        id: &str,
+        method: &str,
+        params: &serde_json::Value,
+    ) -> Result<Vec<u8>, ErrorCode> {
+        self.0.exchange(id, method, params).await
+    }
 }
 
 impl<S: AsyncRead + AsyncWrite + Unpin> AuthenticatedDefaultProfile<S> {
@@ -58,29 +80,71 @@ pub async fn authenticate_default_app_read(
     authenticate_default_for(Some(tool)).await
 }
 
+/// Uses only the GUI file and its registration-derived existing key; never the CLI profile.
+pub async fn authenticate_gui()
+-> Result<AuthenticatedGuiProfile<impl AsyncRead + AsyncWrite + Unpin>, ErrorCode> {
+    authenticate_profile(ProfileSelector::Gui, None)
+        .await
+        .map(AuthenticatedGuiProfile)
+}
+
 async fn authenticate_default_for(
     app_read: Option<AppReadTool>,
 ) -> Result<AuthenticatedDefaultProfile<impl AsyncRead + AsyncWrite + Unpin>, ErrorCode> {
-    let loaded = hantong_platform::load_default_client_profile()?;
-    let profile = ParsedClientProfile::from_json(loaded.bytes())?;
+    authenticate_profile(ProfileSelector::Default, app_read).await
+}
+async fn authenticate_profile(
+    selected: ProfileSelector,
+    app_read: Option<AppReadTool>,
+) -> Result<AuthenticatedDefaultProfile<impl AsyncRead + AsyncWrite + Unpin>, ErrorCode> {
+    let loaded = match selected {
+        ProfileSelector::Default => hantong_platform::load_default_client_profile()?,
+        ProfileSelector::Gui => hantong_platform::load_gui_client_profile()?,
+    };
+    let profile = parse_selected_profile(loaded.bytes(), selected)?;
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_err(|_| ErrorCode::AuthRequired)?
         .as_millis()
         .try_into()
         .map_err(|_| ErrorCode::AuthRequired)?;
-    let pending = match app_read {
-        Some(tool) => prepare_app_profile(&profile, tool, now)?,
-        None => prepare_profile(&profile, now)?,
+    let pending = match (selected, app_read) {
+        (ProfileSelector::Default, Some(tool)) => prepare_app_profile(&profile, tool, now)?,
+        (ProfileSelector::Default, None) => prepare_profile(&profile, now)?,
+        (ProfileSelector::Gui, None) => prepare_gui_profile(&profile, now)?,
+        (ProfileSelector::Gui, Some(_)) => return Err(ErrorCode::ScopeDenied),
     };
     let scope = pending.requested_scope().clone();
-    let client = authenticated_wire::authenticate(pending, "default-profile-auth-1").await?;
+    let id = match selected {
+        ProfileSelector::Default => "default-profile-auth-1",
+        ProfileSelector::Gui => "gui-profile-auth-1",
+    };
+    let client = authenticated_wire::authenticate(pending, id).await?;
     Ok(AuthenticatedDefaultProfile {
         client,
         loaded,
         accounts: scope.accounts().to_vec(),
         scope,
     })
+}
+
+fn parse_selected_profile(
+    bytes: &[u8],
+    expected: ProfileSelector,
+) -> Result<ParsedClientProfile, ErrorCode> {
+    let profile = ParsedClientProfile::from_json(bytes)?;
+    require_selector(&profile, expected)?;
+    Ok(profile)
+}
+fn require_selector(
+    profile: &ParsedClientProfile,
+    expected: ProfileSelector,
+) -> Result<(), ErrorCode> {
+    if profile.profile() == expected {
+        Ok(())
+    } else {
+        Err(ErrorCode::AuthRequired)
+    }
 }
 
 /// Checks the registered identity and immediately drops the authenticated
@@ -102,6 +166,15 @@ fn prepare_profile(
     profile: &ParsedClientProfile,
     now: i64,
 ) -> Result<PendingClientAuthentication, ErrorCode> {
+    require_selector(profile, ProfileSelector::Default)?;
+    prepare_profile_with_scope(profile, profile.scope().clone(), now)
+}
+
+fn prepare_gui_profile(
+    profile: &ParsedClientProfile,
+    now: i64,
+) -> Result<PendingClientAuthentication, ErrorCode> {
+    require_selector(profile, ProfileSelector::Gui)?;
     prepare_profile_with_scope(profile, profile.scope().clone(), now)
 }
 
@@ -110,6 +183,7 @@ fn prepare_app_profile(
     tool: AppReadTool,
     now: i64,
 ) -> Result<PendingClientAuthentication, ErrorCode> {
+    require_selector(profile, ProfileSelector::Default)?;
     if !profile
         .scope()
         .tools()
@@ -213,6 +287,141 @@ mod tests {
             value.scope().accounts().to_vec(),
         )
         .unwrap()
+    }
+
+    #[test]
+    fn sec03_gui_and_default_trusted_profiles_reject_cross_file_bytes_before_key_access() {
+        let mut public = [7; 72];
+        public[..8].copy_from_slice(b"ECS1\x20\0\0\0");
+        let default =
+            ParsedClientProfile::new([1; 16], [2; 32], public, public, 1, vec![]).unwrap();
+        let gui =
+            ParsedClientProfile::new_gui([3; 16], [4; 32], public, public, 1, vec![]).unwrap();
+        for (p, expected) in [
+            (&default, ProfileSelector::Default),
+            (&gui, ProfileSelector::Gui),
+        ] {
+            assert_eq!(
+                parse_selected_profile(&p.to_json().unwrap(), expected).unwrap(),
+                *p
+            );
+        }
+        assert_eq!(
+            parse_selected_profile(&gui.to_json().unwrap(), ProfileSelector::Default),
+            Err(ErrorCode::AuthRequired)
+        );
+        assert_eq!(
+            parse_selected_profile(&default.to_json().unwrap(), ProfileSelector::Gui),
+            Err(ErrorCode::AuthRequired)
+        );
+        assert!(matches!(
+            prepare_profile(&gui, 1000),
+            Err(ErrorCode::AuthRequired)
+        ));
+        assert!(matches!(
+            prepare_gui_profile(&default, 1000),
+            Err(ErrorCode::AuthRequired)
+        ));
+        assert!(matches!(
+            prepare_app_profile(&gui, AppReadTool::DisplaySettingsGet, 1000),
+            Err(ErrorCode::AuthRequired)
+        ));
+    }
+    #[test]
+    fn sec03_gui_authentication_binds_own_key_and_exact_read_scope_and_rejects_widening() {
+        let id = id();
+        let client = OwnedKey::registered(id);
+        let server = OwnedKey::random();
+        let gui = ParsedClientProfile::new_gui(
+            id,
+            client_key_id_for_registration(id).unwrap(),
+            client.key().public_key().unwrap(),
+            server.key().public_key().unwrap(),
+            1,
+            vec!["account_a".into()],
+        )
+        .unwrap();
+        let before = gui.to_json().unwrap();
+        let pending = prepare_gui_profile(&gui, 1000).unwrap();
+        assert_eq!(pending.requested_scope(), gui.scope());
+        let peer = current_peer_context().unwrap();
+        let mut challenge = AuthTranscript {
+            registration_id: id,
+            profile_epoch: 1,
+            issued_at_utc_ms: 1000,
+            expires_at_utc_ms: 31000,
+            server_instance_id: random_nonce().unwrap(),
+            server_nonce: random_nonce().unwrap(),
+            client_nonce: pending.client_nonce(),
+            server_key_hash: sha256(gui.server_public_key()).unwrap(),
+            client_key_hash: sha256(gui.client_public_key()).unwrap(),
+            server: peer.clone(),
+            client: peer,
+            scope: gui.scope().clone(),
+        };
+        let signature = server
+            .key()
+            .sign(&challenge.encode(SignerRole::Server).unwrap())
+            .unwrap();
+        let response = pending
+            .respond(challenge.clone(), &signature, 1001)
+            .unwrap();
+        assert!(
+            verify_signature(
+                gui.client_public_key(),
+                &challenge.encode(SignerRole::Client).unwrap(),
+                &response
+            )
+            .unwrap()
+        );
+        for scope in [
+            RequestedScope::new(
+                vec!["account_a".into()],
+                hantong_contracts::auth::default_cli_metadata_tools(),
+            )
+            .unwrap(),
+            RequestedScope::new(
+                vec!["account_a".into(), "account_b".into()],
+                hantong_contracts::auth::gui_read_tools(),
+            )
+            .unwrap(),
+        ] {
+            let pending = prepare_gui_profile(&gui, 1000).unwrap();
+            challenge.client_nonce = pending.client_nonce();
+            challenge.scope = scope;
+            let signature = server
+                .key()
+                .sign(&challenge.encode(SignerRole::Server).unwrap())
+                .unwrap();
+            assert_eq!(
+                pending.respond(challenge.clone(), &signature, 1001),
+                Err(ErrorCode::AuthRequired)
+            );
+        }
+        assert_eq!(gui.to_json().unwrap(), before);
+    }
+    #[test]
+    fn sec03_gui_missing_registration_key_is_not_created_or_replaced_by_other_key() {
+        let missing = id();
+        let other = OwnedKey::registered(id());
+        let server = OwnedKey::random();
+        let gui = ParsedClientProfile::new_gui(
+            missing,
+            client_key_id_for_registration(missing).unwrap(),
+            other.key().public_key().unwrap(),
+            server.key().public_key().unwrap(),
+            1,
+            vec![],
+        )
+        .unwrap();
+        assert!(matches!(
+            prepare_gui_profile(&gui, 1000),
+            Err(ErrorCode::AuthRequired)
+        ));
+        assert!(matches!(
+            ClientSigningKey::open_for_registration(missing),
+            Err(ErrorCode::NotFound)
+        ));
     }
 
     #[test]

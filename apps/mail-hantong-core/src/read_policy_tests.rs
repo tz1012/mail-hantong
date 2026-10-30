@@ -241,17 +241,29 @@ pub(super) async fn run_app_read_scenarios(
             requests_per_minute: 60,
         })
         .unwrap();
-    for kind in [
-        hantong_store::ClientKind::Gui,
-        hantong_store::ClientKind::Mcp,
-    ] {
+    // Relabeling an existing CLI identity as GUI is now rejected at the
+    // provenance boundary, before policy. A genuine GUI with its three fixed
+    // reads is exercised by gui_read_integration_tests.
+    h.fixture
+        .mutate(PolicyFixtureMutation::AppClientKind(
+            hantong_store::ClientKind::Gui,
+        ))
+        .unwrap();
+    assert!(matches!(
         h.fixture
-            .mutate(PolicyFixtureMutation::AppClientKind(kind))
-            .unwrap();
-        assert_error(&h.response(display()).await, ErrorCode::PolicyBlocked);
-        assert_error(&h.response(diagnostics()).await, ErrorCode::PolicyBlocked);
-        assert_terminal(&h, Some(ErrorCode::PolicyBlocked), None);
-    }
+            .open()
+            .unwrap()
+            .load_registration(h.fixture.registration_id),
+        Err(ErrorCode::InternalError)
+    ));
+    h.fixture
+        .mutate(PolicyFixtureMutation::AppClientKind(
+            hantong_store::ClientKind::Mcp,
+        ))
+        .unwrap();
+    assert_error(&h.response(display()).await, ErrorCode::PolicyBlocked);
+    assert_error(&h.response(diagnostics()).await, ErrorCode::PolicyBlocked);
+    assert_terminal(&h, Some(ErrorCode::PolicyBlocked), None);
 }
 
 pub(super) async fn run_policy_scenarios(

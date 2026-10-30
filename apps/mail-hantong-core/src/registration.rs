@@ -11,8 +11,9 @@ use hantong_ipc_client::profile::ParsedClientProfile;
 use hantong_ipc_server::setup_dispatch::{SetupCommand, SetupReceipt};
 use hantong_platform::{ClientSigningKey, ServerSigningKey};
 use hantong_store::{
-    CliRegistrationStage, ClientKind, DEFAULT_CLI_LABEL, RegistrationRecord, RegistrationRequest,
-    RegistrationRequestState, RegistrationState, ServerIdentity, Store,
+    CliRegistrationStage, ClientKind, DEFAULT_CLI_LABEL, DEFAULT_GUI_LABEL, GuiRegistrationStage,
+    RegistrationRecord, RegistrationRequest, RegistrationRequestState, RegistrationState,
+    ServerIdentity, Store,
 };
 use std::{cell::Cell, rc::Rc};
 use tokio::sync::mpsc;
@@ -164,15 +165,41 @@ impl RegistrationHandle<'_> {
         &self,
         command: RegistrationCommand,
     ) -> Result<RegistrationReceipt, ErrorCode> {
+        let gui = matches!(
+            command,
+            RegistrationCommand::GuiRequest | RegistrationCommand::GuiStatus(_)
+        );
+        let kind = if gui {
+            ClientKind::Gui
+        } else {
+            ClientKind::Cli
+        };
         match command {
-            RegistrationCommand::Status(id) => self.state.receipt(id),
-            RegistrationCommand::Request => {
-                if self.state.store.load_default_cli_registration()?.is_some() {
+            RegistrationCommand::Status(id) | RegistrationCommand::GuiStatus(id) => {
+                self.state.receipt(id, kind)
+            }
+            RegistrationCommand::Request | RegistrationCommand::GuiRequest => {
+                let registered = if gui {
+                    self.state.store.load_gui_registration()?
+                } else {
+                    self.state.store.load_default_cli_registration()?
+                };
+                if registered.is_some() {
                     return Err(ErrorCode::Conflict);
                 }
                 if let Some(job) = self.state.scheduled.get() {
                     return match job {
-                        Job::Registration(id) => self.state.receipt(id),
+                        Job::Registration(id) => {
+                            let active = self
+                                .state
+                                .store
+                                .get_registration_request(id)?
+                                .ok_or(ErrorCode::InternalError)?;
+                            if active.client_kind != kind {
+                                return Err(ErrorCode::RateLimited);
+                            }
+                            self.state.receipt(id, kind)
+                        }
                         Job::Imap(_) | Job::ScopeRefresh(_) => Err(ErrorCode::RateLimited),
                     };
                 }
@@ -186,17 +213,30 @@ impl RegistrationHandle<'_> {
                         return Err(error);
                     }
                 }
-                let request = match self.state.store.load_pending_default_cli_request()? {
+                let pending = if gui {
+                    self.state.store.load_pending_gui_request()?
+                } else {
+                    self.state.store.load_pending_default_cli_request()?
+                };
+                let request = match pending {
                     Some(request) => request,
                     None => {
                         let scope = RequestedScope::new(
                             self.state.store.list_registrable_account_ids()?,
-                            vec!["mail.accounts.list".into()],
+                            if gui {
+                                hantong_contracts::auth::gui_read_tools()
+                            } else {
+                                vec!["mail.accounts.list".into()]
+                            },
                         )?;
                         self.state.store.create_registration_request(
                             hantong_platform::random_nonce()?,
-                            ClientKind::Cli,
-                            DEFAULT_CLI_LABEL,
+                            kind,
+                            if gui {
+                                DEFAULT_GUI_LABEL
+                            } else {
+                                DEFAULT_CLI_LABEL
+                            },
                             &scope,
                         )?
                     }
@@ -241,7 +281,7 @@ impl RegistrationWorker<'_> {
 }
 
 impl Shared<'_> {
-    fn receipt(&self, id: [u8; 32]) -> Result<RegistrationReceipt, ErrorCode> {
+    fn receipt(&self, id: [u8; 32], kind: ClientKind) -> Result<RegistrationReceipt, ErrorCode> {
         if id == [0; 32] {
             return Err(ErrorCode::InvalidInput);
         }
@@ -249,6 +289,16 @@ impl Shared<'_> {
             .store
             .get_registration_request(id)?
             .ok_or(ErrorCode::NotFound)?;
+        if request.client_kind != kind {
+            return Err(ErrorCode::NotFound);
+        }
+        if !supported_identity(
+            request.client_kind,
+            &request.display_label,
+            request.scope.tools(),
+        ) {
+            return Err(ErrorCode::Conflict);
+        }
         if request.state == RegistrationRequestState::Pending
             && self
                 .store
@@ -301,9 +351,15 @@ impl Shared<'_> {
                 let consumed = verified.consume(&review)?;
                 commit_consumed_review(&effects, &expected, &consumed)
             }
-            Err(ErrorCode::ApprovalDenied) => self
-                .store
-                .deny_cli_registration_request(id, expected.version),
+            Err(ErrorCode::ApprovalDenied) => {
+                if expected.client_kind == ClientKind::Gui {
+                    self.store
+                        .deny_gui_registration_request(id, expected.version)
+                } else {
+                    self.store
+                        .deny_cli_registration_request(id, expected.version)
+                }
+            }
             Err(ErrorCode::ApprovalExpired) => {
                 self.store
                     .expire_registration_request(id, expected.version)?;
@@ -349,13 +405,19 @@ fn review_snapshot(
     request: &RegistrationRequest,
     hash: [u8; 32],
 ) -> Result<RegistrationReview, ErrorCode> {
-    if request.client_kind != ClientKind::Cli
-        || request.display_label != DEFAULT_CLI_LABEL
-        || request.scope.tools() != ["mail.accounts.list"]
-    {
+    if !supported_identity(
+        request.client_kind,
+        &request.display_label,
+        request.scope.tools(),
+    ) {
         return Err(ErrorCode::Conflict);
     }
-    RegistrationReview::new(
+    let constructor = if request.client_kind == ClientKind::Gui {
+        RegistrationReview::new_gui
+    } else {
+        RegistrationReview::new
+    };
+    constructor(
         request.request_id,
         request.version,
         request.scope.accounts().to_vec(),
@@ -363,6 +425,16 @@ fn review_snapshot(
         request.created_at_utc_ms,
         request.expires_at_utc_ms,
     )
+}
+
+fn supported_identity(kind: ClientKind, label: &str, tools: &[String]) -> bool {
+    match kind {
+        ClientKind::Cli => label == DEFAULT_CLI_LABEL && tools == ["mail.accounts.list"],
+        ClientKind::Gui => {
+            label == DEFAULT_GUI_LABEL && tools == hantong_contracts::auth::gui_read_tools()
+        }
+        _ => false,
+    }
 }
 
 // This effect seam is private and has exactly one production implementation.
@@ -394,8 +466,11 @@ trait Effects {
 }
 fn cleanup_orphan<E: Effects>(effects: &E, request: &RegistrationRequest) -> Result<(), ErrorCode> {
     if request.state == RegistrationRequestState::Approved
-        || request.client_kind != ClientKind::Cli
-        || request.display_label != DEFAULT_CLI_LABEL
+        || !supported_identity(
+            request.client_kind,
+            &request.display_label,
+            request.scope.tools(),
+        )
     {
         return Err(ErrorCode::Conflict);
     }
@@ -483,7 +558,7 @@ fn commit_consumed_review<E: Effects>(
     effects.activate(&record, hash)
 }
 fn recover_record<E: Effects>(effects: &E, record: &RegistrationRecord) -> Result<(), ErrorCode> {
-    validate_default_record(record)?;
+    validate_initial_record(record)?;
     let request = effects.request(record.request_id)?;
     if request.state != RegistrationRequestState::Approved
         || request.client_kind != record.client_kind
@@ -502,23 +577,31 @@ fn recover_record<E: Effects>(effects: &E, record: &RegistrationRecord) -> Resul
     let _publication = effects.publish(&bytes)?;
     effects.activate(record, hash)
 }
-fn validate_default_record(record: &RegistrationRecord) -> Result<(), ErrorCode> {
+fn validate_initial_record(record: &RegistrationRecord) -> Result<(), ErrorCode> {
     if record.registration_id != hantong_platform::registration_id_for_request(record.request_id)?
         || record.state != RegistrationState::Provisioning
-        || record.client_kind != ClientKind::Cli
-        || record.display_label != DEFAULT_CLI_LABEL
+        || record.profile_epoch != 1
+        || !supported_identity(
+            record.client_kind,
+            &record.display_label,
+            record.scope.tools(),
+        )
         || !record.read_only
         || record.requests_per_minute != 60
         || record.approved_channel != "approval_helper"
-        || record.scope.tools() != ["mail.accounts.list"]
     {
         return Err(ErrorCode::Conflict);
     }
     Ok(())
 }
 fn profile_bytes(record: &RegistrationRecord, server: [u8; 72]) -> Result<Vec<u8>, ErrorCode> {
-    validate_default_record(record)?;
-    ParsedClientProfile::new(
+    validate_initial_record(record)?;
+    let constructor = if record.client_kind == ClientKind::Gui {
+        ParsedClientProfile::new_gui
+    } else {
+        ParsedClientProfile::new
+    };
+    constructor(
         record.registration_id,
         hantong_platform::client_key_id_for_registration(record.registration_id)?,
         record.public_key,
@@ -540,7 +623,9 @@ impl Effects for NativeEffects<'_> {
         self.store.registration_key_is_linked(request, public)
     }
     fn orphans(&self) -> Result<Vec<RegistrationRequest>, ErrorCode> {
-        self.store.list_orphan_cli_registration_requests()
+        let mut requests = self.store.list_orphan_cli_registration_requests()?;
+        requests.extend(self.store.list_orphan_gui_registration_requests()?);
+        Ok(requests)
     }
     fn provisioning(&self) -> Result<Vec<RegistrationRecord>, ErrorCode> {
         Ok(self
@@ -599,16 +684,34 @@ impl Effects for NativeEffects<'_> {
         public: [u8; 72],
         hash: [u8; 32],
     ) -> Result<RegistrationRecord, ErrorCode> {
-        self.store
-            .stage_cli_registration(&CliRegistrationStage::new(request, id, public, hash)?)
+        if request.client_kind == ClientKind::Gui {
+            self.store
+                .stage_gui_registration(&GuiRegistrationStage::new(request, id, public, hash)?)
+        } else {
+            self.store
+                .stage_cli_registration(&CliRegistrationStage::new(request, id, public, hash)?)
+        }
     }
     fn publish(&self, bytes: &[u8]) -> Result<Self::Publication, ErrorCode> {
-        hantong_approval_windows::publish_default_profile(bytes)
+        match ParsedClientProfile::from_json(bytes)?.profile() {
+            hantong_ipc_client::profile::ProfileSelector::Default => {
+                hantong_approval_windows::publish_default_profile(bytes)
+            }
+            hantong_ipc_client::profile::ProfileSelector::Gui => {
+                hantong_approval_windows::publish_gui_profile(bytes)
+            }
+        }
     }
     fn activate(&self, record: &RegistrationRecord, hash: [u8; 32]) -> Result<(), ErrorCode> {
-        self.store
-            .activate_cli_registration(record.registration_id, record.version, hash)
-            .map(drop)
+        if record.client_kind == ClientKind::Gui {
+            self.store
+                .activate_gui_registration(record.registration_id, record.version, hash)
+                .map(drop)
+        } else {
+            self.store
+                .activate_cli_registration(record.registration_id, record.version, hash)
+                .map(drop)
+        }
     }
 }
 

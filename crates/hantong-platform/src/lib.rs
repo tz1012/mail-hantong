@@ -14,7 +14,7 @@ mod windows_identity;
 mod windows_pipe;
 
 pub use paths::{AppDirectories, app_directories};
-pub use profile_file::{LoadedClientProfile, load_default_client_profile};
+pub use profile_file::{LoadedClientProfile, load_default_client_profile, load_gui_client_profile};
 
 #[cfg(windows)]
 pub use windows_autostart::WindowsAutoStart;

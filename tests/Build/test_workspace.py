@@ -21,6 +21,8 @@ EXPECTED_PACKAGES = {
     "hantong-adapters",
     "mail-hantong-core",
     "hantong-cli",
+    "hantong-desktop",
+    "mail-hantong-gui",
     "hantong-test-support",
 }
 
@@ -40,6 +42,8 @@ class WorkspaceScaffoldTests(unittest.TestCase):
         self.assertEqual({package["name"] for package in metadata["packages"]}, EXPECTED_PACKAGES)
         cli = next(package for package in metadata["packages"] if package["name"] == "hantong-cli")
         self.assertEqual([target["name"] for target in cli["targets"] if target["kind"] == ["bin"]], ["hantong"])
+        gui = next(package for package in metadata["packages"] if package["name"] == "mail-hantong-gui")
+        self.assertEqual([target["name"] for target in gui["targets"] if target["kind"] == ["bin"]], ["mail-hantong"])
 
     def test_M001_workspace_uses_pinned_toolchain_and_license_file(self):
         toolchain = (ROOT / "rust-toolchain.toml").read_text(encoding="utf-8")

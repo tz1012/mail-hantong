@@ -47,7 +47,34 @@ pub(super) fn publish(bytes: &[u8]) -> Result<Publication, ErrorCode> {
     publish_at(&hantong_platform::app_directories()?.profiles, bytes)
 }
 
+pub(super) fn publish_gui(bytes: &[u8]) -> Result<Publication, ErrorCode> {
+    publish_fixed(
+        &hantong_platform::app_directories()?.profiles,
+        bytes,
+        ProfileFile::Gui,
+    )
+}
+enum ProfileFile {
+    Default,
+    Gui,
+}
+impl ProfileFile {
+    fn name(&self) -> &'static str {
+        match self {
+            Self::Default => "default.json",
+            Self::Gui => "gui.json",
+        }
+    }
+}
+
 fn publish_at(profiles: &Path, bytes: &[u8]) -> Result<Publication, ErrorCode> {
+    publish_fixed(profiles, bytes, ProfileFile::Default)
+}
+fn publish_fixed(
+    profiles: &Path,
+    bytes: &[u8],
+    selected: ProfileFile,
+) -> Result<Publication, ErrorCode> {
     if bytes.is_empty() || bytes.len() > MAX_PROFILE_BYTES {
         return Err(ErrorCode::InvalidInput);
     }
@@ -56,7 +83,7 @@ fn publish_at(profiles: &Path, bytes: &[u8]) -> Result<Publication, ErrorCode> {
     let user = identity.user_sid();
     let security = creation_security(user)?;
     let directories = open_profile_directories(profiles, user, &security)?;
-    let destination = profiles.join("default.json");
+    let destination = profiles.join(selected.name());
     if let Some(file) = existing(&destination, bytes, user)? {
         return Ok(Publication {
             _file: file,
@@ -1008,6 +1035,68 @@ mod tests {
     }
 
     #[test]
+    fn sec03_gui_profile_publication_coexists_without_replacing_cli_or_gui_bytes() {
+        let fixture = Fixture::new();
+        let default = publish_at(&fixture.profiles, b"cli-public").unwrap();
+        let gui = publish_fixed(&fixture.profiles, b"gui-public", ProfileFile::Gui).unwrap();
+        assert_eq!(
+            fs::read(fixture.profiles.join("default.json")).unwrap(),
+            b"cli-public"
+        );
+        assert_eq!(
+            fs::read(fixture.profiles.join("gui.json")).unwrap(),
+            b"gui-public"
+        );
+        // Initial publication still owns a write-capable guard. A second
+        // protected reader must fail until activation releases that guard.
+        assert_eq!(
+            publish_fixed(&fixture.profiles, b"gui-public", ProfileFile::Gui).unwrap_err(),
+            ErrorCode::ScopeDenied
+        );
+        drop(gui);
+        let gui = publish_fixed(&fixture.profiles, b"gui-public", ProfileFile::Gui).unwrap();
+        assert_eq!(
+            publish_fixed(&fixture.profiles, b"different", ProfileFile::Gui).unwrap_err(),
+            ErrorCode::Conflict
+        );
+        assert_eq!(
+            fs::read(fixture.profiles.join("gui.json")).unwrap(),
+            b"gui-public"
+        );
+        assert!(
+            OpenOptions::new()
+                .write(true)
+                .open(fixture.profiles.join("gui.json"))
+                .is_err()
+        );
+        assert!(fs::remove_file(fixture.profiles.join("gui.json")).is_err());
+        assert!(fs::rename(&fixture.profiles, fixture.root.join("renamed")).is_err());
+        drop(gui);
+        drop(default);
+    }
+    #[test]
+    fn sec03_gui_profile_publication_never_repairs_acl_or_uses_cli_as_existing_gui() {
+        let fixture = Fixture::new();
+        fixture.dirs(true);
+        fixture.existing(b"gui-public", true);
+        let gui = fixture.profiles.join("gui.json");
+        fs::write(&gui, b"gui-public").unwrap();
+        secure(&gui, true, true);
+        let file = File::open(&gui).unwrap();
+        let before = security_snapshot(&file);
+        assert_eq!(
+            publish_fixed(&fixture.profiles, b"gui-public", ProfileFile::Gui).unwrap_err(),
+            ErrorCode::ScopeDenied
+        );
+        assert_eq!(security_snapshot(&file), before);
+        assert_eq!(
+            fs::read(fixture.profiles.join("default.json")).unwrap(),
+            b"gui-public"
+        );
+        assert_eq!(fs::read(&gui).unwrap(), b"gui-public");
+    }
+
+    #[test]
     fn ai09_profile_publication_never_repairs_existing_file_acl() {
         for foreign in [false, true] {
             let fixture = Fixture::new();
@@ -1040,6 +1129,11 @@ mod tests {
         assert!(status.success());
         assert_eq!(
             publish_at(&fixture.profiles, b"public").unwrap_err(),
+            ErrorCode::ScopeDenied
+        );
+        assert_eq!(fs::read_dir(&other).unwrap().count(), 0);
+        assert_eq!(
+            publish_fixed(&fixture.profiles, b"gui-public", ProfileFile::Gui).unwrap_err(),
             ErrorCode::ScopeDenied
         );
         assert_eq!(fs::read_dir(&other).unwrap().count(), 0);

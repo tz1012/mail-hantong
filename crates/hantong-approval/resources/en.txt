@@ -1,4 +1,9 @@
 title=Review CLI registration
+gui_title=Review mail-hantong window access
+gui_introduction=Review the accounts and local mail information this window may read before verifying your identity.
+gui_client_value=mail-hantong GUI
+gui_tools=Read the listed accounts, saved folders, and cached message metadata including subject and sender. This does not read message bodies, contact providers, send mail, or change messages. Cached results may be incomplete or out of date.
+gui_verification_required=Windows Hello is required to register this window's access.
 introduction=Review this CLI and its account access before verifying your identity.
 client=Client
 client_value=hantong CLI

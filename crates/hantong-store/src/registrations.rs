@@ -419,6 +419,7 @@ pub(super) fn read_registration(
     let record = read_registration_bare(connection, id)?;
     if let Some(value) = &record {
         crate::scope_refresh::validate_registration(connection, value)?;
+        crate::registration_activation::validate_gui_registration(connection, value)?;
     }
     Ok(record)
 }

@@ -326,11 +326,13 @@ impl State {
     fn start_verification(&mut self, hwnd: HWND) -> Result<(), ErrorCode> {
         let language = self.model.presentation().language();
         match self.model.review() {
-            DialogReview::Registration(_) => {
-                self.operation = Some(ConsentOperation::start(
-                    hwnd,
-                    text(language, TextKey::VerificationRequired),
-                )?);
+            DialogReview::Registration(review) => {
+                let key = if review.client_kind() == hantong_contracts::client::ClientKind::Gui {
+                    TextKey::GuiVerificationRequired
+                } else {
+                    TextKey::VerificationRequired
+                };
+                self.operation = Some(ConsentOperation::start(hwnd, text(language, key))?);
             }
             DialogReview::Imap(review) => {
                 let input = self.password_input.take().ok_or(ErrorCode::InternalError)?;
@@ -490,6 +492,14 @@ impl State {
         }
     }
     fn caption(&self, id: i32) -> String {
+        if self.model.review().is_gui_registration() {
+            let key = match id {
+                HEADING => TextKey::GuiTitle,
+                INTRO => TextKey::GuiIntroduction,
+                _ => return self.generic_caption(id),
+            };
+            return text(self.model.presentation().language(), key).to_owned();
+        }
         if self.model.review().is_scope_refresh() {
             let key = match id {
                 HEADING => TextKey::ScopeRefreshTitle,

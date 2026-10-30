@@ -5,6 +5,8 @@ use crate::ErrorCode;
 pub enum RegistrationCommand {
     Request,
     Status([u8; 32]),
+    GuiRequest,
+    GuiStatus([u8; 32]),
 }
 
 impl std::fmt::Debug for RegistrationCommand {
@@ -12,6 +14,8 @@ impl std::fmt::Debug for RegistrationCommand {
         f.write_str(match self {
             Self::Request => "RegistrationCommand::Request",
             Self::Status(_) => "RegistrationCommand::Status(<redacted>)",
+            Self::GuiRequest => "RegistrationCommand::GuiRequest",
+            Self::GuiStatus(_) => "RegistrationCommand::GuiStatus(<redacted>)",
         })
     }
 }

@@ -22,6 +22,39 @@ fn model() -> ReviewModel {
 }
 
 #[test]
+fn sec03_gui_review_is_distinct_and_binds_all_three_local_read_tools() {
+    let gui = RegistrationReview::new_gui(
+        [17; 32],
+        9,
+        vec!["b".into(), "a".into()],
+        [34; 32],
+        1000,
+        301000,
+    )
+    .unwrap();
+    assert_eq!(gui.client_kind(), ClientKind::Gui);
+    assert_eq!(gui.profile_name(), "gui");
+    assert_eq!(
+        gui.scope().tools(),
+        hantong_contracts::auth::gui_read_tools()
+    );
+    assert_ne!(gui.canonical_bytes(), review().canonical_bytes());
+    let bytes = gui.canonical_bytes();
+    assert!(bytes.starts_with(b"mail-hantong/gui-registration-review/v1\0gui\0gui\0"));
+    for tool in gui.scope().tools() {
+        assert!(
+            bytes
+                .windows(tool.len())
+                .any(|part| part == tool.as_bytes())
+        );
+    }
+    assert!(!gui.scope().permits_account("other", "mail.messages.search"));
+    assert!(!gui.scope().permits_account("a", "mail.sync.page"));
+    let empty = RegistrationReview::new_gui([1; 32], 1, vec![], [2; 32], 1, 2).unwrap();
+    assert!(!empty.scope().permits_account("a", "mail.accounts.list"));
+}
+
+#[test]
 fn cli07_review_fixes_read_only_default_scope_and_preserves_empty_as_zero() {
     let review = review();
     assert_eq!(review.client_kind(), ClientKind::Cli);

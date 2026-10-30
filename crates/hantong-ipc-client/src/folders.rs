@@ -18,6 +18,15 @@ impl fmt::Debug for FolderItem {
     }
 }
 impl FolderItem {
+    pub fn wire_hex(&self) -> &str {
+        self.wire()
+    }
+    pub fn display_name(&self) -> &str {
+        self.value["display_name"].as_str().unwrap_or("")
+    }
+    pub fn encoding(&self) -> &str {
+        self.value["encoding"].as_str().unwrap_or("utf8")
+    }
     pub fn value(&self) -> &Value {
         &self.value
     }
@@ -370,6 +379,28 @@ if let Some(cursor)=request.cursor() {arguments["cursor"]=serde_json::json!(curs
 let params=serde_json::json!({"schema_version":1,"request_id":id,"tool":"mail.folders.list","params":arguments});
 let raw=profile.exchange(id,"mail.folders.list",&params).await?;
 parse_folder_page(&raw,id,&request) })
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = request;
+        Err(ErrorCode::CapabilityUnsupported)
+    }
+}
+
+pub fn list_gui_folders(request: FolderListRequest) -> Result<FolderPage, ErrorCode> {
+    #[cfg(windows)]
+    {
+        tokio::runtime::Builder::new_current_thread().enable_io().enable_time().build()
+            .map_err(|_| ErrorCode::CoreUnavailable)?.block_on(async move {
+                let profile = crate::authenticate_gui().await?;
+                authorize_folder(profile.scope(),request.account_id(),"mail.folders.list")?;
+                let id = "gui-folders-list-1";
+                let mut arguments = serde_json::json!({"account_id":request.account_id(),"limit":request.limit()});
+                if let Some(cursor)=request.cursor() { arguments["cursor"]=serde_json::json!(cursor.encode()); }
+                let params = serde_json::json!({"schema_version":1,"request_id":id,"tool":"mail.folders.list","params":arguments});
+                let raw = profile.exchange(id,"mail.folders.list",&params).await?;
+                parse_folder_page(&raw,id,&request)
+            })
     }
     #[cfg(not(windows))]
     {

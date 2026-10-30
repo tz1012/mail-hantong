@@ -106,9 +106,9 @@ M7-09,이벤트 트리거 제한,not_started,사람,"M7-01, M5-03",,,,
 M7-10,푸시 지연 측정,not_started,에이전트,M7-08,,,,
 M7-11,이벤트 보존과 커서 만료,not_started,에이전트,M7-01,,,,
 M7-99,다음 마일스톤 계획 갱신,not_started,사람,M7 나머지 전부,,,,
-M8-01,GUI 골격과 IPC 연결,not_started,에이전트,"M1-02, ADR-002",,,,
+M8-01,GUI 골격과 IPC 연결,in_progress,에이전트,"M1-02, ADR-002",PROGRESS.md; DESIGN.md; ../contracts/desktop-shell.md; ../contracts/gui-client-registration.md; ../../crates/hantong-desktop/src/lib.rs; ../../apps/mail-hantong-gui/src/main.rs,,,GUI 고유 등록·인증·로컬 계정/폴더/메일 목록·영한/테마 구현 및 시험 통과; 전체 GUI·설정 저장·접근성 종단 후속; 보안/계약 사람 검토 필요
 M8-02,명령 레지스트리,not_started,에이전트,M8-01,,,,
-M8-03,통합함·계정별 함,not_started,에이전트,M8-02,,,,
+M8-03,통합함·계정별 함,in_progress,에이전트,M8-02,PROGRESS.md; DESIGN.md; ../contracts/desktop-shell.md; ../contracts/gui-client-registration.md; ../../crates/hantong-desktop/src/lib.rs; ../../apps/mail-hantong-gui/src/main.rs,,,GUI 고유 등록·인증·로컬 계정/폴더/메일 목록·영한/테마 구현 및 시험 통과; 전체 GUI·설정 저장·접근성 종단 후속; 보안/계약 사람 검토 필요
 M8-04,읽기 화면과 안전한 본문,not_started,사람,"M8-03, ADR-017",,,,
 M8-05,작성 창과 최종 검토 화면,not_started,에이전트,"M8-03, M4-10",,,,
 M8-06,기본 키맵과 프리셋,not_started,에이전트,M8-02,,,,
@@ -123,8 +123,8 @@ M8-14,단축키 학습 보조 (P1),not_started,에이전트,M8-07,,,,
 M8-15,정리·메일함 UI,not_started,에이전트,"M8-03, M4-15~18, M5-11, M6-13",,,,
 M8-16,규칙 편집 UI,not_started,사람,"M8-02, M6-11~13",,,,
 M8-17,주소록 UI,not_started,사람,"M8-03, M4-19",,,,
-M8-18,GUI 언어 지원 통합,not_started,에이전트,"M8-01, M8-02, M8-09",,,,
-M8-19,GUI 테마 통합,not_started,에이전트,"M8-01, M8-09, M8-10",,,,
+M8-18,GUI 언어 지원 통합,in_progress,에이전트,"M8-01, M8-02, M8-09",PROGRESS.md; DESIGN.md; ../contracts/desktop-shell.md; ../contracts/gui-client-registration.md; ../../crates/hantong-desktop/src/lib.rs; ../../apps/mail-hantong-gui/src/main.rs,,,GUI 고유 등록·인증·로컬 계정/폴더/메일 목록·영한/테마 구현 및 시험 통과; 전체 GUI·설정 저장·접근성 종단 후속; 보안/계약 사람 검토 필요
+M8-19,GUI 테마 통합,in_progress,에이전트,"M8-01, M8-09, M8-10",PROGRESS.md; DESIGN.md; ../contracts/desktop-shell.md; ../contracts/gui-client-registration.md; ../../crates/hantong-desktop/src/lib.rs; ../../apps/mail-hantong-gui/src/main.rs,,,GUI 고유 등록·인증·로컬 계정/폴더/메일 목록·영한/테마 구현 및 시험 통과; 전체 GUI·설정 저장·접근성 종단 후속; 보안/계약 사람 검토 필요
 M8-99,다음 마일스톤 계획 갱신,not_started,사람,"M8-01~13, M8-15~19",,,,
 M9-01,설정 마법사 엔진,in_progress,사람,M5-04,PROGRESS.md; ../contracts/imap-setup-journal.md; ../contracts/imap-setup-bootstrap.md; ../contracts/imap-setup-resume.md; ../../crates/hantong-store/src/imap_setup.rs; ../../apps/mail-hantong-core/src/setup_imap.rs; ../../apps/hantong-cli/src/main.rs; ../contracts/client-scope-refresh.md,,,신규 IMAP 단일 시도·v6 명시 재개·보호 확인·Core/CLI·기본 프로필 범위 갱신 연결; 전체 마법사·사람 검토 남음; 카드 정의/선행 유지
 M9-02,BYO OAuth 클라이언트 단계,not_started,에이전트,"M9-01, M3-01",,,,

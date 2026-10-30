@@ -34,6 +34,9 @@ impl ReviewSnapshot for DialogReview {
     }
 }
 impl DialogReview {
+    pub(super) fn is_gui_registration(&self) -> bool {
+        matches!(self, Self::Registration(review) if review.client_kind() == hantong_contracts::client::ClientKind::Gui)
+    }
     pub(super) fn is_setup(&self) -> bool {
         matches!(self, Self::Imap(_))
     }
@@ -120,6 +123,31 @@ mod tests {
         mail_connection::MailConnectionConfig,
     };
     use std::time::Duration;
+    #[test]
+    fn inst04_gui_review_requires_own_painted_snapshot_before_verification() {
+        let gui = RegistrationReview::new_gui([1; 32], 1, vec!["a".into()], [2; 32], 1000, 301000)
+            .unwrap();
+        let cli =
+            RegistrationReview::new([1; 32], 1, vec!["a".into()], [2; 32], 1000, 301000).unwrap();
+        let dialog = DialogReview::Registration(gui);
+        assert!(dialog.is_gui_registration());
+        for language in [Language::En, Language::Ko] {
+            let mut model = ReviewModel::new(
+                dialog.clone(),
+                Presentation::new(Some(language), Theme::System, false, true, false),
+            );
+            assert!(!model.paint_completed(&DialogReview::Registration(cli.clone())));
+            assert_eq!(
+                model.begin_verification(2000, Duration::from_secs(1)),
+                ReviewIntent::None
+            );
+            assert!(model.paint_completed(&dialog));
+            assert_eq!(
+                model.begin_verification(2001, Duration::from_secs(1)),
+                ReviewIntent::RequestVerification
+            );
+        }
+    }
     #[test]
     fn inst05_setup_dialog_paints_exact_summary_before_verification_and_keeps_theme() {
         let endpoint = MailConnectionConfig::from_json(

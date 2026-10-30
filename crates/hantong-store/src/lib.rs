@@ -34,7 +34,9 @@ pub mod uid_inspection;
 pub mod uid_page_jobs;
 pub mod uid_reconcile_jobs;
 pub mod uid_recovery_jobs;
-pub use registration_activation::{CliRegistrationStage, DEFAULT_CLI_LABEL};
+pub use registration_activation::{
+    CliRegistrationStage, DEFAULT_CLI_LABEL, DEFAULT_GUI_LABEL, GuiRegistrationStage,
+};
 mod server_identity;
 pub use registrations::{
     ClientKind, RegistrationRecord, RegistrationRequest, RegistrationRequestState,

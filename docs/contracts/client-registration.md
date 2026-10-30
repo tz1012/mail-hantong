@@ -2,6 +2,8 @@
 
 상태: 2026-10-30 연속 개발 범위의 구현 계약. 사람 보안 검토 필요. 관련 요건: CLI-15, MCP-03, SEC-03, INST-04. 등록 요청은 권한이나 발송 승인이 아니다.
 
+GUI는 [고유 GUI 등록 계약](gui-client-registration.md)의 별도 request/status 메서드·kind·프로필을 사용한다. 아래 CLI/default 경로와 이전 bytes는 유지한다.
+
 ## 등록 전 IPC
 
 OS가 같은 사용자·로그온 세션으로 검증한 기존 로컬 pipe에서 다음 두 메서드만 추가한다. 기존 엄격한 JSON-RPC decoder, 프레임 상한, 5초 I/O deadline, 응답 ACK를 그대로 사용한다. 메일·auth 메서드를 등록 callback으로 전달하지 않는다.

@@ -8,9 +8,11 @@ use hantong_contracts::{
 use serde_json::{Value, json};
 
 pub fn parse(request: &RpcRequest) -> Result<RegistrationCommand, ErrorCode> {
-    let status = match request.method.as_str() {
-        "registration.request" => false,
-        "registration.status" => true,
+    let (status, gui) = match request.method.as_str() {
+        "registration.request" => (false, false),
+        "registration.status" => (true, false),
+        "registration.gui.request" => (false, true),
+        "registration.gui.status" => (true, true),
         _ => return Err(ErrorCode::InvalidInput),
     };
     let params = request.params.as_object().ok_or(ErrorCode::InvalidInput)?;
@@ -25,7 +27,11 @@ pub fn parse(request: &RpcRequest) -> Result<RegistrationCommand, ErrorCode> {
         return Err(ErrorCode::VersionMismatch);
     }
     if !status {
-        return Ok(RegistrationCommand::Request);
+        return Ok(if gui {
+            RegistrationCommand::GuiRequest
+        } else {
+            RegistrationCommand::Request
+        });
     }
     let id = wire_hex::decode_fixed::<32>(
         params
@@ -36,7 +42,11 @@ pub fn parse(request: &RpcRequest) -> Result<RegistrationCommand, ErrorCode> {
     if id == [0; 32] {
         return Err(ErrorCode::InvalidInput);
     }
-    Ok(RegistrationCommand::Status(id))
+    Ok(if gui {
+        RegistrationCommand::GuiStatus(id)
+    } else {
+        RegistrationCommand::Status(id)
+    })
 }
 
 pub fn result(receipt: &RegistrationReceipt) -> Value {
@@ -58,6 +68,46 @@ mod tests {
             method: method.into(),
             params,
         }
+    }
+    #[test]
+    fn sec03_gui_registration_routes_fixed_kind_and_rejects_authority_fields() {
+        assert_eq!(
+            parse(&request(
+                "registration.gui.request",
+                json!({"protocol_version":1})
+            )),
+            Ok(RegistrationCommand::GuiRequest)
+        );
+        assert_eq!(
+            parse(&request(
+                "registration.gui.status",
+                json!({"protocol_version":1,"request_id":wire_hex::encode(&[1;32])})
+            )),
+            Ok(RegistrationCommand::GuiStatus([1; 32]))
+        );
+        for params in [
+            json!(null),
+            json!([]),
+            json!({}),
+            json!({"protocol_version":1,"client_kind":"gui"}),
+            json!({"protocol_version":1,"approved":true}),
+            json!({"protocol_version":1,"scope":[]}),
+        ] {
+            assert_eq!(
+                parse(&request("registration.gui.request", params)),
+                Err(ErrorCode::InvalidInput)
+            );
+        }
+        for method in ["registration.gui.approve", "registration.gui.activate"] {
+            assert_eq!(
+                parse(&request(method, json!({"protocol_version":1}))),
+                Err(ErrorCode::InvalidInput)
+            );
+        }
+        let body = br#"{"jsonrpc":"2.0","id":"g","method":"registration.gui.status","params":{"protocol_version":1,"protocol_version":1}}"#;
+        let mut frame = (body.len() as u32).to_le_bytes().to_vec();
+        frame.extend(body);
+        assert_eq!(crate::decode_request(&frame), Err(ErrorCode::InvalidInput));
     }
     #[test]
     fn cli15_registration_wire_has_only_request_and_status() {

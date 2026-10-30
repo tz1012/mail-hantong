@@ -16,6 +16,7 @@ def metadata(edges):
         "hantong-application", "hantong-outbox", "hantong-ipc-client", "hantong-ipc-server",
         "hantong-store", "hantong-secrets", "hantong-adapters", "hantong-cli", "mail-hantong-core",
         "hantong-approval-windows",
+        "hantong-desktop", "mail-hantong-gui",
     }
     packages = []
     for name in names:
@@ -29,6 +30,22 @@ def metadata(edges):
 
 
 class ArchitectureTests(unittest.TestCase):
+    def test_M801_desktop_and_gui_cannot_reach_storage_secrets_or_approval_issuer(self):
+        self.assertEqual(check_architecture.validate_metadata(metadata([
+            ("mail-hantong-gui", "hantong-desktop", "normal", None),
+            ("mail-hantong-gui", "hantong-ipc-client", "normal", None),
+            ("hantong-desktop", "hantong-contracts", "normal", None),
+        ])), [])
+        for forbidden in check_architecture.FORBIDDEN_CLIENT:
+            errors = check_architecture.validate_metadata(metadata([
+                ("mail-hantong-gui", "hantong-desktop", "normal", None),
+                ("hantong-desktop", forbidden, "normal", None),
+            ]))
+            self.assertTrue(any("transitive client dependency" in error and "mail-hantong-gui" in error for error in errors))
+        self.assertTrue(check_architecture.validate_metadata(metadata([
+            ("mail-hantong-core", "hantong-desktop", "normal", None),
+        ])))
+
     def test_INST05_native_input_reaches_secrets_without_client_or_reverse_access(self):
         self.assertEqual(check_architecture.validate_metadata(metadata([
             ("hantong-approval-windows", "hantong-secrets", "normal", None),

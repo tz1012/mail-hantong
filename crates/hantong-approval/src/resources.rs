@@ -3,6 +3,11 @@ use hantong_domain::config::Language;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd)]
 pub enum TextKey {
+    GuiTitle,
+    GuiIntroduction,
+    GuiClientValue,
+    GuiTools,
+    GuiVerificationRequired,
     Title,
     Introduction,
     Client,
@@ -60,6 +65,11 @@ pub enum TextKey {
 }
 impl TextKey {
     pub const ALL: &'static [Self] = &[
+        Self::GuiTitle,
+        Self::GuiIntroduction,
+        Self::GuiClientValue,
+        Self::GuiTools,
+        Self::GuiVerificationRequired,
         Self::Title,
         Self::Introduction,
         Self::Client,
@@ -117,6 +127,11 @@ impl TextKey {
     ];
     pub fn as_str(self) -> &'static str {
         match self {
+            Self::GuiTitle => "gui_title",
+            Self::GuiIntroduction => "gui_introduction",
+            Self::GuiClientValue => "gui_client_value",
+            Self::GuiTools => "gui_tools",
+            Self::GuiVerificationRequired => "gui_verification_required",
             Self::Title => "title",
             Self::Introduction => "introduction",
             Self::Client => "client",

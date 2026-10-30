@@ -42,6 +42,18 @@ pub fn load_default_client_profile() -> Result<LoadedClientProfile, ErrorCode> {
     }
 }
 
+/// Reads only Known Folder/`mail-hantong/profiles/gui.json`, without a CLI fallback.
+pub fn load_gui_client_profile() -> Result<LoadedClientProfile, ErrorCode> {
+    #[cfg(windows)]
+    {
+        windows::load_gui(&crate::app_directories()?.profiles)
+    }
+    #[cfg(not(windows))]
+    {
+        Err(ErrorCode::CapabilityUnsupported)
+    }
+}
+
 #[cfg(windows)]
 #[allow(unsafe_code)]
 mod windows {
@@ -71,6 +83,27 @@ mod windows {
     use windows_sys::Win32::System::SystemServices::ACCESS_ALLOWED_ACE_TYPE;
 
     pub(super) fn load(profiles: &Path) -> Result<LoadedClientProfile, ErrorCode> {
+        load_fixed(profiles, ProfileFile::Default)
+    }
+    pub(super) fn load_gui(profiles: &Path) -> Result<LoadedClientProfile, ErrorCode> {
+        load_fixed(profiles, ProfileFile::Gui)
+    }
+    enum ProfileFile {
+        Default,
+        Gui,
+    }
+    impl ProfileFile {
+        fn name(&self) -> &'static str {
+            match self {
+                Self::Default => "default.json",
+                Self::Gui => "gui.json",
+            }
+        }
+    }
+    fn load_fixed(
+        profiles: &Path,
+        selected: ProfileFile,
+    ) -> Result<LoadedClientProfile, ErrorCode> {
         validate_path(profiles)?;
         let user = crate::current_peer_context()?;
         let product = profiles.parent().ok_or(ErrorCode::ScopeDenied)?;
@@ -104,7 +137,7 @@ mod windows {
             .access_mode(FILE_GENERIC_READ | READ_CONTROL)
             .share_mode(FILE_SHARE_READ)
             .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
-            .open(profiles.join("default.json"))
+            .open(profiles.join(selected.name()))
             .map_err(open_error)?;
         check_type(&file, false)?;
         check_security(&file, user.user_sid(), true)?;
@@ -372,6 +405,7 @@ mod windows {
                 // non-recursively; a junction must never be traversed.
                 for path in [
                     self.profiles.join("default.json"),
+                    self.profiles.join("gui.json"),
                     self.profiles.join("ignored.tmp"),
                 ] {
                     if path.is_dir() {
@@ -435,6 +469,57 @@ mod windows {
             let loaded = load(&fixture.profiles).unwrap();
             assert_eq!(loaded.bytes(), b"public-profile-fixture");
             assert_eq!(format!("{loaded:?}"), "LoadedClientProfile { <redacted> }");
+        }
+
+        #[test]
+        fn sec03_gui_profile_loader_uses_only_its_fixed_file_and_retains_guards() {
+            let fixture = Fixture::new();
+            fixture.file(b"cli-public");
+            assert_eq!(
+                load_gui(&fixture.profiles).unwrap_err(),
+                ErrorCode::ClientNotRegistered
+            );
+            let gui = fixture.profiles.join("gui.json");
+            fs::write(&gui, b"gui-public").unwrap();
+            secure(&gui, false, true);
+            let loaded = load_gui(&fixture.profiles).unwrap();
+            assert_eq!(loaded.bytes(), b"gui-public");
+            assert_eq!(load(&fixture.profiles).unwrap().bytes(), b"cli-public");
+            assert!(OpenOptions::new().write(true).open(&gui).is_err());
+            assert!(fs::remove_file(&gui).is_err());
+            assert!(fs::rename(&fixture.profiles, fixture.root.join("renamed")).is_err());
+            drop(loaded);
+            fs::remove_file(fixture.profiles.join("default.json")).unwrap();
+            assert_eq!(
+                load(&fixture.profiles).unwrap_err(),
+                ErrorCode::ClientNotRegistered
+            );
+            assert_eq!(load_gui(&fixture.profiles).unwrap().bytes(), b"gui-public");
+        }
+        #[test]
+        fn sec03_gui_profile_loader_keeps_acl_type_and_size_checks_without_cli_fallback() {
+            let fixture = Fixture::new();
+            fixture.file(b"cli-public");
+            let gui = fixture.profiles.join("gui.json");
+            fs::write(&gui, b"gui-public").unwrap();
+            secure(&gui, true, true);
+            assert_eq!(
+                load_gui(&fixture.profiles).unwrap_err(),
+                ErrorCode::ScopeDenied
+            );
+            secure(&gui, false, true);
+            fs::write(&gui, vec![b' '; MAX_PROFILE_BYTES + 1]).unwrap();
+            assert_eq!(
+                load_gui(&fixture.profiles).unwrap_err(),
+                ErrorCode::InvalidInput
+            );
+            fs::remove_file(&gui).unwrap();
+            fs::create_dir(&gui).unwrap();
+            assert_eq!(
+                load_gui(&fixture.profiles).unwrap_err(),
+                ErrorCode::ScopeDenied
+            );
+            assert_eq!(load(&fixture.profiles).unwrap().bytes(), b"cli-public");
         }
 
         #[test]
@@ -534,6 +619,10 @@ mod windows {
                 "isolated fixture junction creation failed"
             );
             assert_eq!(load(&fixture.profiles).unwrap_err(), ErrorCode::ScopeDenied);
+            assert_eq!(
+                load_gui(&fixture.profiles).unwrap_err(),
+                ErrorCode::ScopeDenied
+            );
         }
 
         #[test]
@@ -545,6 +634,10 @@ mod windows {
                 r"C:\fixture\other\profiles",
             ] {
                 assert_eq!(load(Path::new(path)).unwrap_err(), ErrorCode::ScopeDenied);
+                assert_eq!(
+                    load_gui(Path::new(path)).unwrap_err(),
+                    ErrorCode::ScopeDenied
+                );
             }
         }
 
@@ -633,6 +726,10 @@ mod windows {
                 load(&alias.join("mail-hantong/profiles")).unwrap_err(),
                 ErrorCode::ScopeDenied
             );
+            assert_eq!(
+                load_gui(&alias.join("mail-hantong/profiles")).unwrap_err(),
+                ErrorCode::ScopeDenied
+            );
         }
 
         #[test]
@@ -668,6 +765,10 @@ mod tests {
     fn inst01_profile_is_unsupported_outside_windows() {
         assert_eq!(
             load_default_client_profile().unwrap_err(),
+            ErrorCode::CapabilityUnsupported
+        );
+        assert_eq!(
+            load_gui_client_profile().unwrap_err(),
             ErrorCode::CapabilityUnsupported
         );
     }

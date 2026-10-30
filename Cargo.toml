@@ -13,8 +13,10 @@ members = [
     "crates/hantong-store",
     "crates/hantong-secrets",
     "crates/hantong-adapters",
+    "crates/hantong-desktop",
     "apps/mail-hantong-core",
     "apps/hantong-cli",
+    "apps/mail-hantong-gui",
     "tests/Fakes",
 ]
 resolver = "3"

@@ -1,5 +1,7 @@
 # CLI 등록 검토 화면과 사람 확인 v1
 
+GUI 확장은 [GUI 등록 계약](gui-client-registration.md)을 따른다. 기존 CLI canonical v1은 유지하며 GUI 검토는 별도 domain으로 kind/profile/세 로컬 읽기 도구를 결속한다. GUI용 제목·설명·Hello 안내를 영한 리소스로 표시하고 기존 opaque proof 발급·소비 경계를 유지한다.
+
 상태: 2026-10-30 구현 기준, CLI-07·INST-04·APR-02·OPS-07·OPS-08. 사람 보안 검토 필요. 초기 대상은 `default` CLI의 read-only `mail.accounts.list` 권한이며 일반 발송 승인을 대신하지 않는다.
 
 ## 불변 검토 자료

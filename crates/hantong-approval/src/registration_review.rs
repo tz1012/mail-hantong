@@ -9,6 +9,7 @@ const REVIEW_DOMAIN: &[u8] = b"mail-hantong/registration-review/v1\0";
 
 #[derive(Clone, Eq, PartialEq)]
 pub struct RegistrationReview {
+    client_kind: ClientKind,
     request_id: [u8; 32],
     request_version: u64,
     scope: RequestedScope,
@@ -42,6 +43,7 @@ impl RegistrationReview {
         }
         let scope = RequestedScope::new(account_ids, vec!["mail.accounts.list".into()])?;
         Ok(Self {
+            client_kind: ClientKind::Cli,
             request_id,
             request_version,
             scope,
@@ -49,6 +51,29 @@ impl RegistrationReview {
             created_at_utc_ms,
             expires_at_utc_ms,
         })
+    }
+    pub fn new_gui(
+        request_id: [u8; 32],
+        request_version: u64,
+        account_ids: Vec<String>,
+        server_public_key_hash: [u8; 32],
+        created_at_utc_ms: i64,
+        expires_at_utc_ms: i64,
+    ) -> Result<Self, ErrorCode> {
+        let mut review = Self::new(
+            request_id,
+            request_version,
+            account_ids,
+            server_public_key_hash,
+            created_at_utc_ms,
+            expires_at_utc_ms,
+        )?;
+        review.client_kind = ClientKind::Gui;
+        review.scope = RequestedScope::new(
+            review.account_ids().to_vec(),
+            hantong_contracts::auth::gui_read_tools(),
+        )?;
+        Ok(review)
     }
     pub fn request_id(&self) -> &[u8; 32] {
         &self.request_id
@@ -72,10 +97,14 @@ impl RegistrationReview {
         self.expires_at_utc_ms
     }
     pub fn client_kind(&self) -> ClientKind {
-        ClientKind::Cli
+        self.client_kind
     }
     pub fn profile_name(&self) -> &'static str {
-        "default"
+        if self.client_kind == ClientKind::Gui {
+            "gui"
+        } else {
+            "default"
+        }
     }
     pub fn read_only(&self) -> bool {
         true
@@ -88,7 +117,17 @@ impl RegistrationReview {
         let accounts = self.scope.accounts();
         let account_bytes: usize = accounts.iter().map(|value| 4 + value.len()).sum();
         let mut output = Vec::with_capacity(REVIEW_DOMAIN.len() + 92 + account_bytes);
-        output.extend_from_slice(REVIEW_DOMAIN);
+        if self.client_kind == ClientKind::Gui {
+            output.extend_from_slice(b"mail-hantong/gui-registration-review/v1\0");
+            output.extend_from_slice(b"gui\0gui\0");
+            output.extend_from_slice(&(self.scope.tools().len() as u32).to_be_bytes());
+            for tool in self.scope.tools() {
+                output.extend_from_slice(&(tool.len() as u32).to_be_bytes());
+                output.extend_from_slice(tool.as_bytes());
+            }
+        } else {
+            output.extend_from_slice(REVIEW_DOMAIN);
+        }
         output.extend_from_slice(&self.request_id);
         output.extend_from_slice(&self.request_version.to_be_bytes());
         output.extend_from_slice(&self.server_public_key_hash);

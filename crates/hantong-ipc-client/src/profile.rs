@@ -1,7 +1,9 @@
 //! Parsed public profile data, never evidence of trust or human authorization.
 use hantong_contracts::{
     ErrorCode,
-    auth::{RequestedScope, default_cli_legacy_tools, is_supported_default_cli_toolset},
+    auth::{
+        RequestedScope, default_cli_legacy_tools, gui_read_tools, is_supported_default_cli_toolset,
+    },
     wire_hex,
 };
 use serde::{Deserialize, Serialize};
@@ -13,6 +15,7 @@ const PUBLIC_KEY_HEADER: &[u8; 8] = b"ECS1\x20\0\0\0";
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ProfileSelector {
     Default,
+    Gui,
 }
 impl ProfileSelector {
     pub fn parse(value: &str) -> Result<Self, ErrorCode> {
@@ -22,12 +25,29 @@ impl ProfileSelector {
         }
     }
     pub fn as_str(self) -> &'static str {
-        "default"
+        match self {
+            Self::Default => "default",
+            Self::Gui => "gui",
+        }
+    }
+    fn from_wire(value: &str) -> Result<Self, ErrorCode> {
+        match value {
+            "default" => Ok(Self::Default),
+            "gui" => Ok(Self::Gui),
+            _ => Err(ErrorCode::InvalidInput),
+        }
+    }
+    fn permits_tools(self, tools: &[String]) -> bool {
+        match self {
+            Self::Default => is_supported_default_cli_toolset(tools),
+            Self::Gui => tools == gui_read_tools(),
+        }
     }
 }
 
 #[derive(Clone, Eq, PartialEq)]
 pub struct ParsedClientProfile {
+    profile: ProfileSelector,
     registration_id: [u8; 16],
     client_key_id: [u8; 32],
     client_public_key: [u8; 72],
@@ -84,6 +104,43 @@ impl ParsedClientProfile {
         profile_epoch: u64,
         scope: RequestedScope,
     ) -> Result<Self, ErrorCode> {
+        Self::new_for(
+            ProfileSelector::Default,
+            registration_id,
+            client_key_id,
+            client_public_key,
+            server_public_key,
+            profile_epoch,
+            scope,
+        )
+    }
+    pub fn new_gui(
+        registration_id: [u8; 16],
+        client_key_id: [u8; 32],
+        client_public_key: [u8; 72],
+        server_public_key: [u8; 72],
+        profile_epoch: u64,
+        account_ids: Vec<String>,
+    ) -> Result<Self, ErrorCode> {
+        Self::new_for(
+            ProfileSelector::Gui,
+            registration_id,
+            client_key_id,
+            client_public_key,
+            server_public_key,
+            profile_epoch,
+            RequestedScope::new(account_ids, gui_read_tools())?,
+        )
+    }
+    fn new_for(
+        profile: ProfileSelector,
+        registration_id: [u8; 16],
+        client_key_id: [u8; 32],
+        client_public_key: [u8; 72],
+        server_public_key: [u8; 72],
+        profile_epoch: u64,
+        scope: RequestedScope,
+    ) -> Result<Self, ErrorCode> {
         if registration_id == [0; 16]
             || client_key_id == [0; 32]
             || !(1..=i64::MAX as u64).contains(&profile_epoch)
@@ -92,10 +149,11 @@ impl ParsedClientProfile {
         {
             return Err(ErrorCode::InvalidInput);
         }
-        if !is_supported_default_cli_toolset(scope.tools()) {
+        if !profile.permits_tools(scope.tools()) {
             return Err(ErrorCode::InvalidInput);
         }
         Ok(Self {
+            profile,
             registration_id,
             client_key_id,
             client_public_key,
@@ -118,15 +176,16 @@ impl ParsedClientProfile {
         }
         let value: WireProfile =
             serde_json::from_slice(input).map_err(|_| ErrorCode::InvalidInput)?;
+        let profile = ProfileSelector::from_wire(&value.profile)?;
         if value.schema_version != 1
-            || ProfileSelector::parse(&value.profile).is_err()
             || !value.read_only
             || value.requests_per_minute != 60
-            || !is_supported_default_cli_toolset(&value.tool_ids)
+            || !profile.permits_tools(&value.tool_ids)
         {
             return Err(ErrorCode::InvalidInput);
         }
-        Self::new_with_scope(
+        Self::new_for(
+            profile,
             wire_hex::decode_fixed(&value.registration_id)?,
             wire_hex::decode_fixed(&value.client_key_id)?,
             wire_hex::decode_fixed(&value.client_public_key)?,
@@ -139,7 +198,7 @@ impl ParsedClientProfile {
     pub fn to_json(&self) -> Result<Vec<u8>, ErrorCode> {
         let value = WireProfile {
             schema_version: 1,
-            profile: ProfileSelector::Default.as_str().to_owned(),
+            profile: self.profile.as_str().to_owned(),
             registration_id: wire_hex::encode(&self.registration_id),
             client_key_id: wire_hex::encode(&self.client_key_id),
             client_public_key: wire_hex::encode(&self.client_public_key),
@@ -157,7 +216,7 @@ impl ParsedClientProfile {
         Ok(bytes)
     }
     pub fn profile(&self) -> ProfileSelector {
-        ProfileSelector::Default
+        self.profile
     }
     pub fn registration_id(&self) -> &[u8; 16] {
         &self.registration_id
@@ -219,6 +278,129 @@ mod tests {
     }
     fn invalid(value: &Value) {
         assert_eq!(parse(value), Err(ErrorCode::InvalidInput));
+    }
+
+    #[test]
+    fn sec03_gui_profile_has_distinct_selector_and_exact_read_scope() {
+        let p = ParsedClientProfile::new_gui(
+            [1; 16],
+            [2; 32],
+            public_key(3),
+            public_key(4),
+            1,
+            vec!["b".into(), "a".into()],
+        )
+        .unwrap();
+        assert_eq!(p.profile(), ProfileSelector::Gui);
+        assert_eq!(ProfileSelector::Gui.as_str(), "gui");
+        assert_eq!(ProfileSelector::parse("gui"), Err(ErrorCode::InvalidInput));
+        assert_eq!(p.scope().accounts(), &["a", "b"]);
+        assert_eq!(p.scope().tools(), gui_read_tools());
+        let bytes = p.to_json().unwrap();
+        assert_eq!(ParsedClientProfile::from_json(&bytes).unwrap(), p);
+        assert_eq!(
+            ParsedClientProfile::from_json(&bytes)
+                .unwrap()
+                .to_json()
+                .unwrap(),
+            bytes
+        );
+        assert_eq!(
+            serde_json::from_slice::<Value>(&bytes).unwrap()["profile"],
+            "gui"
+        );
+        for tool in [
+            "mail.folders.refresh",
+            "mail.sync.page",
+            "app.settings.display.get",
+            "app.diagnostics.snapshot",
+            "mail.send.execute",
+        ] {
+            assert!(!p.scope().permits_account("a", tool));
+        }
+        let empty =
+            ParsedClientProfile::new_gui([1; 16], [2; 32], public_key(3), public_key(4), 1, vec![])
+                .unwrap();
+        assert!(!empty.scope().permits_account("a", "mail.accounts.list"));
+        assert_eq!(format!("{p:?}"), "ParsedClientProfile { <redacted> }");
+    }
+    #[test]
+    fn sec03_gui_profile_rejects_cli_scopes_and_noncanonical_or_extended_gui_scope() {
+        let mut input = value();
+        input["profile"] = json!("gui");
+        let mut reversed = gui_read_tools();
+        reversed.reverse();
+        let mut duplicate = gui_read_tools();
+        duplicate.push("mail.messages.search".into());
+        let mut expanded = gui_read_tools();
+        expanded.push("mail.sync.page".into());
+        for tools in [
+            default_cli_legacy_tools(),
+            hantong_contracts::auth::default_cli_folder_tools(),
+            hantong_contracts::auth::default_cli_uid_tools(),
+            hantong_contracts::auth::default_cli_metadata_tools(),
+            hantong_contracts::auth::default_cli_app_read_tools(),
+            reversed,
+            duplicate,
+            expanded,
+        ] {
+            input["tool_ids"] = json!(tools);
+            invalid(&input);
+        }
+        for omitted in 0..3 {
+            let mut tools = gui_read_tools();
+            tools.remove(omitted);
+            input["tool_ids"] = json!(tools);
+            invalid(&input);
+        }
+        input["tool_ids"] = json!(gui_read_tools());
+        let raw = serde_json::to_string(&input).unwrap();
+        for (key, original) in input.as_object().unwrap() {
+            let duplicate = format!(
+                "{{{}:{},{}",
+                serde_json::to_string(key).unwrap(),
+                original,
+                &raw[1..]
+            );
+            assert_eq!(
+                ParsedClientProfile::from_json(duplicate.as_bytes()),
+                Err(ErrorCode::InvalidInput)
+            );
+            let mut missing = input.clone();
+            missing.as_object_mut().unwrap().remove(key);
+            invalid(&missing);
+        }
+        input["profile"] = json!("default");
+        invalid(&input);
+    }
+    #[test]
+    fn cli07_gui_extension_preserves_every_cli_canonical_profile_byte() {
+        for tools in [
+            default_cli_legacy_tools(),
+            hantong_contracts::auth::default_cli_folder_tools(),
+            hantong_contracts::auth::default_cli_uid_tools(),
+            hantong_contracts::auth::default_cli_metadata_tools(),
+            hantong_contracts::auth::default_cli_app_read_tools(),
+        ] {
+            let p = ParsedClientProfile::new_with_scope(
+                [1; 16],
+                [2; 32],
+                public_key(3),
+                public_key(4),
+                1,
+                RequestedScope::new(vec!["b".into(), "a".into()], tools.clone()).unwrap(),
+            )
+            .unwrap();
+            let expected = format!(
+                "{{\"schema_version\":1,\"profile\":\"default\",\"registration_id\":\"{}\",\"client_key_id\":\"{}\",\"client_public_key\":\"{}\",\"server_public_key\":\"{}\",\"profile_epoch\":1,\"account_ids\":[\"a\",\"b\"],\"tool_ids\":{},\"read_only\":true,\"requests_per_minute\":60}}",
+                wire_hex::encode(&[1; 16]),
+                wire_hex::encode(&[2; 32]),
+                wire_hex::encode(&public_key(3)),
+                wire_hex::encode(&public_key(4)),
+                serde_json::to_string(&tools).unwrap()
+            );
+            assert_eq!(p.to_json().unwrap(), expected.as_bytes());
+        }
     }
 
     #[test]
