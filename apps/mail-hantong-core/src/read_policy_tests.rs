@@ -78,12 +78,21 @@ impl<'a> Harness<'a> {
             dispatch_connection(connection, server_key, instance, &mut lookup, &mut execute).await
         };
         let client = async {
+            let requested = if matches!(
+                method.as_str(),
+                "app.settings.display.get" | "app.diagnostics.snapshot"
+            ) && current.scope.tools().contains(&method)
+            {
+                RequestedScope::new(vec![], vec![method.clone()]).unwrap()
+            } else {
+                current.scope.clone()
+            };
             let pending = PendingClientAuthentication::begin(
                 client_key.name(),
                 server_key.public_key().unwrap(),
                 current.registration_id,
                 current.profile_epoch,
-                current.scope,
+                requested,
                 now_ms(),
             )
             .unwrap();
@@ -152,6 +161,97 @@ fn assert_terminal(h: &Harness<'_>, error: Option<ErrorCode>, count: Option<u64>
     let terminal = rows[0].completion().unwrap().terminal();
     assert_eq!(terminal.error(), error);
     assert_eq!(terminal.result_count(), count);
+}
+
+pub(super) async fn run_app_read_scenarios(
+    listener: &mut LocalPipeServer,
+    client: &ClientSigningKey,
+    server: &ServerSigningKey,
+    instance: [u8; 32],
+) {
+    let display = || json!({"schema_version":1,"request_id":"display","tool":"app.settings.display.get","params":{}});
+    let diagnostics = || {
+        let now = now_ms();
+        json!({"schema_version":1,"request_id":"diagnostics","tool":"app.diagnostics.snapshot","params":{"from_utc_ms":now-86_400_000,"to_utc_ms":now,"sections":["sync","recent_work","errors"]}})
+    };
+    let mut h = Harness::new(listener, client, server, instance);
+    assert_error(&h.response(display()).await, ErrorCode::ScopeDenied);
+    assert_terminal(&h, Some(ErrorCode::ScopeDenied), None);
+    assert!(h.audit()[0].account_ids().is_empty());
+    h.fixture
+        .mutate(PolicyFixtureMutation::AllowAppReads)
+        .unwrap();
+    assert_eq!(
+        h.response(display()).await["result"],
+        json!({"schema_version":1,"ok":true,"cli_language":null})
+    );
+    {
+        let store = h.fixture.open().unwrap();
+        let mut config = store.initialize_config("UTC").unwrap();
+        config.cli.language = hantong_domain::config::Language::Ko;
+        store
+            .update_config(
+                &serde_json::to_vec(&config).unwrap(),
+                config.settings_version,
+            )
+            .unwrap();
+    }
+    let response = h.response(display()).await;
+    assert_eq!(response["result"]["cli_language"], "ko");
+    assert_terminal(&h, None, None);
+    let request = diagnostics();
+    let response = h.response(request.clone()).await;
+    let selection = hantong_contracts::diagnostic_snapshot::DiagnosticSnapshotRequest::new(
+        request["params"]["from_utc_ms"].as_i64().unwrap(),
+        request["params"]["to_utc_ms"].as_i64().unwrap(),
+        100,
+        &hantong_contracts::diagnostic_aggregate::DiagnosticSection::ALL,
+    )
+    .unwrap();
+    let parsed = hantong_ipc_client::diagnostic_snapshot::parse_snapshot_response(
+        &serde_json::to_vec(&response).unwrap(),
+        "policy-call",
+        &selection,
+    )
+    .unwrap();
+    assert_eq!(parsed.aggregate().window().included_executions(), 3);
+    assert_eq!(parsed.aggregate().recent_work().unwrap().count(), 3);
+    assert_eq!(parsed.aggregate().errors().unwrap().count(), 1);
+    assert_eq!(parsed.aggregate().sync().unwrap().count(), 0);
+    for forbidden in [
+        "account_a",
+        "fixture-a@example.invalid",
+        "Policy fixture",
+        "cli_language",
+    ] {
+        assert!(!parsed.snapshot_json().contains(forbidden));
+    }
+    assert_terminal(&h, None, None);
+    // App reads share the registration bucket with mail reads across connections.
+    h.fixture
+        .mutate(PolicyFixtureMutation::Limit {
+            read_only: true,
+            requests_per_minute: 3,
+        })
+        .unwrap();
+    assert_error(&h.response(read("account_a")).await, ErrorCode::RateLimited);
+    h.fixture
+        .mutate(PolicyFixtureMutation::Limit {
+            read_only: true,
+            requests_per_minute: 60,
+        })
+        .unwrap();
+    for kind in [
+        hantong_store::ClientKind::Gui,
+        hantong_store::ClientKind::Mcp,
+    ] {
+        h.fixture
+            .mutate(PolicyFixtureMutation::AppClientKind(kind))
+            .unwrap();
+        assert_error(&h.response(display()).await, ErrorCode::PolicyBlocked);
+        assert_error(&h.response(diagnostics()).await, ErrorCode::PolicyBlocked);
+        assert_terminal(&h, Some(ErrorCode::PolicyBlocked), None);
+    }
 }
 
 pub(super) async fn run_policy_scenarios(

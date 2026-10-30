@@ -84,6 +84,12 @@ cargo run -p hantong-cli -- sync recover-status --account ACCOUNT --execution-id
 
 저장된 메일의 제목·발신자는 로컬 메타데이터 조회로 확인합니다. 처음 등록한 CLI나 기존 폴더/UID 권한은 헤더를 읽을 수 없습니다. 사용자가 `clients refresh`의 보호 확인에서 메타데이터 공개 범위를 명시적으로 허용한 뒤 사용할 수 있습니다.
 
+현재 권한 갱신에는 CLI 표시 언어와 자기 실행 이력의 진단 집계 읽기도 포함됩니다. 명시 `--lang`이 우선하며, 일반 메일 명령은 저장된 CLI 언어를 최대 250ms의 비동기 조회 예산으로 읽고 사용할 수 없으면 영어로 표시합니다. `--json`, 도움말, 등록·설정 명령은 이 추가 조회를 하지 않습니다. 진단은 아래처럼 기간과 항목을 지정해 조회하며 식별자·주소·메일 원문을 출력하거나 파일·외부 서버로 전송하지 않습니다.
+
+```powershell
+cargo run -p hantong-cli -- diagnostics snapshot --sections sync,recent_work,errors --hours 24 --limit 100 --json
+```
+
 ```powershell
 cargo run -p hantong-cli -- search --account ACCOUNT --wire-hex HEX --encoding utf8 --limit 16
 cargo run -p hantong-cli -- search --account ACCOUNT --wire-hex HEX --encoding utf8 --filter unread --lang ko

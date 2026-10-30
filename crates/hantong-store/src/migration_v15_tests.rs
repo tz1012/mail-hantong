@@ -19,7 +19,7 @@ fn mail03_v14_to_v15_preserves_all_existing_rows_and_backfills_identity() {
     let before = f.keyed().with_connection(v14_product_rows).unwrap();
     let store = f.open().unwrap();
     store.with_connection(|c| {
-        assert_eq!(c.pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0))?, 15);
+        assert_eq!(c.pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0))?, i64::from(CURRENT_SCHEMA_VERSION));
         assert_eq!(before, v14_product_rows(c)?);
         let identity: (String, String, String, String, i64, i64) = c.query_row(
             "SELECT internal_message_id,account_id,mailbox_key,mailbox_encoding,uid_validity,uid FROM imap_message_identities", [],
@@ -46,7 +46,7 @@ fn mail03_v14_to_v15_preserves_absent_audit_sequence_and_empty_cache() {
     store.with_connection(|c| {
         assert_eq!(c.query_row("SELECT count(*) FROM sqlite_sequence WHERE name='audit_starts'", [], |r| r.get::<_,i64>(0))?, 0);
         assert_eq!(c.query_row("SELECT count(*) FROM imap_message_identities", [], |r| r.get::<_,i64>(0))?, 0);
-        validate_schema(c, SCHEMA, 15)
+        validate_schema(c, SCHEMA, CURRENT_SCHEMA_VERSION)
     }).unwrap();
 }
 
@@ -74,7 +74,7 @@ fn mail03_v14_to_v15_backfill_failure_rolls_back_every_rebuilt_table() {
         seed_v14_fixture(&f);
         let store = Store { connection: f.keyed() };
         let before = store.with_connection(v14_product_rows).unwrap();
-        assert_eq!(store.migrate_with_backup(14, 15, SCHEMA, |c| {
+        assert_eq!(store.migrate_with_backup(14, 15, SCHEMA_V15, |c| {
             c.execute_batch(MIGRATION_V14_TO_V15)?;
             c.execute_batch(fault)?;
             // Check the insertion failure itself, independently of final DDL validation.
@@ -96,7 +96,7 @@ fn mail03_v14_to_v15_post_backfill_schema_failure_preserves_source() {
     seed_v14_fixture(&f);
     let store = Store { connection: f.keyed() };
     let before = store.with_connection(v14_product_rows).unwrap();
-    assert_eq!(store.migrate_with_backup(14, 15, SCHEMA, |c| {
+    assert_eq!(store.migrate_with_backup(14, 15, SCHEMA_V15, |c| {
         apply_v15_migration(c)?;
         c.execute_batch("CREATE TABLE unexpected_metadata_schema(value)")
     }), Err(ErrorCode::InternalError));
@@ -159,7 +159,7 @@ fn mail03_v14_to_v15_preserves_recovery_cycles_and_retired_epoch_observations() 
         assert_eq!(before,v14_product_rows(c)?);
         assert_eq!(c.query_row("SELECT count(*) FROM imap_message_identities",[],|r|r.get::<_,i64>(0))?,3);
         assert_eq!(c.query_row("SELECT count(*) FROM imap_uid_epochs",[],|r|r.get::<_,i64>(0))?,2);
-        validate_schema(c,SCHEMA,15)
+        validate_schema(c,SCHEMA,CURRENT_SCHEMA_VERSION)
     }).unwrap();
     assert_eq!(migrated.load_uid_recovery_receipt([9;16], &UidPageStatusRequest::new("acct",[31;32]).unwrap()).unwrap(), completed);
     assert_eq!(migrated.load_uid_recovery_receipt([9;16], &UidPageStatusRequest::new("acct",[32;32]).unwrap()).unwrap().state(),UidPageState::Unresolved);

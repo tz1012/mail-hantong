@@ -277,6 +277,9 @@ pub(super) fn insert_audit_terminal_tx(
     if completed < record.started_at_utc_ms() {
         return Err(ErrorCode::InternalError);
     }
+    if record.tool().is_global_read() && terminal.result_count().is_some() {
+        return Err(ErrorCode::InvalidInput);
+    }
     let count = terminal
         .result_count()
         .map(i64::try_from)

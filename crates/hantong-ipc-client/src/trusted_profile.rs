@@ -6,7 +6,7 @@ use crate::{
     profile::ParsedClientProfile,
 };
 use hantong_contracts::ErrorCode;
-use hantong_contracts::auth::RequestedScope;
+use hantong_contracts::auth::{AppReadTool, RequestedScope};
 use hantong_platform::{
     ClientSigningKey, LoadedClientProfile, client_key_id_for_registration, validate_public_key,
 };
@@ -47,6 +47,20 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AuthenticatedDefaultProfile<S> {
 /// repairs, replaces, or accepts an alternative profile, key, or server pin.
 pub async fn authenticate_default()
 -> Result<AuthenticatedDefaultProfile<impl AsyncRead + AsyncWrite + Unpin>, ErrorCode> {
+    authenticate_default_for(None).await
+}
+
+/// Requests only one explicitly granted app read and no account scope.
+/// Existing registration, profile bytes, key, and server pin remain unchanged.
+pub async fn authenticate_default_app_read(
+    tool: AppReadTool,
+) -> Result<AuthenticatedDefaultProfile<impl AsyncRead + AsyncWrite + Unpin>, ErrorCode> {
+    authenticate_default_for(Some(tool)).await
+}
+
+async fn authenticate_default_for(
+    app_read: Option<AppReadTool>,
+) -> Result<AuthenticatedDefaultProfile<impl AsyncRead + AsyncWrite + Unpin>, ErrorCode> {
     let loaded = hantong_platform::load_default_client_profile()?;
     let profile = ParsedClientProfile::from_json(loaded.bytes())?;
     let now = std::time::SystemTime::now()
@@ -55,13 +69,17 @@ pub async fn authenticate_default()
         .as_millis()
         .try_into()
         .map_err(|_| ErrorCode::AuthRequired)?;
-    let pending = prepare_profile(&profile, now)?;
+    let pending = match app_read {
+        Some(tool) => prepare_app_profile(&profile, tool, now)?,
+        None => prepare_profile(&profile, now)?,
+    };
+    let scope = pending.requested_scope().clone();
     let client = authenticated_wire::authenticate(pending, "default-profile-auth-1").await?;
     Ok(AuthenticatedDefaultProfile {
         client,
         loaded,
-        accounts: profile.scope().accounts().to_vec(),
-        scope: profile.scope().clone(),
+        accounts: scope.accounts().to_vec(),
+        scope,
     })
 }
 
@@ -82,6 +100,31 @@ pub fn verify_default() -> Result<(), ErrorCode> {
 
 fn prepare_profile(
     profile: &ParsedClientProfile,
+    now: i64,
+) -> Result<PendingClientAuthentication, ErrorCode> {
+    prepare_profile_with_scope(profile, profile.scope().clone(), now)
+}
+
+fn prepare_app_profile(
+    profile: &ParsedClientProfile,
+    tool: AppReadTool,
+    now: i64,
+) -> Result<PendingClientAuthentication, ErrorCode> {
+    if !profile
+        .scope()
+        .tools()
+        .iter()
+        .any(|allowed| allowed == tool.as_str())
+    {
+        return Err(ErrorCode::ScopeDenied);
+    }
+    let scope = RequestedScope::new(vec![], vec![tool.as_str().into()])?;
+    prepare_profile_with_scope(profile, scope, now)
+}
+
+fn prepare_profile_with_scope(
+    profile: &ParsedClientProfile,
+    scope: RequestedScope,
     now: i64,
 ) -> Result<PendingClientAuthentication, ErrorCode> {
     let registration = *profile.registration_id();
@@ -105,7 +148,7 @@ fn prepare_profile(
         *profile.server_public_key(),
         registration,
         profile.profile_epoch(),
-        profile.scope().clone(),
+        scope,
         now,
     )
     .map_err(|_| ErrorCode::AuthRequired)
@@ -299,6 +342,127 @@ mod tests {
                 .requested_scope()
                 .permits_account("account_b", "mail.messages.search")
         );
+    }
+
+    #[test]
+    fn cli15_app_read_scope_minimal_auth_binds_exact_tool_and_preserves_profile() {
+        let id = id();
+        let client = OwnedKey::registered(id);
+        let server = OwnedKey::random();
+        let profile = ParsedClientProfile::new_with_scope(
+            id,
+            client_key_id_for_registration(id).unwrap(),
+            client.key().public_key().unwrap(),
+            server.key().public_key().unwrap(),
+            5,
+            RequestedScope::new(
+                vec!["account_a".into()],
+                hantong_contracts::auth::default_cli_app_read_tools(),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let before = profile.to_json().unwrap();
+        for tool in [
+            AppReadTool::DisplaySettingsGet,
+            AppReadTool::DiagnosticsSnapshot,
+        ] {
+            let pending = prepare_app_profile(&profile, tool, 1000).unwrap();
+            let requested = RequestedScope::new(vec![], vec![tool.as_str().into()]).unwrap();
+            assert_eq!(pending.requested_scope(), &requested);
+            assert!(
+                !pending
+                    .requested_scope()
+                    .permits_account("account_a", tool.as_str())
+            );
+            let context = current_peer_context().unwrap();
+            let challenge = AuthTranscript {
+                registration_id: id,
+                profile_epoch: 5,
+                issued_at_utc_ms: 1000,
+                expires_at_utc_ms: 31000,
+                server_instance_id: random_nonce().unwrap(),
+                server_nonce: random_nonce().unwrap(),
+                client_nonce: pending.client_nonce(),
+                server_key_hash: sha256(profile.server_public_key()).unwrap(),
+                client_key_hash: sha256(profile.client_public_key()).unwrap(),
+                server: context.clone(),
+                client: context,
+                scope: requested,
+            };
+            let signature = server
+                .key()
+                .sign(&challenge.encode(SignerRole::Server).unwrap())
+                .unwrap();
+            let response = pending
+                .respond(challenge.clone(), &signature, 1001)
+                .unwrap();
+            assert!(
+                verify_signature(
+                    profile.client_public_key(),
+                    &challenge.encode(SignerRole::Client).unwrap(),
+                    &response
+                )
+                .unwrap()
+            );
+            let pending = prepare_app_profile(&profile, tool, 1000).unwrap();
+            let mut widened = challenge;
+            widened.client_nonce = pending.client_nonce();
+            widened.scope = profile.scope().clone();
+            let signature = server
+                .key()
+                .sign(&widened.encode(SignerRole::Server).unwrap())
+                .unwrap();
+            assert_eq!(
+                pending.respond(widened, &signature, 1001),
+                Err(ErrorCode::AuthRequired)
+            );
+        }
+        assert_eq!(
+            prepare_profile(&profile, 1000).unwrap().requested_scope(),
+            profile.scope()
+        );
+        assert_eq!(profile.to_json().unwrap(), before);
+    }
+
+    #[test]
+    fn cli15_app_read_scope_without_grant_stops_before_existing_key_access() {
+        let id = id();
+        let arbitrary = OwnedKey::random();
+        let server = OwnedKey::random();
+        assert!(matches!(
+            ClientSigningKey::open_for_registration(id),
+            Err(ErrorCode::NotFound)
+        ));
+        for tools in [
+            hantong_contracts::auth::default_cli_legacy_tools(),
+            hantong_contracts::auth::default_cli_folder_tools(),
+            hantong_contracts::auth::default_cli_uid_tools(),
+            hantong_contracts::auth::default_cli_metadata_tools(),
+        ] {
+            let profile = ParsedClientProfile::new_with_scope(
+                id,
+                client_key_id_for_registration(id).unwrap(),
+                arbitrary.key().public_key().unwrap(),
+                server.key().public_key().unwrap(),
+                1,
+                RequestedScope::new(vec![], tools).unwrap(),
+            )
+            .unwrap();
+            for tool in [
+                AppReadTool::DisplaySettingsGet,
+                AppReadTool::DiagnosticsSnapshot,
+            ] {
+                assert!(matches!(
+                    prepare_app_profile(&profile, tool, 1000),
+                    Err(ErrorCode::ScopeDenied)
+                ));
+            }
+        }
+        assert!(matches!(
+            ClientSigningKey::open_for_registration(id),
+            Err(ErrorCode::NotFound)
+        ));
     }
 
     #[test]

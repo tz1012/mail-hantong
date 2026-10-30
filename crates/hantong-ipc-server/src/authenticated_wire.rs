@@ -378,9 +378,14 @@ where
     let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
     tokio::time::timeout_at(deadline, async {
         let (request, length) = read_bounded_request_with_length(authenticated.transport()?, crate::MAX_FRAME_SIZE).await?;
-        if !request.method.starts_with("mail.") { return Err(ErrorCode::InvalidInput); }
-        let response_limit=if request.method=="mail.sync.page" {8192}else{crate::MAX_FRAME_SIZE};
-        if length>response_limit {return Err(ErrorCode::InvalidInput)}
+        if !request.method.starts_with("mail.") && !matches!(request.method.as_str(), "app.settings.display.get" | "app.diagnostics.snapshot") { return Err(ErrorCode::InvalidInput); }
+        let (request_limit,response_limit)=match request.method.as_str() {
+            "app.settings.display.get" => (4096,4096),
+            "app.diagnostics.snapshot" => (4096,36864),
+            "mail.sync.page" => (8192,8192),
+            _ => (crate::MAX_FRAME_SIZE,crate::MAX_FRAME_SIZE),
+        };
+        if length>request_limit {return Err(ErrorCode::InvalidInput)}
         if tokio::time::Instant::now() >= deadline { return Err(ErrorCode::CoreUnavailable); }
         let result = execute(&mut authenticated, &request);
         // In this foundation the internal path is local Store/security state.

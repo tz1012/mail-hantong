@@ -13,6 +13,7 @@ use hantong_contracts::scope_refresh::{
 };
 use std::env;
 use std::io::{self, Write};
+mod diagnostics;
 mod search;
 mod sync;
 
@@ -190,6 +191,95 @@ fn resource(lang: Lang, key: &str) -> &'static str {
         .expect("validated CLI resource key")
 }
 
+fn resolve_display_language(
+    fallback: Lang,
+    explicit: bool,
+    machine: bool,
+    lookup: &mut impl FnMut() -> Result<
+        hantong_contracts::display_settings::CliDisplaySettings,
+        ErrorCode,
+    >,
+) -> Lang {
+    if explicit || machine {
+        return fallback;
+    }
+    match lookup().ok().and_then(|settings| settings.language()) {
+        Some(hantong_contracts::display_settings::CliDisplayLanguage::En) => Lang::En,
+        Some(hantong_contracts::display_settings::CliDisplayLanguage::Ko) => Lang::Ko,
+        None => Lang::En,
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn cli16_saved_language_lookup_is_optional_and_never_changes_explicit_or_machine_output() {
+    use hantong_contracts::display_settings::{CliDisplayLanguage, CliDisplaySettings};
+    assert!(matches!(
+        resolve_display_language(Lang::En, false, false, &mut || Ok(CliDisplaySettings::new(
+            Some(CliDisplayLanguage::Ko)
+        ))),
+        Lang::Ko
+    ));
+    for machine in [false, true] {
+        assert!(matches!(
+            resolve_display_language(Lang::En, true, machine, &mut || panic!(
+                "explicit language must not read settings"
+            )),
+            Lang::En
+        ));
+    }
+    assert!(matches!(
+        resolve_display_language(Lang::Ko, false, true, &mut || panic!(
+            "machine output must not read settings"
+        )),
+        Lang::Ko
+    ));
+    assert!(matches!(
+        resolve_display_language(Lang::En, false, false, &mut || Err(
+            ErrorCode::CoreUnavailable
+        )),
+        Lang::En
+    ));
+    assert!(matches!(
+        resolve_display_language(Lang::En, false, false, &mut || Ok(CliDisplaySettings::new(
+            None
+        ))),
+        Lang::En
+    ));
+}
+
+#[cfg(test)]
+#[test]
+fn cli16_invalid_help_and_bootstrap_commands_do_not_lookup_saved_language() {
+    for args in [
+        vec![],
+        vec!["--help"],
+        vec!["--version"],
+        vec!["unknown"],
+        vec!["folders", "list"],
+        vec!["sync", "page"],
+        vec!["search"],
+        vec!["diagnostics", "snapshot"],
+        vec!["clients", "verify"],
+        vec!["--lang", "ko", "accounts", "list"],
+        vec!["--json", "accounts", "list"],
+    ] {
+        run_with_mail_actions(
+            args.into_iter().map(String::from),
+            |_| Err(ErrorCode::CapabilityUnsupported),
+            || Err(ErrorCode::CapabilityUnsupported),
+            |_| Err(ErrorCode::CapabilityUnsupported),
+            |_| Err(ErrorCode::CapabilityUnsupported),
+            |_| Err(ErrorCode::CapabilityUnsupported),
+            (
+                |_| Err(ErrorCode::CapabilityUnsupported),
+                |_| Err(ErrorCode::CapabilityUnsupported),
+                || panic!("excluded command must not look up settings"),
+            ),
+        );
+    }
+}
+
 fn message(code: ErrorCode, lang: Lang) -> &'static str {
     match (code, lang) {
         (ErrorCode::ClientNotRegistered, _) => resource(lang, "client_not_registered"),
@@ -229,7 +319,11 @@ fn run(args: impl IntoIterator<Item = String>) -> i32 {
         hantong_ipc_client::accounts::list_default_accounts,
         hantong_ipc_client::imap_setup::exchange,
         hantong_ipc_client::scope_refresh::exchange,
-        (real_folder_action, sync::real_action),
+        (
+            real_folder_action,
+            sync::real_action,
+            hantong_ipc_client::display_settings::get_default,
+        ),
     )
 }
 
@@ -489,7 +583,11 @@ fn run_with_boundaries_and_scope_with_folders(
         account_list,
         setup,
         scope_refresh,
-        (folder_action, |_| Err(ErrorCode::CapabilityUnsupported)),
+        (
+            folder_action,
+            |_| Err(ErrorCode::CapabilityUnsupported),
+            || Err(ErrorCode::CapabilityUnsupported),
+        ),
     )
 }
 
@@ -506,9 +604,10 @@ fn run_with_mail_actions(
     actions: (
         impl FnMut(FolderAction) -> Result<FolderActionResult, ErrorCode>,
         impl FnMut(sync::Action) -> Result<sync::ResultValue, ErrorCode>,
+        impl FnMut() -> Result<hantong_contracts::display_settings::CliDisplaySettings, ErrorCode>,
     ),
 ) -> i32 {
-    let (mut folder_action, mut sync_action) = actions;
+    let (mut folder_action, mut sync_action, mut display_settings) = actions;
     let mut lang = Lang::En;
     let mut json = false;
     let mut include_capabilities = false;
@@ -582,6 +681,8 @@ fn run_with_mail_actions(
             | "--wire-hex"
             | "--encoding"
             | "--filter"
+            | "--sections"
+            | "--hours"
             | "--expected-catalog-generation"
             | "--expected-cursor-version"
             | "--execution-id" => {
@@ -623,7 +724,7 @@ fn run_with_mail_actions(
     if !folder_options.is_empty()
         && !matches!(
             command.first().map(String::as_str),
-            Some("folders" | "sync" | "search")
+            Some("folders" | "sync" | "search" | "diagnostics")
         )
     {
         return emit_error(ErrorCode::InvalidInput, lang, json);
@@ -644,14 +745,33 @@ fn run_with_mail_actions(
     if !setup_options.is_empty() {
         return emit_error(ErrorCode::InvalidInput, lang, json);
     }
+    let mut resolve_lang =
+        || resolve_display_language(lang, seen_lang, json, &mut display_settings);
+    if command.first().is_some_and(|v| v == "diagnostics") {
+        return diagnostics::run(&command, &folder_options, lang, json, &mut resolve_lang);
+    }
     if command.first().is_some_and(|v| v == "sync") {
-        return sync::run(&command, &folder_options, lang, json, &mut sync_action);
+        return sync::run(
+            &command,
+            &folder_options,
+            lang,
+            json,
+            &mut sync_action,
+            &mut resolve_lang,
+        );
     }
     if command.first().is_some_and(|v| v == "search") {
-        return search::run(&command, &folder_options, lang, json);
+        return search::run(&command, &folder_options, lang, json, &mut resolve_lang);
     }
     if !folder_options.is_empty() || command.first().is_some_and(|v| v == "folders") {
-        return run_folder_command(&command, &folder_options, lang, json, &mut folder_action);
+        return run_folder_command(
+            &command,
+            &folder_options,
+            lang,
+            json,
+            &mut folder_action,
+            &mut resolve_lang,
+        );
     }
     if want_help && command.is_empty() {
         println!("{}", help(lang));
@@ -711,6 +831,7 @@ fn run_with_mail_actions(
     }
     let protected = matches!(command.as_slice(), [a, b] if (a == "accounts" && b == "list") || (a == "send" && b == "execute") || (a == "approvals" && b == "get"));
     if matches!(command.as_slice(), [a,b] if a == "accounts" && b == "list") {
+        let lang = resolve_lang();
         return match account_list(include_capabilities) {
             Ok(value) => {
                 print!("{}", account_output(&value, lang, json));
@@ -732,6 +853,7 @@ fn run_folder_command(
     lang: Lang,
     json: bool,
     folder_action: &mut impl FnMut(FolderAction) -> Result<FolderActionResult, ErrorCode>,
+    resolve_lang: &mut impl FnMut() -> Lang,
 ) -> i32 {
     let valid = matches!(command, [a,b] if a == "folders" && (b == "list" || b == "refresh" || b == "refresh-status"));
     if !valid {
@@ -771,6 +893,7 @@ fn run_folder_command(
             Ok(v) => v,
             Err(e) => return emit_error(e, lang, json),
         };
+        let lang = resolve_lang();
         return match folder_action(FolderAction::List(request)) {
             Ok(FolderActionResult::Page(page)) => {
                 if json {
@@ -812,6 +935,10 @@ fn run_folder_command(
         if !valid_folder_id(operation) || !valid_folder_id(key) {
             return emit_error(ErrorCode::InvalidInput, lang, json);
         }
+        if !valid_folder_id(account) {
+            return emit_error(ErrorCode::InvalidInput, lang, json);
+        }
+        let lang = resolve_lang();
         return match folder_action(FolderAction::Refresh {
             account: (*account).to_owned(),
             operation: (*operation).to_owned(),
@@ -849,6 +976,7 @@ fn run_folder_command(
             Ok(v) => v,
             Err(e) => return emit_error(e, lang, json),
         };
+        let lang = resolve_lang();
         return match folder_action(FolderAction::Status(request)) {
             Ok(FolderActionResult::Refresh(receipt)) => {
                 if json {

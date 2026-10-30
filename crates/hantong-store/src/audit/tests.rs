@@ -15,6 +15,54 @@ struct Fixture {
     root: PathBuf,
     store: Option<Store>,
 }
+
+#[test]
+fn cli16_ops05_global_audit_persists_without_account_refs_or_result_count() {
+    let f = Fixture::new();
+    for (index, tool) in [
+        AuditTool::DisplaySettingsGet,
+        AuditTool::DiagnosticsSnapshot,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let id = [(200 + index) as u8; 32];
+        let begin = AuditBegin::new(id, [9; 16], 1, tool, vec![]).unwrap();
+        f.store().begin_audit(&begin).unwrap();
+        assert_eq!(
+            f.store()
+                .finish_audit(id, AuditTerminal::succeeded(Some(0)).unwrap()),
+            Err(ErrorCode::InvalidInput)
+        );
+        assert!(
+            f.store()
+                .load_audit(id)
+                .unwrap()
+                .unwrap()
+                .completion()
+                .is_none()
+        );
+        f.store()
+            .finish_audit(id, AuditTerminal::succeeded(None).unwrap())
+            .unwrap();
+        let record = f.store().load_audit(id).unwrap().unwrap();
+        assert_eq!(record.tool(), tool);
+        assert!(record.account_ids().is_empty());
+    }
+    f.store()
+        .with_connection(|c| {
+            assert_eq!(
+                c.query_row(
+                    "SELECT retained_executions,retained_account_refs FROM audit_capacity",
+                    [],
+                    |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?))
+                )?,
+                (2, 0)
+            );
+            Ok(())
+        })
+        .unwrap();
+}
 impl Fixture {
     fn new() -> Self {
         static NEXT: AtomicU64 = AtomicU64::new(0);

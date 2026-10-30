@@ -15,7 +15,12 @@ pub fn response(request: RpcRequest) -> Value {
 }
 
 fn dispatch(request: &RpcRequest) -> Result<Value, ErrorCode> {
-    if request.method.starts_with("mail.") {
+    if request.method.starts_with("mail.")
+        || matches!(
+            request.method.as_str(),
+            "app.settings.display.get" | "app.diagnostics.snapshot"
+        )
+    {
         return Err(ErrorCode::ClientNotRegistered);
     }
     if !matches!(

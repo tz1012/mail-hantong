@@ -65,7 +65,12 @@ fn validate_exchange_field(value: &str, max: usize, method: bool) -> Result<(), 
         || !value
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b':' | b'-'))
-        || (method && !value.starts_with("mail."))
+        || (method
+            && !value.starts_with("mail.")
+            && !matches!(
+                value,
+                "app.settings.display.get" | "app.diagnostics.snapshot"
+            ))
     {
         return Err(ErrorCode::InvalidInput);
     }
@@ -87,8 +92,22 @@ where
         "method": method,
         "params": params,
     });
-    write_tool_frame(&mut transport, &request).await?;
-    let response = read_tool_frame(&mut transport).await?;
+    let (request_limit, response_limit) = match method {
+        "app.settings.display.get" => (4096, 4096),
+        "app.diagnostics.snapshot" => (4096, 36864),
+        _ => (MAX_TOOL_FRAME, MAX_TOOL_FRAME),
+    };
+    write_frame_with_limit(
+        &mut transport,
+        &request,
+        request_limit,
+        ErrorCode::InvalidInput,
+        ErrorCode::InvalidInput,
+        ErrorCode::CoreUnavailable,
+    )
+    .await?;
+    let response =
+        read_frame_with_limit(&mut transport, response_limit, ErrorCode::CoreUnavailable).await?;
     transport
         .write_all(&[0x06])
         .await
@@ -185,21 +204,6 @@ where
     .await
 }
 
-async fn write_tool_frame<S>(transport: &mut S, value: &serde_json::Value) -> Result<(), ErrorCode>
-where
-    S: AsyncWrite + Unpin,
-{
-    write_frame_with_limit(
-        transport,
-        value,
-        MAX_TOOL_FRAME,
-        ErrorCode::InvalidInput,
-        ErrorCode::InvalidInput,
-        ErrorCode::CoreUnavailable,
-    )
-    .await
-}
-
 async fn write_frame_with_limit<S>(
     transport: &mut S,
     value: &serde_json::Value,
@@ -228,13 +232,6 @@ where
     S: AsyncRead + Unpin,
 {
     read_frame_with_limit(transport, MAX_AUTH_FRAME, ErrorCode::AuthRequired).await
-}
-
-async fn read_tool_frame<S>(transport: &mut S) -> Result<Vec<u8>, ErrorCode>
-where
-    S: AsyncRead + Unpin,
-{
-    read_frame_with_limit(transport, MAX_TOOL_FRAME, ErrorCode::CoreUnavailable).await
 }
 
 async fn read_frame_with_limit<S>(

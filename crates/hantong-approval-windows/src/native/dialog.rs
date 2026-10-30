@@ -274,6 +274,53 @@ mod tests {
     }
 
     #[test]
+    fn cli15_app_read_scope_dialog_requires_both_disclosures_before_verification() {
+        let mut app = vec![
+            "app.diagnostics.snapshot".into(),
+            "app.settings.display.get".into(),
+        ];
+        app.extend(hantong_contracts::auth::default_cli_metadata_tools());
+        let review = ScopeRefreshReview::new_with_tools(
+            [1; 32],
+            1,
+            [2; 16],
+            [3; 32],
+            4,
+            5,
+            [6; 32],
+            [7; 32],
+            vec!["acct_a".into()],
+            vec!["acct_a".into()],
+            hantong_contracts::auth::default_cli_metadata_tools(),
+            app,
+            1000,
+            301000,
+        )
+        .unwrap();
+        for (language, language_text, diagnostics_text) in [
+            (Language::En, "saved CLI language", "this registered client"),
+            (Language::Ko, "저장된 CLI 표시 언어", "이 등록 클라이언트"),
+        ] {
+            let dialog = DialogReview::ScopeRefresh(review.clone());
+            let summary = dialog.summary(language).unwrap();
+            assert!(summary.contains(language_text) && summary.contains(diagnostics_text));
+            let mut model = ReviewModel::new(
+                dialog.clone(),
+                Presentation::new(Some(language), Theme::System, false, true, false),
+            );
+            assert_eq!(
+                model.begin_verification(2000, Duration::from_secs(1)),
+                ReviewIntent::None
+            );
+            assert!(model.paint_completed(&dialog));
+            assert_eq!(
+                model.begin_verification(2001, Duration::from_secs(1)),
+                ReviewIntent::RequestVerification
+            );
+        }
+    }
+
+    #[test]
     fn cli15_scope_refresh_dialog_paints_exact_bilingual_snapshot_before_verification() {
         let review = ScopeRefreshReview::new(
             [1; 32],

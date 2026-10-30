@@ -246,6 +246,10 @@ pub(crate) fn validate_history_v14(connection: &rusqlite::Connection) -> rusqlit
     storage::validate_history_v14(connection)
 }
 #[cfg(windows)]
+pub(crate) fn validate_history_v15(connection: &rusqlite::Connection) -> rusqlite::Result<()> {
+    storage::validate_history_v15(connection)
+}
+#[cfg(windows)]
 pub(crate) fn validate_history(connection: &rusqlite::Connection) -> rusqlite::Result<()> {
     context(connection)
         .map(|_| ())

@@ -50,3 +50,5 @@ scope_refresh_current_tools=Current allowed tools
 scope_refresh_target_tools=New allowed tools
 scope_refresh_uid_page_permission=mail.sync.page allows reading one metadata page or first-page recovery after mailbox identity changes, preserving existing records. It does not send or change server mail.
 scope_refresh_metadata_permission=mail.messages.search exposes metadata already in the local cache, including subject and sender headers, to this registered client. It does not read the body, perform server search, send, or change mail. Results cover stored data and do not guarantee a complete mailbox or its current server state.
+scope_refresh_display_permission=app.settings.display.get reads the saved CLI language (English or Korean). It does not change settings.
+scope_refresh_diagnostics_permission=app.diagnostics.snapshot reads bounded diagnostic counts and status codes for this registered client within its current account scope. No mail content, headers, account identifiers, file paths, or raw logs are returned or transmitted.

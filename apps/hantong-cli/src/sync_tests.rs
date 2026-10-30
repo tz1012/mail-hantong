@@ -348,7 +348,11 @@ fn invoke(args: Vec<&str>, action: impl FnMut(Action) -> Result<ResultValue, Err
         |_| panic!("accounts"),
         |_| panic!("setup"),
         |_| panic!("scope"),
-        (|_| panic!("folders"), action),
+        (
+            |_| panic!("folders"),
+            action,
+            || Err(ErrorCode::CapabilityUnsupported),
+        ),
     )
 }
 #[test]

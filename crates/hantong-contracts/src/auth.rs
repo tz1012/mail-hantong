@@ -8,6 +8,21 @@ const MAX_ITEMS: usize = 128;
 pub const MAX_TRANSCRIPT_BYTES: usize = 32_768;
 const DOMAIN: &[u8] = b"mail-hantong/ipc-auth/v1\0";
 
+/// Fixed accountless app reads. A value is not authentication or authority.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AppReadTool {
+    DisplaySettingsGet,
+    DiagnosticsSnapshot,
+}
+impl AppReadTool {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::DisplaySettingsGet => "app.settings.display.get",
+            Self::DiagnosticsSnapshot => "app.diagnostics.snapshot",
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SignerRole {
     Server = 1,
@@ -571,6 +586,16 @@ pub fn default_cli_metadata_tools() -> Vec<String> {
     tools
 }
 
+/// Exact app-read grant offered only by a fresh native scope review.
+pub fn default_cli_app_read_tools() -> Vec<String> {
+    let mut tools = vec![
+        AppReadTool::DiagnosticsSnapshot.as_str().into(),
+        AppReadTool::DisplaySettingsGet.as_str().into(),
+    ];
+    tools.extend(default_cli_metadata_tools());
+    tools
+}
+
 fn default_cli_toolset_rank(tools: &[String]) -> Option<u8> {
     if tools == default_cli_legacy_tools() {
         Some(0)
@@ -580,6 +605,8 @@ fn default_cli_toolset_rank(tools: &[String]) -> Option<u8> {
         Some(2)
     } else if tools == default_cli_metadata_tools() {
         Some(3)
+    } else if tools == default_cli_app_read_tools() {
+        Some(4)
     } else {
         None
     }
@@ -604,6 +631,56 @@ pub fn is_supported_default_cli_toolset_transition(old: &[String], target: &[Str
 #[cfg(test)]
 mod default_toolset_tests {
     use super::*;
+    #[test]
+    fn cli15_app_read_scope_is_exact_and_preserves_existing_toolsets() {
+        let app: Vec<String> = [
+            "app.diagnostics.snapshot",
+            "app.settings.display.get",
+            "mail.accounts.list",
+            "mail.folders.list",
+            "mail.folders.refresh",
+            "mail.messages.search",
+            "mail.sync.page",
+        ]
+        .into_iter()
+        .map(str::to_owned)
+        .collect();
+        assert_eq!(default_cli_app_read_tools(), app);
+        let sets = [
+            default_cli_legacy_tools(),
+            default_cli_folder_tools(),
+            default_cli_uid_tools(),
+            default_cli_metadata_tools(),
+            app.clone(),
+        ];
+        assert!(is_supported_default_cli_toolset(&app));
+        for (old_index, old) in sets.iter().enumerate() {
+            assert_eq!(
+                old.iter().any(|tool| tool.starts_with("app.")),
+                old_index == 4
+            );
+            for (target_index, target) in sets.iter().enumerate() {
+                assert_eq!(
+                    is_supported_default_cli_toolset_transition(old, target),
+                    old_index <= target_index
+                );
+            }
+        }
+        for invalid in [
+            app[1..].to_vec(),
+            app.iter().rev().cloned().collect(),
+            app.iter()
+                .cloned()
+                .chain(["mail.send.execute".into()])
+                .collect(),
+            app.iter()
+                .cloned()
+                .chain(["app.settings.display.get".into()])
+                .collect(),
+        ] {
+            assert!(!is_supported_default_cli_toolset(&invalid));
+        }
+    }
     #[test]
     fn cli15_metadata_scope_is_exact_and_never_widens_existing_grants() {
         let metadata: Vec<String> = [

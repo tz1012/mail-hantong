@@ -7,9 +7,9 @@ fn metadata_tools() -> Vec<String> {
 }
 
 #[test]
-fn cli15_metadata_scope_new_history_uses_v4_domain() {
+fn cli15_metadata_scope_historical_v4_domain_remains_valid() {
     let f = Fixture::new();
-    let pending = f.create(91, &["b"]);
+    let pending = set_historical_hash(&f, f.create(91, &["b"]), 4);
     assert_eq!(pending.hash_version, 4);
     assert_eq!(pending.payload_hash(), &independent_hash(&pending));
     for version in 1..=3 {
@@ -25,7 +25,7 @@ fn cli15_metadata_scope_activation_keeps_uid_grants_until_atomic_replace() {
     let uid = f.create_scope(92, &["a"], hantong_contracts::auth::default_cli_uid_tools());
     let uid = f.store().stage_cli_scope_refresh(&uid).unwrap();
     f.store().activate_cli_scope_refresh(&uid).unwrap();
-    let pending = f.create_scope(93, &["a"], metadata_tools());
+    let pending = set_historical_hash(&f, f.create_scope(93, &["a"], metadata_tools()), 4);
     assert_eq!(pending.hash_version, 4);
     let staged = f.store().stage_cli_scope_refresh(&pending).unwrap();
     let current = f.store().load_default_cli_registration().unwrap().unwrap();

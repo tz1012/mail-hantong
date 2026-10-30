@@ -239,6 +239,22 @@ impl<'server> AuthenticatedConnection<'server> {
         }
         Ok(())
     }
+
+    /// Checks one closed global read tool without interpreting empty accounts as all accounts.
+    pub fn check_app_read_scope(
+        &mut self,
+        current: Option<&RegisteredClient>,
+        tool: hantong_contracts::auth::AppReadTool,
+    ) -> Result<(), ErrorCode> {
+        self.revalidate_registration(current)?;
+        let current = current.expect("validated registration");
+        if !self.granted.tools().iter().any(|v| v == tool.as_str())
+            || !current.scope.tools().iter().any(|v| v == tool.as_str())
+        {
+            return Err(ErrorCode::ScopeDenied);
+        }
+        Ok(())
+    }
 }
 
 fn check_registration(

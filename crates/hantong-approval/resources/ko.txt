@@ -50,3 +50,5 @@ scope_refresh_current_tools=현재 허용 도구
 scope_refresh_target_tools=새 허용 도구
 scope_refresh_uid_page_permission=mail.sync.page는 메타데이터 한 페이지 읽기나 사서함 식별 정보 변경 후 첫 페이지 복구를 허용하며 기존 기록을 보존합니다. 서버 메일을 발송하거나 변경하지 않습니다.
 scope_refresh_metadata_permission=mail.messages.search는 로컬 캐시에 이미 저장된 메타데이터와 제목·보낸 사람 헤더를 이 등록 클라이언트에 공개합니다. 본문 읽기, 서버 검색, 메일 발송·변경을 실행하지 않습니다. 결과는 저장된 범위이며 사서함 전체나 서버의 현재 상태를 보장하지 않습니다.
+scope_refresh_display_permission=app.settings.display.get은 저장된 CLI 표시 언어(영어·한국어)를 읽습니다. 설정을 변경하지 않습니다.
+scope_refresh_diagnostics_permission=app.diagnostics.snapshot은 이 등록 클라이언트와 현재 계정 범위에 한정된 진단 건수·상태 코드를 읽습니다. 메일 본문·헤더·계정 식별자·파일 경로·원시 로그를 반환하거나 전송하지 않습니다.

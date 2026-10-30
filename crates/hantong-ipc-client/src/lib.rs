@@ -11,10 +11,15 @@ pub mod authenticated_wire;
 #[cfg(windows)]
 mod trusted_profile;
 #[cfg(windows)]
-pub use trusted_profile::{AuthenticatedDefaultProfile, authenticate_default, verify_default};
+pub use trusted_profile::{
+    AuthenticatedDefaultProfile, authenticate_default, authenticate_default_app_read,
+    verify_default,
+};
 
 pub mod accounts;
 pub mod auth_wire;
+pub mod diagnostic_snapshot;
+pub mod display_settings;
 pub mod folders;
 pub mod imap_setup;
 pub mod message_search;

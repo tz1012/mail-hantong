@@ -140,6 +140,18 @@ impl<'a, 'server> ExecutionContext for CoreExecutionAdapter<'a, 'server> {
 
     fn check_scope(&mut self, request: &ToolRequest) -> Result<(), ErrorCode> {
         let (_, current) = self.current_registration()?;
+        let app = match request {
+            ToolRequest::DisplaySettingsGet { .. } => {
+                Some(hantong_contracts::auth::AppReadTool::DisplaySettingsGet)
+            }
+            ToolRequest::DiagnosticsSnapshot { .. } => {
+                Some(hantong_contracts::auth::AppReadTool::DiagnosticsSnapshot)
+            }
+            _ => None,
+        };
+        if let Some(tool) = app {
+            return self.connection.check_app_read_scope(Some(&current), tool);
+        }
         self.connection.check_accounts_scope(
             Some(&current),
             request.account_ids(),
@@ -158,6 +170,58 @@ impl<'a, 'server> ExecutionContext for CoreExecutionAdapter<'a, 'server> {
             record.requests_per_minute,
             request.tool(),
             std::time::Instant::now(),
+        )?;
+        if request.tool().is_global_read()
+            && record.client_kind != hantong_contracts::client::ClientKind::Cli
+        {
+            return Err(ErrorCode::PolicyBlocked);
+        }
+        Ok(())
+    }
+
+    fn read_display_settings(&mut self) -> Result<ReadResult<Self::Output>, ErrorCode> {
+        let language = self
+            .store
+            .load_config()?
+            .map(|config| match config.cli.language {
+                hantong_domain::config::Language::En => "en",
+                hantong_domain::config::Language::Ko => "ko",
+            });
+        ReadResult::new(
+            serde_json::json!({"schema_version":1,"ok":true,"cli_language":language}),
+            None,
+        )
+    }
+
+    fn read_diagnostic_snapshot(
+        &mut self,
+        audit_id: [u8; 32],
+        request: &hantong_contracts::diagnostic_snapshot::DiagnosticSnapshotRequest,
+    ) -> Result<ReadResult<Self::Output>, ErrorCode> {
+        use hantong_contracts::diagnostic_aggregate::{
+            DiagnosticAggregateOwner, DiagnosticAggregateQuery,
+        };
+        let owner = DiagnosticAggregateOwner::new(
+            *self.connection.registration_id(),
+            self.connection.profile_epoch(),
+            Some(audit_id),
+        )?;
+        let query = DiagnosticAggregateQuery::new(
+            owner,
+            request.from_utc_ms(),
+            request.to_utc_ms(),
+            request.max_executions(),
+            request.sections(),
+        )?;
+        let aggregate = self.store.collect_diagnostic_aggregate(&query)?;
+        let snapshot = hantong_application::DiagnosticSnapshot::from_aggregate(aggregate)
+            .map_err(|_| ErrorCode::InternalError)?;
+        let snapshot_json = snapshot
+            .preview_json()
+            .map_err(|_| ErrorCode::InternalError)?;
+        ReadResult::new(
+            serde_json::json!({"schema_version":1,"ok":true,"snapshot_json":snapshot_json}),
+            None,
         )
     }
 

@@ -178,11 +178,13 @@ pub(super) fn run(
     lang: Lang,
     json: bool,
     action: &mut impl FnMut(Action) -> Result<ResultValue, ErrorCode>,
+    resolve_lang: &mut impl FnMut() -> Lang,
 ) -> i32 {
     let request = match parse(command, options) {
         Ok(v) => v,
         Err(e) => return emit_error(e, lang, json),
     };
+    let lang = resolve_lang();
     let cursor = matches!(&request, Action::Cursor(_));
     let inspection = matches!(&request, Action::Inspect(_));
     let reconcile = matches!(&request, Action::Reconcile(_) | Action::ReconcileStatus(_));

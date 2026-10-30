@@ -367,6 +367,60 @@ mod tests {
     }
 
     #[test]
+    fn cli15_app_read_scope_binding_rejects_metadata_or_account_substitution() {
+        let build = |old, target, account: &str| {
+            ScopeRefreshReview::new_with_tools(
+                [1; 32],
+                1,
+                [2; 16],
+                [3; 32],
+                4,
+                5,
+                [6; 32],
+                [7; 32],
+                vec!["acct_a".into()],
+                vec![account.into()],
+                old,
+                target,
+                1000,
+                301000,
+            )
+            .unwrap()
+        };
+        let metadata = hantong_contracts::auth::default_cli_metadata_tools();
+        let mut app = vec![
+            "app.diagnostics.snapshot".into(),
+            "app.settings.display.get".into(),
+        ];
+        app.extend(metadata.clone());
+        let review = build(metadata.clone(), app.clone(), "acct_b");
+        let mut captured = captured_scope();
+        captured.review = review.clone();
+        for substituted in [
+            build(metadata.clone(), metadata, "acct_b"),
+            build(
+                hantong_contracts::auth::default_cli_uid_tools(),
+                app.clone(),
+                "acct_b",
+            ),
+            build(
+                hantong_contracts::auth::default_cli_metadata_tools(),
+                app,
+                "acct_c",
+            ),
+        ] {
+            assert_eq!(
+                captured.validate_at(&substituted, 2000, Duration::from_secs(1), &context(8)),
+                Err(ErrorCode::ScopeDenied)
+            );
+        }
+        assert_eq!(
+            captured.consume_at(&review, 2000, 2001, Duration::from_secs(1), &context(8)),
+            Ok(review)
+        );
+    }
+
+    #[test]
     fn cli15_scope_binding_requires_exact_snapshot_user_nonce_and_live_time() {
         let captured = captured_scope();
         assert_eq!(

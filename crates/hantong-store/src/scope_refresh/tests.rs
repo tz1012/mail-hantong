@@ -142,6 +142,7 @@ fn independent_hash(r: &CliScopeRefresh) -> [u8; 32] {
         2 => b"mail-hantong.cli-scope-refresh.v2\0".to_vec(),
         3 => b"mail-hantong.cli-scope-refresh.v3\0".to_vec(),
         4 => b"mail-hantong.cli-scope-refresh.v4\0".to_vec(),
+        5 => b"mail-hantong.cli-scope-refresh.v5\0".to_vec(),
         _ => panic!("invalid fixture hash version"),
     };
     bytes.extend_from_slice(&r.refresh_id);
@@ -172,6 +173,8 @@ fn independent_hash(r: &CliScopeRefresh) -> [u8; 32] {
     hantong_platform::sha256(&bytes).unwrap()
 }
 
+#[path = "app_read_tests.rs"]
+mod app_read_tests;
 #[path = "metadata_tests.rs"]
 mod metadata_tests;
 fn shift(f: &Fixture, r: &CliScopeRefresh, delta: i64) -> CliScopeRefresh {
@@ -294,7 +297,7 @@ fn cli15_uid_scope_v1_v2_pending_staged_and_active_history_remain_immutable() {
             if phase == ScopeRefreshPhase::Active {
                 let next =
                     f.create_scope(85, &["b"], hantong_contracts::auth::default_cli_uid_tools());
-                assert_eq!(next.hash_version, 4);
+                assert_eq!(next.hash_version, 5);
                 assert!(
                     f.store()
                         .with_connection(super::validate_history_v11)
@@ -1151,7 +1154,7 @@ fn cli15_v8_real_legacy_history_migrates_without_rehash_or_scope_change() {
                 &["b"],
                 hantong_contracts::auth::default_cli_folder_tools(),
             );
-            assert_eq!(next.hash_version, 4);
+            assert_eq!(next.hash_version, 5);
             let next = f.store().stage_cli_scope_refresh(&next).unwrap();
             f.store().activate_cli_scope_refresh(&next).unwrap();
             assert_eq!(

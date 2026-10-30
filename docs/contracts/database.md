@@ -81,3 +81,7 @@ v10 DDL은 `migrations/schema-v10.sql`로 고정하며 `010-to-011.sql`은 [UID 
 [검색 계약](imap-metadata-search.md)과 [scope v4 계약](client-metadata-scope-refresh.md)에 따라 frozen `schema-v14.sql`과 `014-to-015.sql`을 사용한다. 열 개 audit FK closure 표와 scope ledger를 함께 재구축하고 새로운 `imap_message_identities` 표를 추가한다. 보호된 암호화 backup 뒤 단일 Immediate transaction에서 모든 기존 행/JSON/hash·원본 scope v1~v3·미완료 작업·audit capacity/sequence를 보존하며 자동 재개하거나 권한을 확대하지 않는다. 미사용 audit sequence의 행 부재도 보존한다. 같은 transaction에서 모든 불변 IMAP locator의 ID를 streaming backfill하고 삽입값을 검증한다. 잘못된 locator/충돌/누락/변조/DDL 실패는 원본 v14로 rollback한다.
 
 schema12~14는 frozen max3 scope validator, schema15는 max4 validator를 사용한다. mapping은 새 append/recovery와 함께 원자 삽입하며 조회·재실행·startup에서 자동 생성하지 않는다. startup은 mapping/base bijection·FK·count를 검증하고 개별 hash는 선택된 source read에서 검증한다. 전체 메시지 JSON을 startup에 일괄 decode했다고 주장하지 않는다. 실행 증거와 남은 검토는 [PROGRESS](../latest/PROGRESS.md)에 기록한다.
+
+## v16 앱 읽기와 명시 권한 갱신
+
+[앱 실행 계약](app-read-execution.md)에 따라 `schema-v15.sql`을 동결하고 `015-to-016.sql`에서 기존 audit FK closure와 scope ledger를 재구축한다. 새 표 없이 31개 표를 유지하며 두 앱 조회 tool과 scope hash v5/A만 추가한다. v15의 max4 validator는 동결하고 v16에서 max5를 사용한다. 기존 행·scope v1~v4 hash·pending/staged 의도·message ID·미완료 job·audit capacity·sequence 부재/최대값을 보존하며 자동 권한 확대나 재개를 하지 않는다. 보호된 backup 및 단일 transaction 실패 시 원본 v15로 rollback한다. 새 global audit는 계정 참조0개와 result_count=NULL을 요구하며 기존 mail audit의 빈 계정 금지는 유지한다. **사람 검토 필요**.

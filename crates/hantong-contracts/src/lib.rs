@@ -5,6 +5,9 @@
 pub mod audit;
 pub mod auth;
 pub mod client;
+pub mod diagnostic_aggregate;
+pub mod diagnostic_snapshot;
+pub mod display_settings;
 pub mod folders;
 pub mod imap_setup;
 pub mod message_search;

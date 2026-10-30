@@ -584,6 +584,36 @@ mod tests {
             assert_eq!(ProfileSelector::parse(value), Err(ErrorCode::InvalidInput));
         }
     }
+
+    #[test]
+    fn cli15_app_read_scope_profile_preserves_old_bytes_and_accepts_only_exact_new_grant() {
+        let original = parse(&value()).unwrap();
+        let old_bytes = original.to_json().unwrap();
+        let mut app = vec![
+            "app.diagnostics.snapshot".to_owned(),
+            "app.settings.display.get".into(),
+        ];
+        app.extend(hantong_contracts::auth::default_cli_metadata_tools());
+        let mut input = value();
+        input["tool_ids"] = json!(app);
+        let parsed = parse(&input).unwrap();
+        assert_eq!(parsed.scope().tools(), app);
+        assert_eq!(
+            ParsedClientProfile::from_json(&parsed.to_json().unwrap()).unwrap(),
+            parsed
+        );
+        assert_eq!(
+            ParsedClientProfile::from_json(&old_bytes)
+                .unwrap()
+                .to_json()
+                .unwrap(),
+            old_bytes
+        );
+        for invalid_tools in [app[1..].to_vec(), app.iter().rev().cloned().collect()] {
+            input["tool_ids"] = json!(invalid_tools);
+            invalid(&input);
+        }
+    }
     #[test]
     fn sec08_profile_debug_and_errors_hide_untrusted_data() {
         let profile = parse(&value()).unwrap();

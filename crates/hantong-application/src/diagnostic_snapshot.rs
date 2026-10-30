@@ -45,6 +45,7 @@ pub enum SnapshotError {
     EmptySelection,
     DuplicateSelection,
     Serialization,
+    ImmutableSnapshot,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -53,6 +54,7 @@ pub struct DiagnosticSnapshot {
     selection: DiagnosticSelection,
     error_count: Option<u64>,
     last_error: Option<ErrorCode>,
+    aggregate_json: Option<String>,
 }
 impl DiagnosticSnapshot {
     pub fn new(
@@ -67,6 +69,35 @@ impl DiagnosticSnapshot {
             selection,
             error_count: None,
             last_error: None,
+            aggregate_json: None,
+        })
+    }
+    /// Freezes the identifier-free aggregate once for both preview and export.
+    pub fn from_aggregate(
+        aggregate: hantong_contracts::diagnostic_aggregate::DiagnosticAggregate,
+    ) -> Result<Self, SnapshotError> {
+        let json = aggregate::serialize(&aggregate)?;
+        let sections = aggregate
+            .sections()
+            .iter()
+            .map(|section| match section {
+                hantong_contracts::diagnostic_aggregate::DiagnosticSection::Sync => {
+                    SnapshotSection::Sync
+                }
+                hantong_contracts::diagnostic_aggregate::DiagnosticSection::RecentWork => {
+                    SnapshotSection::RecentWork
+                }
+                hantong_contracts::diagnostic_aggregate::DiagnosticSection::Errors => {
+                    SnapshotSection::Errors
+                }
+            })
+            .collect::<Vec<_>>();
+        Ok(Self {
+            generated_at_utc_ms: aggregate.generated_at_utc_ms(),
+            selection: DiagnosticSelection::try_from_sections(&sections)?,
+            error_count: None,
+            last_error: None,
+            aggregate_json: Some(json),
         })
     }
     pub fn with_error_summary(
@@ -74,6 +105,9 @@ impl DiagnosticSnapshot {
         count: u64,
         last_error: Option<ErrorCode>,
     ) -> Result<Self, SnapshotError> {
+        if self.aggregate_json.is_some() {
+            return Err(SnapshotError::ImmutableSnapshot);
+        }
         if count > MAX_METRIC {
             return Err(SnapshotError::MetricOverflow);
         }
@@ -88,6 +122,9 @@ impl DiagnosticSnapshot {
         self.to_json()
     }
     fn to_json(&self) -> Result<String, SnapshotError> {
+        if let Some(json) = &self.aggregate_json {
+            return Ok(json.clone());
+        }
         let mut root = Map::new();
         root.insert("schema_version".into(), Value::from(1u8));
         root.insert(
@@ -123,6 +160,10 @@ impl DiagnosticSnapshot {
         serde_json::to_string(&Value::Object(root)).map_err(|_| SnapshotError::Serialization)
     }
 }
+
+mod aggregate;
+#[cfg(test)]
+mod aggregate_tests;
 
 #[cfg(test)]
 mod tests {

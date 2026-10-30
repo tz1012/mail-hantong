@@ -56,6 +56,16 @@ pub trait ExecutionContext {
     fn begin_audit(&mut self, request: &ToolRequest) -> Result<[u8; 32], ErrorCode>;
     fn check_scope(&mut self, request: &ToolRequest) -> Result<(), ErrorCode>;
     fn check_policy(&mut self, request: &ToolRequest) -> Result<(), ErrorCode>;
+    fn read_display_settings(&mut self) -> Result<ReadResult<Self::Output>, ErrorCode> {
+        Err(ErrorCode::CapabilityUnsupported)
+    }
+    fn read_diagnostic_snapshot(
+        &mut self,
+        _audit_id: [u8; 32],
+        _request: &hantong_contracts::diagnostic_snapshot::DiagnosticSnapshotRequest,
+    ) -> Result<ReadResult<Self::Output>, ErrorCode> {
+        Err(ErrorCode::CapabilityUnsupported)
+    }
     fn read_accounts(
         &mut self,
         request: &AccountsListRequest,
@@ -139,6 +149,21 @@ pub trait ExecutionContext {
     fn finish_audit(&mut self, id: [u8; 32], terminal: AuditTerminal) -> Result<(), ErrorCode>;
 }
 
+fn finish_global_read<C: ExecutionContext>(
+    result: Result<ReadResult<C::Output>, ErrorCode>,
+    context: &mut C,
+    audit_id: [u8; 32],
+) -> Result<C::Output, ErrorCode> {
+    match result {
+        Ok(result) if result.count().is_none() => {
+            finish_success(context, audit_id, None)?;
+            Ok(result.value())
+        }
+        Ok(_) => finish_failure(context, audit_id, ErrorCode::InternalError),
+        Err(error) => finish_failure(context, audit_id, error),
+    }
+}
+
 pub fn execute_tool<C: ExecutionContext>(
     context: &mut C,
     method: &str,
@@ -156,6 +181,14 @@ pub fn execute_tool<C: ExecutionContext>(
     }
 
     match request {
+        ToolRequest::DisplaySettingsGet { .. } => {
+            finish_global_read(context.read_display_settings(), context, audit_id)
+        }
+        ToolRequest::DiagnosticsSnapshot { request, .. } => finish_global_read(
+            context.read_diagnostic_snapshot(audit_id, &request),
+            context,
+            audit_id,
+        ),
         ToolRequest::AccountsList(request) => match context.read_accounts(&request) {
             Ok(result) => {
                 let count = result.count();

@@ -62,11 +62,18 @@ pub(super) fn parse(
     ImapMetadataSearchRequest::new(account, mailbox, filter, limit, cursor)
 }
 
-pub(super) fn run(command: &[String], options: &[(String, String)], lang: Lang, json: bool) -> i32 {
+pub(super) fn run(
+    command: &[String],
+    options: &[(String, String)],
+    lang: Lang,
+    json: bool,
+    resolve_lang: &mut impl FnMut() -> Lang,
+) -> i32 {
     let request = match parse(command, options) {
         Ok(request) => request,
         Err(error) => return emit_error(error, lang, json),
     };
+    let lang = resolve_lang();
     match hantong_ipc_client::message_search::search_default(request) {
         Ok(response) => {
             if json {

@@ -25,6 +25,8 @@ pub enum PolicyFixtureMutation {
     AllowFolders,
     AllowUidPage,
     AllowMetadata,
+    AllowAppReads,
+    AppClientKind(ClientKind),
 }
 impl PolicyStoreFixture {
     pub fn new(server: &ServerSigningKey, client_public: [u8; 72]) -> Result<Self, ErrorCode> {
@@ -90,6 +92,21 @@ impl PolicyStoreFixture {
         }
         self.database()?.with_connection(|c| {
             match change {
+                PolicyFixtureMutation::AllowAppReads => {
+                    let tx=c.unchecked_transaction()?;
+                    let tools=hantong_contracts::auth::default_cli_app_read_tools();
+                    let json=r#"["app.diagnostics.snapshot","app.settings.display.get","mail.accounts.list","mail.folders.list","mail.folders.refresh","mail.messages.search","mail.sync.page"]"#;
+                    tx.execute("UPDATE client_registration_requests SET requested_tools_json=?1,version=version+1 WHERE request_id=(SELECT request_id FROM client_registrations WHERE registration_id=?2)",(json,self.registration_id.as_slice()))?;
+                    for tool in tools { tx.execute("INSERT OR IGNORE INTO client_registration_tools(registration_id,tool_id) VALUES(?1,?2)",(self.registration_id.as_slice(),tool))?; }
+                    tx.execute("UPDATE client_registrations SET profile_epoch=profile_epoch+1,version=version+1 WHERE registration_id=?1",[self.registration_id.as_slice()])?;
+                    tx.commit()?;
+                }
+                PolicyFixtureMutation::AppClientKind(kind) => {
+                    let tx=c.unchecked_transaction()?;
+                    tx.execute("UPDATE client_registration_requests SET client_kind=?1 WHERE request_id=(SELECT request_id FROM client_registrations WHERE registration_id=?2)",(kind.as_str(),self.registration_id.as_slice()))?;
+                    tx.execute("UPDATE client_registrations SET client_kind=?1 WHERE registration_id=?2",(kind.as_str(),self.registration_id.as_slice()))?;
+                    tx.commit()?;
+                }
                 PolicyFixtureMutation::Limit{read_only,requests_per_minute}=> {
                     c.execute("UPDATE client_registrations SET read_only=?1,requests_per_minute=?2,version=version+1 WHERE registration_id=?3",(i64::from(read_only),i64::from(requests_per_minute),self.registration_id.as_slice()))?;
                 }

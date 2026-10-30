@@ -10,6 +10,8 @@ const MAX_EPOCH: u64 = i64::MAX as u64;
 
 #[derive(Clone, Copy, Eq, PartialEq)]
 pub enum AuditTool {
+    DisplaySettingsGet,
+    DiagnosticsSnapshot,
     AccountsList,
     FoldersList,
     FoldersRefresh,
@@ -20,6 +22,8 @@ pub enum AuditTool {
 impl AuditTool {
     pub const fn as_str(self) -> &'static str {
         match self {
+            Self::DisplaySettingsGet => "app.settings.display.get",
+            Self::DiagnosticsSnapshot => "app.diagnostics.snapshot",
             Self::AccountsList => "mail.accounts.list",
             Self::FoldersList => "mail.folders.list",
             Self::FoldersRefresh => "mail.folders.refresh",
@@ -30,6 +34,8 @@ impl AuditTool {
     }
     pub fn parse(value: &str) -> Result<Self, ErrorCode> {
         match value {
+            "app.settings.display.get" => Ok(Self::DisplaySettingsGet),
+            "app.diagnostics.snapshot" => Ok(Self::DiagnosticsSnapshot),
             "mail.accounts.list" => Ok(Self::AccountsList),
             "mail.folders.list" => Ok(Self::FoldersList),
             "mail.folders.refresh" => Ok(Self::FoldersRefresh),
@@ -38,6 +44,9 @@ impl AuditTool {
             "mail.send.execute" => Ok(Self::SendExecute),
             _ => Err(ErrorCode::InvalidInput),
         }
+    }
+    pub const fn is_global_read(self) -> bool {
+        matches!(self, Self::DisplaySettingsGet | Self::DiagnosticsSnapshot)
     }
 }
 impl fmt::Debug for AuditTool {
@@ -66,7 +75,7 @@ impl AuditBegin {
             return Err(ErrorCode::InvalidInput);
         }
         let scope = RequestedScope::new(account_ids, Vec::new())?;
-        if scope.accounts().is_empty() {
+        if scope.accounts().is_empty() != tool.is_global_read() {
             return Err(ErrorCode::InvalidInput);
         }
         Ok(Self {
@@ -221,7 +230,10 @@ impl AuditRecord {
         completed_at_utc_ms: i64,
         terminal: AuditTerminal,
     ) -> Result<Self, ErrorCode> {
-        if self.completion.is_some() || completed_at_utc_ms < self.started_at_utc_ms {
+        if self.completion.is_some()
+            || completed_at_utc_ms < self.started_at_utc_ms
+            || (self.tool.is_global_read() && terminal.result_count().is_some())
+        {
             return Err(ErrorCode::InvalidInput);
         }
         self.completion = Some(AuditCompletion::new(completed_at_utc_ms, terminal)?);
@@ -264,6 +276,52 @@ impl fmt::Debug for AuditRecord {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cli16_ops05_app_audit_requires_exactly_zero_accounts() {
+        for name in ["app.settings.display.get", "app.diagnostics.snapshot"] {
+            let tool = AuditTool::parse(name).expect("known app read tool");
+            assert_eq!(tool.as_str(), name);
+            let begin = AuditBegin::new([1; 32], [2; 16], 1, tool, vec![]).unwrap();
+            assert!(begin.account_ids().is_empty());
+            assert_eq!(
+                AuditBegin::new([1; 32], [2; 16], 1, tool, vec!["a".into()]),
+                Err(ErrorCode::InvalidInput)
+            );
+            let actor = AuditActor::new(crate::client::ClientKind::Cli, "fixture".into()).unwrap();
+            assert!(
+                AuditRecord::begin(1, &begin, actor.clone(), 10)
+                    .unwrap()
+                    .finish(11, AuditTerminal::succeeded(Some(0)).unwrap())
+                    .is_err()
+            );
+            let finished = AuditRecord::begin(1, &begin, actor, 10)
+                .unwrap()
+                .finish(11, AuditTerminal::succeeded(None).unwrap())
+                .unwrap();
+            assert!(finished.account_ids().is_empty());
+            assert_eq!(
+                finished.completion().unwrap().terminal().result_count(),
+                None
+            );
+        }
+        for name in [
+            "mail.accounts.list",
+            "mail.folders.list",
+            "mail.folders.refresh",
+            "mail.sync.page",
+            "mail.messages.search",
+            "mail.send.execute",
+        ] {
+            let tool = AuditTool::parse(name).unwrap();
+            assert_eq!(
+                AuditBegin::new([1; 32], [2; 16], 1, tool, vec![]),
+                Err(ErrorCode::InvalidInput)
+            );
+        }
+        assert!(AuditTool::parse("app.settings.write").is_err());
+        assert!(AuditTool::parse("app.diagnostics.export").is_err());
+    }
 
     #[test]
     fn ai10_begin_sorts_and_bounds_accounts() {

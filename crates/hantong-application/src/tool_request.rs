@@ -21,6 +21,13 @@ use std::{collections::BTreeSet, fmt};
 
 #[derive(Clone, Eq, PartialEq)]
 pub enum ToolRequest {
+    DisplaySettingsGet {
+        request_id: String,
+    },
+    DiagnosticsSnapshot {
+        request_id: String,
+        request: hantong_contracts::diagnostic_snapshot::DiagnosticSnapshotRequest,
+    },
     AccountsList(AccountsListRequest),
     FoldersList {
         request_id: String,
@@ -80,6 +87,12 @@ pub struct SendExecuteRequest {
 impl fmt::Debug for ToolRequest {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::DisplaySettingsGet { .. } => {
+                f.write_str("ToolRequest::DisplaySettingsGet(<redacted>)")
+            }
+            Self::DiagnosticsSnapshot { .. } => {
+                f.write_str("ToolRequest::DiagnosticsSnapshot(<redacted>)")
+            }
             Self::AccountsList(_) => f.write_str("ToolRequest::AccountsList(<redacted>)"),
             Self::FoldersList { .. } => f.write_str("ToolRequest::FoldersList(<redacted>)"),
             Self::FoldersRefresh { .. } => f.write_str("ToolRequest::FoldersRefresh(<redacted>)"),
@@ -112,6 +125,14 @@ impl ToolRequest {
         let tool = string(root.get("tool").unwrap())?;
         let params = object(root.get("params").unwrap())?;
         match tool {
+            "app.settings.display.get" => {
+                exact_keys(params, &[])?;
+                Ok(Self::DisplaySettingsGet { request_id })
+            }
+            "app.diagnostics.snapshot" => Ok(Self::DiagnosticsSnapshot {
+                request_id,
+                request: parse_diagnostic_snapshot(params)?,
+            }),
             "mail.accounts.list" => Ok(Self::AccountsList(parse_accounts(request_id, params)?)),
             "mail.folders.list" => Ok(Self::FoldersList {
                 request_id,
@@ -147,6 +168,8 @@ impl ToolRequest {
 
     pub fn request_id(&self) -> &str {
         match self {
+            Self::DisplaySettingsGet { request_id }
+            | Self::DiagnosticsSnapshot { request_id, .. } => request_id,
             Self::AccountsList(v) => &v.request_id,
             Self::FoldersList { request_id, .. }
             | Self::FoldersRefresh { request_id, .. }
@@ -158,6 +181,8 @@ impl ToolRequest {
 
     pub fn tool(&self) -> AuditTool {
         match self {
+            Self::DisplaySettingsGet { .. } => AuditTool::DisplaySettingsGet,
+            Self::DiagnosticsSnapshot { .. } => AuditTool::DiagnosticsSnapshot,
             Self::AccountsList(_) => AuditTool::AccountsList,
             Self::FoldersList { .. } => AuditTool::FoldersList,
             Self::FoldersRefresh { .. } => AuditTool::FoldersRefresh,
@@ -169,6 +194,7 @@ impl ToolRequest {
 
     pub fn account_ids(&self) -> &[String] {
         match self {
+            Self::DisplaySettingsGet { .. } | Self::DiagnosticsSnapshot { .. } => &[],
             Self::AccountsList(value) => value.account_ids(),
             Self::FoldersList { request, .. } => request.account_ids(),
             Self::FoldersRefresh { action, .. } => match action {
@@ -251,6 +277,40 @@ fn string(value: &Value) -> Result<&str, ErrorCode> {
 }
 fn integer(value: &Value) -> Result<i64, ErrorCode> {
     value.as_i64().ok_or(ErrorCode::InvalidInput)
+}
+
+fn parse_diagnostic_snapshot(
+    params: &Map<String, Value>,
+) -> Result<hantong_contracts::diagnostic_snapshot::DiagnosticSnapshotRequest, ErrorCode> {
+    use hantong_contracts::{
+        diagnostic_aggregate::DiagnosticSection, diagnostic_snapshot::DiagnosticSnapshotRequest,
+    };
+    let mut required = vec!["from_utc_ms", "to_utc_ms", "sections"];
+    if params.contains_key("max_executions") {
+        required.push("max_executions");
+    }
+    exact_keys(params, &required)?;
+    let sections = params["sections"]
+        .as_array()
+        .ok_or(ErrorCode::InvalidInput)?;
+    if sections.is_empty() || sections.len() > 3 {
+        return Err(ErrorCode::InvalidInput);
+    }
+    let sections = sections
+        .iter()
+        .map(|v| DiagnosticSection::parse(string(v)?))
+        .collect::<Result<Vec<_>, _>>()?;
+    let max = params
+        .get("max_executions")
+        .map(integer)
+        .transpose()?
+        .unwrap_or(100);
+    DiagnosticSnapshotRequest::new(
+        integer(&params["from_utc_ms"])?,
+        integer(&params["to_utc_ms"])?,
+        max.try_into().map_err(|_| ErrorCode::InvalidInput)?,
+        &sections,
+    )
 }
 
 fn exact_keys(map: &Map<String, Value>, allowed: &[&str]) -> Result<(), ErrorCode> {

@@ -2,6 +2,60 @@ use super::*;
 use serde_json::json;
 
 #[test]
+fn cli16_ops05_global_reads_keep_validation_scope_policy_audit_order() {
+    for (tool, params) in [
+        ("app.settings.display.get", json!({})),
+        (
+            "app.diagnostics.snapshot",
+            json!({"from_utc_ms":0,"to_utc_ms":1000,"sections":["errors"]}),
+        ),
+    ] {
+        let envelope = json!({"schema_version":1,"request_id":"r","tool":tool,"params":params});
+        let mut fake = Fake::ok();
+        fake.read = ReadResult::new(17, None);
+        assert_eq!(execute_tool(&mut fake, tool, &envelope), Ok(17));
+        assert_eq!(
+            fake.events,
+            [
+                "revalidate",
+                "begin",
+                "scope",
+                "policy",
+                "app_read",
+                "finish_ok"
+            ]
+        );
+        assert_eq!(fake.scoped_accounts, vec![Vec::<String>::new()]);
+        assert_eq!(fake.terminals[0].1.result_count(), None);
+        for policy in [false, true] {
+            let mut fake = Fake::ok();
+            if policy {
+                fake.fail_policy = Some(ErrorCode::PolicyBlocked)
+            } else {
+                fake.fail_scope = Some(ErrorCode::ScopeDenied)
+            }
+            assert!(execute_tool(&mut fake, tool, &envelope).is_err());
+            assert!(!fake.events.contains(&"app_read"));
+            assert_eq!(fake.terminals.len(), 1);
+        }
+        let mut fake = Fake::ok();
+        fake.read = ReadResult::new(17, Some(0));
+        assert_eq!(
+            execute_tool(&mut fake, tool, &envelope),
+            Err(ErrorCode::InternalError)
+        );
+        let mut invalid = envelope.clone();
+        invalid["params"]["account_ids"] = json!([]);
+        let mut fake = Fake::ok();
+        assert_eq!(
+            execute_tool(&mut fake, tool, &invalid),
+            Err(ErrorCode::InvalidInput)
+        );
+        assert!(fake.events.is_empty());
+    }
+}
+
+#[test]
 fn sec03_metadata_search_uses_common_policy_audit_and_emitted_item_count() {
     let envelope = json!({"schema_version":1,"request_id":"r","tool":"mail.messages.search","params":{"mode":"imap_metadata","account_id":"a","wire_hex":"494e424f58","encoding":"utf8"}});
     let mut fake = Fake::ok();
@@ -209,6 +263,18 @@ impl ExecutionContext for Fake {
     fn read_accounts(&mut self, _: &AccountsListRequest) -> Result<ReadResult<u32>, ErrorCode> {
         self.events.push("read");
         std::mem::replace(&mut self.read, Err(ErrorCode::InternalError))
+    }
+    fn read_display_settings(&mut self) -> Result<ReadResult<u32>, ErrorCode> {
+        self.events.push("app_read");
+        std::mem::replace(&mut self.read, Err(ErrorCode::InternalError))
+    }
+    fn read_diagnostic_snapshot(
+        &mut self,
+        audit_id: [u8; 32],
+        _: &hantong_contracts::diagnostic_snapshot::DiagnosticSnapshotRequest,
+    ) -> Result<ReadResult<u32>, ErrorCode> {
+        assert_eq!(Some(audit_id), self.audit_id);
+        self.read_display_settings()
     }
     fn read_message_search(
         &mut self,

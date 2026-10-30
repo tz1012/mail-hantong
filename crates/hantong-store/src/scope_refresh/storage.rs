@@ -46,6 +46,7 @@ fn hash_payload(value: &CliScopeRefresh) -> Result<[u8; 32], ErrorCode> {
         2 => b"mail-hantong.cli-scope-refresh.v2\0".to_vec(),
         3 => b"mail-hantong.cli-scope-refresh.v3\0".to_vec(),
         4 => b"mail-hantong.cli-scope-refresh.v4\0".to_vec(),
+        5 => b"mail-hantong.cli-scope-refresh.v5\0".to_vec(),
         _ => return Err(ErrorCode::InternalError),
     };
     bytes.extend_from_slice(&value.refresh_id);
@@ -106,18 +107,85 @@ fn historical_rank(tools: &[String]) -> Option<u8> {
         ]
     {
         Some(3)
+    } else if tools
+        == [
+            "app.diagnostics.snapshot",
+            "app.settings.display.get",
+            "mail.accounts.list",
+            "mail.folders.list",
+            "mail.folders.refresh",
+            "mail.messages.search",
+            "mail.sync.page",
+        ]
+    {
+        Some(4)
     } else {
         None
     }
 }
 fn historical_toolset(tools: &[String], hash_version: u8) -> bool {
-    (1..=4).contains(&hash_version)
+    (1..=5).contains(&hash_version)
         && historical_rank(tools).is_some_and(|rank| rank < hash_version)
 }
 fn historical_transition(old: &[String], target: &[String], hash_version: u8) -> bool {
     historical_toolset(old, hash_version)
         && historical_toolset(target, hash_version)
         && historical_rank(old) <= historical_rank(target)
+}
+
+#[cfg(test)]
+#[test]
+fn cli15_app_read_scope_historical_membership_and_transitions_are_closed() {
+    let sets: Vec<Vec<String>> = [
+        vec!["mail.accounts.list"],
+        vec![
+            "mail.accounts.list",
+            "mail.folders.list",
+            "mail.folders.refresh",
+        ],
+        vec![
+            "mail.accounts.list",
+            "mail.folders.list",
+            "mail.folders.refresh",
+            "mail.sync.page",
+        ],
+        vec![
+            "mail.accounts.list",
+            "mail.folders.list",
+            "mail.folders.refresh",
+            "mail.messages.search",
+            "mail.sync.page",
+        ],
+        vec![
+            "app.diagnostics.snapshot",
+            "app.settings.display.get",
+            "mail.accounts.list",
+            "mail.folders.list",
+            "mail.folders.refresh",
+            "mail.messages.search",
+            "mail.sync.page",
+        ],
+    ]
+    .into_iter()
+    .map(|set| set.into_iter().map(str::to_owned).collect())
+    .collect();
+    for version in 1..=5 {
+        for (old_rank, old) in sets.iter().enumerate() {
+            assert_eq!(
+                historical_toolset(old, version),
+                old_rank < usize::from(version)
+            );
+            for (target_rank, target) in sets.iter().enumerate() {
+                assert_eq!(
+                    historical_transition(old, target, version),
+                    old_rank <= target_rank && target_rank < usize::from(version)
+                );
+            }
+        }
+    }
+    for version in [0, 6, 255] {
+        assert!(!historical_toolset(&sets[4], version));
+    }
 }
 fn accounts_column(row: &Row<'_>, index: usize) -> rusqlite::Result<Vec<String>> {
     let values: Vec<String> = serde_json::from_str(text_column(row, index, 32768)?)
@@ -231,7 +299,7 @@ fn read_row(
     Ok(value)
 }
 pub(super) fn context(connection: &Connection) -> Result<Option<Context>, ErrorCode> {
-    context_with_layout(connection, false, 4)
+    context_with_layout(connection, false, 5)
 }
 fn context_with_layout(
     connection: &Connection,
@@ -326,6 +394,13 @@ pub(super) fn validate_history_v11(connection: &Connection) -> rusqlite::Result<
 /// Freezes v12-v14 history before the metadata-scope schema migration.
 pub(super) fn validate_history_v14(connection: &Connection) -> rusqlite::Result<()> {
     context_with_layout(connection, false, 3)
+        .map(|_| ())
+        .map_err(|_| rusqlite::Error::InvalidQuery)
+}
+
+/// Freezes v15 history before the app-read scope schema migration.
+pub(super) fn validate_history_v15(connection: &Connection) -> rusqlite::Result<()> {
+    context_with_layout(connection, false, 4)
         .map(|_| ())
         .map_err(|_| rusqlite::Error::InvalidQuery)
 }
@@ -588,7 +663,7 @@ pub(super) fn create(
     }
     let mut value = CliScopeRefresh {
         refresh_id: id,
-        hash_version: 4,
+        hash_version: 5,
         client_public_key_hash: hantong_platform::sha256(&base.public_key)
             .map_err(|_| ErrorCode::InternalError)?,
         base_registration: base,

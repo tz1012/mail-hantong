@@ -68,6 +68,7 @@ async fn bind_fixture_pipe() -> LocalPipeServer {
 
 #[derive(Clone, Copy, Debug)]
 enum PipeScenario {
+    AppReads,
     Policy,
     Folders,
     UidAppend,
@@ -84,6 +85,10 @@ async fn run_isolated_pipe_scenario(scenario: PipeScenario) {
         let instance = random_nonce().unwrap();
         let mut listener = bind_fixture_pipe().await;
         match scenario {
+            PipeScenario::AppReads => {
+                read_policy_tests::run_app_read_scenarios(&mut listener, client, server, instance)
+                    .await;
+            }
             PipeScenario::Policy => {
                 read_policy_tests::run_policy_scenarios(&mut listener, client, server, instance)
                     .await;
@@ -123,6 +128,11 @@ async fn run_isolated_pipe_scenario(scenario: PipeScenario) {
     })
     .await
     .unwrap_or_else(|_| panic!("authenticated pipe scenario timed out: {scenario:?}"));
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn cli16_ops05_app_reads_use_authenticated_scope_policy_and_audit() {
+    run_isolated_pipe_scenario(PipeScenario::AppReads).await;
 }
 
 #[tokio::test(flavor = "current_thread")]

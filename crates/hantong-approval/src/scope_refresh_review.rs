@@ -237,6 +237,22 @@ impl ScopeRefreshReview {
             summary.push_str("\r\n");
             summary.push_str(t(TextKey::ScopeRefreshMetadataPermission));
         }
+        if self
+            .target_tool_ids
+            .iter()
+            .any(|tool| tool == "app.settings.display.get")
+        {
+            summary.push_str("\r\n");
+            summary.push_str(t(TextKey::ScopeRefreshDisplayPermission));
+        }
+        if self
+            .target_tool_ids
+            .iter()
+            .any(|tool| tool == "app.diagnostics.snapshot")
+        {
+            summary.push_str("\r\n");
+            summary.push_str(t(TextKey::ScopeRefreshDiagnosticsPermission));
+        }
         summary
     }
 }
@@ -322,6 +338,54 @@ mod tests {
             build(metadata.clone(), metadata),
             Err(ErrorCode::InvalidInput)
         );
+    }
+
+    #[test]
+    fn cli15_app_read_scope_review_discloses_settings_and_bounded_private_diagnostics() {
+        let metadata = hantong_contracts::auth::default_cli_metadata_tools();
+        let mut app = vec![
+            "app.diagnostics.snapshot".into(),
+            "app.settings.display.get".into(),
+        ];
+        app.extend(metadata.clone());
+        let review = ScopeRefreshReview::new_with_tools(
+            [1; 32],
+            1,
+            [2; 16],
+            [3; 32],
+            4,
+            5,
+            [6; 32],
+            [7; 32],
+            vec!["acct_a".into()],
+            vec!["acct_a".into()],
+            metadata,
+            app,
+            1000,
+            301000,
+        )
+        .unwrap();
+        for (language, language_text, diagnostics_text, metadata_text, excluded) in [
+            (
+                Language::En,
+                "saved CLI language",
+                "this registered client",
+                "subject and sender headers",
+                "raw logs",
+            ),
+            (
+                Language::Ko,
+                "저장된 CLI 표시 언어",
+                "이 등록 클라이언트",
+                "제목·보낸 사람 헤더",
+                "원시 로그",
+            ),
+        ] {
+            let summary = review.summary(language);
+            for expected in [language_text, diagnostics_text, metadata_text, excluded] {
+                assert!(summary.contains(expected), "missing app disclosure");
+            }
+        }
     }
 
     #[test]
