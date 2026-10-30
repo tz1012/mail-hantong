@@ -1168,6 +1168,8 @@ fn cli15_v8_real_legacy_history_migrates_without_rehash_or_scope_change() {
 fn restore_v8_scope_schema(f: &Fixture) {
     f.store().with_connection(|c| {
             let tx=rusqlite::Transaction::new_unchecked(c,rusqlite::TransactionBehavior::Immediate)?;
+            assert_eq!(tx.query_row("SELECT (SELECT count(*) FROM mcp_registration_replacements)+(SELECT count(*) FROM mail_outbox)+(SELECT count(*) FROM mail_send_reviews)+(SELECT count(*) FROM mail_drafts)+(SELECT count(*) FROM mcp_ai_consents)+(SELECT count(*) FROM imap_body_cache)",[],|r|r.get::<_,i64>(0))?,0);
+            tx.execute_batch("DROP TABLE mcp_registration_replacements;DROP TABLE mail_outbox;DROP TABLE mail_send_reviews;DROP TABLE mail_drafts;DROP TABLE mcp_ai_consents;DROP TABLE imap_body_cache;")?;
             let columns="refresh_id,registration_id,base_registration_version,base_profile_epoch,target_profile_epoch,base_accounts_json,target_accounts_json,client_public_key_hash,server_public_key_hash,payload_hash,phase,version,created_at_utc_ms,expires_at_utc_ms,updated_at_utc_ms,decided_at_utc_ms,activated_at_utc_ms";
             tx.execute_batch(&format!("CREATE TEMP TABLE saved_v1 AS SELECT {columns} FROM client_scope_refreshes; DROP TABLE client_scope_refreshes;"))?;
             let schema=include_str!("../../../../docs/contracts/migrations/schema-v8.sql");
@@ -1219,4 +1221,52 @@ fn sec03_v8_legacy_invalid_provenance_is_rejected_before_backup_or_migration() {
         ));
         assert!(!f.root.join("data/backup-before-v8.db").exists());
     }
+}
+#[test]
+fn sec03_v6_body_and_send_scope_changes_read_only_only_at_activation() {
+    let mut f = Fixture::new();
+    let body = f.create_scope(
+        101,
+        &["a"],
+        hantong_contracts::auth::default_cli_body_tools(),
+    );
+    assert_eq!(body.hash_version, 6);
+    assert!(body.base_registration.read_only);
+    let body = f.store().stage_cli_scope_refresh(&body).unwrap();
+    let active = f.store().activate_cli_scope_refresh(&body).unwrap();
+    assert!(active.read_only);
+    let send = f.create_scope(
+        102,
+        &["a"],
+        hantong_contracts::auth::default_cli_send_tools(),
+    );
+    assert_eq!(send.hash_version, 6);
+    let staged = f.store().stage_cli_scope_refresh(&send).unwrap();
+    assert!(
+        f.store()
+            .load_default_cli_registration()
+            .unwrap()
+            .unwrap()
+            .read_only
+    );
+    let active = f.store().activate_cli_scope_refresh(&staged).unwrap();
+    assert!(!active.read_only);
+    assert!(
+        active
+            .scope
+            .tools()
+            .iter()
+            .any(|s| s == "mail.send.execute")
+    );
+    f.reopen();
+    let active = f.store().load_default_cli_registration().unwrap().unwrap();
+    assert!(!active.read_only);
+    assert_eq!(
+        f.store()
+            .load_cli_scope_refresh(*body.refresh_id())
+            .unwrap()
+            .unwrap()
+            .hash_version,
+        6
+    );
 }

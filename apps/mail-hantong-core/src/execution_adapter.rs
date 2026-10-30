@@ -36,6 +36,7 @@ pub(crate) struct CoreExecutionAdapter<'a, 'server> {
     policy: &'a mut ReadPolicy,
     folder_worker: &'a crate::folder_worker::FolderWorkerHandle<'a>,
     uid_worker: Option<&'a crate::uid_worker::UidWorkerHandle<'a>>,
+    send_ui: Option<&'a crate::registration::RegistrationHandle<'a>>,
 }
 
 pub(crate) fn load_registration(
@@ -58,6 +59,7 @@ pub(crate) fn execute<'server>(
 ) -> Result<Value, ErrorCode> {
     execute_with_uid(store, policy, worker, None, connection, request)
 }
+#[cfg(test)]
 pub(crate) fn execute_with_uid<'server>(
     store: &Store,
     policy: &mut ReadPolicy,
@@ -67,6 +69,20 @@ pub(crate) fn execute_with_uid<'server>(
     request: &RpcRequest,
 ) -> Result<Value, ErrorCode> {
     let mut adapter = CoreExecutionAdapter::new(connection, store, policy, worker, uid_worker);
+    hantong_application::execute_tool(&mut adapter, &request.method, &request.params)
+}
+
+pub(crate) fn execute_with_send<'server>(
+    store: &Store,
+    policy: &mut ReadPolicy,
+    worker: &crate::folder_worker::FolderWorkerHandle<'_>,
+    uid_worker: Option<&crate::uid_worker::UidWorkerHandle<'_>>,
+    send_ui: &crate::registration::RegistrationHandle<'_>,
+    connection: &mut AuthenticatedConnection<'server>,
+    request: &RpcRequest,
+) -> Result<Value, ErrorCode> {
+    let mut adapter = CoreExecutionAdapter::new(connection, store, policy, worker, uid_worker);
+    adapter.send_ui = Some(send_ui);
     hantong_application::execute_tool(&mut adapter, &request.method, &request.params)
 }
 
@@ -84,6 +100,7 @@ impl<'a, 'server> CoreExecutionAdapter<'a, 'server> {
             policy,
             folder_worker,
             uid_worker,
+            send_ui: None,
         }
     }
 
@@ -166,6 +183,13 @@ impl<'a, 'server> ExecutionContext for CoreExecutionAdapter<'a, 'server> {
         // view: RegisteredClient deliberately contains no rate/policy grant.
         let (record, current) = self.current_registration()?;
         self.connection.revalidate_registration(Some(&current))?;
+        if record.client_kind == hantong_contracts::client::ClientKind::Mcp {
+            self.store.check_mcp_ai_consent(
+                record.registration_id,
+                record.profile_epoch,
+                request.account_ids(),
+            )?;
+        }
         self.policy.check(
             record.registration_id,
             record.read_only,
@@ -294,6 +318,89 @@ impl<'a, 'server> ExecutionContext for CoreExecutionAdapter<'a, 'server> {
     ) -> Result<ReadResult<Value>, ErrorCode> {
         let snapshot = self.store.inspect_imap_uid(request)?;
         ReadResult::new(hantong_application::render_uid_inspection(&snapshot), None)
+    }
+    fn read_message_locator(
+        &mut self,
+        account: &str,
+        id: &str,
+        max: usize,
+    ) -> Result<ReadResult<Value>, ErrorCode> {
+        let r = self.store.locate_message_body(account, id, max)?;
+        ReadResult::new(
+            serde_json::json!({"schema_version":1,"ok":true,"account_id":account,"internal_message_id":id,"mailbox_wire_hex":r.mailbox().wire_hex(),"mailbox_encoding":r.mailbox().encoding().as_str(),"uidvalidity":r.uidvalidity(),"uid":r.uid()}),
+            Some(1),
+        )
+    }
+    fn read_message_body(
+        &mut self,
+        request: &hantong_contracts::message_body::MessageBodyRequest,
+    ) -> Result<ReadResult<Value>, ErrorCode> {
+        let cached = self.store.cached_message_body(request)?;
+        let (state, text, truncated) = if let Some(body) = cached {
+            let mut text = hantong_contracts::message_body::render_message_text(body.bytes())?;
+            let truncated = text.len() > 65536;
+            if truncated {
+                let mut end = 65536;
+                while !text.is_char_boundary(end) {
+                    end -= 1;
+                }
+                text.truncate(end);
+            }
+            ("ready", Some(text), truncated)
+        } else {
+            self.uid_worker
+                .ok_or(ErrorCode::CoreUnavailable)?
+                .request_body(
+                    *self.connection.registration_id(),
+                    self.connection.profile_epoch(),
+                    request,
+                )?;
+            ("pending", None, false)
+        };
+        ReadResult::new(
+            serde_json::json!({"schema_version":1,"ok":true,"state":state,"account_id":request.account_id(),"mailbox_wire_hex":request.mailbox().wire_hex(),"mailbox_encoding":request.mailbox().encoding().as_str(),"uidvalidity":request.uidvalidity(),"uid":request.uid(),"text":text,"truncated":truncated}),
+            if state == "ready" { Some(1) } else { None },
+        )
+    }
+    fn request_draft_create(
+        &mut self,
+        r: &hantong_contracts::mail_send::DraftCreateRequest,
+    ) -> Result<ReadResult<Value>, ErrorCode> {
+        let id = self.store.create_mail_draft(
+            *self.connection.registration_id(),
+            self.connection.profile_epoch(),
+            r,
+        )?;
+        ReadResult::new(
+            serde_json::json!({"schema_version":1,"ok":true,"account_id":r.account_id(),"draft_id":crate::send_mail::hex(&id),"version":1,"payload_hash":crate::send_mail::hex(r.payload_hash())}),
+            Some(1),
+        )
+    }
+    fn request_send_review(
+        &mut self,
+        r: &hantong_contracts::mail_send::SendReviewRequest,
+    ) -> Result<ReadResult<Value>, ErrorCode> {
+        let receipt = self
+            .send_ui
+            .ok_or(ErrorCode::CoreUnavailable)?
+            .request_send(
+                *self.connection.registration_id(),
+                self.connection.profile_epoch(),
+                r,
+            )?;
+        ReadResult::new(crate::send_mail::render(&receipt), None)
+    }
+    fn read_send_review(
+        &mut self,
+        r: &hantong_contracts::mail_send::SendReviewStatusRequest,
+    ) -> Result<ReadResult<Value>, ErrorCode> {
+        let receipt = self.store.mail_send_receipt(
+            *self.connection.registration_id(),
+            self.connection.profile_epoch(),
+            &r.account_id,
+            r.review_id,
+        )?;
+        ReadResult::new(crate::send_mail::render(&receipt), None)
     }
     fn read_message_search(
         &mut self,

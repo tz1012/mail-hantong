@@ -608,6 +608,27 @@ pub fn default_cli_app_read_tools() -> Vec<String> {
     tools
 }
 
+pub fn default_cli_body_tools() -> Vec<String> {
+    let mut tools = default_cli_app_read_tools();
+    tools.push("mail.messages.get".into());
+    tools.sort_unstable();
+    tools
+}
+
+pub fn default_cli_send_tools() -> Vec<String> {
+    let mut tools = default_cli_body_tools();
+    tools.extend(
+        [
+            "mail.drafts.create",
+            "mail.send.request",
+            "mail.send.execute",
+        ]
+        .map(str::to_owned),
+    );
+    tools.sort_unstable();
+    tools
+}
+
 fn default_cli_toolset_rank(tools: &[String]) -> Option<u8> {
     if tools == default_cli_legacy_tools() {
         Some(0)
@@ -619,6 +640,10 @@ fn default_cli_toolset_rank(tools: &[String]) -> Option<u8> {
         Some(3)
     } else if tools == default_cli_app_read_tools() {
         Some(4)
+    } else if tools == default_cli_body_tools() {
+        Some(5)
+    } else if tools == default_cli_send_tools() {
+        Some(6)
     } else {
         None
     }
@@ -797,4 +822,31 @@ mod default_toolset_tests {
         reversed.reverse();
         assert!(!is_supported_default_cli_toolset(&reversed));
     }
+}
+
+/// Fixed read-only MCP grant; independent of human CLI profiles.
+pub fn mcp_read_tools() -> Vec<String> {
+    gui_read_tools()
+}
+
+/// Exact native-reviewed mail MCP set. Legacy metadata proofs retain read3.
+pub fn mcp_mail_tools() -> Vec<String> {
+    let mut tools = mcp_read_tools();
+    tools.extend(
+        [
+            "mail.folders.refresh",
+            "mail.sync.page",
+            "mail.messages.get",
+            "mail.drafts.create",
+            "mail.send.request",
+            "mail.send.execute",
+        ]
+        .into_iter()
+        .map(str::to_owned),
+    );
+    tools.sort();
+    tools
+}
+pub fn is_supported_mcp_toolset(tools: &[String]) -> bool {
+    tools == mcp_read_tools() || tools == mcp_mail_tools()
 }

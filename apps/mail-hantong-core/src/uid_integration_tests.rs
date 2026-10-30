@@ -278,6 +278,7 @@ pub(super) async fn run_uid_scenarios(
     server: &ServerSigningKey,
     instance: [u8; 32],
 ) {
+    body::run(listener, client, server, instance).await;
     frame_limits(listener, client, server, instance).await;
     // A folder-only registration cannot invoke the new tool.
     {
@@ -769,3 +770,6 @@ pub(super) async fn run_reconcile_scenarios(
         tokio::select! {_=&mut flow=>{},result=&mut run=>panic!("restarted reconcile worker stopped: {result:?}")}
     }).await.expect("bounded reconciliation restart scenario");
 }
+
+#[path = "body_integration_tests.rs"]
+mod body;

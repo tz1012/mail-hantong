@@ -285,7 +285,7 @@ pub(super) fn insert_audit_terminal_tx(
         .map(i64::try_from)
         .transpose()
         .map_err(|_| ErrorCode::InternalError)?;
-    tx.execute("INSERT INTO audit_terminals(execution_id,completed_at_utc_ms,result_kind,error_code,result_count) VALUES(?1,?2,?3,?4,?5)",rusqlite::params![execution_id.as_slice(),completed,if terminal.is_success(){"returned_ok"}else{"returned_error"},terminal.error().map(ErrorCode::as_str),count]).map_err(|_|ErrorCode::InternalError)?;
+    if tx.execute("INSERT INTO audit_terminals(execution_id,completed_at_utc_ms,result_kind,error_code,result_count) VALUES(?1,?2,?3,?4,?5)",rusqlite::params![execution_id.as_slice(),completed,if terminal.is_success(){"returned_ok"}else{"returned_error"},terminal.error().map(ErrorCode::as_str),count]).map_err(|_|ErrorCode::InternalError)? != 1 { return Err(ErrorCode::InternalError); }
     Ok(())
 }
 

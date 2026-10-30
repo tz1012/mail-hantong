@@ -36,6 +36,86 @@ impl Selection {
 }
 
 impl<S: AsyncRead + AsyncWrite + Unpin> Protocol<S> {
+    pub(super) async fn body(
+        &mut self,
+        request: &hantong_contracts::message_body::MessageBodyRequest,
+        encoding: MailboxEncoding,
+    ) -> Result<hantong_contracts::message_body::MessageBody, crate::imap_body::ImapBodyError> {
+        use hantong_contracts::uid_page::UidMailboxEncoding;
+        let expected_encoding = match request.mailbox().encoding() {
+            UidMailboxEncoding::Utf8 => MailboxEncoding::Utf8,
+            UidMailboxEncoding::ModifiedUtf7 => MailboxEncoding::ModifiedUtf7,
+        };
+        if encoding != expected_encoding {
+            return Err(MailProbeError::Protocol.into());
+        }
+        let wire = hantong_contracts::wire_hex::decode_bounded(request.mailbox().wire_hex(), 1024)
+            .map_err(|_| MailProbeError::Protocol)?;
+        let mailbox =
+            ImapMailboxName::from_wire(&wire, encoding).map_err(|_| MailProbeError::Protocol)?;
+        let (validity, next) = self.examine("h6", &mailbox).await?;
+        if validity != request.uidvalidity() {
+            return Err(crate::imap_body::ImapBodyError::UidValidityChanged);
+        }
+        if request.uid() >= next {
+            return Err(crate::imap_body::ImapBodyError::NotFound);
+        }
+        // All interpolated bytes are validated numeric identity; PEEK and EXAMINE
+        // together avoid changing the message's Seen flag.
+        self.write(SensitiveBuffer(
+            format!("h7 UID FETCH {} (UID BODY.PEEK[])\r\n", request.uid()).into_bytes(),
+        ))
+        .await?;
+        let mut frame = Vec::new();
+        while !frame.ends_with(b"\r\n") {
+            if frame.len() >= 512 {
+                return Err(MailProbeError::Protocol.into());
+            }
+            frame.push(self.byte().await?);
+        }
+        if frame.starts_with(b"h7 OK ") || frame == b"h7 OK\r\n" {
+            return Err(crate::imap_body::ImapBodyError::NotFound);
+        }
+        let open = frame
+            .iter()
+            .rposition(|b| *b == b'{')
+            .ok_or(MailProbeError::Protocol)?;
+        let digits = frame
+            .get(open + 1..frame.len().saturating_sub(3))
+            .ok_or(MailProbeError::Protocol)?;
+        if digits.is_empty() || !digits.iter().all(u8::is_ascii_digit) {
+            return Err(MailProbeError::Protocol.into());
+        }
+        let length: usize = std::str::from_utf8(digits)
+            .map_err(|_| MailProbeError::Protocol)?
+            .parse()
+            .map_err(|_| MailProbeError::Protocol)?;
+        if length > request.max_bytes() {
+            return Err(crate::imap_body::ImapBodyError::TooLarge);
+        }
+        for _ in 0..length {
+            frame.push(self.byte().await?);
+        }
+        let literal_end = frame.len();
+        loop {
+            if frame.len() - literal_end >= 512 {
+                return Err(MailProbeError::Protocol.into());
+            }
+            frame.push(self.byte().await?);
+            if frame[literal_end..].ends_with(b"\r\n") {
+                break;
+            }
+        }
+        let body = crate::imap_body::parse_body_peek(request.clone(), validity, &frame)
+            .map_err(|_| MailProbeError::Protocol)?;
+        if !matches!(
+            self.uid_frame(Mode::Fetch, "h7").await?,
+            Reply::Tagged(Observation::None)
+        ) {
+            return Err(MailProbeError::Protocol.into());
+        }
+        Ok(body)
+    }
     async fn uid_fetch(&mut self, first: u32, last: u32) -> Result<(), MailProbeError> {
         if first == 0 || last < first || u64::from(last) - u64::from(first) >= 64 {
             return Err(MailProbeError::Protocol);
@@ -300,5 +380,53 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Protocol<S> {
         let page = ImapUidPage::new(first, validity, next, messages)
             .map_err(|_| MailProbeError::Protocol)?;
         ImapUidRecoveryPage::new(request.clone(), page).map_err(|_| MailProbeError::Protocol.into())
+    }
+}
+
+#[cfg(test)]
+mod body_tests {
+    use super::*;
+    #[tokio::test]
+    async fn mail03_body_driver_uses_readonly_examine_and_peek_then_requires_ok() {
+        let (client, server) = tokio::io::duplex(4096);
+        let server = tokio::spawn(async move {
+            use tokio::io::AsyncBufReadExt;
+            let mut server = BufReader::new(server);
+            let mut line = String::new();
+            server.read_line(&mut line).await.unwrap();
+            assert_eq!(line, "h6 EXAMINE INBOX\r\n");
+            server.get_mut().write_all(b"* 1 EXISTS\r\n* OK [UIDVALIDITY 42] stable\r\n* OK [UIDNEXT 10] next\r\nh6 OK [READ-ONLY] selected\r\n").await.unwrap();
+            line.clear();
+            server.read_line(&mut line).await.unwrap();
+            assert_eq!(line, "h7 UID FETCH 9 (UID BODY.PEEK[])\r\n");
+            server
+                .get_mut()
+                .write_all(b"* 77 FETCH (UID 9 BODY[] {5}\r\nhello)\r\nh7 OK fetched\r\n")
+                .await
+                .unwrap();
+        });
+        let request = hantong_contracts::message_body::MessageBodyRequest::new(
+            "acct",
+            hantong_contracts::uid_page::UidMailboxIdentity::new(
+                "494e424f58",
+                hantong_contracts::uid_page::UidMailboxEncoding::ModifiedUtf7,
+            )
+            .unwrap(),
+            42,
+            9,
+            64,
+        )
+        .unwrap();
+        let mut client = Protocol {
+            io: BufReader::new(client),
+            remaining: 4096,
+            written: 0,
+        };
+        let body = client
+            .body(&request, MailboxEncoding::ModifiedUtf7)
+            .await
+            .unwrap();
+        assert_eq!(body.bytes(), b"hello");
+        server.await.unwrap();
     }
 }

@@ -23,7 +23,55 @@ use tokio::sync::mpsc;
 
 type Job = [u8; 32];
 #[derive(Debug, Eq, PartialEq)]
+struct BodyJob {
+    id: Job,
+    registration: [u8; 16],
+    epoch: u64,
+    request: hantong_contracts::message_body::MessageBodyRequest,
+    endpoint: hantong_domain::mail_connection::ImapEndpointConfig,
+}
+type BodyStates = Rc<std::cell::RefCell<std::collections::BTreeMap<String, Option<ErrorCode>>>>;
+fn body_key(r: &hantong_contracts::message_body::MessageBodyRequest) -> String {
+    format!(
+        "{}:{}:{}:{}:{}:{}",
+        r.account_id(),
+        r.mailbox().wire_hex(),
+        r.mailbox().encoding().as_str(),
+        r.uidvalidity(),
+        r.uid(),
+        r.max_bytes()
+    )
+}
+fn body_grant(
+    store: &Store,
+    id: [u8; 16],
+    epoch: u64,
+    r: &hantong_contracts::message_body::MessageBodyRequest,
+) -> Result<(), ErrorCode> {
+    let record = store
+        .load_registration(id)?
+        .ok_or(ErrorCode::ClientNotRegistered)?;
+    if record.state != hantong_store::RegistrationState::Active {
+        return Err(ErrorCode::ClientSuspended);
+    }
+    if record.profile_epoch != epoch {
+        return Err(ErrorCode::AuthRequired);
+    }
+    if !record
+        .scope
+        .permits_account(r.account_id(), "mail.messages.get")
+    {
+        return Err(ErrorCode::ScopeDenied);
+    }
+    if record.client_kind == hantong_contracts::client::ClientKind::Mcp {
+        store.check_mcp_ai_consent(id, epoch, r.account_ids())?;
+    }
+    store.body_endpoint(r).map(|_| ())
+}
+
+#[derive(Debug, Eq, PartialEq)]
 enum QueuedJob {
+    Body(Box<BodyJob>),
     Initial(Job),
     Page(Job),
     Reconcile(Job),
@@ -49,6 +97,13 @@ impl Drop for Slot {
     }
 }
 impl Slot {
+    fn submit_body(mut self, job: BodyJob) {
+        self.permit
+            .take()
+            .expect("owned permit")
+            .send(QueuedJob::Body(Box::new(job)));
+    }
+
     fn submit_initial(mut self) {
         self.permit
             .take()
@@ -113,11 +168,13 @@ fn queue(shared: Rc<Cell<Option<Job>>>) -> (Queue, mpsc::Receiver<QueuedJob>) {
 }
 
 pub(crate) struct UidWorkerHandle<'a> {
+    body_states: BodyStates,
     store: &'a Store,
     queue: Queue,
     instance: [u8; 32],
 }
 pub(crate) struct UidWorker<'a, D> {
+    body_states: BodyStates,
     store: &'a Store,
     receiver: mpsc::Receiver<QueuedJob>,
     scheduled: Rc<Cell<Option<Job>>>,
@@ -125,6 +182,14 @@ pub(crate) struct UidWorker<'a, D> {
     discovery: D,
 }
 pub(crate) trait Discovery {
+    async fn body(
+        &self,
+        _request: &hantong_contracts::message_body::MessageBodyRequest,
+        _endpoint: &hantong_domain::mail_connection::ImapEndpointConfig,
+    ) -> Result<hantong_contracts::message_body::MessageBody, ErrorCode> {
+        Err(ErrorCode::CapabilityUnsupported)
+    }
+
     async fn initial(&self, _job: &InitialSyncJob) -> Result<InitialObservation, ErrorCode> {
         Err(ErrorCode::CapabilityUnsupported)
     }
@@ -144,6 +209,26 @@ pub(crate) struct NativeDiscovery<'a> {
     secrets_root: &'a Path,
 }
 impl Discovery for NativeDiscovery<'_> {
+    async fn body(
+        &self,
+        request: &hantong_contracts::message_body::MessageBodyRequest,
+        endpoint: &hantong_domain::mail_connection::ImapEndpointConfig,
+    ) -> Result<hantong_contracts::message_body::MessageBody, ErrorCode> {
+        let secrets = hantong_secrets::SecretStore::open(self.secrets_root)
+            .map_err(|_| ErrorCode::InternalError)?;
+        secrets
+            .fetch_imap_body(request, endpoint)
+            .await
+            .map_err(|error| match error {
+                hantong_secrets::imap_body::ImapBodyError::Probe(e) => probe_error(e),
+                hantong_secrets::imap_body::ImapBodyError::UidValidityChanged => {
+                    ErrorCode::Conflict
+                }
+                hantong_secrets::imap_body::ImapBodyError::NotFound => ErrorCode::NotFound,
+                hantong_secrets::imap_body::ImapBodyError::TooLarge => ErrorCode::QuotaExceeded,
+            })
+    }
+
     async fn initial(&self, job: &InitialSyncJob) -> Result<InitialObservation, ErrorCode> {
         let secrets = hantong_secrets::SecretStore::open(self.secrets_root)
             .map_err(|_| ErrorCode::InternalError)?;
@@ -231,16 +316,19 @@ pub(crate) fn coordinator_with_instance<D: Discovery>(
     shared: Rc<Cell<Option<Job>>>,
     instance: [u8; 32],
 ) -> (UidWorkerHandle<'_>, UidWorker<'_, D>) {
+    let body_states = Rc::new(std::cell::RefCell::new(std::collections::BTreeMap::new()));
     let (queue, receiver) = queue(shared);
     let scheduled = queue.scheduled.clone();
     let owned = queue.owned.clone();
     (
         UidWorkerHandle {
+            body_states: body_states.clone(),
             store,
             queue,
             instance,
         },
         UidWorker {
+            body_states,
             store,
             receiver,
             scheduled,
@@ -250,6 +338,46 @@ pub(crate) fn coordinator_with_instance<D: Discovery>(
     )
 }
 impl UidWorkerHandle<'_> {
+    pub(crate) fn request_body(
+        &self,
+        registration: [u8; 16],
+        epoch: u64,
+        request: &hantong_contracts::message_body::MessageBodyRequest,
+    ) -> Result<(), ErrorCode> {
+        body_grant(self.store, registration, epoch, request)?;
+        let key = format!(
+            "{}:{}:{}",
+            hantong_contracts::wire_hex::encode(&registration),
+            epoch,
+            body_key(request)
+        );
+        let state = self.body_states.borrow().get(&key).copied();
+        if let Some(state) = state {
+            return match state {
+                None => Ok(()),
+                Some(error) => {
+                    self.body_states.borrow_mut().remove(&key);
+                    Err(error)
+                }
+            };
+        }
+        let endpoint = self.store.body_endpoint(request)?;
+        let id = hantong_platform::random_nonce()?;
+        let slot = self.queue.reserve(id).map_err(|_| ErrorCode::RateLimited)?;
+        if self.body_states.borrow().len() >= 64 {
+            self.body_states.borrow_mut().clear();
+        }
+        self.body_states.borrow_mut().insert(key, None);
+        slot.submit_body(BodyJob {
+            id,
+            registration,
+            epoch,
+            request: request.clone(),
+            endpoint,
+        });
+        Ok(())
+    }
+
     pub(crate) fn admit_initial(
         &self,
         id: Job,
@@ -335,6 +463,32 @@ impl<D: Discovery> UidWorker<'_, D> {
     pub(crate) async fn run(mut self) -> Result<(), ErrorCode> {
         while let Some(queued) = self.receiver.recv().await {
             let id = match queued {
+                QueuedJob::Body(job) => {
+                    let key = format!(
+                        "{}:{}:{}",
+                        hantong_contracts::wire_hex::encode(&job.registration),
+                        job.epoch,
+                        body_key(&job.request)
+                    );
+                    let outcome=async {
+                    body_grant(self.store,job.registration,job.epoch,&job.request)?;
+                    let fetch=tokio::time::timeout(Duration::from_secs(30),self.discovery.body(&job.request,&job.endpoint)); tokio::pin!(fetch);
+                    let mut tick=tokio::time::interval(Duration::from_millis(500));
+                    let body=loop { tokio::select! {biased; _=tick.tick()=> {body_grant(self.store,job.registration,job.epoch,&job.request)?;}, result=&mut fetch=>break result.map_err(|_|ErrorCode::Offline)?? } };
+                    body_grant(self.store,job.registration,job.epoch,&job.request)?;
+                    if body.key()!=&job.request {return Err(ErrorCode::InternalError)}
+                    self.store.cache_message_body(&body,job.endpoint.settings_version())
+                  }.await;
+                    match outcome {
+                        Ok(()) => {
+                            self.body_states.borrow_mut().remove(&key);
+                        }
+                        Err(error) => {
+                            self.body_states.borrow_mut().insert(key, Some(error));
+                        }
+                    }
+                    job.id
+                }
                 QueuedJob::Initial(id) => {
                     self.run_initial(id).await?;
                     id

@@ -71,6 +71,38 @@ pub trait ExecutionContext {
         &mut self,
         request: &AccountsListRequest,
     ) -> Result<ReadResult<Self::Output>, ErrorCode>;
+    fn request_draft_create(
+        &mut self,
+        _request: &hantong_contracts::mail_send::DraftCreateRequest,
+    ) -> Result<ReadResult<Self::Output>, ErrorCode> {
+        Err(ErrorCode::CapabilityUnsupported)
+    }
+    fn request_send_review(
+        &mut self,
+        _request: &hantong_contracts::mail_send::SendReviewRequest,
+    ) -> Result<ReadResult<Self::Output>, ErrorCode> {
+        Err(ErrorCode::CapabilityUnsupported)
+    }
+    fn read_send_review(
+        &mut self,
+        _request: &hantong_contracts::mail_send::SendReviewStatusRequest,
+    ) -> Result<ReadResult<Self::Output>, ErrorCode> {
+        Err(ErrorCode::CapabilityUnsupported)
+    }
+    fn read_message_locator(
+        &mut self,
+        _account: &str,
+        _id: &str,
+        _max: usize,
+    ) -> Result<ReadResult<Self::Output>, ErrorCode> {
+        Err(ErrorCode::CapabilityUnsupported)
+    }
+    fn read_message_body(
+        &mut self,
+        _request: &hantong_contracts::message_body::MessageBodyRequest,
+    ) -> Result<ReadResult<Self::Output>, ErrorCode> {
+        Err(ErrorCode::CapabilityUnsupported)
+    }
     fn read_message_search(
         &mut self,
         _request: &ImapMetadataSearchRequest,
@@ -169,6 +201,20 @@ pub trait ExecutionContext {
     }
 }
 
+fn finish_local_read<C: ExecutionContext>(
+    result: Result<ReadResult<C::Output>, ErrorCode>,
+    context: &mut C,
+    id: [u8; 32],
+) -> Result<C::Output, ErrorCode> {
+    match result {
+        Ok(result) => {
+            finish_success(context, id, result.count())?;
+            Ok(result.value())
+        }
+        Err(e) => finish_failure(context, id, e),
+    }
+}
+
 fn finish_global_read<C: ExecutionContext>(
     result: Result<ReadResult<C::Output>, ErrorCode>,
     context: &mut C,
@@ -210,6 +256,35 @@ pub fn execute_tool<C: ExecutionContext>(
             audit_id,
         ),
         ToolRequest::AccountsList(request) => match context.read_accounts(&request) {
+            Ok(result) => {
+                let count = result.count();
+                let value = result.value;
+                finish_success(context, audit_id, count)?;
+                Ok(value)
+            }
+            Err(error) => finish_failure(context, audit_id, error),
+        },
+        ToolRequest::DraftCreate { request, .. } => {
+            let result = context.request_draft_create(&request);
+            finish_local_read(result, context, audit_id)
+        }
+        ToolRequest::SendReview { action, .. } => {
+            let result = match action {
+                crate::SendReviewAction::Request(r) => context.request_send_review(&r),
+                crate::SendReviewAction::Status(r) => context.read_send_review(&r),
+            };
+            finish_local_read(result, context, audit_id)
+        }
+        ToolRequest::MessageLocator {
+            account_id,
+            message_id,
+            max_bytes,
+            ..
+        } => {
+            let result = context.read_message_locator(&account_id, &message_id, max_bytes);
+            finish_local_read(result, context, audit_id)
+        }
+        ToolRequest::MessagesGet { request, .. } => match context.read_message_body(&request) {
             Ok(result) => {
                 let count = result.count();
                 let value = result.value;

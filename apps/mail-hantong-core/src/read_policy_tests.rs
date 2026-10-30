@@ -261,9 +261,15 @@ pub(super) async fn run_app_read_scenarios(
             hantong_store::ClientKind::Mcp,
         ))
         .unwrap();
-    assert_error(&h.response(display()).await, ErrorCode::PolicyBlocked);
-    assert_error(&h.response(diagnostics()).await, ErrorCode::PolicyBlocked);
-    assert_terminal(&h, Some(ErrorCode::PolicyBlocked), None);
+    // MCP now has its own activation provenance and identity. Relabeling CLI
+    // rows fails before authentication; it cannot borrow CLI application reads.
+    assert!(matches!(
+        h.fixture
+            .open()
+            .unwrap()
+            .load_registration(h.fixture.registration_id),
+        Err(ErrorCode::InternalError)
+    ));
 }
 
 pub(super) async fn run_policy_scenarios(

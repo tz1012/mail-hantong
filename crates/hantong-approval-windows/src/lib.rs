@@ -3,7 +3,9 @@
 
 //! Core-owned native user verification. Never a CLI/MCP dependency.
 
-use hantong_approval::{AccountSetupReview, RegistrationReview, ScopeRefreshReview};
+use hantong_approval::{
+    AccountSetupReview, RegistrationReview, ScopeRefreshReview, SendReview, SmtpSetupReview,
+};
 use hantong_contracts::ErrorCode;
 use hantong_domain::config::{Language, Theme};
 use std::fmt;
@@ -61,6 +63,17 @@ pub fn publish_gui_profile(bytes: &[u8]) -> Result<PublishedProfile, ErrorCode> 
         Err(ErrorCode::CapabilityUnsupported)
     }
 }
+pub fn publish_mcp_profile(bytes: &[u8]) -> Result<PublishedProfile, ErrorCode> {
+    #[cfg(windows)]
+    {
+        profile_publication::publish_mcp(bytes).map(|inner| PublishedProfile { _inner: inner })
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = bytes;
+        Err(ErrorCode::CapabilityUnsupported)
+    }
+}
 
 /// Publishes a new default profile while retaining the exact old profile as a
 /// request-bound backup until Store activation. This is not authorization.
@@ -81,6 +94,23 @@ pub fn refresh_default_profile(
     }
 }
 
+/// Protected compare-and-replace for an explicitly native-reviewed MCP identity replacement.
+pub fn refresh_mcp_profile(
+    request_id: [u8; 32],
+    old_bytes: &[u8],
+    new_bytes: &[u8],
+) -> Result<PublishedProfile, ErrorCode> {
+    #[cfg(windows)]
+    {
+        profile_publication::refresh_mcp(request_id, old_bytes, new_bytes)
+            .map(|inner| PublishedProfile { _inner: inner })
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (request_id, old_bytes, new_bytes);
+        Err(ErrorCode::CapabilityUnsupported)
+    }
+}
 /// Removes the inert old-profile backup after Store activation. Failure leaves
 /// the active profile intact and the backup recoverable for explicit cleanup.
 pub fn cleanup_profile_refresh_backup(publication: &mut PublishedProfile) -> Result<(), ErrorCode> {
@@ -237,6 +267,101 @@ pub async fn review_scope_refresh(
     #[cfg(not(windows))]
     {
         let _ = (review, language, theme);
+        Err(ErrorCode::CapabilityUnsupported)
+    }
+}
+
+/// Single-use result, constructible only by this module's owned OS verification.
+pub struct VerifiedSend {
+    #[cfg(windows)]
+    binding: binding::CapturedReview<SendReview>,
+    #[cfg(windows)]
+    verified_at_utc_ms: i64,
+    #[cfg(not(windows))]
+    _private: (),
+}
+impl fmt::Debug for VerifiedSend {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("VerifiedSend(<redacted>)")
+    }
+}
+impl VerifiedSend {
+    pub fn consume(self, expected: &SendReview) -> Result<SendReview, ErrorCode> {
+        #[cfg(windows)]
+        {
+            self.binding.consume(expected, self.verified_at_utc_ms)
+        }
+        #[cfg(not(windows))]
+        {
+            let _ = expected;
+            Err(ErrorCode::CapabilityUnsupported)
+        }
+    }
+}
+pub async fn review_send(
+    review: SendReview,
+    language: Option<Language>,
+    theme: Theme,
+) -> Result<VerifiedSend, ErrorCode> {
+    review.validate()?;
+    #[cfg(windows)]
+    {
+        native::show_send(review, language, theme).await
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (review, language, theme);
+        Err(ErrorCode::CapabilityUnsupported)
+    }
+}
+
+/// SMTP secret capture stays opaque and inside Secrets even after verification.
+pub struct VerifiedSmtpSetup {
+    #[cfg(windows)]
+    binding: binding::CapturedReview<SmtpSetupReview>,
+    #[cfg(windows)]
+    verified_at_utc_ms: i64,
+    #[cfg(windows)]
+    pending: hantong_secrets::PendingImapCredential,
+    #[cfg(not(windows))]
+    _private: (),
+}
+impl fmt::Debug for VerifiedSmtpSetup {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("VerifiedSmtpSetup(<redacted>)")
+    }
+}
+impl VerifiedSmtpSetup {
+    pub fn consume(
+        self,
+        expected: &SmtpSetupReview,
+    ) -> Result<hantong_secrets::PendingImapCredential, ErrorCode> {
+        #[cfg(windows)]
+        {
+            self.binding.consume(expected, self.verified_at_utc_ms)?;
+            setup_binding::validate_pending(expected.capture_review(), &self.pending)?;
+            Ok(self.pending)
+        }
+        #[cfg(not(windows))]
+        {
+            let _ = expected;
+            Err(ErrorCode::CapabilityUnsupported)
+        }
+    }
+}
+pub async fn review_smtp_setup(
+    review: SmtpSetupReview,
+    plan: hantong_secrets::SmtpPasswordCapturePlan,
+    language: Option<Language>,
+    theme: Theme,
+) -> Result<VerifiedSmtpSetup, ErrorCode> {
+    #[cfg(windows)]
+    {
+        native::show_smtp_setup(review, plan, language, theme).await
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (review, plan, language, theme);
         Err(ErrorCode::CapabilityUnsupported)
     }
 }

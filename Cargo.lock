@@ -338,6 +338,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "hantong-ai"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+]
+
+[[package]]
 name = "hantong-application"
 version = "0.1.0"
 dependencies = [
@@ -373,13 +380,19 @@ dependencies = [
 name = "hantong-cli"
 version = "0.1.0"
 dependencies = [
+ "hantong-ai",
  "hantong-contracts",
  "hantong-ipc-client",
+ "hantong-platform",
+ "serde_json",
 ]
 
 [[package]]
 name = "hantong-contracts"
 version = "0.1.0"
+dependencies = [
+ "serde_json",
+]
 
 [[package]]
 name = "hantong-desktop"
@@ -421,6 +434,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "hantong-mcp"
+version = "0.1.0"
+dependencies = [
+ "hantong-contracts",
+ "hantong-ipc-client",
+ "hantong-platform",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "hantong-outbox"
 version = "0.1.0"
 
@@ -444,6 +469,7 @@ dependencies = [
 name = "hantong-secrets"
 version = "0.1.0"
 dependencies = [
+ "hantong-contracts",
  "hantong-domain",
  "io-imap",
  "lettre",
@@ -467,6 +493,13 @@ dependencies = [
  "hantong-platform",
  "hantong-secrets",
  "rusqlite",
+ "serde_json",
+]
+
+[[package]]
+name = "hantong-t"
+version = "0.1.0"
+dependencies = [
  "serde_json",
 ]
 

@@ -11,16 +11,21 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 
 mod database;
+pub mod imap_body;
 mod imap_probe;
 mod mail_credentials;
 #[cfg(windows)]
 mod mail_transport;
 mod protected_input;
 mod smtp_probe;
+mod smtp_send;
 pub use database::{DatabaseError, KeyedConnection};
 pub use imap_probe::{ImapCapabilities, ImapProbeReceipt, ImapUidPageError};
-pub use protected_input::{ImapPasswordCapturePlan, PasswordInput, PendingImapCredential};
+pub use protected_input::{
+    ImapPasswordCapturePlan, PasswordInput, PendingImapCredential, SmtpPasswordCapturePlan,
+};
 pub use smtp_probe::{MailProbeError, SmtpProbeReceipt};
+pub use smtp_send::{SmtpSendEnvelope, SmtpSendError, SmtpSendResult};
 
 const MAX_SECRET: usize = 65_536;
 #[cfg(windows)]

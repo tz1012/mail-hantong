@@ -16,7 +16,7 @@ def metadata(edges):
         "hantong-application", "hantong-outbox", "hantong-ipc-client", "hantong-ipc-server",
         "hantong-store", "hantong-secrets", "hantong-adapters", "hantong-cli", "mail-hantong-core",
         "hantong-approval-windows",
-        "hantong-desktop", "mail-hantong-gui",
+        "hantong-desktop", "mail-hantong-gui", "hantong-ai", "hantong-mcp", "hantong-t",
     }
     packages = []
     for name in names:

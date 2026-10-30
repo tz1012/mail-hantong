@@ -20,12 +20,12 @@ use tokio::{
 };
 use tokio_rustls::TlsConnector;
 
-pub(super) struct TlsSettings {
-    pub(super) implicit: Arc<ClientConfig>,
-    pub(super) starttls: TlsParameters,
+pub(crate) struct TlsSettings {
+    pub(crate) implicit: Arc<ClientConfig>,
+    pub(crate) starttls: TlsParameters,
 }
 impl TlsSettings {
-    fn platform(host: &str) -> Result<Self, MailProbeError> {
+    pub(crate) fn platform(host: &str) -> Result<Self, MailProbeError> {
         let implicit = ClientConfig::builder()
             .with_platform_verifier()
             .map_err(|_| MailProbeError::Tls)?
@@ -111,8 +111,8 @@ pub(super) async fn with_deadline<T>(
 // Constructible only by verified_connection after the selected TLS flow succeeds.
 // Lettre's injected implicit TLS stream is tagged plain internally; the completed
 // Rustls handshake here, rather than Lettre's state query, is the TLS evidence.
-struct VerifiedSmtpConnection(AsyncSmtpConnection);
-async fn verified_connection<S>(
+pub(crate) struct VerifiedSmtpConnection(pub(crate) AsyncSmtpConnection);
+pub(crate) async fn verified_connection<S>(
     endpoint: &SmtpEndpointConfig,
     stream: S,
     peer: SocketAddr,

@@ -1,0 +1,14 @@
+title=mail-hantong AI 대화
+usage=사용법: hantong ai providers | login codex|claude | status codex|claude | chat codex|claude [--prompt 내용]
+notice=입력한 내용만 전송합니다. 메일은 자동 첨부하지 않습니다. /quit를 입력하면 종료합니다.
+prompt=나
+reply=AI
+browser=공식 제공자 창에서 로그인을 완료하세요. Claude는 Console API 사용량 결제 로그인을 사용합니다.
+ready=로그인했습니다.
+missing=공식 제공자 CLI를 설치한 뒤 다시 실행하세요. Codex: https://developers.openai.com/codex/cli ; Claude: https://code.claude.com/docs/en/setup
+subscription=Claude 앱 내 대화에는 Console/API 결제가 필요합니다. 이 앱은 claude.ai 구독 OAuth를 제공하지 않습니다. 공식 Claude CLI를 별도로 실행하거나 Console로 로그인하세요.
+failed=AI 작업이 실패했습니다.
+login=먼저 이 제공자에 로그인하세요.
+human=대화형 터미널이 필요합니다. 스크립트에서는 로그인 후 chat PROVIDER --prompt 내용을 사용하세요.
+commands=/help /status /provider [openai|codex|claude|list] /model [list|ID] /mode [light|med|high|ultra-high] /fast [on|off] /agent [on|off] /cli /quit
+clean=새 제공자 세션을 시작했습니다. 에이전트 접근은 꺼져 있으며 이전 대화는 전달하지 않았습니다.

@@ -364,3 +364,5 @@ mod tests {
 }
 
 pub mod scope_refresh_wire;
+
+mod smtp_setup_wire;

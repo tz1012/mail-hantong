@@ -75,6 +75,51 @@ impl RegistrationReview {
         )?;
         Ok(review)
     }
+    pub fn new_mcp(
+        request_id: [u8; 32],
+        request_version: u64,
+        account_ids: Vec<String>,
+        server_public_key_hash: [u8; 32],
+        created_at_utc_ms: i64,
+        expires_at_utc_ms: i64,
+    ) -> Result<Self, ErrorCode> {
+        let mut review = Self::new(
+            request_id,
+            request_version,
+            account_ids,
+            server_public_key_hash,
+            created_at_utc_ms,
+            expires_at_utc_ms,
+        )?;
+        review.client_kind = ClientKind::Mcp;
+        review.scope = RequestedScope::new(
+            review.account_ids().to_vec(),
+            hantong_contracts::auth::mcp_read_tools(),
+        )?;
+        Ok(review)
+    }
+    pub fn new_mcp_mail(
+        request_id: [u8; 32],
+        request_version: u64,
+        account_ids: Vec<String>,
+        server_public_key_hash: [u8; 32],
+        created_at_utc_ms: i64,
+        expires_at_utc_ms: i64,
+    ) -> Result<Self, ErrorCode> {
+        let mut review = Self::new_mcp(
+            request_id,
+            request_version,
+            account_ids,
+            server_public_key_hash,
+            created_at_utc_ms,
+            expires_at_utc_ms,
+        )?;
+        review.scope = RequestedScope::new(
+            review.account_ids().to_vec(),
+            hantong_contracts::auth::mcp_mail_tools(),
+        )?;
+        Ok(review)
+    }
     pub fn request_id(&self) -> &[u8; 32] {
         &self.request_id
     }
@@ -100,14 +145,16 @@ impl RegistrationReview {
         self.client_kind
     }
     pub fn profile_name(&self) -> &'static str {
-        if self.client_kind == ClientKind::Gui {
+        if self.client_kind == ClientKind::Mcp {
+            "mcp"
+        } else if self.client_kind == ClientKind::Gui {
             "gui"
         } else {
             "default"
         }
     }
     pub fn read_only(&self) -> bool {
-        true
+        self.scope.tools() != hantong_contracts::auth::mcp_mail_tools()
     }
     pub fn requests_per_minute(&self) -> u32 {
         60
@@ -117,7 +164,19 @@ impl RegistrationReview {
         let accounts = self.scope.accounts();
         let account_bytes: usize = accounts.iter().map(|value| 4 + value.len()).sum();
         let mut output = Vec::with_capacity(REVIEW_DOMAIN.len() + 92 + account_bytes);
-        if self.client_kind == ClientKind::Gui {
+        if self.client_kind == ClientKind::Mcp {
+            if self.scope.tools() == hantong_contracts::auth::mcp_mail_tools() {
+                output.extend_from_slice(b"mail-hantong/mcp-mail-registration-review/v2\0");
+            } else {
+                output.extend_from_slice(b"mail-hantong/mcp-registration-review/v1\0");
+            }
+            output.extend_from_slice(b"mcp\0mcp\0");
+            output.extend_from_slice(&(self.scope.tools().len() as u32).to_be_bytes());
+            for tool in self.scope.tools() {
+                output.extend_from_slice(&(tool.len() as u32).to_be_bytes());
+                output.extend_from_slice(tool.as_bytes());
+            }
+        } else if self.client_kind == ClientKind::Gui {
             output.extend_from_slice(b"mail-hantong/gui-registration-review/v1\0");
             output.extend_from_slice(b"gui\0gui\0");
             output.extend_from_slice(&(self.scope.tools().len() as u32).to_be_bytes());
@@ -399,5 +458,45 @@ impl<R: ReviewSnapshot> ReviewModel<R> {
     pub fn system_theme_changed(&mut self, os_dark: bool, high_contrast: bool) {
         self.presentation
             .system_theme_changed(os_dark, high_contrast);
+    }
+}
+
+#[cfg(test)]
+mod mcp_binding_tests {
+    #[test]
+    fn ai09_mcp_full_mail_proof_has_distinct_domain_and_writable_disclosure() {
+        let old =
+            super::RegistrationReview::new_mcp([1; 32], 1, vec!["a".into()], [2; 32], 1, 1000)
+                .unwrap();
+        let new =
+            super::RegistrationReview::new_mcp_mail([1; 32], 1, vec!["a".into()], [2; 32], 1, 1000)
+                .unwrap();
+        assert!(old.read_only());
+        assert!(!new.read_only());
+        assert!(
+            old.canonical_bytes()
+                .starts_with(b"mail-hantong/mcp-registration-review/v1\0")
+        );
+        assert!(
+            new.canonical_bytes()
+                .starts_with(b"mail-hantong/mcp-mail-registration-review/v2\0")
+        );
+        assert_ne!(old.canonical_bytes(), new.canonical_bytes());
+    }
+    use super::*;
+    #[test]
+    fn mcp03_registration_proof_domain_and_kind_are_not_gui_or_cli() {
+        let args = vec!["A".into()];
+        let mcp = RegistrationReview::new_mcp([1; 32], 1, args.clone(), [2; 32], 1, 1000).unwrap();
+        let gui = RegistrationReview::new_gui([1; 32], 1, args.clone(), [2; 32], 1, 1000).unwrap();
+        let cli = RegistrationReview::new([1; 32], 1, args, [2; 32], 1, 1000).unwrap();
+        assert_eq!(mcp.client_kind(), ClientKind::Mcp);
+        assert_eq!(mcp.profile_name(), "mcp");
+        assert_ne!(mcp.canonical_bytes(), gui.canonical_bytes());
+        assert_ne!(mcp.canonical_bytes(), cli.canonical_bytes());
+        assert_eq!(
+            mcp.scope().tools(),
+            hantong_contracts::auth::mcp_read_tools()
+        );
     }
 }

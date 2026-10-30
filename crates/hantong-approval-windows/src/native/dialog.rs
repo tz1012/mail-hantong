@@ -16,6 +16,8 @@ pub(super) enum DialogReview {
     Registration(RegistrationReview),
     Imap(AccountSetupReview),
     ScopeRefresh(ScopeRefreshReview),
+    Send(hantong_approval::SendReview),
+    Smtp(hantong_approval::SmtpSetupReview),
 }
 impl ReviewSnapshot for DialogReview {
     fn created_at_utc_ms(&self) -> i64 {
@@ -23,6 +25,8 @@ impl ReviewSnapshot for DialogReview {
             Self::Registration(review) => review.created_at_utc_ms(),
             Self::Imap(review) => review.created_at_utc_ms(),
             Self::ScopeRefresh(review) => review.created_at_utc_ms(),
+            Self::Send(review) => review.created_at_utc_ms(),
+            Self::Smtp(review) => review.created_at_utc_ms(),
         }
     }
     fn expires_at_utc_ms(&self) -> i64 {
@@ -30,15 +34,34 @@ impl ReviewSnapshot for DialogReview {
             Self::Registration(review) => review.expires_at_utc_ms(),
             Self::Imap(review) => review.expires_at_utc_ms(),
             Self::ScopeRefresh(review) => review.expires_at_utc_ms(),
+            Self::Send(review) => review.expires_at_utc_ms(),
+            Self::Smtp(review) => review.expires_at_utc_ms(),
         }
     }
 }
 impl DialogReview {
+    pub(super) fn is_smtp(&self) -> bool {
+        matches!(self, Self::Smtp(_))
+    }
+    pub(super) fn password_review(&self) -> Option<&AccountSetupReview> {
+        match self {
+            Self::Imap(v) => Some(v),
+            Self::Smtp(v) => Some(v.capture_review()),
+            _ => None,
+        }
+    }
+
+    pub(super) fn is_send(&self) -> bool {
+        matches!(self, Self::Send(_))
+    }
+    pub(super) fn is_mcp_registration(&self) -> bool {
+        matches!(self, Self::Registration(review) if review.client_kind() == hantong_contracts::client::ClientKind::Mcp)
+    }
     pub(super) fn is_gui_registration(&self) -> bool {
         matches!(self, Self::Registration(review) if review.client_kind() == hantong_contracts::client::ClientKind::Gui)
     }
     pub(super) fn is_setup(&self) -> bool {
-        matches!(self, Self::Imap(_))
+        matches!(self, Self::Imap(_) | Self::Smtp(_))
     }
     pub(super) fn is_scope_refresh(&self) -> bool {
         matches!(self, Self::ScopeRefresh(_))
@@ -51,6 +74,8 @@ impl DialogReview {
             Self::Registration(review) => review_text(review, language),
             Self::Imap(review) => Ok(setup_summary(review, language)),
             Self::ScopeRefresh(review) => Ok(review.summary(language)),
+            Self::Send(review) => Ok(review.summary(language)),
+            Self::Smtp(review) => Ok(review.summary(language)),
         }
     }
 }
@@ -59,6 +84,8 @@ pub(super) enum DialogBinding {
     Registration(CapturedReview),
     Imap(CapturedReview<AccountSetupReview>),
     ScopeRefresh(CapturedReview<ScopeRefreshReview>),
+    Send(CapturedReview<hantong_approval::SendReview>),
+    Smtp(CapturedReview<hantong_approval::SmtpSetupReview>),
 }
 impl DialogBinding {
     pub(super) fn review(&self) -> DialogReview {
@@ -66,6 +93,8 @@ impl DialogBinding {
             Self::Registration(binding) => DialogReview::Registration(binding.review.clone()),
             Self::Imap(binding) => DialogReview::Imap(binding.review.clone()),
             Self::ScopeRefresh(binding) => DialogReview::ScopeRefresh(binding.review.clone()),
+            Self::Send(binding) => DialogReview::Send(binding.review.clone()),
+            Self::Smtp(binding) => DialogReview::Smtp(binding.review.clone()),
         }
     }
     pub(super) fn started(&self) -> Instant {
@@ -73,6 +102,8 @@ impl DialogBinding {
             Self::Registration(binding) => binding.started,
             Self::Imap(binding) => binding.started,
             Self::ScopeRefresh(binding) => binding.started,
+            Self::Send(binding) => binding.started,
+            Self::Smtp(binding) => binding.started,
         }
     }
     pub(super) fn validate(&self, expected: &DialogReview) -> Result<(), ErrorCode> {
@@ -84,6 +115,8 @@ impl DialogBinding {
             (Self::ScopeRefresh(binding), DialogReview::ScopeRefresh(review)) => {
                 binding.validate(review)
             }
+            (Self::Send(binding), DialogReview::Send(review)) => binding.validate(review),
+            (Self::Smtp(binding), DialogReview::Smtp(review)) => binding.validate(review),
             _ => Err(ErrorCode::ScopeDenied),
         }
     }
@@ -102,6 +135,12 @@ impl DialogBinding {
             (Self::ScopeRefresh(binding), None) => binding
                 .into_verified()
                 .map(|value| DialogVerified::ScopeRefresh(Box::new(value))),
+            (Self::Send(binding), None) => binding
+                .into_verified()
+                .map(|value| DialogVerified::Send(Box::new(value))),
+            (Self::Smtp(binding), Some(pending)) => binding
+                .into_verified_smtp(pending)
+                .map(|v| DialogVerified::Smtp(Box::new(v))),
             _ => Err(ErrorCode::InternalError),
         }
     }
@@ -110,6 +149,8 @@ pub(super) enum DialogVerified {
     Registration(Box<VerifiedRegistration>),
     Imap(Box<VerifiedImapSetup>),
     ScopeRefresh(Box<VerifiedScopeRefresh>),
+    Send(Box<crate::VerifiedSend>),
+    Smtp(Box<crate::VerifiedSmtpSetup>),
 }
 
 #[cfg(test)]

@@ -16,6 +16,7 @@ docs/latest/requirements-index.csv -text
 Cargo.toml text eol=lf
 Cargo.lock text eol=lf
 rust-toolchain.toml text eol=lf
+install.ps1 text eol=lf
 crates/** text eol=lf
 apps/** text eol=lf
 scripts/check-all text eol=lf

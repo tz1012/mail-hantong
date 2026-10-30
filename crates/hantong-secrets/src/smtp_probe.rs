@@ -5,9 +5,9 @@ pub use hantong_domain::smtp_capabilities::{SmtpAuthMechanism, SmtpCapabilities}
 use std::fmt;
 
 #[cfg(all(windows, test))]
-mod tests;
+pub(crate) mod tests;
 #[cfg(windows)]
-mod windows;
+pub(crate) mod windows;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum MailProbeError {

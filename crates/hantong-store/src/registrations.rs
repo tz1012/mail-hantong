@@ -420,6 +420,7 @@ pub(super) fn read_registration(
     if let Some(value) = &record {
         crate::scope_refresh::validate_registration(connection, value)?;
         crate::registration_activation::validate_gui_registration(connection, value)?;
+        crate::registration_activation::validate_mcp_registration(connection, value)?;
     }
     Ok(record)
 }

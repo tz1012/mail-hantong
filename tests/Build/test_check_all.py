@@ -24,7 +24,7 @@ class CheckAllTests(unittest.TestCase):
         completed = []
 
         def fake_run(command, *, cwd, env, check, timeout):
-            self.assertEqual(timeout, 1800 if command[:2] == ["cargo", "build"] else 600)
+            self.assertEqual(timeout, 1800 if command[:2] in (["cargo", "build"], ["cargo", "clippy"]) else 600)
             completed.append((command, cwd, env.get("HANTONG_CHECK_ALL"), check))
             return mock.Mock(returncode=0)
 

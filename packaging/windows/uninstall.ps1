@@ -13,11 +13,13 @@ $lock = [IO.File]::Open($lockPath, [IO.FileMode]::OpenOrCreate, [IO.FileAccess]:
 try {
     # Preflight every version, ancestor, file hash and launcher before deletion.
     $state = Read-InstallState $root
+    Remove-OwnedUserPath $root
     foreach ($version in $state.versions) {
         $directory = Get-ChildPath $root "versions/$($version.version)"
         Remove-OwnedFiles $directory $version.files
     }
-    foreach ($relative in @('bin/hantong.cmd', 'bin/mail-hantong-core.cmd', 'current.txt', 'install-manifest.json', '.mail-hantong-owner')) {
+    $launchers = @((Get-OwnedBinaries $state.versions) | ForEach-Object { "bin/$_.cmd" })
+    foreach ($relative in ($launchers + @('current.txt', 'install-manifest.json', '.mail-hantong-owner'))) {
         $path = Get-ChildPath $root $relative
         if (Test-Path -LiteralPath $path -PathType Leaf) { Remove-Item -LiteralPath $path -Force }
     }

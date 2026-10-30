@@ -11,7 +11,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-SOURCE_FILES = ("Cargo.toml", "Cargo.lock", "rust-toolchain.toml", "tests/Corpus/index.json", "scripts/native-tools.json", "scripts/check-all", "scripts/traceability", "scripts/test-mail-server", "packaging/licenses/index.json")
+SOURCE_FILES = ("Cargo.toml", "Cargo.lock", "rust-toolchain.toml", "install.ps1", "tests/Corpus/index.json", "scripts/native-tools.json", "scripts/check-all", "scripts/traceability", "scripts/test-mail-server", "packaging/licenses/index.json")
 SOURCE_SUFFIXES = {".rs", ".py", ".toml", ".txt", ".eml", ".mbox", ".ps1", ".sh", ".cert", ".fullchain", ".key", ".manifest"}
 RESULTS = {"unimplemented", "not_run", "passed", "failed", "review_required", "not_applicable"}
 REQUIRED_EVIDENCE = {"result", "test_id", "test_kind", "environment", "command", "exit_code", "log_path", "log_sha256", "evidence", "reviewer"}

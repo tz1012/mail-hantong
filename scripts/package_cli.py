@@ -20,8 +20,9 @@ from traceability import source_hash, ValidationError
 
 ROOT = Path(__file__).resolve().parents[1]
 TARGET = "x86_64-pc-windows-msvc"
-DEFAULT_VERSION = "0.1.0-preview.2"
-BINARIES = {"hantong-cli": "hantong", "mail-hantong-core": "mail-hantong-core"}
+DEFAULT_VERSION = "0.1.0-preview.3"
+BINARIES = {"hantong-cli": "hantong", "mail-hantong-core": "mail-hantong-core",
+            "hantong-mcp": "hantong-mcp", "hantong-t": "hantong-t"}
 LICENSE_NAME = re.compile(r"^(?:licen[sc]e|copying|copyright|notice)(?:[._-].*)?$", re.I)
 MAX_INPUT = 256 * 1024 * 1024
 RUSTFLAGS = "-C target-feature=+crt-static"
@@ -344,7 +345,10 @@ def package(root: Path = ROOT, *, version: str = DEFAULT_VERSION, output_dir: Pa
         "Explicitly indexed missing texts may come from their exact upstream source revision; their source URLs, revisions, and content hashes appear in the inventory. "
         "This conservative inventory is not legal clearance, an SPDX completeness claim, or proof that every bundled native component's obligations are satisfied. "
         "Review upstream terms before redistribution. Workspace code is covered by LICENSE.\n").encode()
-    command = ["cargo", "build", "--release", "--target", TARGET, "-p", "hantong-cli", "-p", "mail-hantong-core", "--bins", "--locked", "--offline"]
+    command = ["cargo", "build", "--release", "--target", TARGET]
+    for package_name in BINARIES:
+        command.extend(["-p", package_name])
+    command.extend(["--bins", "--locked", "--offline"])
     if not skip_build:
         run_command(runner, command, root, env, capture=False, timeout=1800)
     compiler = compiler_info(runner, root, env)

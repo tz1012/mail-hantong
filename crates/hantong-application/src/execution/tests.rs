@@ -298,6 +298,13 @@ impl ExecutionContext for Fake {
         assert_eq!(Some(audit_id), self.audit_id);
         self.read_display_settings()
     }
+    fn read_message_body(
+        &mut self,
+        _: &hantong_contracts::message_body::MessageBodyRequest,
+    ) -> Result<ReadResult<u32>, ErrorCode> {
+        self.events.push("body");
+        std::mem::replace(&mut self.read, Err(ErrorCode::InternalError))
+    }
     fn read_message_search(
         &mut self,
         _: &ImapMetadataSearchRequest,
@@ -921,4 +928,34 @@ fn m203_folder_scope_and_policy_denials_never_call_folder_service() {
         Err(ErrorCode::PolicyBlocked)
     );
     assert!(!fake.events.contains(&"handoff"));
+}
+
+#[test]
+fn sec03_body_reads_pass_common_scope_policy_audit_before_provider() {
+    let envelope = json!({"schema_version":1,"request_id":"r","tool":"mail.messages.get","params":{"mode":"imap_body","account_id":"a","mailbox_wire_hex":"494e424f58","mailbox_encoding":"utf8","uidvalidity":42,"uid":9,"max_bytes":1024}});
+    let mut f = Fake::ok();
+    assert_eq!(execute_tool(&mut f, "mail.messages.get", &envelope), Ok(7));
+    assert_eq!(
+        f.events,
+        [
+            "revalidate",
+            "begin",
+            "scope",
+            "policy",
+            "body",
+            "finish_ok"
+        ]
+    );
+    assert_eq!(f.scoped_accounts, [vec!["a".to_owned()]]);
+    for policy in [false, true] {
+        let mut f = Fake::ok();
+        if policy {
+            f.fail_policy = Some(ErrorCode::PolicyBlocked)
+        } else {
+            f.fail_scope = Some(ErrorCode::ScopeDenied)
+        }
+        assert!(execute_tool(&mut f, "mail.messages.get", &envelope).is_err());
+        assert!(!f.events.contains(&"body"));
+        assert_eq!(f.terminals.len(), 1);
+    }
 }

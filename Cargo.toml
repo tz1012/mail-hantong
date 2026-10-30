@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "crates/hantong-contracts",
+    "crates/hantong-ai",
     "crates/hantong-platform",
     "crates/hantong-domain",
     "crates/hantong-approval",
@@ -16,6 +17,8 @@ members = [
     "crates/hantong-desktop",
     "apps/mail-hantong-core",
     "apps/hantong-cli",
+    "apps/hantong-t",
+    "apps/hantong-mcp",
     "apps/mail-hantong-gui",
     "tests/Fakes",
 ]

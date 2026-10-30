@@ -30,7 +30,9 @@ class PackageCliTests(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
-        self.root = Path(self.temporary.name)
+        # GitHub's Windows TEMP can contain an 8.3 user-directory alias. Match
+        # Cargo's canonical manifest paths before the boundary/link checks.
+        self.root = Path(self.temporary.name).resolve()
         self.env = {"CARGO_HOME": str(self.root / "cargo-home")}
         self.registry = self.root / "cargo-home/registry/src/local-test"
         self.output = self.root / "output"
@@ -65,11 +67,13 @@ class PackageCliTests(unittest.TestCase):
                                   "manifest_path": str(directory / "Cargo.toml"), "license": "MIT", "license_file": None})
         lock = "version = 4\n" + "".join(
             f'[[package]]\nname = "{p["name"]}"\nversion = "1.0.0"\nsource = "{self.source}"\nchecksum = "{"a" * 64}"\n'
-            for p in self.packages[2:])
+            for p in self.packages if p["source"] is not None)
         (self.root / "Cargo.lock").write_text(lock, encoding="utf-8")
         self.metadata = {"packages": self.packages, "workspace_members": list(package.BINARIES),
                          "target_directory": str(self.target), "resolve": {"nodes": [
                              {"id": "hantong-cli", "deps": []},
+                             {"id": "hantong-mcp", "deps": []},
+                             {"id": "hantong-t", "deps": []},
                              {"id": "mail-hantong-core", "deps": [
                                  {"pkg": "openssl-src", "dep_kinds": [{"kind": "build"}]},
                                  {"pkg": "sqlcipher-src", "dep_kinds": [{"kind": None}]}]},
@@ -115,7 +119,7 @@ class PackageCliTests(unittest.TestCase):
         with zipfile.ZipFile(archive) as zipped:
             names = zipped.namelist()
             self.assertEqual(names, sorted(names))
-            self.assertEqual([name for name in names if name.endswith(".exe")], ["bin/hantong.exe", "bin/mail-hantong-core.exe"])
+            self.assertEqual([name for name in names if name.endswith(".exe")], sorted(f"bin/{binary}.exe" for binary in package.BINARIES.values()))
             self.assertFalse(any("profile" in name or ".env" in name or "gui.exe" in name for name in names))
             self.assertEqual(zipped.read("LICENSE"), (self.root / "LICENSE").read_bytes())
             self.assertTrue(any(name.endswith("openssl/LICENSE.txt") for name in names))
@@ -140,17 +144,19 @@ class PackageCliTests(unittest.TestCase):
                 self.assertEqual(entry["sha256"], package.sha(data))
                 self.assertEqual(entry["size"], len(data))
         self.assertFalse(any(command[:2] == ["cargo", "build"] for command, _ in self.calls))
-        self.assertEqual(sum(command[0] not in ("cargo", "rustc") for command, _ in self.calls), 8)
+        self.assertEqual(sum(command[0] not in ("cargo", "rustc") for command, _ in self.calls), 4 * len(package.BINARIES))
 
     def test_INST01_build_uses_verified_environment_locked_offline_explicit_target_and_smoke(self):
         result = self.build()
         commands = [command for command, _ in self.calls]
         build = next(command for command in commands if command[:2] == ["cargo", "build"])
-        self.assertEqual(build, ["cargo", "build", "--release", "--target", package.TARGET,
-                                "-p", "hantong-cli", "-p", "mail-hantong-core", "--bins", "--locked", "--offline"])
+        expected = ["cargo", "build", "--release", "--target", package.TARGET]
+        for name in package.BINARIES:
+            expected.extend(["-p", name])
+        self.assertEqual(build, expected + ["--bins", "--locked", "--offline"])
         self.assertTrue(all(kwargs["env"] == self.env | {"RUSTFLAGS": package.RUSTFLAGS} for _, kwargs in self.calls))
         self.assertNotIn("RUSTFLAGS", self.env)
-        self.assertEqual([command[1] for command in commands if command[0] not in ("cargo", "rustc")], ["--help", "--version"] * 2)
+        self.assertEqual([command[1] for command in commands if command[0] not in ("cargo", "rustc")], ["--help", "--version"] * len(package.BINARIES))
         self.assertFalse(any("run" in command for command in commands))
         self.assertEqual(json.loads((result / "BUILD-METADATA.json").read_bytes())["source_relation"], "built_from_current_workspace")
 
@@ -194,11 +200,12 @@ class PackageCliTests(unittest.TestCase):
         self.assertFalse((self.output / package.DEFAULT_VERSION).exists())
 
     def test_INST01_missing_and_traversing_licenses_are_actionable_and_never_publish(self):
-        self.metadata["packages"][2]["license_file"] = "../LICENSE"
+        dependency = next(item for item in self.metadata["packages"] if item["name"] == "openssl-src")
+        dependency["license_file"] = "../LICENSE"
         (self.registry / "LICENSE").write_text("outside crate", encoding="utf-8")
         with self.assertRaisesRegex(package.PackageError, "outside|escapes"):
             self.build(skip_build=True)
-        self.metadata["packages"][2]["license_file"] = None
+        dependency["license_file"] = None
         directory = self.registry / "openssl-src-1.0.0"
         (directory / "LICENSE").unlink()
         (directory / "openssl/LICENSE.txt").unlink()

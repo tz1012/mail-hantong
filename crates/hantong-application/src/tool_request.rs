@@ -42,13 +42,36 @@ pub enum ToolRequest {
         request_id: String,
         action: UidPageAction,
     },
+    DraftCreate {
+        request_id: String,
+        request: hantong_contracts::mail_send::DraftCreateRequest,
+    },
+    SendReview {
+        request_id: String,
+        action: SendReviewAction,
+    },
     SendExecute(SendExecuteRequest),
+    MessageLocator {
+        request_id: String,
+        account_id: String,
+        message_id: String,
+        max_bytes: usize,
+    },
+    MessagesGet {
+        request_id: String,
+        request: hantong_contracts::message_body::MessageBodyRequest,
+    },
     MessagesSearch {
         request_id: String,
         request: ImapMetadataSearchRequest,
     },
 }
 
+#[derive(Clone, Eq, PartialEq)]
+pub enum SendReviewAction {
+    Request(hantong_contracts::mail_send::SendReviewRequest),
+    Status(hantong_contracts::mail_send::SendReviewStatusRequest),
+}
 #[derive(Clone, Eq, PartialEq)]
 pub enum FolderRefreshAction {
     Request(FolderRefreshRequest),
@@ -101,7 +124,11 @@ impl fmt::Debug for ToolRequest {
             Self::FoldersList { .. } => f.write_str("ToolRequest::FoldersList(<redacted>)"),
             Self::FoldersRefresh { .. } => f.write_str("ToolRequest::FoldersRefresh(<redacted>)"),
             Self::SyncPage { .. } => f.write_str("ToolRequest::SyncPage(<redacted>)"),
+            Self::DraftCreate { .. } => f.write_str("ToolRequest::DraftCreate(<redacted>)"),
+            Self::SendReview { .. } => f.write_str("ToolRequest::SendReview(<redacted>)"),
             Self::SendExecute(_) => f.write_str("ToolRequest::SendExecute(<redacted>)"),
+            Self::MessageLocator { .. } => f.write_str("ToolRequest::MessageLocator(<redacted>)"),
+            Self::MessagesGet { .. } => f.write_str("ToolRequest::MessagesGet(<redacted>)"),
             Self::MessagesSearch { .. } => f.write_str("ToolRequest::MessagesSearch(<redacted>)"),
         }
     }
@@ -150,7 +177,173 @@ impl ToolRequest {
                 request_id,
                 action: parse_uid_page(params)?,
             }),
+            "mail.drafts.create" => {
+                exact_keys(
+                    params,
+                    &[
+                        "account_id",
+                        "to",
+                        "subject",
+                        "body",
+                        "operation_id",
+                        "idempotency_key",
+                        "expected_version",
+                        "payload_hash",
+                    ],
+                )?;
+                let recipients = params
+                    .get("to")
+                    .unwrap()
+                    .as_array()
+                    .ok_or(ErrorCode::InvalidInput)?
+                    .iter()
+                    .map(|v| string(v).map(str::to_owned))
+                    .collect::<Result<Vec<_>, _>>()?;
+                let request = hantong_contracts::mail_send::DraftCreateRequest::new(
+                    string(&params["account_id"])?,
+                    recipients,
+                    string(&params["subject"])?.into(),
+                    string(&params["body"])?.into(),
+                    string(&params["operation_id"])?,
+                    string(&params["idempotency_key"])?,
+                    u64::try_from(integer(&params["expected_version"])?)
+                        .map_err(|_| ErrorCode::InvalidInput)?,
+                    hantong_contracts::wire_hex::decode_fixed(string(&params["payload_hash"])?)?,
+                )?;
+                Ok(Self::DraftCreate {
+                    request_id,
+                    request,
+                })
+            }
+            "mail.send.request" => {
+                let mode = string(params.get("mode").ok_or(ErrorCode::InvalidInput)?)?;
+                let action = match mode {
+                    "request" => {
+                        exact_keys(
+                            params,
+                            &[
+                                "mode",
+                                "account_id",
+                                "draft_id",
+                                "operation_id",
+                                "idempotency_key",
+                                "expected_version",
+                                "payload_hash",
+                            ],
+                        )?;
+                        SendReviewAction::Request(
+                            hantong_contracts::mail_send::SendReviewRequest::new(
+                                string(&params["account_id"])?,
+                                hantong_contracts::wire_hex::decode_fixed(string(
+                                    &params["draft_id"],
+                                )?)?,
+                                u64::try_from(integer(&params["expected_version"])?)
+                                    .map_err(|_| ErrorCode::InvalidInput)?,
+                                string(&params["operation_id"])?,
+                                string(&params["idempotency_key"])?,
+                                hantong_contracts::wire_hex::decode_fixed(string(
+                                    &params["payload_hash"],
+                                )?)?,
+                            )?,
+                        )
+                    }
+                    "status" => {
+                        exact_keys(params, &["mode", "account_id", "review_id"])?;
+                        let account = string(&params["account_id"])?;
+                        let review_id = hantong_contracts::wire_hex::decode_fixed(string(
+                            &params["review_id"],
+                        )?)?;
+                        if review_id == [0; 32]
+                            || account.is_empty()
+                            || account.len() > 128
+                            || !account
+                                .bytes()
+                                .all(|b| b.is_ascii_alphanumeric() || b"_-".contains(&b))
+                        {
+                            return Err(ErrorCode::InvalidInput);
+                        }
+                        SendReviewAction::Status(
+                            hantong_contracts::mail_send::SendReviewStatusRequest {
+                                account_id: account.into(),
+                                review_id,
+                            },
+                        )
+                    }
+                    _ => return Err(ErrorCode::InvalidInput),
+                };
+                Ok(Self::SendReview { request_id, action })
+            }
             "mail.send.execute" => Ok(Self::SendExecute(parse_send(request_id, params)?)),
+            "mail.messages.get" => {
+                if params.get("mode").and_then(Value::as_str) == Some("locator") {
+                    exact_keys(
+                        params,
+                        &["mode", "account_id", "internal_message_id", "max_bytes"],
+                    )?;
+                    let account = string(&params["account_id"])?;
+                    let message = string(&params["internal_message_id"])?;
+                    let max_bytes = usize::try_from(integer(&params["max_bytes"])?)
+                        .map_err(|_| ErrorCode::InvalidInput)?;
+                    if account.is_empty()
+                        || account.len() > 128
+                        || !account
+                            .bytes()
+                            .all(|b| b.is_ascii_alphanumeric() || b"_-".contains(&b))
+                        || message.len() != 68
+                        || !message.starts_with("msg_")
+                        || !message[4..]
+                            .bytes()
+                            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+                        || !(1..=hantong_contracts::message_body::MAX_BODY_BYTES)
+                            .contains(&max_bytes)
+                    {
+                        return Err(ErrorCode::InvalidInput);
+                    }
+                    return Ok(Self::MessageLocator {
+                        request_id,
+                        account_id: account.into(),
+                        message_id: message.into(),
+                        max_bytes,
+                    });
+                }
+                exact_keys(
+                    params,
+                    &[
+                        "mode",
+                        "account_id",
+                        "mailbox_wire_hex",
+                        "mailbox_encoding",
+                        "uidvalidity",
+                        "uid",
+                        "max_bytes",
+                    ],
+                )?;
+                if string(params.get("mode").unwrap())? != "imap_body" {
+                    return Err(ErrorCode::InvalidInput);
+                }
+                let encoding = match string(params.get("mailbox_encoding").unwrap())? {
+                    "utf8" => UidMailboxEncoding::Utf8,
+                    "modified_utf7" => UidMailboxEncoding::ModifiedUtf7,
+                    _ => return Err(ErrorCode::InvalidInput),
+                };
+                let request = hantong_contracts::message_body::MessageBodyRequest::new(
+                    string(params.get("account_id").unwrap())?,
+                    UidMailboxIdentity::new(
+                        string(params.get("mailbox_wire_hex").unwrap())?,
+                        encoding,
+                    )?,
+                    u32::try_from(integer(params.get("uidvalidity").unwrap())?)
+                        .map_err(|_| ErrorCode::InvalidInput)?,
+                    u32::try_from(integer(params.get("uid").unwrap())?)
+                        .map_err(|_| ErrorCode::InvalidInput)?,
+                    usize::try_from(integer(params.get("max_bytes").unwrap())?)
+                        .map_err(|_| ErrorCode::InvalidInput)?,
+                )?;
+                Ok(Self::MessagesGet {
+                    request_id,
+                    request,
+                })
+            }
             "mail.messages.search" => Ok(Self::MessagesSearch {
                 request_id,
                 request: parse_message_search(params)?,
@@ -178,8 +371,13 @@ impl ToolRequest {
             Self::FoldersList { request_id, .. }
             | Self::FoldersRefresh { request_id, .. }
             | Self::SyncPage { request_id, .. } => request_id,
+            Self::DraftCreate { request_id, .. } | Self::SendReview { request_id, .. } => {
+                request_id
+            }
             Self::SendExecute(v) => &v.request_id,
-            Self::MessagesSearch { request_id, .. } => request_id,
+            Self::MessageLocator { request_id, .. }
+            | Self::MessagesGet { request_id, .. }
+            | Self::MessagesSearch { request_id, .. } => request_id,
         }
     }
 
@@ -191,7 +389,10 @@ impl ToolRequest {
             Self::FoldersList { .. } => AuditTool::FoldersList,
             Self::FoldersRefresh { .. } => AuditTool::FoldersRefresh,
             Self::SyncPage { .. } => AuditTool::SyncPage,
+            Self::DraftCreate { .. } => AuditTool::DraftCreate,
+            Self::SendReview { .. } => AuditTool::SendRequest,
             Self::SendExecute(_) => AuditTool::SendExecute,
+            Self::MessageLocator { .. } | Self::MessagesGet { .. } => AuditTool::MessagesGet,
             Self::MessagesSearch { .. } => AuditTool::MessagesSearch,
         }
     }
@@ -217,7 +418,14 @@ impl ToolRequest {
                 UidPageAction::InitialStatus(v) => v.account_ids(),
                 UidPageAction::InitialPlan(v) => v.account_ids(),
             },
+            Self::DraftCreate { request, .. } => request.account_ids(),
+            Self::SendReview { action, .. } => match action {
+                SendReviewAction::Request(r) => r.account_ids(),
+                SendReviewAction::Status(r) => std::slice::from_ref(&r.account_id),
+            },
             Self::SendExecute(value) => std::slice::from_ref(&value.account_id),
+            Self::MessageLocator { account_id, .. } => std::slice::from_ref(account_id),
+            Self::MessagesGet { request, .. } => request.account_ids(),
             Self::MessagesSearch { request, .. } => request.account_ids(),
         }
     }

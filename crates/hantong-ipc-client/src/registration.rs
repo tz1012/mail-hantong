@@ -22,15 +22,22 @@ pub fn request(id: &str, command: RegistrationCommand) -> Result<Vec<u8>, ErrorC
     }
     let (method, params) = match command {
         RegistrationCommand::Request => ("registration.request", json!({"protocol_version":1})),
+        RegistrationCommand::McpRequest => {
+            ("registration.mcp.request", json!({"protocol_version":1}))
+        }
         RegistrationCommand::GuiRequest => {
             ("registration.gui.request", json!({"protocol_version":1}))
         }
-        RegistrationCommand::Status(request_id) | RegistrationCommand::GuiStatus(request_id) => {
+        RegistrationCommand::Status(request_id)
+        | RegistrationCommand::GuiStatus(request_id)
+        | RegistrationCommand::McpStatus(request_id) => {
             if request_id == [0; 32] {
                 return Err(ErrorCode::InvalidInput);
             }
             (
-                if matches!(command, RegistrationCommand::GuiStatus(_)) {
+                if matches!(command, RegistrationCommand::McpStatus(_)) {
+                    "registration.mcp.status"
+                } else if matches!(command, RegistrationCommand::GuiStatus(_)) {
                     "registration.gui.status"
                 } else {
                     "registration.status"
@@ -64,8 +71,9 @@ pub fn parse_response(
         Body::Result(value) => value,
         Body::Error(code) => return Err(code),
     };
-    if let RegistrationCommand::Status(expected) | RegistrationCommand::GuiStatus(expected) =
-        command
+    if let RegistrationCommand::Status(expected)
+    | RegistrationCommand::GuiStatus(expected)
+    | RegistrationCommand::McpStatus(expected) = command
         && receipt.request_id() != &expected
     {
         return Err(ErrorCode::CoreUnavailable);

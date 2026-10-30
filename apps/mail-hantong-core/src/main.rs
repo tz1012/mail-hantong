@@ -16,7 +16,11 @@ mod registration;
 #[cfg(windows)]
 mod scope_refresh;
 #[cfg(windows)]
+mod send_mail;
+#[cfg(windows)]
 mod setup_imap;
+#[cfg(windows)]
+mod setup_smtp;
 #[cfg(windows)]
 mod storage;
 #[cfg(windows)]
@@ -83,7 +87,7 @@ fn start() -> Result<(), ErrorCode> {
     let store = storage::initialize_storage(&directories)?;
     let server_identity = identity::initialize_server_identity(&store)?;
     let server_instance = hantong_platform::random_nonce()?;
-    let mut read_policy = hantong_policy::ReadPolicy::new();
+    let read_policy = std::rc::Rc::new(std::cell::RefCell::new(hantong_policy::ReadPolicy::new()));
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_io()
         .enable_time()
@@ -101,8 +105,12 @@ fn start() -> Result<(), ErrorCode> {
             event(EventKind::CoreStopping);
             Ok(())
         };
-        let (registration, registration_worker) =
-            registration::coordinator(&store, &server_identity, &directories.secrets);
+        let (registration, registration_worker) = registration::coordinator_with_policy(
+            &store,
+            &server_identity,
+            &directories.secrets,
+            read_policy.clone(),
+        );
         let shared_slot = std::rc::Rc::new(std::cell::Cell::new(None));
         let (folder_worker_handle, folder_worker) =
             folder_worker::coordinator_for_store(&store, &directories.secrets, shared_slot.clone());
@@ -119,11 +127,12 @@ fn start() -> Result<(), ErrorCode> {
             server_instance,
             |id| execution_adapter::load_registration(&store, id),
             |session, request| {
-                execution_adapter::execute_with_uid(
+                execution_adapter::execute_with_send(
                     &store,
-                    &mut read_policy,
+                    &mut read_policy.borrow_mut(),
                     &folder_worker_handle,
                     Some(&uid_worker_handle),
+                    &registration,
                     session,
                     request,
                 )

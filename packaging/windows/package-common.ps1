@@ -63,8 +63,23 @@ function Get-Shim([string] $Binary) {
         ('"%~dp0..\versions\%HT_VERSION%\bin\' + $Binary + '.exe" %*'),
         'exit /b %errorlevel%', '') -join "`r`n")
 }
-function Assert-Shims([string] $Root) {
-    foreach ($binary in @('hantong', 'mail-hantong-core')) {
+function Get-OwnedBinaries($Versions) {
+    $names = @('hantong', 'mail-hantong-core')
+    if ($null -ne $Versions) {
+        foreach ($binary in @('hantong-t', 'hantong-mcp')) {
+            $included = $false
+            foreach ($version in $Versions) {
+                foreach ($file in $version.files) {
+                    if ([string]$file.path -ieq "bin/$binary.exe" -or [string]$file.path -ieq "bin\$binary.exe") { $included = $true }
+                }
+            }
+            if ($included) { $names += $binary }
+        }
+    }
+    return $names
+}
+function Assert-Shims([string] $Root, $Versions) {
+    foreach ($binary in (Get-OwnedBinaries $Versions)) {
         $path = Get-ChildPath $Root "bin/$binary.cmd"
         if (-not (Test-Path -LiteralPath $path -PathType Leaf) -or
             [IO.File]::ReadAllText($path) -cne (Get-Shim $binary)) { throw 'Installed launcher was changed' }
@@ -85,7 +100,7 @@ function Read-InstallState([string] $Root) {
         $directory = Get-ChildPath $Root "versions/$($version.version)"
         foreach ($file in $version.files) { Assert-FileHash (Get-ChildPath $directory $file.path) $file.sha256 }
     }
-    Assert-Shims $Root
+    Assert-Shims $Root $state.versions
     $current = Get-ChildPath $Root 'current.txt'
     if (Test-Path -LiteralPath $current -PathType Leaf) {
         $active = [IO.File]::ReadAllText($current)
@@ -129,4 +144,40 @@ function Remove-OwnedFiles([string] $Directory, $Files) {
             Remove-Item -LiteralPath $path -Force
         }
     }
+}
+
+function Test-UserPathEntry([string] $Entry, [string] $Bin) {
+    $expanded = [Environment]::ExpandEnvironmentVariables($Entry.Trim()).TrimEnd('\')
+    return $expanded.Equals($Bin.TrimEnd('\'), [StringComparison]::OrdinalIgnoreCase)
+}
+function Get-UserPathAddition([string] $Current, [string] $Bin) {
+    foreach ($entry in $Current.Split(';')) {
+        if (Test-UserPathEntry $entry $Bin) { return $null }
+    }
+    if ([string]::IsNullOrEmpty($Current)) { return $Bin }
+    return $Current.TrimEnd(';') + ';' + $Bin
+}
+function Add-OwnedUserPath([string] $Root) {
+    $bin = Get-ChildPath $Root 'bin'
+    $marker = Get-ChildPath $Root '.user-path-owned'
+    if ((Test-Path -LiteralPath $marker) -and [IO.File]::ReadAllText($marker) -cne $bin) { throw 'Invalid PATH ownership marker' }
+    $current = [Environment]::GetEnvironmentVariable('Path', [EnvironmentVariableTarget]::User)
+    $updated = Get-UserPathAddition $current $bin
+    if ($null -eq $updated) { return }
+    # Record ownership before changing PATH; a retry can safely remove only our
+    # entry even when registry publication is interrupted.
+    Write-AtomicText $marker $bin
+    [Environment]::SetEnvironmentVariable('Path', $updated, [EnvironmentVariableTarget]::User)
+}
+function Get-UserPathRemoval([string] $Current, [string] $Bin) {
+    return (@($Current.Split(';') | Where-Object { -not (Test-UserPathEntry $_ $Bin) }) -join ';')
+}
+function Remove-OwnedUserPath([string] $Root) {
+    $marker = Get-ChildPath $Root '.user-path-owned'
+    if (-not (Test-Path -LiteralPath $marker)) { return }
+    $bin = Get-ChildPath $Root 'bin'
+    if ([IO.File]::ReadAllText($marker) -cne $bin) { throw 'Invalid PATH ownership marker' }
+    $current = [Environment]::GetEnvironmentVariable('Path', [EnvironmentVariableTarget]::User)
+    [Environment]::SetEnvironmentVariable('Path', (Get-UserPathRemoval $current $bin), [EnvironmentVariableTarget]::User)
+    Remove-Item -LiteralPath $marker -Force
 }

@@ -1,0 +1,10 @@
+title=보내는 메일 설정
+intro=기존 계정의 SMTP 서버를 확인하고 보호된 입력란에 앱 비밀번호를 입력하세요.
+verify=본인 확인 후 SMTP 설정 저장
+verification=이 SMTP 서버를 설정하려면 본인 확인을 진행하세요.
+footer=최초 SMTP 설정과 보호된 자격 증명을 저장합니다. 메일을 보내거나 이후 발송을 승인하지 않습니다.
+account=계정
+version=계정 버전
+server=SMTP 서버
+port=포트
+login=로그인 주소

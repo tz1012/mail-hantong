@@ -71,7 +71,7 @@ const BUTTONS: [i32; 8] = [ENGLISH, KOREAN, LIGHT, DARK, SYSTEM, VERIFY, DENY, C
 // Scope-refresh reviews may contain 128 old and 128 target IDs, each up to
 // 128 ASCII bytes. Keep the edit control and post-paint validator on one
 // explicit UTF-16-unit bound with room for labels and localized text.
-const MAX_REVIEW_UTF16_UNITS: usize = 64 * 1024;
+const MAX_REVIEW_UTF16_UNITS: usize = 2 * 1024 * 1024;
 
 struct Sta;
 impl Sta {
@@ -327,7 +327,9 @@ impl State {
         let language = self.model.presentation().language();
         match self.model.review() {
             DialogReview::Registration(review) => {
-                let key = if review.client_kind() == hantong_contracts::client::ClientKind::Gui {
+                let key = if review.client_kind() == hantong_contracts::client::ClientKind::Mcp {
+                    TextKey::McpVerificationRequired
+                } else if review.client_kind() == hantong_contracts::client::ClientKind::Gui {
                     TextKey::GuiVerificationRequired
                 } else {
                     TextKey::VerificationRequired
@@ -362,6 +364,34 @@ impl State {
                 )?;
                 self.pending = Some(pending);
                 self.operation = Some(operation);
+            }
+            DialogReview::Smtp(review) => {
+                let input = self.password_input.take().ok_or(ErrorCode::InternalError)?;
+                let (pending, operation) = capture_before_verification(
+                    || {
+                        let pending = input.capture().map_err(input_error)?;
+                        validate_pending(review.capture_review(), &pending)?;
+                        self.binding
+                            .as_ref()
+                            .ok_or(ErrorCode::InternalError)?
+                            .validate(self.model.review())?;
+                        Ok(pending)
+                    },
+                    || {
+                        ConsentOperation::start(
+                            hwnd,
+                            hantong_approval::smtp_setup_review::text(language, "verification"),
+                        )
+                    },
+                )?;
+                self.pending = Some(pending);
+                self.operation = Some(operation);
+            }
+            DialogReview::Send(_) => {
+                self.operation = Some(ConsentOperation::start(
+                    hwnd,
+                    hantong_approval::send_review::text(language, "verification"),
+                )?);
             }
             DialogReview::ScopeRefresh(_) => {
                 self.operation = Some(ConsentOperation::start(
@@ -492,6 +522,42 @@ impl State {
         }
     }
     fn caption(&self, id: i32) -> String {
+        if self.model.review().is_smtp() {
+            let key = match id {
+                HEADING => Some("title"),
+                INTRO => Some("intro"),
+                VERIFY => Some("verify"),
+                FOOTER => Some("footer"),
+                _ => None,
+            };
+            if let Some(key) = key {
+                return hantong_approval::smtp_setup_review::text(
+                    self.model.presentation().language(),
+                    key,
+                )
+                .to_owned();
+            }
+        }
+
+        if self.model.review().is_send() {
+            let key = match id {
+                HEADING => "title",
+                INTRO => "intro",
+                VERIFY => "verify",
+                FOOTER => "footer",
+                _ => return self.generic_caption(id),
+            };
+            return hantong_approval::send_review::text(self.model.presentation().language(), key)
+                .to_owned();
+        }
+        if self.model.review().is_mcp_registration() {
+            let key = match id {
+                HEADING => TextKey::McpTitle,
+                INTRO => TextKey::McpIntroduction,
+                _ => return self.generic_caption(id),
+            };
+            return text(self.model.presentation().language(), key).to_owned();
+        }
         if self.model.review().is_gui_registration() {
             let key = match id {
                 HEADING => TextKey::GuiTitle,
@@ -689,9 +755,11 @@ fn create_controls(hwnd: HWND, state: &mut State) -> Result<(), ErrorCode> {
         state.controls.push((id, child));
         if id == PASSWORD_LABEL {
             let plan = state.password_plan.take().ok_or(ErrorCode::InternalError)?;
-            let DialogReview::Imap(review) = state.model.review() else {
-                return Err(ErrorCode::InternalError);
-            };
+            let review = state
+                .model
+                .review()
+                .password_review()
+                .ok_or(ErrorCode::InternalError)?;
             validate_plan(review, &plan)?;
             state.password_input = Some(
                 plan.attach_to_parent(hwnd.0 as isize, PASSWORD_INPUT)
@@ -772,6 +840,8 @@ pub(super) fn run(
         DialogVerified::Registration(verified) => Ok(*verified),
         DialogVerified::Imap(_) => Err(ErrorCode::InternalError),
         DialogVerified::ScopeRefresh(_) => Err(ErrorCode::InternalError),
+        DialogVerified::Send(_) => Err(ErrorCode::InternalError),
+        DialogVerified::Smtp(_) => Err(ErrorCode::InternalError),
     }
 }
 
@@ -793,6 +863,8 @@ pub(super) fn run_setup(
         DialogVerified::Imap(verified) => Ok(*verified),
         DialogVerified::Registration(_) => Err(ErrorCode::InternalError),
         DialogVerified::ScopeRefresh(_) => Err(ErrorCode::InternalError),
+        DialogVerified::Send(_) => Err(ErrorCode::InternalError),
+        DialogVerified::Smtp(_) => Err(ErrorCode::InternalError),
     }
 }
 
@@ -810,6 +882,44 @@ pub(super) fn run_scope_refresh(
         cancellation,
     )? {
         DialogVerified::ScopeRefresh(verified) => Ok(*verified),
+        _ => Err(ErrorCode::InternalError),
+    }
+}
+
+pub(super) fn run_send(
+    review: hantong_approval::SendReview,
+    language: Option<Language>,
+    theme: Theme,
+    cancellation: Receiver<()>,
+) -> Result<crate::VerifiedSend, ErrorCode> {
+    match run_dialog(
+        DialogReview::Send(review),
+        None,
+        language,
+        theme,
+        cancellation,
+    )? {
+        DialogVerified::Send(verified) => Ok(*verified),
+        _ => Err(ErrorCode::InternalError),
+    }
+}
+
+pub(super) fn run_smtp_setup(
+    review: hantong_approval::SmtpSetupReview,
+    plan: ImapPasswordCapturePlan,
+    language: Option<Language>,
+    theme: Theme,
+    cancellation: Receiver<()>,
+) -> Result<crate::VerifiedSmtpSetup, ErrorCode> {
+    validate_plan(review.capture_review(), &plan)?;
+    match run_dialog(
+        DialogReview::Smtp(review),
+        Some(plan),
+        language,
+        theme,
+        cancellation,
+    )? {
+        DialogVerified::Smtp(value) => Ok(*value),
         _ => Err(ErrorCode::InternalError),
     }
 }
@@ -832,6 +942,8 @@ fn run_dialog(
             DialogBinding::Registration(CapturedReview::capture(review)?)
         }
         DialogReview::Imap(review) => DialogBinding::Imap(CapturedReview::capture(review)?),
+        DialogReview::Smtp(review) => DialogBinding::Smtp(CapturedReview::capture(review)?),
+        DialogReview::Send(review) => DialogBinding::Send(CapturedReview::capture(review)?),
         DialogReview::ScopeRefresh(review) => {
             DialogBinding::ScopeRefresh(CapturedReview::capture(review)?)
         }

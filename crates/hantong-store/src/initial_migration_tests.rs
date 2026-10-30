@@ -107,7 +107,8 @@ fn sync01_v16_to_v17_preserves_all_frozen_rows_sequence_and_message_identity() {
         })
         .unwrap();
 
-    let store = f.open().unwrap();
+    let store = Store { connection: f.keyed() };
+    store.migrate_v16_to_v17().unwrap();
     store
         .with_connection(|c| {
             assert_eq!(
@@ -157,21 +158,22 @@ fn sync01_v16_to_v17_preserves_all_frozen_rows_sequence_and_message_identity() {
             )?;
             assert_eq!(after_identity, before_identity);
             assert_initial_tables_empty(c)?;
-            validate_schema(c, SCHEMA, 17)
+            validate_schema(c, SCHEMA_V17, 17)
         })
         .unwrap();
     assert!(f.0.join("data/backup-before-v16.db").is_file());
 }
 
 #[test]
-fn sync01_fresh_v17_has_exact_table_count_and_empty_initial_preview_ledgers() {
+fn sync01_fresh_v18_has_exact_table_count_and_empty_initial_preview_ledgers() {
     let f = Fixture::new();
     let store = f.open().unwrap();
     store
         .with_connection(|c| {
-            assert_eq!(product_table_names(c)?.len(), 35);
+            assert_eq!(product_table_names(c)?.len(), 41);
             assert_initial_tables_empty(c)?;
-            validate_schema(c, SCHEMA, 17)
+            assert_v18_tables_empty(c)?;
+            validate_schema(c, SCHEMA, 18)
         })
         .unwrap();
 }
@@ -212,7 +214,7 @@ fn sync01_v16_to_v17_validation_failure_rolls_back_schema_rows_and_sequence() {
         .unwrap();
 
     assert_eq!(
-        store.migrate_with_backup(16, 17, SCHEMA, |c| {
+        store.migrate_with_backup(16, 17, SCHEMA_V17, |c| {
             c.execute_batch(MIGRATION_V16_TO_V17)?;
             c.execute_batch("CREATE TABLE unexpected_initial_preview_schema(value)")
         }),

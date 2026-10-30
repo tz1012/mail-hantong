@@ -12,9 +12,9 @@ unsafe_code = "allow"
 unsafe_op_in_unsafe_fn = "deny"
 
 [dependencies]
+hantong-contracts = { path = "../hantong-contracts" }
 hantong-domain = { path = "../hantong-domain" }
 
-[dev-dependencies]
 serde_json = "=1.0.154"
 
 [target.'cfg(windows)'.dev-dependencies]

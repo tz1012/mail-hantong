@@ -7,6 +7,9 @@ license-file.workspace = true
 publish = false
 
 [dependencies]
+serde_json = "=1.0.154"
+hantong-ai = { path = "../../crates/hantong-ai" }
+hantong-platform = { path = "../../crates/hantong-platform" }
 hantong-contracts = { path = "../../crates/hantong-contracts" }
 hantong-ipc-client = { path = "../../crates/hantong-ipc-client" }
 

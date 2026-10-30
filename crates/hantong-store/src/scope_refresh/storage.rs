@@ -47,6 +47,7 @@ fn hash_payload(value: &CliScopeRefresh) -> Result<[u8; 32], ErrorCode> {
         3 => b"mail-hantong.cli-scope-refresh.v3\0".to_vec(),
         4 => b"mail-hantong.cli-scope-refresh.v4\0".to_vec(),
         5 => b"mail-hantong.cli-scope-refresh.v5\0".to_vec(),
+        6 => b"mail-hantong.cli-scope-refresh.v6\0".to_vec(),
         _ => return Err(ErrorCode::InternalError),
     };
     bytes.extend_from_slice(&value.refresh_id);
@@ -119,13 +120,46 @@ fn historical_rank(tools: &[String]) -> Option<u8> {
         ]
     {
         Some(4)
+    } else if tools
+        == [
+            "app.diagnostics.snapshot",
+            "app.settings.display.get",
+            "mail.accounts.list",
+            "mail.folders.list",
+            "mail.folders.refresh",
+            "mail.messages.get",
+            "mail.messages.search",
+            "mail.sync.page",
+        ]
+    {
+        Some(5)
+    } else if tools
+        == [
+            "app.diagnostics.snapshot",
+            "app.settings.display.get",
+            "mail.accounts.list",
+            "mail.drafts.create",
+            "mail.folders.list",
+            "mail.folders.refresh",
+            "mail.messages.get",
+            "mail.messages.search",
+            "mail.send.execute",
+            "mail.send.request",
+            "mail.sync.page",
+        ]
+    {
+        Some(6)
     } else {
         None
     }
 }
 fn historical_toolset(tools: &[String], hash_version: u8) -> bool {
-    (1..=5).contains(&hash_version)
-        && historical_rank(tools).is_some_and(|rank| rank < hash_version)
+    if hash_version == 6 {
+        historical_rank(tools).is_some()
+    } else {
+        (1..=5).contains(&hash_version)
+            && historical_rank(tools).is_some_and(|rank| rank < hash_version)
+    }
 }
 fn historical_transition(old: &[String], target: &[String], hash_version: u8) -> bool {
     historical_toolset(old, hash_version)
@@ -183,7 +217,45 @@ fn cli15_app_read_scope_historical_membership_and_transitions_are_closed() {
             }
         }
     }
-    for version in [0, 6, 255] {
+    let body = vec![
+        "app.diagnostics.snapshot",
+        "app.settings.display.get",
+        "mail.accounts.list",
+        "mail.folders.list",
+        "mail.folders.refresh",
+        "mail.messages.get",
+        "mail.messages.search",
+        "mail.sync.page",
+    ]
+    .into_iter()
+    .map(str::to_owned)
+    .collect::<Vec<_>>();
+    let send = vec![
+        "app.diagnostics.snapshot",
+        "app.settings.display.get",
+        "mail.accounts.list",
+        "mail.drafts.create",
+        "mail.folders.list",
+        "mail.folders.refresh",
+        "mail.messages.get",
+        "mail.messages.search",
+        "mail.send.execute",
+        "mail.send.request",
+        "mail.sync.page",
+    ]
+    .into_iter()
+    .map(str::to_owned)
+    .collect::<Vec<_>>();
+    for tools in [&body, &send] {
+        assert!(historical_toolset(tools, 6));
+        for version in 1..=5 {
+            assert!(!historical_toolset(tools, version))
+        }
+    }
+    assert!(historical_transition(&sets[4], &body, 6));
+    assert!(historical_transition(&body, &send, 6));
+    assert!(!historical_transition(&send, &body, 6));
+    for version in [0, 7, 255] {
         assert!(!historical_toolset(&sets[4], version));
     }
 }
@@ -276,6 +348,7 @@ fn read_row(
     base.version = base_version as u64;
     base.profile_epoch = epoch as u64;
     base.scope = RequestedScope::new(old, base_tools).map_err(|_| rusqlite::Error::InvalidQuery)?;
+    base.read_only = !base.scope.tools().iter().any(|t| t == "mail.send.execute");
     let value = CliScopeRefresh {
         refresh_id: id,
         hash_version: hash_version as u8,
@@ -299,7 +372,7 @@ fn read_row(
     Ok(value)
 }
 pub(super) fn context(connection: &Connection) -> Result<Option<Context>, ErrorCode> {
-    context_with_layout(connection, false, 5)
+    context_with_layout(connection, false, 6)
 }
 fn context_with_layout(
     connection: &Connection,
@@ -338,7 +411,12 @@ fn context_with_layout(
         || original.display_label != DEFAULT_CLI_LABEL
         || !historical_toolset(original.scope.tools(), 1)
         || !historical_toolset(registration.scope.tools(), maximum_hash_version)
-        || !registration.read_only
+        || registration.read_only
+            == registration
+                .scope
+                .tools()
+                .iter()
+                .any(|t| t == "mail.send.execute")
         || registration.requests_per_minute != 60
         || registration.approved_channel != "approval_helper"
         || registration.request_id == [0; 32]
@@ -405,6 +483,11 @@ pub(super) fn validate_history_v15(connection: &Connection) -> rusqlite::Result<
         .map_err(|_| rusqlite::Error::InvalidQuery)
 }
 
+pub(super) fn validate_history_v17(connection: &Connection) -> rusqlite::Result<()> {
+    context_with_layout(connection, false, 5)
+        .map(|_| ())
+        .map_err(|_| rusqlite::Error::InvalidQuery)
+}
 struct Authorized {
     scope: RequestedScope,
     version: Option<u64>,
@@ -663,7 +746,15 @@ pub(super) fn create(
     }
     let mut value = CliScopeRefresh {
         refresh_id: id,
-        hash_version: 5,
+        hash_version: if target_scope
+            .tools()
+            .iter()
+            .any(|t| t == "mail.messages.get")
+        {
+            6
+        } else {
+            5
+        },
         client_public_key_hash: hantong_platform::sha256(&base.public_key)
             .map_err(|_| ErrorCode::InternalError)?,
         base_registration: base,
@@ -843,12 +934,13 @@ pub(super) fn activate(
         ))?;
     }
     let changed = db(tx.execute(
-        "UPDATE client_registrations SET state='active',version=version+1,updated_at_utc_ms=?2 WHERE registration_id=?1 AND state='provisioning' AND profile_epoch=?3 AND version=?4",
+        "UPDATE client_registrations SET state='active',read_only=?5,version=version+1,updated_at_utc_ms=?2 WHERE registration_id=?1 AND state='provisioning' AND profile_epoch=?3 AND version=?4",
         params![
             staged.registration_id.as_slice(),
             now,
             staged.profile_epoch as i64,
             staged.version as i64,
+            !expected.target_tools.iter().any(|t|t=="mail.send.execute"),
         ],
     ))?;
     if changed != 1 {

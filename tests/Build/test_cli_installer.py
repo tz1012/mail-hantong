@@ -26,6 +26,28 @@ def held_file(path, share="None"):
             holder.communicate("release\n", timeout=10)
 @unittest.skipUnless(os.name == "nt" and shutil.which("pwsh"), "Windows PowerShell is required")
 class CliInstallerTests(unittest.TestCase):
+    def test_inst01_update_adds_only_owned_optional_launchers_and_uninstall_removes_them(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            installed = root / "installed"
+            first = self.bundle(root / "one", "1.0.0")
+            self.assertEqual(ps(INSTALL, "-Source", first, "-InstallRoot", installed).returncode, 0)
+            second = self.bundle(root / "two", "2.0.0")
+            manifest_path = second / "release-manifest.json"
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            for binary in ("hantong-mcp", "hantong-t"):
+                path = second / f"bin/{binary}.exe"
+                path.write_bytes(b"synthetic optional executable")
+                manifest["files"].append({"path": f"bin/{binary}.exe", "sha256": hashlib.sha256(path.read_bytes()).hexdigest(), "size": path.stat().st_size})
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+            result = ps(INSTALL, "-Source", second, "-InstallRoot", installed)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            for binary in ("hantong", "mail-hantong-core", "hantong-mcp", "hantong-t"):
+                self.assertTrue((installed / f"bin/{binary}.cmd").is_file())
+            result = ps(UNINSTALL, "-InstallRoot", installed)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertFalse((installed / "bin").exists())
+
     def bundle(self, root, version="0.1.0"):
         src = root / "bundle"; (src / "bin").mkdir(parents=True)
         for name, content in {"bin/hantong.exe": b"cli", "bin/mail-hantong-core.exe": b"core", "LICENSE": b"license"}.items(): (src / name).write_bytes(content)

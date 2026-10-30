@@ -165,7 +165,9 @@ where
         SetupCommand::Registration(registration_command) => {
             registration(registration_command).map(SetupReceipt::Registration)
         }
-        SetupCommand::Imap(_) | SetupCommand::ScopeRefresh(_) => Err(ErrorCode::InvalidInput),
+        SetupCommand::Imap(_) | SetupCommand::Smtp(_) | SetupCommand::ScopeRefresh(_) => {
+            Err(ErrorCode::InvalidInput)
+        }
     };
     dispatch_connection_with_setup(
         connection,
@@ -218,6 +220,7 @@ where
     } else {
         let response = if request.method.starts_with("registration.")
             || request.method.starts_with("setup.imap.")
+            || request.method.starts_with("setup.smtp.")
         {
             crate::setup_dispatch::response(&request, frame_length, setup)
         } else {
@@ -277,7 +280,9 @@ where
         SetupCommand::Registration(registration_command) => {
             registration(registration_command).map(SetupReceipt::Registration)
         }
-        SetupCommand::Imap(_) | SetupCommand::ScopeRefresh(_) => Err(ErrorCode::InvalidInput),
+        SetupCommand::Imap(_) | SetupCommand::Smtp(_) | SetupCommand::ScopeRefresh(_) => {
+            Err(ErrorCode::InvalidInput)
+        }
     };
     serve_until_with_setup(
         shutdown,

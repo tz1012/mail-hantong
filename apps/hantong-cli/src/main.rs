@@ -13,9 +13,13 @@ use hantong_contracts::scope_refresh::{
 };
 use std::env;
 use std::io::{self, Write};
+mod ai;
 mod diagnostics;
 mod initial_sync;
+mod mail_send;
+mod message_body;
 mod search;
+mod smtp_setup;
 mod sync;
 
 const EN_RESOURCES: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/resources/en.txt"));
@@ -676,7 +680,18 @@ fn run_with_mail_actions(
                 };
                 setup_options.push((arg, value));
             }
-            "--account"
+            "--message-id"
+            | "--to"
+            | "--subject"
+            | "--body-file"
+            | "--draft-id"
+            | "--payload-hash"
+            | "--expected-version"
+            | "--review-id"
+            | "--uidvalidity"
+            | "--uid"
+            | "--max-bytes"
+            | "--account"
             | "--limit"
             | "--cursor"
             | "--expected-generation"
@@ -711,6 +726,13 @@ fn run_with_mail_actions(
                 }
                 want_version = true;
             }
+            "--prompt" if command.first().map(String::as_str) == Some("ai") => {
+                let Some(value) = it.next() else {
+                    return emit_error(ErrorCode::InvalidInput, lang, json);
+                };
+                command.push("--prompt".into());
+                command.push(value);
+            }
             value if value.starts_with('-') => {
                 return emit_error(ErrorCode::InvalidInput, lang, json);
             }
@@ -729,10 +751,17 @@ fn run_with_mail_actions(
     if (want_help || want_version) && !command.is_empty() {
         return emit_error(ErrorCode::InvalidInput, lang, json);
     }
+    if command.first().map(String::as_str) == Some("setup")
+        && command.get(1).map(String::as_str) == Some("smtp")
+    {
+        let mut options = setup_options.clone();
+        options.extend(folder_options.iter().cloned());
+        return smtp_setup::run(&command, &options, lang, json);
+    }
     if !folder_options.is_empty()
         && !matches!(
             command.first().map(String::as_str),
-            Some("folders" | "sync" | "search" | "diagnostics")
+            Some("folders" | "sync" | "search" | "read" | "draft" | "send" | "diagnostics")
         )
     {
         return emit_error(ErrorCode::InvalidInput, lang, json);
@@ -753,6 +782,9 @@ fn run_with_mail_actions(
     if !setup_options.is_empty() {
         return emit_error(ErrorCode::InvalidInput, lang, json);
     }
+    if let Some(code) = ai::try_run(&command, matches!(lang, Lang::Ko), json, seen_no_input) {
+        return code;
+    }
     let mut resolve_lang =
         || resolve_display_language(lang, seen_lang, json, &mut display_settings);
     if command.first().is_some_and(|v| v == "diagnostics") {
@@ -767,6 +799,14 @@ fn run_with_mail_actions(
             &mut sync_action,
             &mut resolve_lang,
         );
+    }
+    if command.first().is_some_and(|v| v == "draft" || v == "send")
+        && !matches!(command.as_slice(),[a,b] if a=="send"&&b=="execute")
+    {
+        return mail_send::run(&command, &folder_options, lang, json, &mut resolve_lang);
+    }
+    if command.first().is_some_and(|v| v == "read") {
+        return message_body::run(&command, &folder_options, lang, json, &mut resolve_lang);
     }
     if command.first().is_some_and(|v| v == "search") {
         return search::run(&command, &folder_options, lang, json, &mut resolve_lang);

@@ -13,7 +13,7 @@ mod trusted_profile;
 #[cfg(windows)]
 pub use trusted_profile::{
     AuthenticatedDefaultProfile, AuthenticatedGuiProfile, authenticate_default,
-    authenticate_default_app_read, authenticate_gui, verify_default,
+    authenticate_default_app_read, authenticate_gui, authenticate_mcp, verify_default,
 };
 
 pub mod accounts;
@@ -23,6 +23,8 @@ pub mod display_settings;
 pub mod folders;
 pub mod imap_setup;
 pub mod initial_sync;
+pub mod mail_send;
+pub mod message_body;
 pub mod message_search;
 pub mod profile;
 pub mod registration;
@@ -371,3 +373,5 @@ mod tests {
 }
 
 pub mod scope_refresh;
+
+pub mod smtp_setup;

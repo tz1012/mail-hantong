@@ -8,7 +8,10 @@ use hantong_contracts::{
 use serde_json::{Value, json};
 
 pub fn parse(request: &RpcRequest) -> Result<RegistrationCommand, ErrorCode> {
+    let mcp = request.method.starts_with("registration.mcp.");
     let (status, gui) = match request.method.as_str() {
+        "registration.mcp.request" => (false, false),
+        "registration.mcp.status" => (true, false),
         "registration.request" => (false, false),
         "registration.status" => (true, false),
         "registration.gui.request" => (false, true),
@@ -27,7 +30,9 @@ pub fn parse(request: &RpcRequest) -> Result<RegistrationCommand, ErrorCode> {
         return Err(ErrorCode::VersionMismatch);
     }
     if !status {
-        return Ok(if gui {
+        return Ok(if mcp {
+            RegistrationCommand::McpRequest
+        } else if gui {
             RegistrationCommand::GuiRequest
         } else {
             RegistrationCommand::Request
@@ -42,7 +47,9 @@ pub fn parse(request: &RpcRequest) -> Result<RegistrationCommand, ErrorCode> {
     if id == [0; 32] {
         return Err(ErrorCode::InvalidInput);
     }
-    Ok(if gui {
+    Ok(if mcp {
+        RegistrationCommand::McpStatus(id)
+    } else if gui {
         RegistrationCommand::GuiStatus(id)
     } else {
         RegistrationCommand::Status(id)
@@ -105,6 +112,46 @@ mod tests {
             );
         }
         let body = br#"{"jsonrpc":"2.0","id":"g","method":"registration.gui.status","params":{"protocol_version":1,"protocol_version":1}}"#;
+        let mut frame = (body.len() as u32).to_le_bytes().to_vec();
+        frame.extend(body);
+        assert_eq!(crate::decode_request(&frame), Err(ErrorCode::InvalidInput));
+    }
+    #[test]
+    fn sec03_mcp_registration_routes_fixed_kind_and_rejects_authority_fields() {
+        assert_eq!(
+            parse(&request(
+                "registration.mcp.request",
+                json!({"protocol_version":1})
+            )),
+            Ok(RegistrationCommand::McpRequest)
+        );
+        assert_eq!(
+            parse(&request(
+                "registration.mcp.status",
+                json!({"protocol_version":1,"request_id":wire_hex::encode(&[1;32])})
+            )),
+            Ok(RegistrationCommand::McpStatus([1; 32]))
+        );
+        for params in [
+            json!(null),
+            json!([]),
+            json!({}),
+            json!({"protocol_version":1,"client_kind":"mcp"}),
+            json!({"protocol_version":1,"approved":true}),
+            json!({"protocol_version":1,"scope":[]}),
+        ] {
+            assert_eq!(
+                parse(&request("registration.mcp.request", params)),
+                Err(ErrorCode::InvalidInput)
+            );
+        }
+        for method in ["registration.mcp.approve", "registration.mcp.activate"] {
+            assert_eq!(
+                parse(&request(method, json!({"protocol_version":1}))),
+                Err(ErrorCode::InvalidInput)
+            );
+        }
+        let body = br#"{"jsonrpc":"2.0","id":"g","method":"registration.mcp.status","params":{"protocol_version":1,"protocol_version":1}}"#;
         let mut frame = (body.len() as u32).to_le_bytes().to_vec();
         frame.extend(body);
         assert_eq!(crate::decode_request(&frame), Err(ErrorCode::InvalidInput));

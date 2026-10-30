@@ -47,6 +47,18 @@ class ToolSchemaContractTests(unittest.TestCase):
             {"account_id", "draft_id", "operation_id", "expected_version", "payload_hash", "approval_id", "idempotency_key"},
         )
 
+    def test_mail03_body_request_binds_shared_envelope_and_exact_locator_variants(self):
+        body = self.load("mail.messages.get.schema.json")
+        self.assertEqual(set(body["required"]), {"schema_version", "request_id", "tool", "params"})
+        self.assertFalse(body["additionalProperties"])
+        self.assertEqual(body["properties"]["tool"]["const"], "mail.messages.get")
+        variants = body["properties"]["params"]["oneOf"]
+        self.assertEqual({v["properties"]["mode"]["const"] for v in variants}, {"imap_body", "locator"})
+        for variant in variants:
+            self.assertFalse(variant["additionalProperties"])
+            self.assertIn("account_id", variant["required"])
+            self.assertIn("max_bytes", variant["required"])
+
 
 if __name__ == "__main__":
     unittest.main()

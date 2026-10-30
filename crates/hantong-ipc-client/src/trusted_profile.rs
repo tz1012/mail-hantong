@@ -88,6 +88,11 @@ pub async fn authenticate_gui()
         .map(AuthenticatedGuiProfile)
 }
 
+pub async fn authenticate_mcp()
+-> Result<AuthenticatedDefaultProfile<impl AsyncRead + AsyncWrite + Unpin>, ErrorCode> {
+    authenticate_profile(ProfileSelector::Mcp, None).await
+}
+
 async fn authenticate_default_for(
     app_read: Option<AppReadTool>,
 ) -> Result<AuthenticatedDefaultProfile<impl AsyncRead + AsyncWrite + Unpin>, ErrorCode> {
@@ -100,6 +105,7 @@ async fn authenticate_profile(
     let loaded = match selected {
         ProfileSelector::Default => hantong_platform::load_default_client_profile()?,
         ProfileSelector::Gui => hantong_platform::load_gui_client_profile()?,
+        ProfileSelector::Mcp => hantong_platform::load_mcp_client_profile()?,
     };
     let profile = parse_selected_profile(loaded.bytes(), selected)?;
     let now = std::time::SystemTime::now()
@@ -111,6 +117,11 @@ async fn authenticate_profile(
     let pending = match (selected, app_read) {
         (ProfileSelector::Default, Some(tool)) => prepare_app_profile(&profile, tool, now)?,
         (ProfileSelector::Default, None) => prepare_profile(&profile, now)?,
+        (ProfileSelector::Mcp, None) => {
+            require_selector(&profile, ProfileSelector::Mcp)?;
+            prepare_profile_with_scope(&profile, profile.scope().clone(), now)?
+        }
+        (ProfileSelector::Mcp, Some(_)) => return Err(ErrorCode::ScopeDenied),
         (ProfileSelector::Gui, None) => prepare_gui_profile(&profile, now)?,
         (ProfileSelector::Gui, Some(_)) => return Err(ErrorCode::ScopeDenied),
     };
@@ -118,6 +129,7 @@ async fn authenticate_profile(
     let id = match selected {
         ProfileSelector::Default => "default-profile-auth-1",
         ProfileSelector::Gui => "gui-profile-auth-1",
+        ProfileSelector::Mcp => "mcp-profile-auth-1",
     };
     let client = authenticated_wire::authenticate(pending, id).await?;
     Ok(AuthenticatedDefaultProfile {
@@ -741,5 +753,41 @@ mod tests {
             ClientSigningKey::open_for_registration(id),
             Err(ErrorCode::NotFound)
         ));
+    }
+}
+
+#[cfg(test)]
+mod mcp_identity_tests {
+    use super::*;
+    #[test]
+    fn mcp03_parsed_profiles_cannot_switch_cli_gui_and_mcp_identities() {
+        let mut key = [1_u8; 72];
+        key[..8].copy_from_slice(b"ECS1\x20\0\0\0");
+        let profile =
+            ParsedClientProfile::new_mcp([1; 16], [2; 32], key, key, 1, vec!["A".into()]).unwrap();
+        let bytes = profile.to_json().unwrap();
+        assert_eq!(
+            parse_selected_profile(&bytes, ProfileSelector::Mcp).unwrap(),
+            profile
+        );
+        assert_eq!(
+            parse_selected_profile(&bytes, ProfileSelector::Default),
+            Err(ErrorCode::AuthRequired)
+        );
+        assert_eq!(
+            parse_selected_profile(&bytes, ProfileSelector::Gui),
+            Err(ErrorCode::AuthRequired)
+        );
+        assert!(matches!(
+            prepare_app_profile(&profile, AppReadTool::DiagnosticsSnapshot, 1),
+            Err(ErrorCode::AuthRequired)
+        ));
+        assert!(
+            !profile
+                .scope()
+                .tools()
+                .iter()
+                .any(|tool| tool.starts_with("app.") || tool.contains("send"))
+        );
     }
 }

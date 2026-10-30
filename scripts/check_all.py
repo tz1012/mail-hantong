@@ -42,7 +42,8 @@ def run_checks(root: Path = ROOT) -> int:
     env["HANTONG_CHECK_ALL"] = "1"
     for command in commands:
         print("+", " ".join(command), flush=True)
-        timeout = 1800 if command[:2] == ["cargo", "build"] else 600
+        # Clippy also builds vendored SQLCipher/OpenSSL on a fresh runner.
+        timeout = 1800 if command[:2] in (["cargo", "build"], ["cargo", "clippy"]) else 600
         try:
             completed = subprocess.run(command, cwd=root, env=env, check=False, timeout=timeout)
         except subprocess.TimeoutExpired:

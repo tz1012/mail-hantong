@@ -42,7 +42,7 @@ fn prepare_for_pin(store: &Store, pin: [u8; 32]) -> Result<CliScopeRefresh, Erro
         hantong_platform::random_nonce()?,
         RequestedScope::new(
             store.list_registrable_account_ids()?,
-            hantong_contracts::auth::default_cli_app_read_tools(),
+            hantong_contracts::auth::default_cli_send_tools(),
         )?,
         pin,
     )

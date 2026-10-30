@@ -10,15 +10,17 @@
 
 ## 현재 상태
 
-**우선순위 변경(사용자 지시, 2026-10-30): GUI보다 CLI 출시를 먼저 진행한다.** GUI 진행 파일은 보존하고 추가 디자인 작업을 중단했다. 상단 폴더 드롭다운 제거·왼쪽 실제 폴더 통합·스크롤 끝 자동 추가 로딩은 아직 미구현으로 후속에 남긴다. CLI는 터미널 명령형이며 전체 화면 TUI는 아니다. 코어는 별도 프로세스이고 계정 비밀번호 입력·등록/권한 승인은 보호된 Windows 창을 유지한다.
+2026-10-30 CLI preview.3 기능 묶음: 본문 읽기·암호화 캐시, 초안 작성, 개별 native 승인 발송 원장·SMTP, 최초 SMTP 보호 설정, 독립 MCP 등록·도구 조회/호출, Codex/Claude Console AI 대화, 공급자/모델/추론/fast/agent 세션 제어와 한 줄 설치를 연결했다. `/provider`와 `/provide`를 같은 명령으로 받고, 값 없는 공급자·모델·모드 명령은 상하키 선택을 제공한다. 최종 전체 검사 **1,565개 통과** 후 공개 저장소 [tz1012/mail-hantong](https://github.com/tz1012/mail-hantong)에 새 소스·개발 미리보기를 게시하는 단계다. 아래 preview.2의 1,450개는 직전 기준선으로 보존한다. 보안·계약 변경은 **[사람 검토 필요]**다.
 
-현재 CLI 구현 범위의 Windows x64 개발 미리보기 ZIP, 체크섬·의존성 고지, 로컬 설치/제거 스크립트, 영한 사용 안내를 만들고 검증했다. 최신 산출물은 `artifacts/cli/0.1.0-preview.2/`다. 이 미리보기는 작업 PC의 로컬 산출물이며 본문·첨부·작성·발송·예약·주소록·자동화까지 완료한 정식 출시가 아니다. 공개 GitHub remote/릴리스는 아직 생성하지 않았다.
+**우선순위 변경(사용자 지시, 2026-10-30): GUI보다 CLI 출시를 먼저 진행한다.** GUI 진행 파일은 보존하고 추가 디자인 작업을 중단했다. 상단 폴더 드롭다운 제거·왼쪽 실제 폴더 통합·스크롤 끝 자동 추가 로딩은 후속에 남긴다. 코어는 별도 프로세스이고 계정 비밀번호 입력·등록/권한 승인은 보호된 Windows 창을 유지한다.
+
+직전 검증 산출물은 `artifacts/cli/0.1.0-preview.2/`에 보존한다. 새 label은 `0.1.0-preview.3`이다. 미리보기는 완성된 정식 제품을 뜻하지 않는다. 첨부·예약·주소록·규칙 자동화·실제 제공자 상호 운용성과 사람 보안 검토가 남아 있다.
 
 | 항목 | 상태와 근거 |
 | --- | --- |
 | 기준 자료 | 사용자 승인으로 채택한 [Markdown 기준 요건](../requirements/README.md): 요건 170개·1단계 P0 144개·문장별 AC ID 341개. 작업 카드 정의 151개는 보존한다. |
 | 현재 카드 | 사용자 우선 지시에 따른 **CLI 개발 미리보기의 로컬 패키지·설치 검증**을 마쳤다. M9-10/11/15/16의 전체 설치·새 OS·서명·출시 게이트 완료가 아니다. M8 GUI 진행 파일은 보존했다. 보안·계약은 **사람 검토 필요**다. |
-| 최신 검증 | **1,450개 통과**(문서 29·빌드 도구 81·Rust 1,340). check-all 전체 build/test/fmt/Clippy·의존/문서/추적 검사 통과. CLI의 Linux x86_64·macOS arm64 대상 Clippy 통과 후 CLI Rust 소스 변경 없음. 실제 ZIP의 Windows PowerShell 5.1 설치·preview.1→2 업데이트·재설치·제거 검증 통과. 실제 Mac 실행·새 OS 시험·전체 기능 완료를 뜻하지 않는다. |
+| 최신 검증 | **1,565개 통과**(문서 29·빌드 도구 88·Rust 1,448). check-all 전체 build/test/fmt/Clippy·의존/문서/추적 검사 통과. CLI의 Linux x86_64·macOS arm64 대상 Clippy 통과 후 CLI Rust 소스 변경 없음. 실제 ZIP의 Windows PowerShell 5.1 설치·preview.1→2 업데이트·재설치·제거 검증 통과. 실제 Mac 실행·새 OS 시험·전체 기능 완료를 뜻하지 않는다. |
 | 제품 구현 | Rust workspace·영/한 CLI·Windows 코어/인증 IPC·DPAPI·SQLCipher·설정 검증·정책/감사·보호 등록/계정 설정 구현. 폴더·UID 수집/대조/복구·관측 요약·로컬 제목/발신자 목록과 GUI 메타데이터 읽기를 연결했다. CLI 미리보기 설치는 로컬 검증을 마쳤으며, 본문·첨부·발송·전체 GUI와 실제 제공자 검증은 미완료다. |
 | GitHub | 로컬 Git main 저장소를 초기화해 개발 기준선을 기록한다. 공개 저장소 주소·remote·릴리스·패키지 ID는 아직 없음. 빌드 산출물·실행 데이터·에이전트 상태는 제외한다. |
 | 새 사용자 요청 | 진행 상황을 이 문서에 누적하고, GitHub에서 명령어로 설치 및 개발을 시작할 수 있는 경로를 마련한다. 상세 범위는 [공개와 설치 계획](DISTRIBUTION.md)에 기록한다. |
@@ -28,6 +30,20 @@
 | Mac 지원 방향 | 사용자 승인으로 정식 후속 목표에 포함했다. Windows 우선 출시 후 Mac 코어·CLI·최소 승인 도우미부터 제공하고 전체 GUI를 후속 제공한다. 구체적인 단계·일정·패키지는 미정이며 현재 제품은 미구현이다. |
 | 공개 사용 정책 | **[LICENSE Version 1.0](../../LICENSE) 정식 채택** — 개인·회사 내부 업무용 사용, 수정본 비공개 및 원본·수정본 무료 재배포 허용. 프로그램 판매·유료 제공 금지. 고지 유지·수정 표시·보증과 책임 조항 포함. 저작권자는 **Andrew Cho**, 웹사이트 **https://tzt.kr**, 연락처 **andrew@tzt.kr**이다. [한국어 안내](LICENSING.md), [ADR-016](../adr/ADR-016-license.md). |
 | 다음 제품 작업 | CLI 미리보기 검증 기준선을 보존하고 본문/첨부·작성/임시보관·승인 Outbox 등 메일 기능을 이어간다. GUI 추가 디자인·자동 추가 로딩·상단 폴더 선택 제거는 후속 범위다. |
+
+## CLI preview.3 — 본문·승인 발송·AI·MCP·명령 설치 (2026-10-30)
+
+- 본문은 인증 IPC·정책·감사를 거쳐 읽기 전용 IMAP EXAMINE/BODY.PEEK[]로 수집하고 SQLCipher에 저장한다. 계정·정확한 mailbox·UIDVALIDITY·UID·endpoint 버전을 결속한다. 제한된 MIME plain/HTML text 해독, 영한 문자열, 제어문자 제거, 최대 64KiB 표시를 연결했다. 첨부·외부 이미지 실행은 후속이다.
+- 초안은 계정·수신자·제목·전체 UTF-8 본문 hash를 검증해 불변 버전1로 저장한다. native 창이 전체 메시지와 SMTP 대상·발신자를 표시하고 OS 사람 확인을 요구한다. opaque proof 소비·현재 권한/epoch/계정/endpoint 재검사·정책/감사를 통과해야 단 한 번의 Sending claim을 커밋한다. 응답 불확실·도중 권한 변경·시작 시 미완료 sending은 SEND_UNKNOWN이며 자동 재전송하지 않는다. 최초 SMTP 설정도 보호 입력·계정 버전 CAS를 사용한다.
+- MCP는 CLI와 다른 등록·CNG 키·mcp.json·native v2 proof를 사용한다. 새 full9 등록은 직접 실행 RPC를 제외한8개 도구만 광고한다. legacy read3는 명시 재검토 후 새 주체로 교체하고 원자적 폐기·lineage·보호 프로필 CAS를 기록한다. 계정별 외부 AI 동의는 확인된 활성화와 같은 트랜잭션에만 생성하며 업데이트·시작으로 부여하지 않는다.
+- AI는 공식 Codex app-server 관리 인증 및 Claude Console/API 과금 연결을 사용한다. 실제 공급자 로그인·추론은 수행하지 않았고 가짜 프로세스/모델 목록으로 검증했다. Claude 구독 OAuth는 제공하지 않는다. 기본 mail context·범용 shell/filesystem/web 도구는 꺼져 있으며 `/agent on`은 별도 MCP 등록과 계정 동의가 필요하다. 공급자/모델 전환·agent off는 이전 메일 문맥을 재사용하지 않는다.
+- `/provider`와 `/provide`, `/model`, `/mode`의 값 없는 입력은 ↑↓·Enter·Esc를 지원한다. 비대화형/JSON/no-input은 메뉴를 열지 않는다. mode는 모델의 실제 low/medium/high/xhigh/max 지원 범위로 제한한다. `/fast on|off`는 실제 서비스 설정만 요청하며 미지원은 거부한다. `/agent`·`/fast` 단독은 상태를 표시한다.
+- 루트 `install.ps1` 한 줄 부트스트랩은 GitHub의 호환 ZIP·체크섬·크기·압축 경로를 검증한다. 사용자 PATH에 소유한 항목만 추가하고 제거하며 다른 PATH와 데이터는 보존한다. Windows PowerShell5.1 Restricted 파일 정책에서도 시스템/사용자 정책 변경 없이 검증된 스크립트 내용을 실행하는 시험5개가 통과했다.
+- 전체 `target/cli-preview3-final-check.log` exit0: **1,565개**(문서29·빌드 도구88·Rust1,448), fmt·Clippy·build·아키텍처·요건 검사 통과. 로그 SHA-256 `9533798ed72bc6f250d1ec21fb9f97ce0f2433a38b7528d2098ff9fb4c0e2052`. 동결 후 Windows Clippy/fmt 및 Linux 전체 target 교차 Clippy도 통과했다. 최종 추적·패키지 소스 hash는 `0c39d71f42e61d5aa2b92cd5acae08f49e42ce019da54e813a4859c7b31a7c7e`다. 추적표는 개별 AC의 사람 검토·공급자 증거가 없는 항목을 통과로 승격하지 않는다.
+- 실제 ZIP으로 preview.2 설치→preview.3 업데이트·반복→설치된 영/한 도움말·JSON 종료 코드→제거를 시험했다. 공백/한글 경로와 알 수 없는 파일·데이터를 보존했다. 로그 `target/cli-preview3-package-upgrade-smoke.log` exit0, SHA-256 `b608c337a8d8b8375e1d9ade7d36cd11f83f07da21dbba64dba3b6b70b886022`. 최종 AI mode 수정 후 CLI·build metadata·manifest만 달라졌으며 설치 스크립트와 다른 실행 파일은 시험한 바이트와 같음을 대조했다. 최종 네 실행 파일의 help/version·PE·각 manifest checksum도 다시 검증했다.
+- 최종 ZIP `artifacts/cli/0.1.0-preview.3/mail-hantong-cli-0.1.0-preview.3-windows-x86_64.zip`: **20,731,868 bytes**, SHA-256 `c77c85cc9077086022659a37cda19f502b76f900a81919a18177fdaaa29ab146`. 정적 MSVC CRT, Windows 시스템 DLL만 사용함을 확인했다. 의존성 고지134개 포함; 법적 검토·SBOM 완전성을 주장하지 않는다. 실토큰 패턴 검사0건. 앞선 후보들은 별도 rejected 디렉터리에 보존했다.
+- 통합 수정: SMTP recipient550를 lettre 예외와 구분해 명확한 거부로 기록, post-DATA 연결 유실은 Uncertain 유지, SMTP 입력의 IMAP-caption/저장 경로 혼용 차단, 취소/만료/rate/정책 실패 receipt와 strict decoder 정합성, 역사적35개 테이블 보존·새6개 무동의·rollback·backup collision, 새 패키지 그래프 시험/JSON schema ID·공통 envelope, Windows TEMP 8.3 fixture 경로, Clippy 첫 native 빌드 timeout을 보완했다. 시험을 삭제·건너뛰기로 바꾸지 않았다.
+- **[사람 검토 필요]**: 승인·비밀·정책·발송·IPC·계약 변경. 실제 계정/서비스/Hello/외부 추론은 사용하지 않았다. 서명·깨끗한 Windows·실제 IMAP/SMTP 및 AI 공급자 상호 운용성, 첨부·예약·주소록·규칙, Mac 제품은 남아 있다. 이번 배포는 완성된 정식 제품이나 전체 출시 게이트의 통과가 아니다.
 
 ## CLI preview.2 — 진단 권한 연결 수정 (2026-10-30)
 

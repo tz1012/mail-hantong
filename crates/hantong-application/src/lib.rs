@@ -22,7 +22,8 @@ pub use diagnostic_snapshot::{
 
 mod tool_request;
 pub use tool_request::{
-    AccountsListRequest, FolderRefreshAction, SendExecuteRequest, ToolRequest, UidPageAction,
+    AccountsListRequest, FolderRefreshAction, SendExecuteRequest, SendReviewAction, ToolRequest,
+    UidPageAction,
 };
 mod uid_page_response;
 pub use uid_page_response::{

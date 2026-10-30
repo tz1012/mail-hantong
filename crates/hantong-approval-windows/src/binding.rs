@@ -142,6 +142,31 @@ impl CapturedReview<ScopeRefreshReview> {
     }
 }
 
+impl CapturedReview<SendReview> {
+    pub(super) fn into_verified(self) -> Result<VerifiedSend, ErrorCode> {
+        let verified_at_utc_ms = self.verification_time()?;
+        Ok(VerifiedSend {
+            binding: self,
+            verified_at_utc_ms,
+        })
+    }
+}
+
+impl CapturedReview<SmtpSetupReview> {
+    pub(super) fn into_verified_smtp(
+        self,
+        pending: hantong_secrets::PendingImapCredential,
+    ) -> Result<VerifiedSmtpSetup, ErrorCode> {
+        crate::setup_binding::validate_pending(self.review.capture_review(), &pending)?;
+        let verified_at_utc_ms = self.verification_time()?;
+        Ok(VerifiedSmtpSetup {
+            binding: self,
+            verified_at_utc_ms,
+            pending,
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -209,6 +234,141 @@ mod tests {
             session: [4; 32],
             nonce: [5; 32],
         }
+    }
+    fn outgoing_review() -> SendReview {
+        let endpoint = hantong_domain::mail_connection::MailConnectionConfig::from_json(
+            br#"{"schema_version":1,"account_id":"acct","imap":{"settings_version":1,"host":"imap.example","port":993,"tls":"implicit_tls","login_name":"sender@example.com","authentication":"app_password"},"smtp":{"settings_version":1,"host":"smtp.example","port":587,"tls":"starttls_required","login_name":"sender@example.com","authentication":"app_password"}}"#,
+        ).unwrap().smtp().unwrap().clone();
+        SendReview {
+            review_id: [1; 32],
+            owner_registration_id: [2; 16],
+            profile_epoch: 3,
+            account_version: 4,
+            endpoint,
+            draft: hantong_contracts::mail_send::DraftCreateRequest::new(
+                "acct",
+                vec!["to@example.com".into()],
+                "subject".into(),
+                "body".into(),
+                "draft",
+                "draft",
+                0,
+                [5; 32],
+            )
+            .unwrap(),
+            request: hantong_contracts::mail_send::SendReviewRequest::new(
+                "acct", [6; 32], 1, "send", "send", [5; 32],
+            )
+            .unwrap(),
+            created_at_utc_ms: 1000,
+            expires_at_utc_ms: 301000,
+        }
+    }
+    fn captured_value<R: ReviewSnapshot>(review: R) -> CapturedReview<R> {
+        CapturedReview {
+            review,
+            started: Instant::now(),
+            captured_at_utc_ms: 1500,
+            user: context(8),
+            session: [4; 32],
+            nonce: [5; 32],
+        }
+    }
+    #[test]
+    fn apr01_send_verification_binds_every_content_endpoint_identity_and_version() {
+        let review = outgoing_review();
+        review.validate().unwrap();
+        let mut substitutions = Vec::new();
+        let mut push = |change: fn(&mut SendReview)| {
+            let mut r = review.clone();
+            change(&mut r);
+            substitutions.push(r);
+        };
+        push(|r| r.review_id = [7; 32]);
+        push(|r| r.owner_registration_id = [7; 16]);
+        push(|r| r.profile_epoch += 1);
+        push(|r| r.account_version += 1);
+        push(|r| r.expires_at_utc_ms -= 1);
+        push(|r| {
+            r.request = hantong_contracts::mail_send::SendReviewRequest::new(
+                "acct", [7; 32], 2, "other", "other", [5; 32],
+            )
+            .unwrap()
+        });
+        push(|r| {
+            r.draft = hantong_contracts::mail_send::DraftCreateRequest::new(
+                "acct",
+                vec!["other@example.com".into()],
+                "changed".into(),
+                "changed".into(),
+                "other",
+                "other",
+                0,
+                [5; 32],
+            )
+            .unwrap()
+        });
+        push(|r| {
+            r.endpoint=hantong_domain::mail_connection::MailConnectionConfig::from_json(br#"{"schema_version":1,"account_id":"acct","imap":{"settings_version":1,"host":"imap.example","port":993,"tls":"implicit_tls","login_name":"sender@example.com","authentication":"app_password"},"smtp":{"settings_version":2,"host":"other.example","port":465,"tls":"implicit_tls","login_name":"other@example.com","authentication":"app_password"}}"#).unwrap().smtp().unwrap().clone()
+        });
+        let captured = captured_value(review.clone());
+        for changed in substitutions {
+            assert_eq!(
+                captured.validate_at(&changed, 2000, Duration::ZERO, &context(8)),
+                Err(ErrorCode::ScopeDenied)
+            );
+        }
+        assert_eq!(
+            captured.validate_at(&review, 2000, Duration::ZERO, &context(9)),
+            Err(ErrorCode::ScopeDenied)
+        );
+        assert_eq!(
+            captured.validate_at(&review, 301000, Duration::ZERO, &context(8)),
+            Err(ErrorCode::ApprovalExpired)
+        );
+        assert_eq!(
+            captured.consume_at(&review, 2000, 2001, Duration::from_secs(1), &context(8)),
+            Ok(review)
+        );
+    }
+    #[test]
+    fn setup01_smtp_binding_rejects_account_version_or_cross_protocol_snapshot_substitution() {
+        let endpoint = outgoing_review().endpoint;
+        let setup = setup_review(None);
+        let mirror=hantong_domain::mail_connection::MailConnectionConfig::from_json(br#"{"schema_version":1,"account_id":"acct","imap":{"settings_version":1,"host":"smtp.example","port":587,"tls":"starttls_required","login_name":"sender@example.com","authentication":"app_password"}}"#).unwrap().imap().clone();
+        let capture = AccountSetupReview::new(
+            setup.draft().clone(),
+            mirror,
+            [1; 32],
+            [2; 32],
+            [3; 32],
+            1000,
+            301000,
+        )
+        .unwrap();
+        let review = SmtpSetupReview::new(capture.clone(), endpoint.clone(), 1).unwrap();
+        let captured = captured_value(review.clone());
+        assert_eq!(
+            captured.validate_at(
+                &SmtpSetupReview::new(capture, endpoint.clone(), 2).unwrap(),
+                2000,
+                Duration::ZERO,
+                &context(8)
+            ),
+            Err(ErrorCode::ScopeDenied)
+        );
+        assert_eq!(
+            SmtpSetupReview::new(setup, endpoint, 1),
+            Err(ErrorCode::InvalidInput)
+        );
+        assert_eq!(
+            captured.validate_at(&review, 2000, Duration::ZERO, &context(9)),
+            Err(ErrorCode::ScopeDenied)
+        );
+        assert_eq!(
+            captured.consume_at(&review, 2000, 1999, Duration::ZERO, &context(8)),
+            Err(ErrorCode::ApprovalExpired)
+        );
     }
     #[test]
     fn inst05_setup_binding_requires_exact_display_and_current_logon() {

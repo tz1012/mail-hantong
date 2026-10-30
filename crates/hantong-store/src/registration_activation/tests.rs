@@ -1,5 +1,7 @@
 use super::*;
 mod gui_tests;
+mod mcp_tests;
+mod send_tests;
 use crate::RegistrationState;
 use hantong_contracts::{auth::RequestedScope, wire_hex};
 use rusqlite::params;

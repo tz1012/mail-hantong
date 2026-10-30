@@ -212,6 +212,43 @@ pub(super) fn input_account(s: &str) -> Result<(), ErrorCode> {
 }
 
 impl Store {
+    pub fn smtp_setup_account_version(&self, account: &str) -> Result<u64, ErrorCode> {
+        input_account(account)?;
+        #[cfg(windows)]
+        {
+            self.mail_transaction(TransactionBehavior::Deferred, |tx| {
+                check_account(tx, account)?;
+                let v = db(tx.query_row(
+                    "SELECT settings_version FROM accounts WHERE account_id=?1",
+                    [account],
+                    |r| r.get::<_, i64>(0),
+                ))?;
+                u64::try_from(v)
+                    .ok()
+                    .filter(|v| *v > 0)
+                    .ok_or(ErrorCode::InternalError)
+            })
+        }
+        #[cfg(not(windows))]
+        {
+            Err(ErrorCode::CapabilityUnsupported)
+        }
+    }
+    pub fn put_initial_smtp_connection(
+        &self,
+        account: &str,
+        endpoint: &SmtpEndpointConfig,
+        mutation: &MailMutation,
+        account_version: u64,
+    ) -> Result<u64, ErrorCode> {
+        if mutation.expected_version() != 0
+            || endpoint.settings_version() != 1
+            || account_version == 0
+        {
+            return Err(ErrorCode::InvalidInput);
+        }
+        self.put_connection_bound(account, endpoint.into(), mutation, Some(account_version))
+    }
     pub fn put_imap_connection(
         &self,
         account: &str,
@@ -313,17 +350,28 @@ impl Store {
         e: Endpoint<'_>,
         m: &MailMutation,
     ) -> Result<u64, ErrorCode> {
+        self.put_connection_bound(account, e, m, None)
+    }
+    fn put_connection_bound(
+        &self,
+        account: &str,
+        e: Endpoint<'_>,
+        m: &MailMutation,
+        account_version: Option<u64>,
+    ) -> Result<u64, ErrorCode> {
         let hash = payload_hash(account, e, m.expected_version)?;
         if hash != m.payload_hash {
             return Err(ErrorCode::InvalidInput);
         }
         #[cfg(not(windows))]
         {
+            let _ = account_version;
             Err(ErrorCode::CapabilityUnsupported)
         }
         #[cfg(windows)]
         {
             self.mail_transaction(TransactionBehavior::Immediate,|tx| {
+                if let Some(expected)=account_version {let current:i64=db(tx.query_row("SELECT settings_version FROM accounts WHERE account_id=?1",[account],|r|r.get(0)))?;if u64::try_from(current).ok()!=Some(expected){return Err(ErrorCode::Conflict)}}
                 if let Some(version)=replay(tx,account,e.kind,m)? { return Ok(version); }
                 check_account(tx,account)?;
                 if e.kind==MailEndpointKind::Smtp&&read_endpoint(tx,account,MailEndpointKind::Imap)?.is_none() { return Err(ErrorCode::Conflict); }
@@ -376,7 +424,7 @@ fn text(row: &rusqlite::Row<'_>, index: usize, max: usize) -> rusqlite::Result<S
     Ok(value.to_owned())
 }
 #[cfg(windows)]
-pub(super) fn check_account(tx: &Transaction<'_>, account: &str) -> Result<(), ErrorCode> {
+pub(super) fn check_account(tx: &rusqlite::Connection, account: &str) -> Result<(), ErrorCode> {
     match db(tx
         .query_row(
             "SELECT provider FROM accounts WHERE account_id=?1",

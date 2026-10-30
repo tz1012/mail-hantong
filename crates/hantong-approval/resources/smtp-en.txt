@@ -1,0 +1,10 @@
+title=Configure outgoing mail
+intro=Review the SMTP server for this existing account, then enter its app password in the protected field.
+verify=Verify and save SMTP settings
+verification=Verify your identity to configure this SMTP server.
+footer=This saves the first SMTP configuration and its protected credential. It does not send mail or approve future messages.
+account=Account
+version=Account version
+server=SMTP server
+port=Port
+login=Login address

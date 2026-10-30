@@ -26,6 +26,7 @@ pub enum PolicyFixtureMutation {
     AllowUidPage,
     AllowMetadata,
     AllowAppReads,
+    AllowBodies,
     AppClientKind(ClientKind),
 }
 impl PolicyStoreFixture {
@@ -92,6 +93,13 @@ impl PolicyStoreFixture {
         }
         self.database()?.with_connection(|c| {
             match change {
+                PolicyFixtureMutation::AllowBodies => {
+                    let tx=c.unchecked_transaction()?;let tools=hantong_contracts::auth::default_cli_body_tools();let json=r#"["app.diagnostics.snapshot","app.settings.display.get","mail.accounts.list","mail.folders.list","mail.folders.refresh","mail.messages.get","mail.messages.search","mail.sync.page"]"#;
+                    tx.execute("UPDATE client_registration_requests SET requested_tools_json=?1,version=version+1 WHERE request_id=(SELECT request_id FROM client_registrations WHERE registration_id=?2)",(json,self.registration_id.as_slice()))?;
+                    for tool in tools {tx.execute("INSERT OR IGNORE INTO client_registration_tools(registration_id,tool_id) VALUES(?1,?2)",(self.registration_id.as_slice(),tool))?;}
+                    tx.execute("UPDATE client_registrations SET profile_epoch=profile_epoch+1,version=version+1 WHERE registration_id=?1",[self.registration_id.as_slice()])?;
+                    tx.execute("INSERT OR IGNORE INTO mail_connection_settings(account_id,endpoint_kind,settings_version,host,port,tls,login_name,authentication,updated_at_utc_ms) VALUES('account_a','imap',1,'imap.fixture.invalid',993,'implicit_tls','fixture-user','app_password',1)",[])?;tx.commit()?;
+                }
                 PolicyFixtureMutation::AllowAppReads => {
                     let tx=c.unchecked_transaction()?;
                     let tools=hantong_contracts::auth::default_cli_app_read_tools();

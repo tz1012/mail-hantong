@@ -900,7 +900,7 @@ fn cli15_scope_refresh_queue_deduplicates_and_resumes_only_explicit_requests() {
             .unwrap()
             .unwrap()
             .target_tools(),
-        hantong_contracts::auth::default_cli_app_read_tools()
+        hantong_contracts::auth::default_cli_send_tools()
     );
     assert_eq!(worker.receiver.try_recv().unwrap(), Job::ScopeRefresh(rid));
     assert!(
@@ -959,5 +959,93 @@ fn cli15_scope_refresh_queue_deduplicates_and_resumes_only_explicit_requests() {
             .unwrap()
             .state,
         RegistrationState::Provisioning
+    );
+}
+
+#[test]
+fn inst04_mcp_and_cli_pending_requests_are_separate_and_share_the_native_queue() {
+    struct Key(Option<ServerSigningKey>);
+    impl Drop for Key {
+        fn drop(&mut self) {
+            self.0.take().unwrap().delete().unwrap();
+        }
+    }
+    struct Directory(std::path::PathBuf);
+    impl Drop for Directory {
+        fn drop(&mut self) {
+            std::fs::remove_dir_all(&self.0).unwrap();
+        }
+    }
+    let key = Key(Some(
+        ServerSigningKey::create(hantong_platform::random_nonce().unwrap()).unwrap(),
+    ));
+    let root = Directory(std::env::temp_dir().join(format!(
+        "hantong-mcp-registration-{}",
+        hantong_contracts::wire_hex::encode(&hantong_platform::random_nonce().unwrap())
+    )));
+    std::fs::create_dir(&root.0).unwrap();
+    let store = Store::open(root.0.join("data"), root.0.join("keys")).unwrap();
+    let secrets = root.0.join("keys");
+    let (handle, mut worker) = coordinator(&store, key.0.as_ref().unwrap(), &secrets);
+    let first = handle.command(RegistrationCommand::McpRequest).unwrap();
+    let id = *first.request_id();
+    assert_eq!(worker.receiver.try_recv().unwrap(), Job::Registration(id));
+    assert_eq!(
+        handle.command(RegistrationCommand::McpRequest),
+        Ok(first.clone())
+    );
+    assert_eq!(
+        handle.command(RegistrationCommand::McpStatus(id)),
+        Ok(first.clone())
+    );
+    assert!(worker.receiver.try_recv().is_err());
+    assert_eq!(
+        handle.command(RegistrationCommand::Status(id)),
+        Err(ErrorCode::NotFound)
+    );
+    assert_eq!(
+        handle.command(RegistrationCommand::Request),
+        Err(ErrorCode::RateLimited)
+    );
+    let stored = store.get_registration_request(id).unwrap().unwrap();
+    assert_eq!(stored.client_kind, ClientKind::Mcp);
+    assert_eq!(stored.display_label, DEFAULT_MCP_LABEL);
+    assert!(stored.scope.accounts().is_empty());
+    assert_eq!(
+        stored.scope.tools(),
+        hantong_contracts::auth::mcp_mail_tools()
+    );
+    drop(worker);
+    drop(handle);
+    let (handle, mut worker) = coordinator(&store, key.0.as_ref().unwrap(), &secrets);
+    assert_eq!(
+        handle.command(RegistrationCommand::McpStatus(id)),
+        Ok(first.clone())
+    );
+    assert!(worker.receiver.try_recv().is_err());
+    assert_eq!(handle.command(RegistrationCommand::McpRequest), Ok(first));
+    assert_eq!(worker.receiver.try_recv().unwrap(), Job::Registration(id));
+    drop(worker);
+    drop(handle);
+    store
+        .deny_mcp_registration_request(id, stored.version)
+        .unwrap();
+    let (handle, mut worker) = coordinator(&store, key.0.as_ref().unwrap(), &secrets);
+    let cli = handle.command(RegistrationCommand::Request).unwrap();
+    assert_ne!(cli.request_id(), &id);
+    assert_eq!(
+        worker.receiver.try_recv().unwrap(),
+        Job::Registration(*cli.request_id())
+    );
+    assert_eq!(
+        handle.command(RegistrationCommand::McpStatus(*cli.request_id())),
+        Err(ErrorCode::NotFound)
+    );
+    assert_eq!(
+        handle
+            .command(RegistrationCommand::McpStatus(id))
+            .unwrap()
+            .state(),
+        RegistrationProgress::Denied
     );
 }

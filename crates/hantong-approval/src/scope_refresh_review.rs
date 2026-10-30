@@ -253,6 +253,22 @@ impl ScopeRefreshReview {
             summary.push_str("\r\n");
             summary.push_str(t(TextKey::ScopeRefreshDiagnosticsPermission));
         }
+        if self
+            .target_tool_ids
+            .iter()
+            .any(|tool| tool == "mail.messages.get")
+        {
+            summary.push_str("\r\n");
+            summary.push_str(t(TextKey::ScopeRefreshBodyPermission));
+        }
+        if self
+            .target_tool_ids
+            .iter()
+            .any(|tool| tool == "mail.send.execute")
+        {
+            summary.push_str("\r\n");
+            summary.push_str(t(TextKey::ScopeRefreshSendPermission));
+        }
         summary
     }
 }

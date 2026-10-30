@@ -26,13 +26,13 @@ const CA: &[u8] = include_bytes!("../../tests/fixtures/tls/ca.cert");
 const CHAIN: &[u8] = include_bytes!("../../tests/fixtures/tls/end.fullchain");
 const KEY: &[u8] = include_bytes!("../../tests/fixtures/tls/end.key");
 type Transcript = Arc<Mutex<Vec<Vec<u8>>>>;
-struct Cleanup(PathBuf);
+pub(crate) struct Cleanup(PathBuf);
 impl Drop for Cleanup {
     fn drop(&mut self) {
         fs::remove_dir_all(&self.0).unwrap();
     }
 }
-fn fixture() -> (Cleanup, SecretStore) {
+pub(crate) fn fixture() -> (Cleanup, SecretStore) {
     static NEXT: AtomicU64 = AtomicU64::new(0);
     let root = std::env::temp_dir().join(format!(
         "hantong-smtp-{}-{}",
@@ -57,7 +57,7 @@ fn endpoint(tls: TlsMode, host: &str, auth: &str, version: u64) -> SmtpEndpointC
         .unwrap()
         .clone()
 }
-fn tls_settings(host: &str, trusted: bool) -> TlsSettings {
+pub(crate) fn tls_settings(host: &str, trusted: bool) -> TlsSettings {
     let mut roots = RootCertStore::empty();
     let mut starttls =
         TlsParameters::builder(host.to_owned()).certificate_store(CertificateStore::None);
@@ -76,7 +76,7 @@ fn tls_settings(host: &str, trusted: bool) -> TlsSettings {
         starttls: starttls.build_rustls().unwrap(),
     }
 }
-fn acceptor() -> TlsAcceptor {
+pub(crate) fn acceptor() -> TlsAcceptor {
     let certs = CertificateDer::pem_slice_iter(CHAIN)
         .collect::<Result<Vec<_>, _>>()
         .unwrap();

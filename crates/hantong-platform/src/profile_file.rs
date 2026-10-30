@@ -53,6 +53,16 @@ pub fn load_gui_client_profile() -> Result<LoadedClientProfile, ErrorCode> {
         Err(ErrorCode::CapabilityUnsupported)
     }
 }
+pub fn load_mcp_client_profile() -> Result<LoadedClientProfile, ErrorCode> {
+    #[cfg(windows)]
+    {
+        windows::load_mcp(&crate::app_directories()?.profiles)
+    }
+    #[cfg(not(windows))]
+    {
+        Err(ErrorCode::CapabilityUnsupported)
+    }
+}
 
 #[cfg(windows)]
 #[allow(unsafe_code)]
@@ -85,18 +95,23 @@ mod windows {
     pub(super) fn load(profiles: &Path) -> Result<LoadedClientProfile, ErrorCode> {
         load_fixed(profiles, ProfileFile::Default)
     }
+    pub(super) fn load_mcp(profiles: &Path) -> Result<LoadedClientProfile, ErrorCode> {
+        load_fixed(profiles, ProfileFile::Mcp)
+    }
     pub(super) fn load_gui(profiles: &Path) -> Result<LoadedClientProfile, ErrorCode> {
         load_fixed(profiles, ProfileFile::Gui)
     }
     enum ProfileFile {
         Default,
         Gui,
+        Mcp,
     }
     impl ProfileFile {
         fn name(&self) -> &'static str {
             match self {
                 Self::Default => "default.json",
                 Self::Gui => "gui.json",
+                Self::Mcp => "mcp.json",
             }
         }
     }
@@ -495,6 +510,32 @@ mod windows {
                 ErrorCode::ClientNotRegistered
             );
             assert_eq!(load_gui(&fixture.profiles).unwrap().bytes(), b"gui-public");
+        }
+
+        #[test]
+        fn sec03_mcp_profile_loader_uses_only_its_fixed_file_and_retains_guards() {
+            let fixture = Fixture::new();
+            fixture.file(b"cli-public");
+            assert_eq!(
+                load_mcp(&fixture.profiles).unwrap_err(),
+                ErrorCode::ClientNotRegistered
+            );
+            let mcp = fixture.profiles.join("mcp.json");
+            fs::write(&mcp, b"mcp-public").unwrap();
+            secure(&mcp, false, true);
+            let loaded = load_mcp(&fixture.profiles).unwrap();
+            assert_eq!(loaded.bytes(), b"mcp-public");
+            assert_eq!(load(&fixture.profiles).unwrap().bytes(), b"cli-public");
+            assert!(OpenOptions::new().write(true).open(&mcp).is_err());
+            assert!(fs::remove_file(&mcp).is_err());
+            assert!(fs::rename(&fixture.profiles, fixture.root.join("renamed")).is_err());
+            drop(loaded);
+            fs::remove_file(fixture.profiles.join("default.json")).unwrap();
+            assert_eq!(
+                load(&fixture.profiles).unwrap_err(),
+                ErrorCode::ClientNotRegistered
+            );
+            assert_eq!(load_mcp(&fixture.profiles).unwrap().bytes(), b"mcp-public");
         }
         #[test]
         fn sec03_gui_profile_loader_keeps_acl_type_and_size_checks_without_cli_fallback() {

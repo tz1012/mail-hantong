@@ -1,6 +1,24 @@
 use super::*;
 use std::time::Duration;
 #[test]
+fn apr01_native_send_constraints_share_rpc_bucket_without_enabling_rpc_send() {
+    let now = Instant::now();
+    let mut p = ReadPolicy::new();
+    assert_eq!(
+        p.check_native_send([1; 16], true, 3, now),
+        Err(ErrorCode::PolicyBlocked)
+    );
+    assert_eq!(p.check_native_send([1; 16], false, 3, now), Ok(()));
+    assert_eq!(
+        p.check([1; 16], false, 3, AuditTool::SendExecute, now),
+        Err(ErrorCode::PolicyBlocked)
+    );
+    assert_eq!(
+        p.check_native_send([1; 16], false, 3, now),
+        Err(ErrorCode::RateLimited)
+    );
+}
+#[test]
 fn mail03_metadata_search_shares_rate_bucket_and_cannot_enable_send() {
     let now = Instant::now();
     let search = AuditTool::parse("mail.messages.search").unwrap();

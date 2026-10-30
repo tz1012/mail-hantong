@@ -214,13 +214,13 @@ impl Effects for Fake<'_> {
 }
 
 #[test]
-fn cli15_app_read_scope_fresh_request_offers_app_reads_but_preserves_existing_targets() {
+fn cli15_body_send_scope_fresh_request_preserves_existing_targets() {
     let fixture = Fixture::new();
     let fresh =
         prepare_for_pin(&fixture.store, hantong_platform::sha256(&public()).unwrap()).unwrap();
     assert_eq!(
         fresh.target_tools(),
-        hantong_contracts::auth::default_cli_app_read_tools()
+        hantong_contracts::auth::default_cli_send_tools()
     );
     assert_eq!(
         fixture
@@ -283,7 +283,7 @@ fn cli15_app_read_scope_fresh_request_offers_app_reads_but_preserves_existing_ta
 }
 
 #[test]
-fn cli15_app_read_scope_same_account_metadata_upgrade_requires_separate_activation() {
+fn cli15_body_send_scope_metadata_upgrade_requires_separate_activation() {
     let fixture = Fixture::new();
     let metadata =
         fixture.pending_with_scope(hantong_contracts::auth::default_cli_metadata_tools());
@@ -305,12 +305,12 @@ fn cli15_app_read_scope_same_account_metadata_upgrade_requires_separate_activati
     assert_eq!(fresh.target_accounts(), before.scope.accounts());
     assert_eq!(
         fresh.target_tools(),
-        hantong_contracts::auth::default_cli_app_read_tools()
+        hantong_contracts::auth::default_cli_send_tools()
     );
     assert_eq!(
         fixture.store.load_default_cli_registration().unwrap(),
         Some(before.clone()),
-        "requesting app access must preserve the active metadata-only grant"
+        "requesting body/send access must preserve the active metadata-only grant"
     );
     let effects = Fake::new(&fixture.store);
     commit_consumed_review(&effects, &fresh, &review_snapshot(&fresh).unwrap()).unwrap();
@@ -333,9 +333,9 @@ fn cli15_app_read_scope_same_account_metadata_upgrade_requires_separate_activati
 }
 
 #[test]
-fn cli15_app_read_scope_same_account_noop_preserves_registration_and_history() {
+fn cli15_body_send_scope_noop_preserves_registration_and_history() {
     let fixture = Fixture::new();
-    let pending = fixture.pending_with_scope(hantong_contracts::auth::default_cli_app_read_tools());
+    let pending = fixture.pending_with_scope(hantong_contracts::auth::default_cli_send_tools());
     let effects = Fake::new(&fixture.store);
     commit_consumed_review(&effects, &pending, &review_snapshot(&pending).unwrap()).unwrap();
     let before = fixture

@@ -2,7 +2,15 @@
 
 A multi-account mail hub for Windows, with a shared core service, the `hantong` CLI, MCP access, and an optional GUI. GUI languages are Korean and English; themes are light, dark, and system. The CLI defaults to English and supports Korean.
 
-**Status: CLI-first development, Windows developer preview; no public product release yet.** The CLI is a terminal command-line client; it is not currently a full-screen TUI. Account setup and authorization still require the protected Windows confirmation window. See the [CLI installation and usage guide](docs/latest/CLI-LAUNCH.md) for supported commands, installation and remaining limitations.
+**Status: Windows CLI developer preview.** [Download releases](https://github.com/tz1012/mail-hantong/releases). The CLI runs in a terminal; account setup and outgoing-mail authorization use a protected Windows confirmation window. See the [CLI installation and usage guide](docs/latest/CLI-LAUNCH.md) for body reading, composing, sending, AI sessions, MCP tools and remaining limitations.
+
+Install or update from PowerShell on Windows x64:
+
+```powershell
+irm https://raw.githubusercontent.com/tz1012/mail-hantong/main/install.ps1 | iex
+```
+
+The installer verifies release checksums and adds the current user's launcher directory to PATH. This unsigned developer preview still needs human security review and real-provider validation.
 
 Windows GUI는 `cargo run -p mail-hantong-gui -- --lang ko --theme system`으로 실행합니다. 영어는 `--lang en`, 테마는 `light`, `dark`, `system`입니다. GUI는 CLI와 별도 등록을 사용하며, 사용자가 연결을 요청하고 보호된 확인 창에서 검토한 계정의 저장된 폴더·메일 메타데이터만 읽습니다. 선택한 폴더에서 전체·읽지 않음·즐겨찾기로 목록을 좁히고 다시 조회할 수 있습니다. 현대적인 메일 화면의 구성과 참조 기준은 [디자인 가이드](docs/latest/DESIGN.md)에 기록합니다. 표시 설정 저장·본문·첨부·작성·발송은 아직 개발 중입니다. 최신 검증 여부는 [진행 기록](docs/latest/PROGRESS.md)을 확인하세요.
 
@@ -22,6 +30,8 @@ The core service and CLI use **Rust 1.95.0**, selected to balance startup speed 
 Rust/rustup과 Python 3.11 이상이 있는 개발 환경에서 다음 명령을 실행할 수 있습니다. Windows는 MSVC C++ build tools와 Windows SDK가 필요합니다. 네이티브 도구 준비 명령은 검증된 NASM·Perl을 `.tools/`에만 설치하며 시스템 PATH를 바꾸지 않습니다. 아래 명령은 소스 개발용이며, CLI 미리보기 ZIP의 설치 방법은 위 CLI 안내를 따릅니다.
 
 ```powershell
+git clone https://github.com/tz1012/mail-hantong.git
+cd mail-hantong
 cargo fetch --locked
 python scripts/prepare_native_tools.py
 python scripts/cargo_native.py build --workspace --all-targets --locked --offline
@@ -32,9 +42,9 @@ cargo run -p hantong-cli -- --lang ko --help
 
 Python 실행 파일을 지정하려면 `./scripts/check-all.ps1 -Python <python-path>`를 사용합니다. Windows의 첫 전체 빌드는 SQLCipher·OpenSSL을 소스에서 컴파일하므로 수 분 이상 걸릴 수 있습니다. 다음 빌드는 Cargo 캐시를 사용합니다. Linux 개발 환경에서는 Windows 도구 준비를 건너뛰고 `cargo fetch --locked` 후 `sh scripts/check-all` 또는 `python3 scripts/check_all.py`로 검사합니다. OS 비밀 저장소의 Linux/macOS 제품 구현은 아직 제공하지 않습니다. Windows의 보호된 계정 조회에는 기존 등록 프로필이 필요합니다.
 
-Windows 코어의 연결 상태를 확인하려면 첫 터미널에서 `python scripts/cargo_native.py run -p mail-hantong-core --locked --offline -- run`을 실행하고 다른 터미널에서 `cargo run -p hantong-cli -- core status --json`을 실행합니다. `--lang ko core status`로 한국어 상태를 볼 수 있습니다. 코어는 Windows Known Folder의 사용자 로컬 앱 데이터 아래 `mail-hantong/data`와 `mail-hantong/secrets`에 암호화 DB·키를 초기화하며, 환경 변수나 명령 인자로 경로를 바꾸지 않습니다. 기존 설정·키·스키마가 올바르지 않으면 시작을 거부합니다. 지원하는 이전 DB는 검증과 단계별 암호화 백업 후 현재 스키마로 이전하고, 서버 서명 키는 Windows 현재 사용자의 CNG에 보관해 다음 실행에도 유지합니다. 활성 서버 키 누락·불일치 시 자동으로 다른 키를 만들지 않습니다. 현재 응답은 전송 준비 상태만 뜻하며 `mail_ready`와 `authenticated`는 false입니다. 코어는 Ctrl+C로 종료합니다. 실제 계정·메일 접근은 구현 중이며 기본 클라이언트 등록은 아래의 별도 개발 명령으로 제공합니다.
+Windows 코어의 연결 상태를 확인하려면 첫 터미널에서 `python scripts/cargo_native.py run -p mail-hantong-core --locked --offline -- run`을 실행하고 다른 터미널에서 `cargo run -p hantong-cli -- core status --json`을 실행합니다. `--lang ko core status`로 한국어 상태를 볼 수 있습니다. 코어는 Windows Known Folder의 사용자 로컬 앱 데이터 아래 `mail-hantong/data`와 `mail-hantong/secrets`에 암호화 DB·키를 초기화하며, 환경 변수나 명령 인자로 경로를 바꾸지 않습니다. 기존 설정·키·스키마가 올바르지 않으면 시작을 거부합니다. 지원하는 이전 DB는 검증과 단계별 암호화 백업 후 현재 스키마로 이전하고, 서버 서명 키는 Windows 현재 사용자의 CNG에 보관해 다음 실행에도 유지합니다. 활성 서버 키 누락·불일치 시 자동으로 다른 키를 만들지 않습니다. 현재 응답은 전송 준비 상태만 뜻하며 `mail_ready`와 `authenticated`는 false입니다. 코어는 Ctrl+C로 종료합니다. CLI의 본문 읽기·작성·발송·AI·MCP 사용 방법은 위 설치·사용 안내를 따릅니다. 기본 클라이언트 등록은 아래 개발 명령으로도 제공합니다.
 
-코드나 시험이 바뀌면 `python scripts/traceability.py`로 추적표를 갱신한 뒤 전체 검사를 실행합니다. 태그나 문서 연결만으로 요건 통과를 표시하지 않습니다. [CI 구성과 미검증 외부 상태](docs/latest/CI.md)도 확인하십시오. 공개 저장소 주소·릴리스·패키지 ID는 아직 없습니다.
+코드나 시험이 바뀌면 `python scripts/traceability.py`로 추적표를 갱신한 뒤 전체 검사를 실행합니다. 태그나 문서 연결만으로 요건 통과를 표시하지 않습니다. [CI 구성과 미검증 외부 상태](docs/latest/CI.md)도 확인하십시오. 공개 소스와 개발 미리보기는 위 GitHub 저장소에서 관리하며 WinGet 패키지 등록은 아직 제공하지 않습니다.
 
 Licensed under the custom [mail-hantong Source-Available License, Version 1.0](LICENSE). Personal and internal business use, private modifications, and free redistribution are permitted. Selling, renting, charging for access or use, and paid hosted or managed provision of the software are prohibited. Preserve license/copyright notices and identify modified versions when redistributing. Third-party licenses apply separately. [한국어 라이선스 안내](docs/latest/LICENSING.md).
 
@@ -96,7 +106,7 @@ cargo run -p hantong-cli -- sync initial-pause --account ACCOUNT --wire-hex HEX 
 
 최근 범위는 최대8페이지이며 페이지당 UID 폭은64입니다. 페이지 완료는 선택한 최근 범위의 진행 상태를 뜻하며 전체 메일함 동기화 완료가 아닙니다. `initial-status`는 요청 당시의 저장된 작업 결과, `initial-plan`은 현재 진행 상태를 보여줍니다. 같은 작업을 다시 요청해도 자동으로 다음 페이지를 수집하지 않습니다. 다음 페이지는 현재 버전과 새 operation/idempotency 값을 사용한 명시 요청으로 진행합니다.
 
-위 계정·HEX·encoding·버전은 실제 조회 값으로 바꾸는 예시입니다. `inspect`는 저장된 UID 범위·해당 페이지의 관측 상한·로컬 저장 시각을 조회합니다. 미관측과 관측된 빈 메일함을 구분하며, UID 범위는 메일 건수나 현재 서버의 최신 상태를 뜻하지 않습니다. 기존 프로필에 새 권한이 없으면 명시 `clients refresh`와 보호 확인이 필요합니다. 한 번에 UID 폭 최대64를 관측하며 중복 요청은 기존 receipt만 반환합니다. `reconcile`은 이미 저장한 한 페이지의 FLAGS와 원격 부재 관측을 별도로 기록하고 원본 메일은 보존합니다. 다음 페이지도 새 명시 요청으로 진행하며, pass 완료는 시작 때 고정한 기존 페이지 묶음의 관측 완료만 뜻합니다. 종료 후 미완료 작업은 자동 재실행하지 않습니다. UIDVALIDITY가 바뀌면 `recover`로 새 식별 체계의 첫 페이지를 명시 수집합니다. 기존 원본·관측·작업 이력은 보존하고 cursor version은 계속 증가합니다. 복구 성공은 전체 mailbox 수집 완료가 아닙니다. 설정/세대/cursor 충돌은 무반영 실패하며 자동 reset하지 않습니다. 본문·첨부·전체 mailbox 목록과 실제 제공자 상호 운용성은 후속 구현/검증입니다. [공개 계약](docs/contracts/imap-uid-tools.md), [상태 대조 계약](docs/contracts/imap-uid-reconcile.md), [복구 계약](docs/contracts/imap-uid-recovery.md), [관측 요약 계약](docs/contracts/imap-uid-inspection.md), [진행 기록](docs/latest/PROGRESS.md)에 현재 증거와 남은 범위를 기록합니다.
+위 계정·HEX·encoding·버전은 실제 조회 값으로 바꾸는 예시입니다. `inspect`는 저장된 UID 범위·해당 페이지의 관측 상한·로컬 저장 시각을 조회합니다. 미관측과 관측된 빈 메일함을 구분하며, UID 범위는 메일 건수나 현재 서버의 최신 상태를 뜻하지 않습니다. 기존 프로필에 새 권한이 없으면 명시 `clients refresh`와 보호 확인이 필요합니다. 한 번에 UID 폭 최대64를 관측하며 중복 요청은 기존 receipt만 반환합니다. `reconcile`은 이미 저장한 한 페이지의 FLAGS와 원격 부재 관측을 별도로 기록하고 원본 메일은 보존합니다. 다음 페이지도 새 명시 요청으로 진행하며, pass 완료는 시작 때 고정한 기존 페이지 묶음의 관측 완료만 뜻합니다. 종료 후 미완료 작업은 자동 재실행하지 않습니다. UIDVALIDITY가 바뀌면 `recover`로 새 식별 체계의 첫 페이지를 명시 수집합니다. 기존 원본·관측·작업 이력은 보존하고 cursor version은 계속 증가합니다. 복구 성공은 전체 mailbox 수집 완료가 아닙니다. 설정/세대/cursor 충돌은 무반영 실패하며 자동 reset하지 않습니다. 본문·작성·발송은 위 CLI 안내를 따르며, 첨부·전체 mailbox 자동 수집과 실제 제공자 검증은 후속입니다. [공개 계약](docs/contracts/imap-uid-tools.md), [상태 대조 계약](docs/contracts/imap-uid-reconcile.md), [복구 계약](docs/contracts/imap-uid-recovery.md), [관측 요약 계약](docs/contracts/imap-uid-inspection.md), [진행 기록](docs/latest/PROGRESS.md)에 현재 증거와 남은 범위를 기록합니다.
 
 저장된 메일의 제목·발신자는 로컬 메타데이터 조회로 확인합니다. 처음 등록한 CLI나 기존 폴더/UID 권한은 헤더를 읽을 수 없습니다. 사용자가 `clients refresh`의 보호 확인에서 메타데이터 공개 범위를 명시적으로 허용한 뒤 사용할 수 있습니다.
 

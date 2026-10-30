@@ -13,10 +13,10 @@ PACKAGES = {
     "hantong-contracts", "hantong-platform", "hantong-domain", "hantong-policy", "hantong-approval", "hantong-approval-windows",
     "hantong-application", "hantong-outbox", "hantong-ipc-client", "hantong-ipc-server",
     "hantong-store", "hantong-secrets", "hantong-adapters", "hantong-cli", "mail-hantong-core",
-    "hantong-desktop", "mail-hantong-gui",
+    "hantong-desktop", "mail-hantong-gui", "hantong-t", "hantong-mcp", "hantong-ai",
 }
 TEST_SUPPORT = "hantong-test-support"
-CLIENTS = {"hantong-cli", "mail-hantong-gui", "hantong-desktop"}
+CLIENTS = {"hantong-cli", "mail-hantong-gui", "hantong-desktop", "hantong-t", "hantong-mcp"}
 FORBIDDEN_CLIENT = {"hantong-store", "hantong-secrets", "hantong-adapters", "hantong-ipc-server", "hantong-outbox", "hantong-approval-windows"}
 ALLOWED = {
     "hantong-contracts": set(),
@@ -32,7 +32,10 @@ ALLOWED = {
     "hantong-store": {"hantong-contracts", "hantong-domain", "hantong-secrets", "hantong-platform"},
     "hantong-secrets": {"hantong-contracts", "hantong-domain"},
     "hantong-adapters": {"hantong-domain"},
-    "hantong-cli": {"hantong-contracts", "hantong-ipc-client"},
+    "hantong-cli": {"hantong-contracts", "hantong-ipc-client", "hantong-ai", "hantong-platform"},
+    "hantong-ai": set(),
+    "hantong-t": set(),
+    "hantong-mcp": {"hantong-contracts", "hantong-ipc-client", "hantong-platform"},
     "hantong-desktop": {"hantong-contracts"},
     "mail-hantong-gui": {"hantong-contracts", "hantong-ipc-client", "hantong-desktop"},
     "mail-hantong-core": PACKAGES - {"mail-hantong-core", "mail-hantong-gui", "hantong-desktop"},

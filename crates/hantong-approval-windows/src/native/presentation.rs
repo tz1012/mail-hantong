@@ -116,12 +116,21 @@ pub(super) fn review_text(
     language: Language,
 ) -> Result<String, ErrorCode> {
     let t = |key| text(language, key);
+    let mcp = review.client_kind() == hantong_contracts::client::ClientKind::Mcp;
     let gui = review.client_kind() == hantong_contracts::client::ClientKind::Gui;
-    let tools = if gui {
+    let tools = if gui || mcp {
         format!(
             "{}\r\n{}",
             review.scope().tools().join("\r\n"),
-            t(TextKey::GuiTools)
+            t(if mcp {
+                if review.read_only() {
+                    TextKey::McpTools
+                } else {
+                    TextKey::McpMailTools
+                }
+            } else {
+                TextKey::GuiTools
+            })
         )
     } else {
         format!("{} (mail.accounts.list)", t(TextKey::AccountsListTool))
@@ -134,7 +143,9 @@ pub(super) fn review_text(
     Ok(format!(
         "{}: {}\r\n{}: {}\r\n{}: {}\r\n{}: {}\r\n\r\n{}\r\n{}\r\n\r\n{}\r\n{}\r\n\r\n{}\r\n{}\r\n\r\n{}: {}\r\n\r\n{}\r\n{}",
         t(TextKey::Client),
-        t(if gui {
+        t(if mcp {
+            TextKey::McpClientValue
+        } else if gui {
             TextKey::GuiClientValue
         } else {
             TextKey::ClientValue
@@ -142,7 +153,11 @@ pub(super) fn review_text(
         t(TextKey::Profile),
         review.profile_name(),
         t(TextKey::Access),
-        t(TextKey::ReadOnly),
+        t(if review.read_only() {
+            TextKey::ReadOnly
+        } else {
+            TextKey::MailAccess
+        }),
         t(TextKey::RateLimit),
         t(TextKey::RateLimitValue),
         t(TextKey::Accounts),
@@ -154,7 +169,9 @@ pub(super) fn review_text(
         t(TextKey::ExpiresAt),
         utc_display(review.expires_at_utc_ms())?,
         t(TextKey::ScopeNotice),
-        t(if gui {
+        t(if mcp {
+            TextKey::McpVerificationRequired
+        } else if gui {
             TextKey::GuiVerificationRequired
         } else {
             TextKey::VerificationRequired
@@ -182,6 +199,31 @@ mod tests {
             assert!(rendered.contains(text(language, TextKey::GuiClientValue)));
             assert!(rendered.contains(text(language, TextKey::GuiTools)));
             assert!(rendered.contains(text(language, TextKey::GuiVerificationRequired)));
+            assert!(!rendered.contains(text(language, TextKey::ClientValue)));
+            assert!(!rendered.contains("default"));
+            for tool in review.scope().tools() {
+                assert!(rendered.contains(tool));
+            }
+        }
+    }
+
+    #[test]
+    fn inst04_mcp_review_discloses_exact_local_header_scope_in_both_languages() {
+        let review = RegistrationReview::new_mcp(
+            [1; 32],
+            1,
+            vec!["account_B".into(), "account_A".into()],
+            [2; 32],
+            1000,
+            2000,
+        )
+        .unwrap();
+        for language in [Language::En, Language::Ko] {
+            let rendered = review_text(&review, language).unwrap();
+            assert!(rendered.contains("account_A\r\naccount_B"));
+            assert!(rendered.contains(text(language, TextKey::McpClientValue)));
+            assert!(rendered.contains(text(language, TextKey::McpTools)));
+            assert!(rendered.contains(text(language, TextKey::McpVerificationRequired)));
             assert!(!rendered.contains(text(language, TextKey::ClientValue)));
             assert!(!rendered.contains("default"));
             for tool in review.scope().tools() {

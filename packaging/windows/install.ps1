@@ -2,12 +2,17 @@
 [CmdletBinding()]
 param(
     [string] $Source,
-    [string] $InstallRoot = (Join-Path $env:LOCALAPPDATA 'Programs\mail-hantong-cli')
+    [string] $InstallRoot = (Join-Path $env:LOCALAPPDATA 'Programs\mail-hantong-cli'),
+    [switch] $AddToPath,
+    [string] $PackageRoot
 )
 # Windows PowerShell 5.1 -File does not initialize PSScriptRoot while binding
 # default parameter expressions. Resolve the omitted source in the script body.
-if (-not $PSBoundParameters.ContainsKey('Source')) { $Source = $PSScriptRoot }
-. (Join-Path $PSScriptRoot 'package-common.ps1')
+if (-not $PSBoundParameters.ContainsKey('PackageRoot')) { $PackageRoot = $PSScriptRoot }
+if (-not $PSBoundParameters.ContainsKey('Source')) { $Source = $PackageRoot }
+# The bootstrap invokes these checksum-verified scripts in memory. This also
+# works under the normal Restricted script-file policy without changing it.
+. ([ScriptBlock]::Create([IO.File]::ReadAllText((Join-Path $PackageRoot 'package-common.ps1'))))
 $script:InstallBase = [IO.Path]::GetFullPath($InstallRoot).TrimEnd('\')
 $root = $script:InstallBase
 $sourceFull = [IO.Path]::GetFullPath($Source)
@@ -29,6 +34,7 @@ $lockPath = Get-ChildPath $root '.install.lock'
 $lock = [IO.File]::Open($lockPath, [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
 $stage = $null
 $createdFiles = @()
+$createdShims = @()
 $promoted = $false
 $recorded = $false
 $firstInstall = $false
@@ -72,8 +78,14 @@ try {
     $null = New-Item -ItemType Directory -Force -Path $bin
     if ($firstInstall) {
         Write-AtomicText $marker 'mail-hantong-cli-v1'
-        foreach ($binary in @('hantong', 'mail-hantong-core')) {
-            Write-AtomicText (Get-ChildPath $bin "$binary.cmd") (Get-Shim $binary)
+    }
+    foreach ($binary in (Get-OwnedBinaries $versions)) {
+        $shim = Get-ChildPath $bin "$binary.cmd"
+        if (Test-Path -LiteralPath $shim) {
+            if ([IO.File]::ReadAllText($shim) -cne (Get-Shim $binary)) { throw 'Refusing to replace an unmanaged launcher' }
+        } else {
+            Write-AtomicText $shim (Get-Shim $binary)
+            $createdShims += $shim
         }
     }
     $stateText = [ordered]@{ schema_version = 1; versions = @($versions) } | ConvertTo-Json -Depth 12
@@ -81,8 +93,12 @@ try {
     # final pointer replacement activates it; the previous version stays usable.
     Write-AtomicText $statePath $stateText
     $recorded = $true
+    if ($AddToPath) { Add-OwnedUserPath $root }
     Write-AtomicText (Get-ChildPath $root 'current.txt') ([string]$release.version)
 } catch {
+    if (-not $recorded) {
+        foreach ($shim in $createdShims) { Assert-SafePath $shim; Remove-Item -LiteralPath $shim -Force }
+    }
     if ($stage -and (Test-Path -LiteralPath $stage)) { Remove-OwnedFiles $stage $createdFiles }
     if ($promoted -and -not $recorded) { Remove-OwnedFiles $versionDir $release.files }
     if ($firstInstall -and -not $recorded) {
@@ -105,4 +121,6 @@ $escapedBin = $bin.Replace("'", "''")
 Write-Output "Installed mail-hantong CLI $($release.version)."
 Write-Output "For this PowerShell session: `$env:Path = '$escapedBin;' + `$env:Path"
 Write-Output "Uninstall with: & '$($versionDir.Replace("'", "''"))\uninstall.ps1' -InstallRoot '$($root.Replace("'", "''"))'"
-Write-Output 'No persistent PATH, startup, account or mail-data settings were changed.'
+if ($AddToPath) { Write-Output 'User PATH is configured. Restart existing terminals to reload their environment.' }
+else { Write-Output 'No persistent PATH settings were changed.' }
+Write-Output 'No startup, account or mail-data settings were changed.'

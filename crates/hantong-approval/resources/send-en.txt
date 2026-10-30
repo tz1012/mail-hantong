@@ -1,0 +1,12 @@
+title=Review outgoing mail
+intro=Check the complete account, recipients, subject and body before approving this delivery.
+verify=Verify and send
+verification=Verify your identity to send this exact email.
+footer=Approval applies only to this immutable message. An uncertain delivery is never automatically retried.
+account=Account
+from=From
+server=SMTP server
+to=To
+subject=Subject
+operation=Operation
+body=Message body

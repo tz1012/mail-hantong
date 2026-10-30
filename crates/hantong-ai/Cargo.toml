@@ -1,0 +1,13 @@
+[package]
+name = "hantong-ai"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license-file.workspace = true
+publish = false
+
+[dependencies]
+serde_json = "=1.0.154"
+
+[lints]
+workspace = true

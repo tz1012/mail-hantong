@@ -307,3 +307,8 @@ fn cli15_refresh_requires_the_windows_store() {
         Err(ErrorCode::CapabilityUnsupported)
     );
 }
+
+#[cfg(windows)]
+pub(crate) fn validate_history_v17(c: &rusqlite::Connection) -> rusqlite::Result<()> {
+    storage::validate_history_v17(c)
+}

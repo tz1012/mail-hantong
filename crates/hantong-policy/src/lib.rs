@@ -29,6 +29,46 @@ impl ReadPolicy {
         tool: AuditTool,
         now: Instant,
     ) -> Result<(), ErrorCode> {
+        self.charge(registration_id, requests_per_minute, now)?;
+        // A writable registration may still read; it gains no write path here.
+        let _ = read_only;
+        match tool {
+            AuditTool::DisplaySettingsGet
+            | AuditTool::DiagnosticsSnapshot
+            | AuditTool::AccountsList
+            | AuditTool::FoldersList
+            | AuditTool::FoldersRefresh
+            | AuditTool::MessagesGet
+            | AuditTool::MessagesSearch
+            | AuditTool::SyncPage => Ok(()),
+            AuditTool::DraftCreate | AuditTool::SendRequest if !read_only => Ok(()),
+            AuditTool::DraftCreate | AuditTool::SendRequest | AuditTool::SendExecute => {
+                Err(ErrorCode::PolicyBlocked)
+            }
+        }
+    }
+    /// Constraints only. The Core native coordinator separately consumes the
+    /// opaque human verification; this method cannot issue approval.
+    pub fn check_native_send(
+        &mut self,
+        registration_id: [u8; 16],
+        read_only: bool,
+        requests_per_minute: u32,
+        now: Instant,
+    ) -> Result<(), ErrorCode> {
+        self.charge(registration_id, requests_per_minute, now)?;
+        if read_only {
+            Err(ErrorCode::PolicyBlocked)
+        } else {
+            Ok(())
+        }
+    }
+    fn charge(
+        &mut self,
+        registration_id: [u8; 16],
+        requests_per_minute: u32,
+        now: Instant,
+    ) -> Result<(), ErrorCode> {
         if registration_id == [0; 16] || !(1..=600).contains(&requests_per_minute) {
             return Err(ErrorCode::InternalError);
         }
@@ -53,18 +93,7 @@ impl ReadPolicy {
             return Err(ErrorCode::RateLimited);
         }
         timestamps.push_back(now);
-        // A writable registration may still read; it gains no write path here.
-        let _ = read_only;
-        match tool {
-            AuditTool::DisplaySettingsGet
-            | AuditTool::DiagnosticsSnapshot
-            | AuditTool::AccountsList
-            | AuditTool::FoldersList
-            | AuditTool::FoldersRefresh
-            | AuditTool::MessagesSearch
-            | AuditTool::SyncPage => Ok(()),
-            AuditTool::SendExecute => Err(ErrorCode::PolicyBlocked),
-        }
+        Ok(())
     }
 }
 

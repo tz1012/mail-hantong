@@ -17,7 +17,10 @@ pub enum AuditTool {
     FoldersRefresh,
     SyncPage,
     MessagesSearch,
+    MessagesGet,
     SendExecute,
+    DraftCreate,
+    SendRequest,
 }
 impl AuditTool {
     pub const fn as_str(self) -> &'static str {
@@ -29,7 +32,10 @@ impl AuditTool {
             Self::FoldersRefresh => "mail.folders.refresh",
             Self::SyncPage => "mail.sync.page",
             Self::MessagesSearch => "mail.messages.search",
+            Self::MessagesGet => "mail.messages.get",
             Self::SendExecute => "mail.send.execute",
+            Self::DraftCreate => "mail.drafts.create",
+            Self::SendRequest => "mail.send.request",
         }
     }
     pub fn parse(value: &str) -> Result<Self, ErrorCode> {
@@ -41,7 +47,10 @@ impl AuditTool {
             "mail.folders.refresh" => Ok(Self::FoldersRefresh),
             "mail.sync.page" => Ok(Self::SyncPage),
             "mail.messages.search" => Ok(Self::MessagesSearch),
+            "mail.messages.get" => Ok(Self::MessagesGet),
             "mail.send.execute" => Ok(Self::SendExecute),
+            "mail.drafts.create" => Ok(Self::DraftCreate),
+            "mail.send.request" => Ok(Self::SendRequest),
             _ => Err(ErrorCode::InvalidInput),
         }
     }

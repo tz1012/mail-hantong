@@ -54,15 +54,25 @@ pub(super) fn publish_gui(bytes: &[u8]) -> Result<Publication, ErrorCode> {
         ProfileFile::Gui,
     )
 }
+pub(super) fn publish_mcp(bytes: &[u8]) -> Result<Publication, ErrorCode> {
+    publish_fixed(
+        &hantong_platform::app_directories()?.profiles,
+        bytes,
+        ProfileFile::Mcp,
+    )
+}
+
 enum ProfileFile {
     Default,
     Gui,
+    Mcp,
 }
 impl ProfileFile {
     fn name(&self) -> &'static str {
         match self {
             Self::Default => "default.json",
             Self::Gui => "gui.json",
+            Self::Mcp => "mcp.json",
         }
     }
 }
@@ -183,6 +193,34 @@ fn refresh_at(
     old_bytes: &[u8],
     new_bytes: &[u8],
 ) -> Result<Publication, ErrorCode> {
+    refresh_fixed_at(
+        profiles,
+        refresh_id,
+        old_bytes,
+        new_bytes,
+        ProfileFile::Default,
+    )
+}
+pub(super) fn refresh_mcp(
+    refresh_id: [u8; 32],
+    old_bytes: &[u8],
+    new_bytes: &[u8],
+) -> Result<Publication, ErrorCode> {
+    refresh_fixed_at(
+        &hantong_platform::app_directories()?.profiles,
+        refresh_id,
+        old_bytes,
+        new_bytes,
+        ProfileFile::Mcp,
+    )
+}
+fn refresh_fixed_at(
+    profiles: &Path,
+    refresh_id: [u8; 32],
+    old_bytes: &[u8],
+    new_bytes: &[u8],
+    selected: ProfileFile,
+) -> Result<Publication, ErrorCode> {
     if refresh_id == [0; 32]
         || old_bytes.is_empty()
         || old_bytes.len() > MAX_PROFILE_BYTES
@@ -198,9 +236,10 @@ fn refresh_at(
     let security = creation_security(user)?;
     let directories = open_profile_directories(profiles, user, &security)?;
 
-    let source_path = profiles.join("default.json");
+    let source_path = profiles.join(selected.name());
     let backup_path = profiles.join(format!(
-        "default.refresh-{}.bak",
+        "{}.refresh-{}.bak",
+        selected.name().trim_end_matches(".json"),
         hantong_contracts::wire_hex::encode(&refresh_id)
     ));
     let mut current = open_refresh_file(&source_path, user)?;
@@ -1073,6 +1112,82 @@ mod tests {
         assert!(fs::rename(&fixture.profiles, fixture.root.join("renamed")).is_err());
         drop(gui);
         drop(default);
+    }
+
+    #[test]
+    fn sec03_mcp_profile_publication_coexists_without_replacing_cli_or_mcp_bytes() {
+        let fixture = Fixture::new();
+        let default = publish_at(&fixture.profiles, b"cli-public").unwrap();
+        let mcp = publish_fixed(&fixture.profiles, b"mcp-public", ProfileFile::Mcp).unwrap();
+        assert_eq!(
+            fs::read(fixture.profiles.join("default.json")).unwrap(),
+            b"cli-public"
+        );
+        assert_eq!(
+            fs::read(fixture.profiles.join("mcp.json")).unwrap(),
+            b"mcp-public"
+        );
+        // Initial publication still owns a write-capable guard. A second
+        // protected reader must fail until activation releases that guard.
+        assert_eq!(
+            publish_fixed(&fixture.profiles, b"mcp-public", ProfileFile::Mcp).unwrap_err(),
+            ErrorCode::ScopeDenied
+        );
+        drop(mcp);
+        let mcp = publish_fixed(&fixture.profiles, b"mcp-public", ProfileFile::Mcp).unwrap();
+        assert_eq!(
+            publish_fixed(&fixture.profiles, b"different", ProfileFile::Mcp).unwrap_err(),
+            ErrorCode::Conflict
+        );
+        assert_eq!(
+            fs::read(fixture.profiles.join("mcp.json")).unwrap(),
+            b"mcp-public"
+        );
+        assert!(
+            OpenOptions::new()
+                .write(true)
+                .open(fixture.profiles.join("mcp.json"))
+                .is_err()
+        );
+        assert!(fs::remove_file(fixture.profiles.join("mcp.json")).is_err());
+        assert!(fs::rename(&fixture.profiles, fixture.root.join("renamed")).is_err());
+        drop(mcp);
+        drop(default);
+    }
+    #[test]
+    fn sec03_mcp_replacement_recovers_exact_backup_without_touching_cli() {
+        let fixture = Fixture::new();
+        drop(publish_at(&fixture.profiles, b"cli").unwrap());
+        drop(publish_fixed(&fixture.profiles, b"legacy-mcp", ProfileFile::Mcp).unwrap());
+        let id = [39; 32];
+        drop(
+            refresh_fixed_at(
+                &fixture.profiles,
+                id,
+                b"legacy-mcp",
+                b"full-mcp",
+                ProfileFile::Mcp,
+            )
+            .unwrap(),
+        );
+        fs::remove_file(fixture.profiles.join("mcp.json")).unwrap();
+        let mut published = refresh_fixed_at(
+            &fixture.profiles,
+            id,
+            b"legacy-mcp",
+            b"full-mcp",
+            ProfileFile::Mcp,
+        )
+        .unwrap();
+        assert_eq!(
+            fs::read(fixture.profiles.join("mcp.json")).unwrap(),
+            b"full-mcp"
+        );
+        assert_eq!(
+            fs::read(fixture.profiles.join("default.json")).unwrap(),
+            b"cli"
+        );
+        cleanup_backup(&mut published).unwrap();
     }
     #[test]
     fn sec03_gui_profile_publication_never_repairs_acl_or_uses_cli_as_existing_gui() {

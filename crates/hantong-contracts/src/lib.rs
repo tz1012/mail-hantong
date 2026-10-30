@@ -11,6 +11,7 @@ pub mod display_settings;
 pub mod folders;
 pub mod imap_setup;
 pub mod initial_sync;
+pub mod message_body;
 pub mod message_search;
 pub mod platform;
 pub mod registration;
@@ -165,4 +166,6 @@ mod tests {
     }
 }
 
+pub mod mail_send;
 pub mod scope_refresh;
+pub mod smtp_setup;

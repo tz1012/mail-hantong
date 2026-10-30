@@ -626,3 +626,66 @@ fn ext03_bad_operation_and_setting_metadata_rejected_without_repair() {
         Err(ErrorCode::InvalidInput)
     );
 }
+#[test]
+fn acc03_initial_smtp_is_bound_to_account_version_and_cannot_overwrite() {
+    let f = Fixture::new();
+    let (imap, smtp) = endpoints(1, Some(1));
+    let smtp = smtp.unwrap();
+    f.store
+        .put_imap_connection(
+            "acct_1",
+            &imap,
+            &mutation(
+                "imap-initial",
+                "imap-initial",
+                0,
+                imap_payload_hash("acct_1", &imap, 0).unwrap(),
+            ),
+        )
+        .unwrap();
+    let m = mutation(
+        "smtp-initial",
+        "smtp-initial",
+        0,
+        smtp_payload_hash("acct_1", &smtp, 0).unwrap(),
+    );
+    assert_eq!(
+        f.store.put_initial_smtp_connection("acct_1", &smtp, &m, 2),
+        Err(ErrorCode::Conflict)
+    );
+    assert_eq!(
+        f.store.put_initial_smtp_connection("acct_1", &smtp, &m, 1),
+        Ok(1)
+    );
+    let replacement = mutation(
+        "smtp-other",
+        "smtp-other",
+        0,
+        smtp_payload_hash("acct_1", &smtp, 0).unwrap(),
+    );
+    assert_eq!(
+        f.store
+            .put_initial_smtp_connection("acct_1", &smtp, &replacement, 1),
+        Err(ErrorCode::Conflict)
+    );
+    f.store
+        .with_connection(|c| {
+            c.execute(
+                "UPDATE accounts SET settings_version=2 WHERE account_id='acct_1'",
+                [],
+            )
+        })
+        .unwrap();
+    assert_eq!(
+        f.store.put_initial_smtp_connection("acct_1", &smtp, &m, 1),
+        Err(ErrorCode::Conflict)
+    );
+    assert_eq!(
+        f.store
+            .load_mail_connection("acct_1")
+            .unwrap()
+            .unwrap()
+            .smtp(),
+        Some(&smtp)
+    );
+}

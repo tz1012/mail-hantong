@@ -6,6 +6,8 @@ use hantong_contracts::ErrorCode;
 #[allow(unsafe_code)]
 mod paths;
 mod profile_file;
+mod selection;
+pub use selection::{Selection, SelectionKey, interactive_select};
 #[cfg(windows)]
 mod windows_autostart;
 #[cfg(windows)]
@@ -14,7 +16,10 @@ mod windows_identity;
 mod windows_pipe;
 
 pub use paths::{AppDirectories, app_directories};
-pub use profile_file::{LoadedClientProfile, load_default_client_profile, load_gui_client_profile};
+pub use profile_file::{
+    LoadedClientProfile, load_default_client_profile, load_gui_client_profile,
+    load_mcp_client_profile,
+};
 
 #[cfg(windows)]
 pub use windows_autostart::WindowsAutoStart;

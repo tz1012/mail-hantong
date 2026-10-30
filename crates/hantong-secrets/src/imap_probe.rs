@@ -54,6 +54,22 @@ impl ImapProbeReceipt {
     }
 }
 impl SecretStore {
+    pub async fn fetch_imap_body(
+        &self,
+        request: &hantong_contracts::message_body::MessageBodyRequest,
+        endpoint: &ImapEndpointConfig,
+    ) -> Result<hantong_contracts::message_body::MessageBody, crate::imap_body::ImapBodyError> {
+        validate_account(request.account_id()).map_err(MailProbeError::Credential)?;
+        #[cfg(windows)]
+        {
+            windows::fetch_body(self, request, endpoint).await
+        }
+        #[cfg(not(windows))]
+        {
+            let _ = endpoint;
+            Err(MailProbeError::UnsupportedPlatform.into())
+        }
+    }
     /// Observes UIDVALIDITY/UIDNEXT through one bounded, read-only EXAMINE.
     /// No messages are fetched and no provider session leaves Secrets.
     pub async fn fetch_imap_uid_observation(

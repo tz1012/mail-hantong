@@ -9,6 +9,11 @@
 
 use std::collections::BTreeMap;
 
+mod send;
+pub use send::{
+    ApprovalConsumer, ApprovalToken, SendOutcome, SendService, SendTransport, TransportResult,
+};
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SendEnvelope {
     pub account_id: String,

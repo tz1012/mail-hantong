@@ -3,6 +3,7 @@ use hantong_contracts::{
     ErrorCode,
     auth::{
         RequestedScope, default_cli_legacy_tools, gui_read_tools, is_supported_default_cli_toolset,
+        mcp_read_tools,
     },
     wire_hex,
 };
@@ -16,6 +17,7 @@ const PUBLIC_KEY_HEADER: &[u8; 8] = b"ECS1\x20\0\0\0";
 pub enum ProfileSelector {
     Default,
     Gui,
+    Mcp,
 }
 impl ProfileSelector {
     pub fn parse(value: &str) -> Result<Self, ErrorCode> {
@@ -28,12 +30,14 @@ impl ProfileSelector {
         match self {
             Self::Default => "default",
             Self::Gui => "gui",
+            Self::Mcp => "mcp",
         }
     }
     fn from_wire(value: &str) -> Result<Self, ErrorCode> {
         match value {
             "default" => Ok(Self::Default),
             "gui" => Ok(Self::Gui),
+            "mcp" => Ok(Self::Mcp),
             _ => Err(ErrorCode::InvalidInput),
         }
     }
@@ -41,6 +45,7 @@ impl ProfileSelector {
         match self {
             Self::Default => is_supported_default_cli_toolset(tools),
             Self::Gui => tools == gui_read_tools(),
+            Self::Mcp => hantong_contracts::auth::is_supported_mcp_toolset(tools),
         }
     }
 }
@@ -132,6 +137,42 @@ impl ParsedClientProfile {
             RequestedScope::new(account_ids, gui_read_tools())?,
         )
     }
+    pub fn new_mcp(
+        registration_id: [u8; 16],
+        client_key_id: [u8; 32],
+        client_public_key: [u8; 72],
+        server_public_key: [u8; 72],
+        profile_epoch: u64,
+        account_ids: Vec<String>,
+    ) -> Result<Self, ErrorCode> {
+        Self::new_for(
+            ProfileSelector::Mcp,
+            registration_id,
+            client_key_id,
+            client_public_key,
+            server_public_key,
+            profile_epoch,
+            RequestedScope::new(account_ids, mcp_read_tools())?,
+        )
+    }
+    pub fn new_mcp_mail(
+        registration_id: [u8; 16],
+        client_key_id: [u8; 32],
+        client_public_key: [u8; 72],
+        server_public_key: [u8; 72],
+        profile_epoch: u64,
+        account_ids: Vec<String>,
+    ) -> Result<Self, ErrorCode> {
+        Self::new_for(
+            ProfileSelector::Mcp,
+            registration_id,
+            client_key_id,
+            client_public_key,
+            server_public_key,
+            profile_epoch,
+            RequestedScope::new(account_ids, hantong_contracts::auth::mcp_mail_tools())?,
+        )
+    }
     fn new_for(
         profile: ProfileSelector,
         registration_id: [u8; 16],
@@ -178,7 +219,7 @@ impl ParsedClientProfile {
             serde_json::from_slice(input).map_err(|_| ErrorCode::InvalidInput)?;
         let profile = ProfileSelector::from_wire(&value.profile)?;
         if value.schema_version != 1
-            || !value.read_only
+            || value.read_only == value.tool_ids.iter().any(|t| t == "mail.send.execute")
             || value.requests_per_minute != 60
             || !profile.permits_tools(&value.tool_ids)
         {
@@ -206,7 +247,7 @@ impl ParsedClientProfile {
             profile_epoch: self.profile_epoch,
             account_ids: self.scope.accounts().to_vec(),
             tool_ids: self.scope.tools().to_vec(),
-            read_only: true,
+            read_only: !self.scope.tools().iter().any(|t| t == "mail.send.execute"),
             requests_per_minute: 60,
         };
         let bytes = serde_json::to_vec(&value).map_err(|_| ErrorCode::InternalError)?;
@@ -237,7 +278,7 @@ impl ParsedClientProfile {
         &self.scope
     }
     pub fn read_only(&self) -> bool {
-        true
+        !self.scope.tools().iter().any(|t| t == "mail.send.execute")
     }
     pub fn requests_per_minute(&self) -> u32 {
         60
@@ -280,6 +321,27 @@ mod tests {
         assert_eq!(parse(value), Err(ErrorCode::InvalidInput));
     }
 
+    #[test]
+    fn sec03_body_send_profiles_require_consistent_read_only_flag() {
+        for (tools, read_only) in [
+            (hantong_contracts::auth::default_cli_body_tools(), true),
+            (hantong_contracts::auth::default_cli_send_tools(), false),
+        ] {
+            let mut input = value();
+            input["tool_ids"] = json!(tools);
+            input["read_only"] = json!(read_only);
+            let p = ParsedClientProfile::from_json(&serde_json::to_vec(&input).unwrap()).unwrap();
+            assert_eq!(p.read_only(), read_only);
+            assert_eq!(
+                ParsedClientProfile::from_json(&p.to_json().unwrap())
+                    .unwrap()
+                    .read_only(),
+                read_only
+            );
+            input["read_only"] = json!(!read_only);
+            invalid(&input);
+        }
+    }
     #[test]
     fn sec03_gui_profile_has_distinct_selector_and_exact_read_scope() {
         let p = ParsedClientProfile::new_gui(

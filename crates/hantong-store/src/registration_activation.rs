@@ -12,37 +12,44 @@ use crate::{
 use rusqlite::{OptionalExtension, TransactionBehavior, params};
 
 pub const DEFAULT_CLI_LABEL: &str = "hantong CLI (default)";
+pub const DEFAULT_MCP_LABEL: &str = "mail-hantong MCP";
 pub const DEFAULT_GUI_LABEL: &str = "mail-hantong GUI";
 
 #[derive(Clone, Copy, Eq, PartialEq)]
 enum RegistrationFlavor {
     Cli,
     Gui,
+    Mcp,
 }
 impl RegistrationFlavor {
     fn kind(self) -> ClientKind {
         match self {
             Self::Cli => ClientKind::Cli,
             Self::Gui => ClientKind::Gui,
+            Self::Mcp => ClientKind::Mcp,
         }
     }
     fn label(self) -> &'static str {
         match self {
             Self::Cli => DEFAULT_CLI_LABEL,
             Self::Gui => DEFAULT_GUI_LABEL,
+            Self::Mcp => DEFAULT_MCP_LABEL,
         }
     }
     fn tools(self) -> Vec<String> {
         match self {
             Self::Cli => vec!["mail.accounts.list".into()],
             Self::Gui => hantong_contracts::auth::gui_read_tools(),
+            Self::Mcp => hantong_contracts::auth::mcp_read_tools(),
         }
     }
     fn matches_request(self, request: &RegistrationRequest) -> bool {
         request.client_kind == self.kind()
             && request.display_label == self.label()
             && request.scope.accounts().len() <= 128
-            && request.scope.tools() == self.tools()
+            && (request.scope.tools() == self.tools()
+                || (self == Self::Mcp
+                    && request.scope.tools() == hantong_contracts::auth::mcp_mail_tools()))
     }
 }
 
@@ -51,6 +58,7 @@ pub struct CliRegistrationStage {
     registration_id: [u8; 16],
     client_public_key: [u8; 72],
     expected_server_public_key_hash: [u8; 32],
+    expected_mcp_replacement: Option<RegistrationRecord>,
 }
 impl fmt::Debug for CliRegistrationStage {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -101,6 +109,7 @@ impl CliRegistrationStage {
             registration_id,
             client_public_key,
             expected_server_public_key_hash,
+            expected_mcp_replacement: None,
         })
     }
 }
@@ -131,6 +140,70 @@ impl GuiRegistrationStage {
         })
     }
 }
+pub struct McpRegistrationStage {
+    inner: CliRegistrationStage,
+}
+impl fmt::Debug for McpRegistrationStage {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("McpRegistrationStage { <redacted> }")
+    }
+}
+impl McpRegistrationStage {
+    /// Fixed GUI registration data; this value does not prove user presence.
+    pub fn new(
+        expected_request: RegistrationRequest,
+        registration_id: [u8; 16],
+        client_public_key: [u8; 72],
+        expected_server_public_key_hash: [u8; 32],
+    ) -> Result<Self, ErrorCode> {
+        if expected_request.scope.tools() != hantong_contracts::auth::mcp_read_tools() {
+            return Err(ErrorCode::InvalidInput);
+        }
+        Ok(Self {
+            inner: CliRegistrationStage::new_for(
+                RegistrationFlavor::Mcp,
+                expected_request,
+                registration_id,
+                client_public_key,
+                expected_server_public_key_hash,
+            )?,
+        })
+    }
+}
+pub struct McpMailRegistrationStage {
+    inner: CliRegistrationStage,
+}
+impl fmt::Debug for McpMailRegistrationStage {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("McpMailRegistrationStage(<redacted>)")
+    }
+}
+impl McpMailRegistrationStage {
+    pub fn new(
+        request: RegistrationRequest,
+        id: [u8; 16],
+        key: [u8; 72],
+        server_hash: [u8; 32],
+        replaced: Option<RegistrationRecord>,
+    ) -> Result<Self, ErrorCode> {
+        if request.scope.tools() != hantong_contracts::auth::mcp_mail_tools() {
+            return Err(ErrorCode::InvalidInput);
+        }
+        if let Some(old) = &replaced
+            && (old.client_kind != ClientKind::Mcp
+                || old.display_label != DEFAULT_MCP_LABEL
+                || old.scope.tools() != hantong_contracts::auth::mcp_read_tools()
+                || old.state != crate::RegistrationState::Active
+                || !old.read_only)
+        {
+            return Err(ErrorCode::Conflict);
+        }
+        let mut inner =
+            CliRegistrationStage::new_for(RegistrationFlavor::Mcp, request, id, key, server_hash)?;
+        inner.expected_mcp_replacement = replaced;
+        Ok(Self { inner })
+    }
+}
 impl Store {
     pub fn list_orphan_cli_registration_requests(
         &self,
@@ -141,6 +214,11 @@ impl Store {
         &self,
     ) -> Result<Vec<RegistrationRequest>, ErrorCode> {
         self.list_orphan_registration_requests(RegistrationFlavor::Gui)
+    }
+    pub fn list_orphan_mcp_registration_requests(
+        &self,
+    ) -> Result<Vec<RegistrationRequest>, ErrorCode> {
+        self.list_orphan_registration_requests(RegistrationFlavor::Mcp)
     }
     fn list_orphan_registration_requests(
         &self,
@@ -179,8 +257,9 @@ impl Store {
                 // registration links before interpreting an absent match.
                 orphan_requests(tx, RegistrationFlavor::Cli)?;
                 orphan_requests(tx, RegistrationFlavor::Gui)?;
+                orphan_requests(tx, RegistrationFlavor::Mcp)?;
                 let request=read_request(tx,&request_id).map_err(internal)?.ok_or(ErrorCode::NotFound)?;
-                if !RegistrationFlavor::Cli.matches_request(&request) && !RegistrationFlavor::Gui.matches_request(&request) {return Err(ErrorCode::Conflict);}
+                if !RegistrationFlavor::Cli.matches_request(&request) && !RegistrationFlavor::Gui.matches_request(&request) && !RegistrationFlavor::Mcp.matches_request(&request) {return Err(ErrorCode::Conflict);}
                 let mut statement=tx.prepare("SELECT registration_id FROM client_registrations WHERE registration_id=?1 OR request_id=?2 OR public_key=?3 LIMIT 4").map_err(internal)?;
                 let ids=statement.query_map(params![id.as_slice(),request_id.as_slice(),public_key.as_slice()],|r|blob_column::<16>(r,0)).map_err(internal)?.collect::<rusqlite::Result<Vec<_>>>().map_err(internal)?;
                 if ids.len()>3 {return Err(ErrorCode::InternalError);}
@@ -195,6 +274,46 @@ impl Store {
     pub fn load_gui_registration(&self) -> Result<Option<RegistrationRecord>, ErrorCode> {
         self.load_fixed_registration(RegistrationFlavor::Gui)
     }
+    /// Narrow, revocable external-AI disclosure consent; absence never means all accounts.
+    pub fn check_mcp_ai_consent(
+        &self,
+        registration_id: [u8; 16],
+        expected_epoch: u64,
+        account_ids: &[String],
+    ) -> Result<(), ErrorCode> {
+        if registration_id == [0; 16] || !(1..=i64::MAX as u64).contains(&expected_epoch) {
+            return Err(ErrorCode::InvalidInput);
+        }
+        if account_ids.is_empty() {
+            return Err(ErrorCode::ScopeDenied);
+        }
+        let requested = hantong_contracts::auth::RequestedScope::new(account_ids.to_vec(), vec![])?;
+        #[cfg(not(windows))]
+        {
+            let _ = requested;
+            Err(ErrorCode::CapabilityUnsupported)
+        }
+        #[cfg(windows)]
+        {
+            self.registration_transaction(TransactionBehavior::Deferred,|tx|{
+                let record=read_registration(tx,&registration_id).map_err(internal)?.ok_or(ErrorCode::ClientNotRegistered)?;
+                if record.client_kind!=ClientKind::Mcp {return Err(ErrorCode::PolicyBlocked);}
+                if record.state!=RegistrationState::Active{return Err(ErrorCode::ClientSuspended);}
+                if record.profile_epoch!=expected_epoch{return Err(ErrorCode::AuthRequired);}
+                if requested.accounts().iter().any(|account|record.scope.accounts().binary_search(account).is_err()) {return Err(ErrorCode::ScopeDenied);}
+                let approved:i64=tx.query_row("SELECT approved_at_utc_ms FROM client_registrations WHERE registration_id=?1",[registration_id.as_slice()],|row|row.get(0)).map_err(internal)?;
+                let mut statement=tx.prepare("SELECT account_id,registration_request_id,approved_at_utc_ms FROM mcp_ai_consents WHERE registration_id=?1 AND profile_epoch=?2 ORDER BY account_id LIMIT 129").map_err(internal)?;
+                let rows=statement.query_map(params![registration_id.as_slice(),expected_epoch as i64],|row|Ok((text_column(row,0,128)?.to_owned(),blob_column::<32>(row,1)?,row.get::<_,i64>(2)?))).map_err(internal)?.collect::<rusqlite::Result<Vec<_>>>().map_err(internal)?;
+                if rows.len()>128 || rows.iter().any(|(account,request,time)|record.scope.accounts().binary_search(account).is_err() || request!=&record.request_id || *time!=approved || *time<=0){return Err(ErrorCode::InternalError);}
+                if requested.accounts().iter().any(|account|!rows.iter().any(|(allowed,_,_)|allowed==account)){return Err(ErrorCode::PolicyBlocked);}
+                Ok(())
+            })
+        }
+    }
+
+    pub fn load_mcp_registration(&self) -> Result<Option<RegistrationRecord>, ErrorCode> {
+        self.load_fixed_registration(RegistrationFlavor::Mcp)
+    }
     fn load_fixed_registration(
         &self,
         flavor: RegistrationFlavor,
@@ -207,7 +326,7 @@ impl Store {
         #[cfg(windows)]
         {
             self.registration_transaction(TransactionBehavior::Deferred, |tx| {
-                let mut statement=tx.prepare("SELECT registration_id FROM client_registrations WHERE (client_kind=?1 AND display_label=?2) OR (?1='gui' AND (client_kind='gui' OR display_label=?2)) ORDER BY registration_id LIMIT 2").map_err(internal)?;
+                let mut statement=tx.prepare("SELECT registration_id FROM client_registrations WHERE ((client_kind=?1 AND display_label=?2) OR (?1 IN ('gui','mcp') AND (client_kind=?1 OR display_label=?2))) AND (?1<>'mcp' OR state<>'revoked') ORDER BY registration_id LIMIT 2").map_err(internal)?;
                 let ids=statement.query_map(params![flavor.kind().as_str(),flavor.label()],|r|blob_column::<16>(r,0)).map_err(internal)?.collect::<rusqlite::Result<Vec<_>>>().map_err(internal)?;
                 if ids.len()>1 {return Err(ErrorCode::Conflict);}
                 ids.first().map(|id|{let record=read_registration(tx,id).map_err(internal)?.ok_or(ErrorCode::InternalError)?;if record.client_kind!=flavor.kind() || record.display_label!=flavor.label(){return Err(ErrorCode::InternalError)}Ok(record)}).transpose()
@@ -222,6 +341,9 @@ impl Store {
     pub fn load_pending_gui_request(&self) -> Result<Option<RegistrationRequest>, ErrorCode> {
         self.load_pending_fixed_request(RegistrationFlavor::Gui)
     }
+    pub fn load_pending_mcp_request(&self) -> Result<Option<RegistrationRequest>, ErrorCode> {
+        self.load_pending_fixed_request(RegistrationFlavor::Mcp)
+    }
     fn load_pending_fixed_request(
         &self,
         flavor: RegistrationFlavor,
@@ -235,7 +357,7 @@ impl Store {
         {
             self.registration_transaction(TransactionBehavior::Deferred, |tx| {
                 let now=crate::utc_millis().map_err(internal)?;
-                let mut statement=tx.prepare("SELECT request_id FROM client_registration_requests WHERE ((client_kind=?1 AND display_label=?2) OR (?1='gui' AND (client_kind='gui' OR display_label=?2))) AND state='pending' AND (expires_at_utc_ms>?3 OR created_at_utc_ms<=0 OR expires_at_utc_ms<=created_at_utc_ms OR expires_at_utc_ms-created_at_utc_ms>300000) ORDER BY request_id LIMIT 2").map_err(internal)?;
+                let mut statement=tx.prepare("SELECT request_id FROM client_registration_requests WHERE ((client_kind=?1 AND display_label=?2) OR (?1 IN ('gui','mcp') AND (client_kind=?1 OR display_label=?2))) AND state='pending' AND (expires_at_utc_ms>?3 OR created_at_utc_ms<=0 OR expires_at_utc_ms<=created_at_utc_ms OR expires_at_utc_ms-created_at_utc_ms>300000) ORDER BY request_id LIMIT 2").map_err(internal)?;
                 let ids=statement.query_map(params![flavor.kind().as_str(),flavor.label(),now],|r|blob_column::<32>(r,0)).map_err(internal)?.collect::<rusqlite::Result<Vec<_>>>().map_err(internal)?;
                 if ids.len()>1 {return Err(ErrorCode::Conflict);}
                 ids.first().map(|id| {
@@ -260,6 +382,35 @@ impl Store {
         stage: &GuiRegistrationStage,
     ) -> Result<RegistrationRecord, ErrorCode> {
         self.stage_registration(&stage.inner, RegistrationFlavor::Gui)
+    }
+    pub fn stage_mcp_registration(
+        &self,
+        stage: &McpRegistrationStage,
+    ) -> Result<RegistrationRecord, ErrorCode> {
+        self.stage_registration(&stage.inner, RegistrationFlavor::Mcp)
+    }
+    pub fn stage_mcp_mail_registration(
+        &self,
+        stage: &McpMailRegistrationStage,
+    ) -> Result<RegistrationRecord, ErrorCode> {
+        self.stage_registration(&stage.inner, RegistrationFlavor::Mcp)
+    }
+    pub fn load_mcp_replaced_registration(
+        &self,
+        id: [u8; 16],
+    ) -> Result<Option<RegistrationRecord>, ErrorCode> {
+        #[cfg(not(windows))]
+        {
+            let _ = id;
+            Err(ErrorCode::CapabilityUnsupported)
+        }
+        #[cfg(windows)]
+        {
+            self.registration_transaction(TransactionBehavior::Deferred,|tx|{
+            let old=tx.query_row("SELECT previous_registration_id FROM mcp_registration_replacements WHERE registration_id=?1",[id.as_slice()],|r|blob_column::<16>(r,0)).optional().map_err(internal)?;
+            old.map(|id|read_registration(tx,&id).map_err(internal)?.ok_or(ErrorCode::InternalError)).transpose()
+        })
+        }
     }
     fn stage_registration(
         &self,
@@ -303,8 +454,14 @@ impl Store {
                     let exists: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM accounts WHERE account_id=?1)", [account], |r| r.get(0)).map_err(internal)?;
                     if !exists { return Err(ErrorCode::NotFound); }
                 }
+                if let Some(old)=&stage.expected_mcp_replacement {
+                    if flavor!=RegistrationFlavor::Mcp || request.scope.tools()!=hantong_contracts::auth::mcp_mail_tools(){return Err(ErrorCode::InvalidInput)}
+                    let current=read_registration(tx,&old.registration_id).map_err(internal)?.ok_or(ErrorCode::Conflict)?;
+                    if current!=*old || current.state!=RegistrationState::Active || current.scope.tools()!=hantong_contracts::auth::mcp_read_tools(){return Err(ErrorCode::Conflict)}
+                    if tx.execute("UPDATE client_registrations SET state='revoked',revoked_at_utc_ms=?1,updated_at_utc_ms=?1,version=version+1 WHERE registration_id=?2 AND state='active' AND version=?3",params![now,old.registration_id.as_slice(),old.version as i64]).map_err(internal)?!=1{return Err(ErrorCode::Conflict)}
+                }
                 let duplicate: bool = tx.query_row(
-                    "SELECT EXISTS(SELECT 1 FROM client_registrations WHERE registration_id=?1 OR request_id=?2 OR public_key=?3 OR (client_kind=?4 AND display_label=?5) OR (?4='gui' AND (client_kind='gui' OR display_label=?5)))",
+                    "SELECT EXISTS(SELECT 1 FROM client_registrations WHERE registration_id=?1 OR request_id=?2 OR public_key=?3 OR (client_kind=?4 AND display_label=?5 AND (?4<>'mcp' OR state<>'revoked')) OR (?4 IN ('gui','mcp') AND (client_kind=?4 OR display_label=?5) AND (?4<>'mcp' OR state<>'revoked')))",
                     params![stage.registration_id.as_slice(),request.request_id.as_slice(),stage.client_public_key.as_slice(),flavor.kind().as_str(),flavor.label()], |r| r.get(0)
                 ).map_err(internal)?;
                 if duplicate { return Err(ErrorCode::Conflict); }
@@ -314,8 +471,8 @@ impl Store {
                 ).map_err(internal)?;
                 if changed != 1 { return Err(ErrorCode::Conflict); }
                 tx.execute(
-                    "INSERT INTO client_registrations(registration_id,request_id,client_kind,display_label,public_key,profile_epoch,state,read_only,requests_per_minute,approved_channel,approved_at_utc_ms,updated_at_utc_ms,revoked_at_utc_ms,version) VALUES(?1,?2,?3,?4,?5,1,'provisioning',1,60,'approval_helper',?6,?6,NULL,1)",
-                    params![stage.registration_id.as_slice(),request.request_id.as_slice(),flavor.kind().as_str(),flavor.label(),stage.client_public_key.as_slice(),now]
+                    "INSERT INTO client_registrations(registration_id,request_id,client_kind,display_label,public_key,profile_epoch,state,read_only,requests_per_minute,approved_channel,approved_at_utc_ms,updated_at_utc_ms,revoked_at_utc_ms,version) VALUES(?1,?2,?3,?4,?5,1,'provisioning',?7,60,'approval_helper',?6,?6,NULL,1)",
+                    params![stage.registration_id.as_slice(),request.request_id.as_slice(),flavor.kind().as_str(),flavor.label(),stage.client_public_key.as_slice(),now,i64::from(request.scope.tools()!=hantong_contracts::auth::mcp_mail_tools())]
                 ).map_err(internal)?;
                 for account in request.scope.accounts() {
                     tx.execute("INSERT INTO client_registration_accounts(registration_id,account_id) VALUES(?1,?2)", params![stage.registration_id.as_slice(),account]).map_err(internal)?;
@@ -323,6 +480,7 @@ impl Store {
                 for tool in request.scope.tools() {
                     tx.execute("INSERT INTO client_registration_tools(registration_id,tool_id) VALUES(?1,?2)", params![stage.registration_id.as_slice(),tool]).map_err(internal)?;
                 }
+                if let Some(old)=&stage.expected_mcp_replacement && tx.execute("INSERT INTO mcp_registration_replacements(registration_id,previous_registration_id,request_id) VALUES(?1,?2,?3)",params![stage.registration_id.as_slice(),old.registration_id.as_slice(),request.request_id.as_slice()]).map_err(internal)?!=1{return Err(ErrorCode::InternalError)}
                 read_registration(tx, &stage.registration_id).map_err(internal)?.ok_or(ErrorCode::InternalError)
             })
         }
@@ -349,6 +507,19 @@ impl Store {
     ) -> Result<RegistrationRecord, ErrorCode> {
         self.activate_registration(
             RegistrationFlavor::Gui,
+            registration_id,
+            expected_version,
+            expected_server_public_key_hash,
+        )
+    }
+    pub fn activate_mcp_registration(
+        &self,
+        registration_id: [u8; 16],
+        expected_version: u64,
+        expected_server_public_key_hash: [u8; 32],
+    ) -> Result<RegistrationRecord, ErrorCode> {
+        self.activate_registration(
+            RegistrationFlavor::Mcp,
             registration_id,
             expected_version,
             expected_server_public_key_hash,
@@ -390,7 +561,7 @@ impl Store {
                 if !flavor.matches_request(&request)
                     || registration.client_kind != flavor.kind()
                     || registration.display_label != flavor.label()
-                    || !registration.read_only
+                    || registration.read_only != (registration.scope.tools()!=hantong_contracts::auth::mcp_mail_tools())
                     || registration.requests_per_minute != 60
                     || registration.approved_channel != "approval_helper"
                     || registration.scope != request.scope
@@ -407,6 +578,13 @@ impl Store {
                     params![now,registration_id.as_slice(),expected_version as i64]
                 ).map_err(internal)?;
                 if changed != 1 { return Err(ErrorCode::Conflict); }
+                if flavor == RegistrationFlavor::Mcp {
+                    for account in registration.scope.accounts() {
+                        let inserted=tx.execute("INSERT INTO mcp_ai_consents(registration_id,account_id,profile_epoch,registration_request_id,approved_at_utc_ms) VALUES(?1,?2,?3,?4,?5)",
+                            params![registration_id.as_slice(),account,registration.profile_epoch as i64,registration.request_id.as_slice(),approved]).map_err(internal)?;
+                        if inserted!=1 { return Err(ErrorCode::InternalError); }
+                    }
+                }
                 read_registration(tx,&registration_id).map_err(internal)?.ok_or(ErrorCode::InternalError)
             })
         }
@@ -425,6 +603,13 @@ impl Store {
         expected_version: u64,
     ) -> Result<(), ErrorCode> {
         self.deny_registration_request(RegistrationFlavor::Gui, request_id, expected_version)
+    }
+    pub fn deny_mcp_registration_request(
+        &self,
+        request_id: [u8; 32],
+        expected_version: u64,
+    ) -> Result<(), ErrorCode> {
+        self.deny_registration_request(RegistrationFlavor::Mcp, request_id, expected_version)
     }
     fn deny_registration_request(
         &self,
@@ -664,13 +849,57 @@ pub(super) fn validate_gui_registration(
     }
     Ok(())
 }
+#[cfg(windows)]
+pub(super) fn validate_mcp_registration(
+    connection: &rusqlite::Connection,
+    record: &RegistrationRecord,
+) -> rusqlite::Result<()> {
+    if record.client_kind != ClientKind::Mcp && record.display_label != DEFAULT_MCP_LABEL {
+        return Ok(());
+    }
+    let request =
+        read_request(connection, &record.request_id)?.ok_or(rusqlite::Error::InvalidQuery)?;
+    if !RegistrationFlavor::Mcp.matches_request(&request)
+        || request.state != RegistrationRequestState::Approved
+        || record.client_kind != ClientKind::Mcp
+        || record.display_label != DEFAULT_MCP_LABEL
+        || record.scope != request.scope
+        || record.read_only != (record.scope.tools() != hantong_contracts::auth::mcp_mail_tools())
+        || record.requests_per_minute != 60
+        || record.approved_channel != "approval_helper"
+        || record.profile_epoch != 1
+        || record.registration_id
+            != hantong_platform::registration_id_for_request(record.request_id)
+                .map_err(|_| rusqlite::Error::InvalidQuery)?
+    {
+        return Err(rusqlite::Error::InvalidQuery);
+    }
+    let predecessor=connection.query_row("SELECT previous_registration_id,request_id FROM mcp_registration_replacements WHERE registration_id=?1",[record.registration_id.as_slice()],|r|Ok((blob_column::<16>(r,0)?,blob_column::<32>(r,1)?))).optional()?;
+    if let Some((id, request_id)) = predecessor {
+        let old = crate::registrations::read_registration_bare(connection, &id)?
+            .ok_or(rusqlite::Error::InvalidQuery)?;
+        if record.scope.tools() != hantong_contracts::auth::mcp_mail_tools()
+            || request_id != record.request_id
+            || old.client_kind != ClientKind::Mcp
+            || old.display_label != DEFAULT_MCP_LABEL
+            || old.scope.tools() != hantong_contracts::auth::mcp_read_tools()
+            || old.state != RegistrationState::Revoked
+            || !old.read_only
+            || old.registration_id == record.registration_id
+        {
+            return Err(rusqlite::Error::InvalidQuery);
+        }
+        validate_mcp_registration(connection, &old)?;
+    }
+    Ok(())
+}
 
 #[cfg(windows)]
 fn orphan_requests(
     tx: &rusqlite::Transaction<'_>,
     flavor: RegistrationFlavor,
 ) -> Result<Vec<RegistrationRequest>, ErrorCode> {
-    let mut defaults=tx.prepare("SELECT registration_id FROM client_registrations WHERE (client_kind=?1 AND display_label=?2) OR (?1='gui' AND (client_kind='gui' OR display_label=?2)) LIMIT 2").map_err(internal)?;
+    let mut defaults=tx.prepare("SELECT registration_id FROM client_registrations WHERE ((client_kind=?1 AND display_label=?2) OR (?1 IN ('gui','mcp') AND (client_kind=?1 OR display_label=?2))) AND (?1<>'mcp' OR state<>'revoked') LIMIT 2").map_err(internal)?;
     let default_ids = defaults
         .query_map(params![flavor.kind().as_str(), flavor.label()], |r| {
             blob_column::<16>(r, 0)
@@ -686,7 +915,7 @@ fn orphan_requests(
             .map_err(internal)?
             .ok_or(ErrorCode::InternalError)?;
     }
-    let mut statement=tx.prepare("SELECT request_id FROM client_registration_requests WHERE (client_kind=?1 AND display_label=?2) OR (?1='gui' AND (client_kind='gui' OR display_label=?2)) ORDER BY request_id LIMIT 1025").map_err(internal)?;
+    let mut statement=tx.prepare("SELECT request_id FROM client_registration_requests WHERE (client_kind=?1 AND display_label=?2) OR (?1 IN ('gui','mcp') AND (client_kind=?1 OR display_label=?2)) ORDER BY request_id LIMIT 1025").map_err(internal)?;
     let ids = statement
         .query_map(params![flavor.kind().as_str(), flavor.label()], |r| {
             blob_column::<32>(r, 0)
@@ -733,7 +962,7 @@ fn orphan_requests(
                     || record.display_label != flavor.label()
                     // read_registration already validates every CLI scope-refresh
                     // transition. Only its initial epoch still equals this request.
-                    || ((flavor == RegistrationFlavor::Gui || record.profile_epoch == 1)
+                    || ((flavor != RegistrationFlavor::Cli || record.profile_epoch == 1)
                         && record.scope != request.scope)
                 {
                     return Err(ErrorCode::InternalError);

@@ -4,7 +4,9 @@
 //! public API exposes a window handle or plaintext; the Windows UI integration
 //! will attach the control only on the owning UI thread.
 use crate::{SecretError, SecretHandle, SecretStore, SensitiveBuffer};
-use hantong_domain::mail_connection::{Authentication, ImapEndpointConfig};
+use hantong_domain::mail_connection::{
+    Authentication, ImapEndpointConfig, MailConnectionConfig, SmtpEndpointConfig,
+};
 use std::{
     fmt,
     marker::PhantomData,
@@ -18,6 +20,7 @@ const INPUT_TTL: Duration = Duration::from_secs(300);
 pub struct ImapPasswordCapturePlan {
     account_id: String,
     endpoint: ImapEndpointConfig,
+    smtp_only: bool,
     request_id: [u8; 32],
     payload_hash: [u8; 32],
     nonce: [u8; 32],
@@ -51,6 +54,7 @@ impl ImapPasswordCapturePlan {
         Ok(Self {
             account_id,
             endpoint: endpoint.clone(),
+            smtp_only: false,
             request_id,
             payload_hash,
             nonce,
@@ -58,6 +62,10 @@ impl ImapPasswordCapturePlan {
             started: Instant::now(),
             _not_sync: PhantomData,
         })
+    }
+    /// Native UI must not display an SMTP capture through the IMAP review path.
+    pub fn is_smtp_capture_binding(&self) -> bool {
+        self.smtp_only
     }
     pub fn account_id(&self) -> &str {
         &self.account_id
@@ -91,6 +99,68 @@ impl ImapPasswordCapturePlan {
     ) -> Result<PasswordInput, SecretError> {
         Err(SecretError::UnsupportedPlatform)
     }
+}
+
+/// Typed SMTP capture. The IMAP-shaped inner value is only a native EDIT
+/// binding mirror; a private protocol marker prevents cross-protocol commit.
+pub struct SmtpPasswordCapturePlan {
+    inner: ImapPasswordCapturePlan,
+    endpoint: SmtpEndpointConfig,
+}
+impl fmt::Debug for SmtpPasswordCapturePlan {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("SmtpPasswordCapturePlan { <redacted> }")
+    }
+}
+impl SmtpPasswordCapturePlan {
+    pub fn new(
+        account: impl Into<String>,
+        endpoint: &SmtpEndpointConfig,
+        request: [u8; 32],
+        hash: [u8; 32],
+    ) -> Result<Self, SecretError> {
+        let account = account.into();
+        let mirror = smtp_capture_mirror(&account, endpoint)?;
+        let mut inner = ImapPasswordCapturePlan::new(account, &mirror, request, hash)?;
+        inner.smtp_only = true;
+        Ok(Self {
+            inner,
+            endpoint: endpoint.clone(),
+        })
+    }
+    pub fn account_id(&self) -> &str {
+        self.inner.account_id()
+    }
+    pub fn endpoint(&self) -> &SmtpEndpointConfig {
+        &self.endpoint
+    }
+    pub fn setup_request_id(&self) -> &[u8; 32] {
+        self.inner.setup_request_id()
+    }
+    pub fn setup_payload_hash(&self) -> &[u8; 32] {
+        self.inner.setup_payload_hash()
+    }
+    pub fn nonce(&self) -> &[u8; 32] {
+        self.inner.nonce()
+    }
+    pub fn capture_endpoint(&self) -> &ImapEndpointConfig {
+        self.inner.endpoint()
+    }
+    pub fn into_imap_capture_binding(self) -> ImapPasswordCapturePlan {
+        self.inner
+    }
+}
+fn smtp_capture_mirror(
+    account: &str,
+    endpoint: &SmtpEndpointConfig,
+) -> Result<ImapEndpointConfig, SecretError> {
+    let bytes = serde_json::to_vec(
+        &serde_json::json!({"schema_version":1,"account_id":account,"imap":endpoint}),
+    )
+    .map_err(|_| SecretError::InvalidCredential)?;
+    MailConnectionConfig::from_json(&bytes)
+        .map(|v| v.imap().clone())
+        .map_err(|_| SecretError::InvalidCredential)
 }
 
 pub struct PendingImapCredential {
@@ -234,12 +304,34 @@ impl PasswordInput {
 }
 
 impl SecretStore {
+    /// Consumes only SMTP-marked opaque native capture, never a CLI secret.
+    pub fn store_pending_smtp_credential(
+        &self,
+        pending: PendingImapCredential,
+        account: &str,
+        endpoint: &SmtpEndpointConfig,
+    ) -> Result<SecretHandle, SecretError> {
+        if pending.captured_at.elapsed() >= INPUT_TTL {
+            return Err(SecretError::InputExpired);
+        }
+        if !pending.plan.smtp_only
+            || pending.plan.account_id != account
+            || pending.plan.endpoint != smtp_capture_mirror(account, endpoint)?
+        {
+            return Err(SecretError::CredentialMismatch);
+        }
+        validate_password(pending.secret.as_slice())?;
+        self.store_smtp_credential(account, endpoint, pending.secret.as_slice())
+    }
     pub fn store_pending_imap_credential(
         &self,
         pending: PendingImapCredential,
         expected_account: &str,
         expected_endpoint: &ImapEndpointConfig,
     ) -> Result<SecretHandle, SecretError> {
+        if pending.plan.smtp_only {
+            return Err(SecretError::CredentialMismatch);
+        }
         if pending.captured_at.elapsed() >= INPUT_TTL {
             return Err(SecretError::InputExpired);
         }
@@ -344,6 +436,63 @@ mod tests {
             Err(SecretError::InvalidCredential)
         );
         assert_eq!(validate_password(b" exact "), Ok(()));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn inst05_smtp_capture_cannot_commit_to_imap_or_different_endpoint() {
+        let config=MailConnectionConfig::from_json(br#"{"schema_version":1,"account_id":"acct","imap":{"settings_version":1,"host":"smtp.example","port":465,"tls":"implicit_tls","login_name":"user@example.test","authentication":"app_password"},"smtp":{"settings_version":1,"host":"smtp.example","port":465,"tls":"implicit_tls","login_name":"user@example.test","authentication":"app_password"}}"#).unwrap();
+        let smtp = config.smtp().unwrap();
+        let root = std::env::temp_dir().join(format!(
+            "hantong-smtp-capture-{}",
+            hantong_contracts::wire_hex::encode(&random_nonce().unwrap())
+        ));
+        std::fs::create_dir(&root).unwrap();
+        let store = SecretStore::open(&root).unwrap();
+        let pending = |plan| PendingImapCredential {
+            plan,
+            secret: SensitiveBuffer(b"synthetic-fixture".to_vec()),
+            captured_at: Instant::now(),
+            _not_sync: PhantomData,
+        };
+        let smtp_plan = || SmtpPasswordCapturePlan::new("acct", smtp, [1; 32], [2; 32]).unwrap();
+        assert!(matches!(
+            store.store_pending_imap_credential(
+                pending(smtp_plan().into_imap_capture_binding()),
+                "acct",
+                config.imap()
+            ),
+            Err(SecretError::CredentialMismatch)
+        ));
+        assert!(matches!(
+            store.store_pending_smtp_credential(
+                pending(
+                    ImapPasswordCapturePlan::new("acct", config.imap(), [1; 32], [2; 32]).unwrap()
+                ),
+                "acct",
+                smtp
+            ),
+            Err(SecretError::CredentialMismatch)
+        ));
+        assert!(matches!(
+            store.store_pending_smtp_credential(
+                pending(smtp_plan().into_imap_capture_binding()),
+                "other",
+                smtp
+            ),
+            Err(SecretError::CredentialMismatch)
+        ));
+        store
+            .store_pending_smtp_credential(
+                pending(smtp_plan().into_imap_capture_binding()),
+                "acct",
+                smtp,
+            )
+            .unwrap();
+        store.verify_smtp_credential("acct", smtp).unwrap();
+        assert!(store.verify_imap_credential("acct", config.imap()).is_err());
+        drop(store);
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

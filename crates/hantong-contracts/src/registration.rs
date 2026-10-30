@@ -7,6 +7,8 @@ pub enum RegistrationCommand {
     Status([u8; 32]),
     GuiRequest,
     GuiStatus([u8; 32]),
+    McpRequest,
+    McpStatus([u8; 32]),
 }
 
 impl std::fmt::Debug for RegistrationCommand {
@@ -14,6 +16,8 @@ impl std::fmt::Debug for RegistrationCommand {
         f.write_str(match self {
             Self::Request => "RegistrationCommand::Request",
             Self::Status(_) => "RegistrationCommand::Status(<redacted>)",
+            Self::McpRequest => "RegistrationCommand::McpRequest",
+            Self::McpStatus(_) => "RegistrationCommand::McpStatus(<redacted>)",
             Self::GuiRequest => "RegistrationCommand::GuiRequest",
             Self::GuiStatus(_) => "RegistrationCommand::GuiStatus(<redacted>)",
         })

@@ -72,6 +72,7 @@ pub(super) async fn probe(
 }
 #[derive(Clone, Copy)]
 enum ReadOperation<'a> {
+    Body(&'a hantong_contracts::message_body::MessageBodyRequest),
     Probe,
     Mailboxes,
     UidObservation(&'a ImapUidObservationRequest),
@@ -80,6 +81,7 @@ enum ReadOperation<'a> {
     UidRecovery(&'a ImapUidRecoveryRequest),
 }
 enum ReadReceipt {
+    Body(Result<hantong_contracts::message_body::MessageBody, crate::imap_body::ImapBodyError>),
     Probe(ImapProbeReceipt),
     Mailboxes(ImapMailboxSnapshot),
     UidObservation(Result<ImapUidObservation, ImapUidPageError>),
@@ -131,6 +133,24 @@ async fn connect(
         .await
     })
     .await
+}
+
+pub(super) async fn fetch_body(
+    store: &SecretStore,
+    request: &hantong_contracts::message_body::MessageBodyRequest,
+    endpoint: &ImapEndpointConfig,
+) -> Result<hantong_contracts::message_body::MessageBody, crate::imap_body::ImapBodyError> {
+    match connect(
+        store,
+        request.account_id(),
+        endpoint,
+        ReadOperation::Body(request),
+    )
+    .await?
+    {
+        ReadReceipt::Body(body) => body,
+        _ => Err(MailProbeError::Protocol.into()),
+    }
 }
 
 pub(super) async fn discover(
@@ -668,6 +688,7 @@ where
         )));
     }
     let (wire_limit, plaintext_limit) = match operation {
+        ReadOperation::Body(_) => (4 * 1024 * 1024, 2 * 1024 * 1024),
         ReadOperation::Probe => (256 * 1024, 256 * 1024),
         ReadOperation::Mailboxes => (4 * 1024 * 1024, 2 * 1024 * 1024),
         ReadOperation::UidObservation(_)
@@ -731,6 +752,18 @@ where
     let caps = verified.capabilities("h5").await?;
     let capabilities = snapshot(&caps);
     let (receipt, logout_tag) = match operation {
+        ReadOperation::Body(request) => {
+            let encoding = if has(&caps, "IMAP4REV2") && !has(&caps, "IMAP4REV1") {
+                MailboxEncoding::Utf8
+            } else {
+                MailboxEncoding::ModifiedUtf7
+            };
+            let result = verified.body(request, encoding).await;
+            if result.is_err() {
+                return Ok(ReadReceipt::Body(result));
+            }
+            (ReadReceipt::Body(result), "h9")
+        }
         ReadOperation::Probe => (
             ReadReceipt::Probe(ImapProbeReceipt {
                 settings_version: source.endpoint.settings_version(),

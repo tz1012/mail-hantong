@@ -6,6 +6,10 @@ pub mod account_setup_review;
 pub mod registration_review;
 pub mod resources;
 pub mod scope_refresh_review;
+pub mod send_review;
+pub use send_review::SendReview;
+pub mod smtp_setup_review;
+pub use smtp_setup_review::SmtpSetupReview;
 pub mod setup_resources;
 pub use account_setup_review::{AccountSetupReview, setup_summary};
 pub use registration_review::{

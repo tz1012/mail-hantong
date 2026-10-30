@@ -167,7 +167,7 @@ fn mail03_v14_to_v15_preserves_recovery_cycles_and_retired_epoch_observations() 
 }
 
 fn v14_product_rows(c: &rusqlite::Connection) -> rusqlite::Result<V14TableRows> {
-    let mut statement = c.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT GLOB 'sqlite_*' AND name NOT IN ('app_metadata','imap_message_identities','imap_initial_preview_plans','imap_initial_preview_requests','imap_initial_preview_pages','imap_initial_preview_messages') ORDER BY name")?;
+    let mut statement = c.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT GLOB 'sqlite_*' AND name NOT IN ('app_metadata','imap_message_identities','imap_initial_preview_plans','imap_initial_preview_requests','imap_initial_preview_pages','imap_initial_preview_messages','imap_body_cache','mail_drafts','mail_send_reviews','mail_outbox','mcp_ai_consents','mcp_registration_replacements') ORDER BY name")?;
     let names = statement.query_map([], |r| r.get::<_, String>(0))?.collect::<rusqlite::Result<Vec<_>>>()?;
     names.into_iter().map(|name| {
         let mut columns = c.prepare(&format!("PRAGMA table_info({name})"))?;

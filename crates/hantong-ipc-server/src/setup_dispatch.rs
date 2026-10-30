@@ -12,11 +12,13 @@ use serde_json::{Value, json};
 pub enum SetupCommand {
     Registration(RegistrationCommand),
     Imap(ImapSetupCommand),
+    Smtp(hantong_contracts::smtp_setup::SmtpSetupCommand),
     ScopeRefresh(ScopeRefreshCommand),
 }
 pub enum SetupReceipt {
     Registration(RegistrationReceipt),
     Imap(ImapSetupReceipt),
+    Smtp(hantong_contracts::smtp_setup::SmtpSetupReceipt),
     ScopeRefresh(ScopeRefreshReceipt),
 }
 
@@ -61,8 +63,12 @@ where
         }
         let command = crate::registration_wire::parse(request)?;
         let expected_id = match command {
-            RegistrationCommand::Request | RegistrationCommand::GuiRequest => None,
-            RegistrationCommand::Status(id) | RegistrationCommand::GuiStatus(id) => Some(id),
+            RegistrationCommand::Request
+            | RegistrationCommand::GuiRequest
+            | RegistrationCommand::McpRequest => None,
+            RegistrationCommand::Status(id)
+            | RegistrationCommand::GuiStatus(id)
+            | RegistrationCommand::McpStatus(id) => Some(id),
         };
         let SetupReceipt::Registration(receipt) = callback(SetupCommand::Registration(command))?
         else {
@@ -72,6 +78,23 @@ where
             return Err(ErrorCode::InternalError);
         }
         Ok(crate::registration_wire::result(&receipt))
+    } else if request.method.starts_with("setup.smtp.") {
+        if !(1..=16384).contains(&frame_length) {
+            return Err(ErrorCode::InvalidInput);
+        }
+        let command = crate::smtp_setup_wire::parse(request)?;
+        let expected = match &command {
+            hantong_contracts::smtp_setup::SmtpSetupCommand::Status(id) => Some(*id),
+            _ => None,
+        };
+        let SetupReceipt::Smtp(receipt) = callback(SetupCommand::Smtp(command))? else {
+            return Err(ErrorCode::InternalError);
+        };
+        receipt.validate().map_err(|_| ErrorCode::InternalError)?;
+        if expected.is_some_and(|id| id != receipt.request_id) {
+            return Err(ErrorCode::InternalError);
+        }
+        Ok(crate::smtp_setup_wire::result(&receipt))
     } else if request.method.starts_with("setup.imap.") {
         if !(1..=16_384).contains(&frame_length) {
             return Err(ErrorCode::InvalidInput);
@@ -226,6 +249,7 @@ mod tests {
                 Ok(match command {
                     SetupCommand::Registration(_) => SetupReceipt::Registration(reg.clone()),
                     SetupCommand::Imap(_) => imap_receipt([2; 32]),
+                    SetupCommand::Smtp(_) => panic!("unexpected SMTP setup"),
                     SetupCommand::ScopeRefresh(_) => panic!("unexpected scope refresh"),
                 })
             });
