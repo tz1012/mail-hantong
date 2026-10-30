@@ -11,7 +11,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-SOURCE_FILES = ("Cargo.toml", "Cargo.lock", "rust-toolchain.toml", "tests/Corpus/index.json", "scripts/native-tools.json", "scripts/check-all", "scripts/traceability", "scripts/test-mail-server")
+SOURCE_FILES = ("Cargo.toml", "Cargo.lock", "rust-toolchain.toml", "tests/Corpus/index.json", "scripts/native-tools.json", "scripts/check-all", "scripts/traceability", "scripts/test-mail-server", "packaging/licenses/index.json")
 SOURCE_SUFFIXES = {".rs", ".py", ".toml", ".txt", ".eml", ".mbox", ".ps1", ".sh", ".cert", ".fullchain", ".key", ".manifest"}
 RESULTS = {"unimplemented", "not_run", "passed", "failed", "review_required", "not_applicable"}
 REQUIRED_EVIDENCE = {"result", "test_id", "test_kind", "environment", "command", "exit_code", "log_path", "log_sha256", "evidence", "reviewer"}
@@ -27,7 +27,7 @@ def source_hash(root: Path) -> str:
     for name in SOURCE_FILES:
         path = root / name
         if path.is_file(): paths.append(path)
-    for directory in (root / "crates", root / "apps", root / "tests", root / "scripts"):
+    for directory in (root / "crates", root / "apps", root / "tests", root / "scripts", root / "packaging"):
         if directory.is_dir():
             paths.extend(p for p in directory.rglob("*") if p.is_file() and not p.is_symlink() and p.suffix.lower() in SOURCE_SUFFIXES and p.name not in {"traceability.json", "execution.json"} and "__pycache__" not in p.parts and p.parent.name not in {"target", "artifacts", ".local"})
     contracts = root / "docs/contracts"

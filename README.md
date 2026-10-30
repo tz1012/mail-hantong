@@ -2,11 +2,13 @@
 
 A multi-account mail hub for Windows, with a shared core service, the `hantong` CLI, MCP access, and an optional GUI. GUI languages are Korean and English; themes are light, dark, and system. The CLI defaults to English and supports Korean.
 
-**Status: active development. The Rust workspace and initial bilingual CLI run locally. Mail integration, GUI and production installers are not complete.**
+**Status: CLI-first development, Windows developer preview; no public product release yet.** The CLI is a terminal command-line client; it is not currently a full-screen TUI. Account setup and authorization still require the protected Windows confirmation window. See the [CLI installation and usage guide](docs/latest/CLI-LAUNCH.md) for supported commands, installation and remaining limitations.
 
-Windows GUI는 `cargo run -p mail-hantong-gui -- --lang ko --theme system`으로 실행합니다. 영어는 `--lang en`, 테마는 `light`, `dark`, `system`입니다. GUI는 CLI와 별도 등록을 사용하며, 사용자가 연결을 요청하고 보호된 확인 창에서 검토한 계정의 저장된 폴더·메일 메타데이터만 읽습니다. 표시 설정 저장·본문·첨부·작성·발송은 아직 개발 중입니다. 최신 검증 여부는 [진행 기록](docs/latest/PROGRESS.md)을 확인하세요.
+Windows GUI는 `cargo run -p mail-hantong-gui -- --lang ko --theme system`으로 실행합니다. 영어는 `--lang en`, 테마는 `light`, `dark`, `system`입니다. GUI는 CLI와 별도 등록을 사용하며, 사용자가 연결을 요청하고 보호된 확인 창에서 검토한 계정의 저장된 폴더·메일 메타데이터만 읽습니다. 선택한 폴더에서 전체·읽지 않음·즐겨찾기로 목록을 좁히고 다시 조회할 수 있습니다. 현대적인 메일 화면의 구성과 참조 기준은 [디자인 가이드](docs/latest/DESIGN.md)에 기록합니다. 표시 설정 저장·본문·첨부·작성·발송은 아직 개발 중입니다. 최신 검증 여부는 [진행 기록](docs/latest/PROGRESS.md)을 확인하세요.
 
 Windows ships first. Planned macOS support starts with the local core, CLI, and a minimal approval helper; the full GUI follows later.
+
+개발용 화면 확인은 `cargo run -p hantong-desktop --example fixture_preview`로 실행할 수 있습니다. 새로고침 후 `[Sample / 예시] Preview` 계정과 받은편지함을 선택하면 명시적으로 표시된 합성 메일 32개로 목록·테마·스크롤을 확인합니다. 이 예제는 Core·IPC·실제 계정·네트워크를 사용하지 않으며 제품 실행 파일에는 포함되지 않습니다.
 
 The core service and CLI use **Rust 1.95.0**, selected to balance startup speed and memory use. The Windows GUI uses native Win32 controls. See [ADR-001](docs/adr/ADR-001-core-runtime.md), [ADR-002](docs/adr/ADR-002-desktop-ui.md), and the [workspace structure](docs/latest/RUST-STRUCTURE.md).
 
@@ -17,7 +19,7 @@ The core service and CLI use **Rust 1.95.0**, selected to balance startup speed 
 - [GitHub 공개와 설치 계획](docs/latest/DISTRIBUTION.md): 사용자 설치와 개발자 작업 환경의 목표
 - [작업 규칙](AGENTS.md): 이 폴더에서 개발할 때 적용할 규칙
 
-Rust/rustup과 Python 3.10 이상이 있는 개발 환경에서 다음 명령을 실행할 수 있습니다. Windows는 MSVC C++ build tools와 Windows SDK가 필요합니다. 네이티브 도구 준비 명령은 검증된 NASM·Perl을 `.tools/`에만 설치하며 시스템 PATH를 바꾸지 않습니다. 제품용 설치 패키지는 아직 없으며 아래 명령은 개발용입니다.
+Rust/rustup과 Python 3.11 이상이 있는 개발 환경에서 다음 명령을 실행할 수 있습니다. Windows는 MSVC C++ build tools와 Windows SDK가 필요합니다. 네이티브 도구 준비 명령은 검증된 NASM·Perl을 `.tools/`에만 설치하며 시스템 PATH를 바꾸지 않습니다. 아래 명령은 소스 개발용이며, CLI 미리보기 ZIP의 설치 방법은 위 CLI 안내를 따릅니다.
 
 ```powershell
 cargo fetch --locked

@@ -1,0 +1,58 @@
+{
+  "format_version": 1,
+  "packages": [
+    {
+      "files": [
+        {
+          "git_blob_sha1": "ebcc880b5ac03d7675a5a64b8cb28ffc02f6fc48",
+          "path": "LICENSE-MIT",
+          "sha256": "028cf7a7c18f8e7344951007d6c28626e86083e56be6e630c642514cb6ce9e7b",
+          "upstream_path": "LICENSE-MIT",
+          "url": "https://github.com/duesee/imap-codec/blob/4f2395e767b521d2dff6821e7032e093e5ca5586/LICENSE-MIT"
+        },
+        {
+          "git_blob_sha1": "261eeb9e9f8b2b4b0d119366dda99c6fd7d35c64",
+          "path": "LICENSE-APACHE",
+          "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
+          "upstream_path": "LICENSE-APACHE",
+          "url": "https://github.com/duesee/imap-codec/blob/4f2395e767b521d2dff6821e7032e093e5ca5586/LICENSE-APACHE"
+        }
+      ],
+      "license_expression": "MIT OR Apache-2.0",
+      "locked_checksum": "6d97d123085ef99031a01544307235eb189ecf23df66e37c41a046e3d6614b9f",
+      "name": "imap-codec",
+      "path_in_vcs": "imap-codec",
+      "registry_source": "registry+https://github.com/rust-lang/crates.io-index",
+      "repository": "https://github.com/duesee/imap-codec",
+      "revision": "4f2395e767b521d2dff6821e7032e093e5ca5586",
+      "version": "2.0.0-alpha.9"
+    },
+    {
+      "files": [
+        {
+          "git_blob_sha1": "ebcc880b5ac03d7675a5a64b8cb28ffc02f6fc48",
+          "path": "LICENSE-MIT",
+          "sha256": "028cf7a7c18f8e7344951007d6c28626e86083e56be6e630c642514cb6ce9e7b",
+          "upstream_path": "LICENSE-MIT",
+          "url": "https://github.com/duesee/imap-codec/blob/c9fe861bc220357cc04fa5041958cd5ee259f49c/LICENSE-MIT"
+        },
+        {
+          "git_blob_sha1": "261eeb9e9f8b2b4b0d119366dda99c6fd7d35c64",
+          "path": "LICENSE-APACHE",
+          "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
+          "upstream_path": "LICENSE-APACHE",
+          "url": "https://github.com/duesee/imap-codec/blob/c9fe861bc220357cc04fa5041958cd5ee259f49c/LICENSE-APACHE"
+        }
+      ],
+      "license_expression": "MIT OR Apache-2.0",
+      "locked_checksum": "15aa08dfdb68ab0aa77bf3de6de5217bfcae4893f33573c8625be183fca621c8",
+      "name": "imap-types",
+      "path_in_vcs": "imap-types",
+      "registry_source": "registry+https://github.com/rust-lang/crates.io-index",
+      "repository": "https://github.com/duesee/imap-codec",
+      "revision": "c9fe861bc220357cc04fa5041958cd5ee259f49c",
+      "version": "2.0.0-alpha.7"
+    }
+  ],
+  "provenance_note": "Upstream files checked against the exact revisions in the locked crates .cargo_vcs_info.json and their package manifests. This is source provenance, not human legal or distribution clearance."
+}

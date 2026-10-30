@@ -1,5 +1,7 @@
 usage=Usage: hantong [--lang en|ko] [--json] [--no-input] <command>
-commands=Commands: core status, clients register, clients status <request_id>, clients verify, clients refresh, clients refresh-status <refresh_id>, setup imap request, setup imap status <request_id>, setup imap resume <request_id>, accounts list, sync cursor, sync page, sync status, sync reconcile, sync reconcile-status, sync recover, sync recover-status, sync inspect, diagnostics snapshot, send execute, approvals get
+commands=Commands: core status; clients register; clients status <request_id>; clients verify; clients refresh; clients refresh-status <refresh_id>; setup imap request; setup imap status <request_id>; setup imap resume <request_id>; accounts list; folders list; folders refresh; folders refresh-status; sync cursor; sync page; sync status; sync reconcile; sync reconcile-status; sync recover; sync recover-status; sync inspect; sync initial-start; sync initial-status; sync initial-plan; sync initial-resume; sync initial-pause; search; diagnostics snapshot
+preview_scope=Developer preview: IMAP setup, cached folders and message metadata. Message bodies, attachments, composing and sending are not available. Windows 11 x64 only for mail operations.
+quick_start=Start mail-hantong-core run in another terminal, then hantong core status --json. Account setup and client registration require the protected Windows confirmation window. See CLI-LAUNCH.md for setup and command examples.
 folder_name=Folder
 sync_cursor=Local UID cursor
 sync_catalog_generation=Catalog generation
@@ -25,7 +27,7 @@ folder_refresh_result=Result
 core_status=Core status: transport is available; mail is not ready; client is not authenticated.
 core_unavailable=The core is unavailable.
 capability_unsupported=This capability is not supported on this operating system.
-protected=Protected mail commands are not available in this build.
+protected=Sending and approval execution are not available in this preview; client registration does not enable them.
 help_language=English is the default display language.
 client_not_registered=The client is not registered.
 client_verified=Default client profile authenticated.

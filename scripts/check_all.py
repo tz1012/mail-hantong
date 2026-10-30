@@ -29,10 +29,10 @@ def run_checks(root: Path = ROOT) -> int:
         [python, "-X", "utf8", "scripts/prepare_requirements.py", "--check"],
         [python, "-X", "utf8", "scripts/check_architecture.py"],
         [python, "-X", "utf8", "scripts/traceability.py", "--check"],
-        ["cargo", "build", "--workspace", "--all-targets", "--locked", "--offline"],
-        ["cargo", "test", "--workspace", "--all-targets", "--locked", "--offline"],
         ["cargo", "fmt", "--all", "--", "--check"],
         ["cargo", "clippy", "--workspace", "--all-targets", "--locked", "--offline", "--", "-D", "warnings"],
+        ["cargo", "build", "--workspace", "--all-targets", "--locked", "--offline"],
+        ["cargo", "test", "--workspace", "--all-targets", "--locked", "--offline"],
     ]
     try:
         env = build_environment(root)

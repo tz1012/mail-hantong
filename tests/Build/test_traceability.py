@@ -92,6 +92,11 @@ class TraceabilityTests(unittest.TestCase):
         self.assertNotEqual(after, before)
         (scripts / "native-tools.json").write_text('{"tools": {}}', encoding="utf-8")
         self.assertNotEqual(traceability.source_hash(root), after)
+        packaging = root / "packaging/windows"
+        packaging.mkdir(parents=True)
+        before_installer = traceability.source_hash(root)
+        (packaging / "install.ps1").write_text("throw 'changed installer'", encoding="utf-8")
+        self.assertNotEqual(traceability.source_hash(root), before_installer)
 
     def test_M004_compiled_tls_fixtures_and_native_manifest_invalidate_evidence(self):
         temp, root = self.fixture(); self.addCleanup(temp.cleanup)

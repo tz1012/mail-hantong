@@ -293,9 +293,11 @@ fn message(code: ErrorCode, lang: Lang) -> &'static str {
 
 fn help(lang: Lang) -> String {
     format!(
-        "mail-hantong / hantong\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}",
+        "mail-hantong / hantong\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}",
         resource(lang, "usage"),
-        resource(lang, "commands"),
+        resource(lang, "preview_scope"),
+        resource(lang, "quick_start"),
+        resource(lang, "commands").replace("; ", "\n  "),
         resource(lang, "sync_recovery_help"),
         resource(lang, "sync_inspection_help"),
         resource(lang, "sync_initial_help"),
@@ -1263,6 +1265,12 @@ mod tests {
         assert_ne!(super::help(super::Lang::En), super::help(super::Lang::Ko));
         assert!(super::help(super::Lang::En).contains("search reads"));
         assert!(super::help(super::Lang::Ko).contains("search는"));
+        for lang in [super::Lang::En, super::Lang::Ko] {
+            let help = super::help(lang);
+            assert!(help.contains("mail-hantong-core run"));
+            assert!(help.contains("folders refresh-status"));
+            assert!(help.contains("CLI-LAUNCH.md"));
+        }
     }
     use super::*;
     #[test]
