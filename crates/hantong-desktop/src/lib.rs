@@ -22,6 +22,7 @@ pub enum MailAction {
         account_id: String,
         folder_wire_hex: String,
         encoding: String,
+        filter: hantong_contracts::message_search::ImapMetadataFilter,
         cursor: Option<String>,
     },
 }

@@ -9,6 +9,7 @@ use std::{
 };
 
 mod bridge;
+mod header_display;
 pub(crate) use bridge::GuiBridge;
 
 #[derive(Debug, PartialEq)]

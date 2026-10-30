@@ -3,7 +3,7 @@ use crate::{MailAction, MailActionResult};
 use hantong_contracts::{
     ErrorCode,
     folders::FolderCursor,
-    message_search::ImapMetadataSearchCursor,
+    message_search::{ImapMetadataFilter, ImapMetadataSearchCursor},
     uid_page::{UidMailboxEncoding, UidMailboxIdentity},
 };
 use std::collections::BTreeSet;
@@ -125,7 +125,7 @@ impl PageCursor {
         &self.0
     }
 }
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MailWorkspace {
     accounts: Vec<MailAccount>,
     folders: Vec<MailFolder>,
@@ -135,6 +135,22 @@ pub struct MailWorkspace {
     selected_account: Option<String>,
     selected_folder: Option<usize>,
     selected_message: Option<usize>,
+    filter: ImapMetadataFilter,
+}
+impl Default for MailWorkspace {
+    fn default() -> Self {
+        Self {
+            accounts: Vec::new(),
+            folders: Vec::new(),
+            messages: Vec::new(),
+            next_cursor: None,
+            folder_cursor: None,
+            selected_account: None,
+            selected_folder: None,
+            selected_message: None,
+            filter: ImapMetadataFilter::All,
+        }
+    }
 }
 impl MailWorkspace {
     pub fn clear(&mut self) {
@@ -170,11 +186,28 @@ impl MailWorkspace {
     pub fn folder_index(&self) -> Option<usize> {
         self.selected_folder
     }
+    pub fn filter(&self) -> ImapMetadataFilter {
+        self.filter
+    }
+    pub fn set_filter(&mut self, filter: ImapMetadataFilter) -> bool {
+        if self.selected_folder().is_none() || self.filter == filter {
+            return false;
+        }
+        self.filter = filter;
+        self.clear_messages();
+        true
+    }
+    pub fn restart_current_folder(&mut self) -> Option<MailAction> {
+        self.selected_folder()?;
+        self.clear_messages();
+        self.message_action(false)
+    }
     pub fn select_account(&mut self, account_id: &str) -> bool {
         if !self.accounts.iter().any(|a| a.account_id == account_id) {
             return false;
         }
         self.selected_account = Some(account_id.into());
+        self.filter = ImapMetadataFilter::All;
         self.folders.clear();
         self.folder_cursor = None;
         self.selected_folder = None;
@@ -211,6 +244,7 @@ impl MailWorkspace {
             account_id: folder.account_id.clone(),
             folder_wire_hex: folder.wire_hex.clone(),
             encoding: folder.encoding.clone(),
+            filter: self.filter,
             cursor: if next {
                 Some(self.next_cursor()?.as_str().into())
             } else {
@@ -287,6 +321,7 @@ impl MailWorkspace {
                     account_id,
                     folder_wire_hex,
                     encoding,
+                    filter,
                     cursor,
                 },
                 MailActionResult::Messages {
@@ -301,6 +336,7 @@ impl MailWorkspace {
                 if &folder.account_id != account_id
                     || &folder.wire_hex != folder_wire_hex
                     || &folder.encoding != encoding
+                    || self.filter != *filter
                     || cursor.as_deref() != self.next_cursor().map(PageCursor::as_str)
                 {
                     return Err(ErrorCode::Conflict);
@@ -310,6 +346,8 @@ impl MailWorkspace {
                     || rows.len() > 32
                     || rows.iter().any(|r| {
                         r.account_id != *account_id
+                            || (*filter == ImapMetadataFilter::Unread && r.is_read)
+                            || (*filter == ImapMetadataFilter::Favorite && !r.is_favorite)
                             || !ids.insert(&r.internal_id)
                             || MailMessage::new(
                                 &r.account_id,

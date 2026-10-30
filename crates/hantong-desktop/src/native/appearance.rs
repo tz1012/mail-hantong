@@ -78,10 +78,14 @@ pub(super) fn os_colors() -> (bool, bool) {
 pub(super) struct Colors {
     pub background: COLORREF,
     pub surface: COLORREF,
+    pub raised: COLORREF,
     pub text: COLORREF,
     pub muted: COLORREF,
     pub border: COLORREF,
+    pub accent: COLORREF,
+    pub selected: COLORREF,
     pub focus: COLORREF,
+    pub on_accent: COLORREF,
 }
 fn color(v: crate::Rgb) -> COLORREF {
     COLORREF(u32::from(v.r) | (u32::from(v.g) << 8) | (u32::from(v.b) << 16))
@@ -92,20 +96,28 @@ impl Colors {
             Self {
                 background: color(p.background),
                 surface: color(p.surface),
+                raised: color(p.raised),
                 text: color(p.text),
                 muted: color(p.muted),
                 border: color(p.border),
+                accent: color(p.accent),
+                selected: color(p.selected),
                 focus: color(p.focus),
+                on_accent: color(p.on_accent),
             }
         } else {
             unsafe {
                 Self {
                     background: COLORREF(GetSysColor(COLOR_WINDOW)),
                     surface: COLORREF(GetSysColor(COLOR_WINDOW)),
+                    raised: COLORREF(GetSysColor(COLOR_3DFACE)),
                     text: COLORREF(GetSysColor(COLOR_WINDOWTEXT)),
                     muted: COLORREF(GetSysColor(COLOR_GRAYTEXT)),
                     border: COLORREF(GetSysColor(COLOR_WINDOWTEXT)),
+                    accent: COLORREF(GetSysColor(COLOR_HIGHLIGHT)),
+                    selected: COLORREF(GetSysColor(COLOR_HIGHLIGHT)),
                     focus: COLORREF(GetSysColor(COLOR_HIGHLIGHT)),
+                    on_accent: COLORREF(GetSysColor(COLOR_HIGHLIGHTTEXT)),
                 }
             }
         }
@@ -131,7 +143,12 @@ impl Drop for Brush {
 }
 pub(super) struct Font(pub HFONT);
 impl Font {
-    fn new(dpi: u32, size: i32, bold: bool) -> Result<Self, ErrorCode> {
+    fn new(
+        dpi: u32,
+        size: i32,
+        bold: bool,
+        face: windows::core::PCWSTR,
+    ) -> Result<Self, ErrorCode> {
         let font = unsafe {
             CreateFontW(
                 -scale(size, dpi),
@@ -151,7 +168,7 @@ impl Font {
                 CLIP_DEFAULT_PRECIS,
                 CLEARTYPE_QUALITY,
                 DEFAULT_PITCH.0 as u32,
-                w!("Segoe UI"),
+                face,
             )
         };
         if font.0.is_null() {
@@ -168,17 +185,22 @@ impl Drop for Font {
         }
     }
 }
+#[allow(dead_code)]
 pub(super) struct Fonts {
     pub body: Font,
     pub heading: Font,
     pub brand: Font,
+    pub caption: Font,
+    pub icon: Font,
 }
 impl Fonts {
     pub(super) fn new(dpi: u32) -> Result<Self, ErrorCode> {
         Ok(Self {
-            body: Font::new(dpi, 16, false)?,
-            heading: Font::new(dpi, 20, true)?,
-            brand: Font::new(dpi, 28, true)?,
+            body: Font::new(dpi, 14, false, w!("Malgun Gothic"))?,
+            heading: Font::new(dpi, 16, true, w!("Segoe UI"))?,
+            brand: Font::new(dpi, 18, true, w!("Segoe UI"))?,
+            caption: Font::new(dpi, 12, false, w!("Malgun Gothic"))?,
+            icon: Font::new(dpi, 16, false, w!("Segoe MDL2 Assets"))?,
         })
     }
 }

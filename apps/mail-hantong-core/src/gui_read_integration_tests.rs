@@ -107,23 +107,32 @@ fn seed_catalog(store: &Store) {
 }
 fn seed_metadata(store: &Store) {
     let endpoint = store.load_mail_connection("account_a").unwrap().unwrap();
-    let message = ImapMessageMetadata::new(
-        3,
-        vec!["\\Flagged".into()],
-        1767225600000,
-        12,
-        ImapEnvelope::new(ImapEnvelopeInput {
-            subject: Some(b"synthetic GUI fixture".to_vec()),
-            ..Default::default()
-        })
-        .unwrap(),
-    )
-    .unwrap();
+    let messages = [
+        (3, vec!["\\Flagged".into()]),
+        (5, vec!["\\Seen".into()]),
+        (7, vec![]),
+    ]
+    .into_iter()
+    .map(|(uid, flags)| {
+        ImapMessageMetadata::new(
+            uid,
+            flags,
+            1767225600000,
+            12,
+            ImapEnvelope::new(ImapEnvelopeInput {
+                subject: Some(b"=?UTF-8?B?7ZWc7Ya1?=".to_vec()),
+                ..Default::default()
+            })
+            .unwrap(),
+        )
+        .unwrap()
+    })
+    .collect();
     let page = ImapUidPage::new(
         ImapUidPageRequest::new("account_a", 1, mailbox(), None, 0).unwrap(),
         7,
         11,
-        vec![message],
+        messages,
     )
     .unwrap();
     let hash =
@@ -203,16 +212,11 @@ impl Harness<'_> {
         served.unwrap();
         response.unwrap()
     }
-    async fn metadata(&mut self) -> Value {
-        let r = ImapMetadataSearchRequest::new(
-            "account_a",
-            identity(),
-            Some(ImapMetadataFilter::All),
-            Some(16),
-            None,
-        )
-        .unwrap();
-        let raw=self.rpc("mail.messages.search",json!({"mode":"imap_metadata","account_id":"account_a","wire_hex":r.mailbox().wire_hex(),"encoding":"modified_utf7","filter":"all","limit":16,"cursor":null})).await;
+    async fn metadata(&mut self, filter: ImapMetadataFilter) -> Value {
+        let r =
+            ImapMetadataSearchRequest::new("account_a", identity(), Some(filter), Some(16), None)
+                .unwrap();
+        let raw=self.rpc("mail.messages.search",json!({"mode":"imap_metadata","account_id":"account_a","wire_hex":r.mailbox().wire_hex(),"encoding":"modified_utf7","filter":filter.as_str(),"limit":16,"cursor":null})).await;
         hantong_ipc_client::message_search::parse_search_response(&raw, "gui-call", &r)
             .unwrap()
             .value()
@@ -322,17 +326,42 @@ pub(super) async fn run_gui_read_scenarios(
                 hantong_ipc_client::folders::parse_folder_page(&raw, "gui-call", &folders).unwrap();
             assert_eq!(folders.items().len(), 1);
             assert_eq!(folders.items()[0].value()["wire_hex"], "494e424f58");
-            let unobserved = h.metadata().await;
+            let unobserved = h.metadata(ImapMetadataFilter::All).await;
             assert_eq!(unobserved["completeness"], "unavailable");
             assert_eq!(unobserved["items"], json!([]));
             assert!(unobserved["observed_at"].is_null());
             seed_metadata(&store);
-            let observed = h.metadata().await;
+            let observed = h.metadata(ImapMetadataFilter::All).await;
             assert_eq!(observed["completeness"], "partial");
-            assert_eq!(observed["items"].as_array().unwrap().len(), 1);
-            assert_eq!(observed["items"][0]["uid"], 3);
+            assert_eq!(observed["items"].as_array().unwrap().len(), 3);
+            assert_eq!(observed["items"][0]["uid"], 7);
             assert_eq!(observed["items"][0]["account_id"], "account_a");
             assert!(observed["observed_at"].is_string());
+            let header: Value = serde_json::from_str(
+                observed["untrusted_content"][0]["content"]
+                    .as_str()
+                    .unwrap(),
+            )
+            .unwrap();
+            assert_eq!(
+                header["subject_hex"],
+                "3d3f5554462d383f423f375a5763375961313f3d"
+            );
+            let unread = h.metadata(ImapMetadataFilter::Unread).await;
+            let unread = unread["items"].as_array().unwrap();
+            assert_eq!(
+                unread
+                    .iter()
+                    .map(|row| row["uid"].as_u64().unwrap())
+                    .collect::<Vec<_>>(),
+                vec![7, 3]
+            );
+            assert!(unread.iter().all(|row| row["is_read"] == false));
+            let favorite = h.metadata(ImapMetadataFilter::Favorite).await;
+            let favorite = favorite["items"].as_array().unwrap();
+            assert_eq!(favorite.len(), 1);
+            assert_eq!(favorite[0]["uid"], 3);
+            assert_eq!(favorite[0]["is_favorite"], true);
             denied(
                 &h.rpc("mail.accounts.list", json!({"account_id":"account_b"}))
                     .await,
@@ -370,13 +399,13 @@ pub(super) async fn run_gui_read_scenarios(
         }
     }
     let audits = store.list_audit_page(None, 100).unwrap();
-    assert_eq!(audits.len(), 9);
+    assert_eq!(audits.len(), 11);
     assert_eq!(
         audits
             .iter()
             .filter(|a| a.completion().unwrap().terminal().is_success())
             .count(),
-        4
+        6
     );
     for record in &audits {
         assert_eq!(record.registration_id(), &registration);
@@ -392,8 +421,10 @@ pub(super) async fn run_gui_read_scenarios(
         .filter(|a| a.tool() == AuditTool::MessagesSearch)
         .map(|a| a.completion().unwrap().terminal().result_count().unwrap())
         .collect::<Vec<_>>();
-    assert_eq!(counts.len(), 2);
-    assert!(counts.contains(&0) && counts.contains(&1));
+    assert_eq!(counts.len(), 4);
+    for count in [0, 1, 2, 3] {
+        assert!(counts.contains(&count));
+    }
     assert_eq!(calls.get(), 0);
     assert_eq!(
         store

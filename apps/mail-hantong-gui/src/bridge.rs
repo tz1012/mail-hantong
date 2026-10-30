@@ -2,7 +2,10 @@
 use hantong_contracts::{
     ErrorCode,
     folders::{FolderCursor, FolderListRequest},
-    message_search::{ImapMetadataSearchCursor, ImapMetadataSearchRequest},
+    message_search::{
+        HeaderProjection, ImapMetadataSearchCursor, ImapMetadataSearchItem,
+        ImapMetadataSearchRequest,
+    },
     registration::{RegistrationCommand, RegistrationReceipt},
     uid_page::{UidMailboxEncoding, UidMailboxIdentity},
 };
@@ -79,35 +82,7 @@ impl Backend for IpcBackend {
                 .headers()
                 .get(item.header_content_index() as usize)
                 .ok_or(ErrorCode::InvalidInput)?;
-            let subject = header
-                .subject()
-                .map(String::from_utf8_lossy)
-                .unwrap_or_default();
-            let sender = header
-                .from()
-                .and_then(|v| v.first())
-                .map(|a| {
-                    let mailbox = a.mailbox().map(String::from_utf8_lossy).unwrap_or_default();
-                    let host = a.host().map(String::from_utf8_lossy).unwrap_or_default();
-                    if host.is_empty() {
-                        mailbox.into_owned()
-                    } else {
-                        format!("{mailbox}@{host}")
-                    }
-                })
-                .unwrap_or_default();
-            rows.push(
-                MailMessage::new(
-                    &account,
-                    item.internal_message_id(),
-                    &sender,
-                    &subject,
-                    &utc_date(item.internal_date_utc_ms()),
-                    item.is_read(),
-                    item.is_favorite(),
-                )
-                .ok_or(ErrorCode::InvalidInput)?,
-            );
+            rows.push(display_message(&account, item, header)?);
         }
         let next_cursor = page
             .next_cursor()
@@ -119,6 +94,42 @@ impl Backend for IpcBackend {
             observed: page.observed_at().is_some(),
         })
     }
+}
+fn display_message(
+    account: &str,
+    item: &ImapMetadataSearchItem,
+    header: &HeaderProjection,
+) -> Result<MailMessage, ErrorCode> {
+    if item.account_id() != account {
+        return Err(ErrorCode::InvalidInput);
+    }
+    let subject = header
+        .subject()
+        .map(crate::header_display::decode_subject)
+        .unwrap_or_default();
+    let sender = header
+        .from()
+        .and_then(|v| v.first())
+        .map(|a| {
+            let mailbox = a.mailbox().map(String::from_utf8_lossy).unwrap_or_default();
+            let host = a.host().map(String::from_utf8_lossy).unwrap_or_default();
+            if host.is_empty() {
+                mailbox.into_owned()
+            } else {
+                format!("{mailbox}@{host}")
+            }
+        })
+        .unwrap_or_default();
+    MailMessage::new(
+        account,
+        item.internal_message_id(),
+        &sender,
+        &subject,
+        &utc_date(item.internal_date_utc_ms()),
+        item.is_read(),
+        item.is_favorite(),
+    )
+    .ok_or(ErrorCode::InvalidInput)
 }
 // Gregorian civil date from a bounded UTC Unix timestamp; no locale or timezone lookup.
 fn utc_date(milliseconds: i64) -> String {
@@ -199,6 +210,7 @@ impl<B: Backend> GuiBridge<B> {
                 account_id,
                 folder_wire_hex,
                 encoding,
+                filter,
                 cursor,
             } => {
                 if next.selected_account() != Some(account_id) {
@@ -215,6 +227,7 @@ impl<B: Backend> GuiBridge<B> {
                     .ok_or(ErrorCode::ScopeDenied)?;
                 if cursor.is_none() {
                     next.select_folder(index);
+                    next.set_filter(*filter);
                 }
                 if next.message_action(cursor.is_some()).as_ref() != Some(&action) {
                     return Err(ErrorCode::Conflict);
@@ -226,7 +239,11 @@ impl<B: Backend> GuiBridge<B> {
                     .map(ImapMetadataSearchCursor::parse)
                     .transpose()?;
                 self.backend.messages(ImapMetadataSearchRequest::new(
-                    account_id, mailbox, None, None, cursor,
+                    account_id,
+                    mailbox,
+                    Some(*filter),
+                    None,
+                    cursor,
                 )?)?
             }
         };

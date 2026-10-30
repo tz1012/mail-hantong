@@ -1,4 +1,86 @@
 use super::*;
+
+#[test]
+fn sec03_gui_filter_change_reload_and_late_responses_keep_exact_binding() {
+    let mut empty = MailWorkspace::default();
+    assert_eq!(empty.filter(), ImapMetadataFilter::All);
+    assert!(!empty.set_filter(ImapMetadataFilter::Unread));
+    assert!(empty.restart_current_folder().is_none());
+    let mut w = selected();
+    let all = w.message_action(false).unwrap();
+    w.apply(
+        &all,
+        &MailActionResult::Messages {
+            rows: vec![row("a")],
+            next_cursor: Some(cursor()),
+            observed: true,
+        },
+    )
+    .unwrap();
+    w.select_message(0);
+    let old_cursor = w.message_action(true).unwrap();
+    assert!(w.set_filter(ImapMetadataFilter::Unread));
+    assert!(w.messages().is_empty() && w.next_cursor().is_none() && w.selected_message().is_none());
+    let expected = w.clone();
+    let page = MailActionResult::Messages {
+        rows: vec![row("a")],
+        next_cursor: None,
+        observed: true,
+    };
+    assert_eq!(w.apply(&all, &page), Err(ErrorCode::Conflict));
+    assert_eq!(w.apply(&old_cursor, &page), Err(ErrorCode::Conflict));
+    assert_eq!(w, expected);
+    let unread = w.message_action(false).unwrap();
+    let mut conflicting = row("a");
+    conflicting.is_read = true;
+    assert_eq!(
+        w.apply(
+            &unread,
+            &MailActionResult::Messages {
+                rows: vec![conflicting],
+                next_cursor: None,
+                observed: true
+            }
+        ),
+        Err(ErrorCode::InvalidInput)
+    );
+    w.apply(
+        &unread,
+        &MailActionResult::Messages {
+            rows: vec![row("a")],
+            next_cursor: Some(cursor()),
+            observed: true,
+        },
+    )
+    .unwrap();
+    w.select_message(0);
+    let stale_next = w.message_action(true).unwrap();
+    assert_eq!(w.restart_current_folder(), Some(unread.clone()));
+    assert!(w.messages().is_empty() && w.next_cursor().is_none() && w.selected_message().is_none());
+    assert_eq!(w.apply(&stale_next, &page), Err(ErrorCode::Conflict));
+    assert!(w.set_filter(ImapMetadataFilter::Favorite));
+    let favorite = w.message_action(false).unwrap();
+    let mut conflicting = row("a");
+    conflicting.is_favorite = false;
+    assert_eq!(
+        w.apply(
+            &favorite,
+            &MailActionResult::Messages {
+                rows: vec![conflicting],
+                next_cursor: None,
+                observed: true
+            }
+        ),
+        Err(ErrorCode::InvalidInput)
+    );
+    w.apply(&favorite, &page).unwrap();
+    assert!(w.select_account("b"));
+    assert_eq!(w.filter(), ImapMetadataFilter::All);
+    w = selected();
+    w.set_filter(ImapMetadataFilter::Favorite);
+    w.clear();
+    assert_eq!(w.filter(), ImapMetadataFilter::All);
+}
 fn account(id: &str) -> MailAccount {
     MailAccount::new(id, id).unwrap()
 }
@@ -146,6 +228,7 @@ fn sec03_gui_workspace_rejects_stale_scope_encoding_cursor_and_oversized_pages_a
         account_id,
         folder_wire_hex,
         encoding: "utf8".into(),
+        filter: ImapMetadataFilter::All,
         cursor: None,
     };
     assert_eq!(

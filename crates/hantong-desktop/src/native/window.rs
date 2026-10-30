@@ -19,17 +19,28 @@ use windows::{
             },
             Gdi::*,
         },
-        System::{LibraryLoader::GetModuleHandleW, SystemServices::SS_NOPREFIX},
+        System::{
+            LibraryLoader::GetModuleHandleW,
+            SystemServices::{SS_ENDELLIPSIS, SS_NOPREFIX},
+        },
         UI::{
-            Controls::{DRAWITEMSTRUCT, ODS_DISABLED, ODS_FOCUS, ODT_BUTTON},
+            Controls::{
+                DRAWITEMSTRUCT, MEASUREITEMSTRUCT, ODS_DISABLED, ODS_FOCUS, ODS_SELECTED,
+                ODT_BUTTON, ODT_COMBOBOX, ODT_LISTBOX,
+            },
             HiDpi::*,
             Input::KeyboardAndMouse::{EnableWindow, GetFocus, SetFocus, VK_RETURN},
+            Shell::{DefSubclassProc, RemoveWindowSubclass, SetWindowSubclass},
             WindowsAndMessaging::*,
         },
     },
     core::{HSTRING, w},
 };
+mod drawing;
 mod layout;
+mod motion;
+mod scrollbar;
+use hantong_contracts::message_search::ImapMetadataFilter;
 use layout::Layout;
 
 const CLASS: windows::core::PCWSTR = w!("mail-hantong.desktop-shell.v1");
@@ -62,7 +73,11 @@ const MESSAGE_LIST: i32 = 35;
 const ACCOUNT_LABEL: i32 = 36;
 const FOLDER_LABEL: i32 = 37;
 const FOLDERS_NEXT: i32 = 38;
+const FILTER_LABEL: i32 = 39;
+const FILTER: i32 = 40;
+const RELOAD_FOLDER: i32 = 41;
 const TIMER: usize = 1;
+const MOTION_TIMER: usize = 2;
 const FIRST_PAINT: u32 = WM_APP + 1;
 const DEFERRED_VISUAL: u32 = WM_APP + 2;
 
@@ -127,7 +142,7 @@ struct Visual {
     colors: Colors,
     background: Brush,
     surface: Brush,
-    border: Brush,
+    high_contrast: bool,
     fonts: Fonts,
     dpi: u32,
 }
@@ -138,7 +153,7 @@ impl Visual {
             colors,
             background: Brush::new(colors.background)?,
             surface: Brush::new(colors.surface)?,
-            border: Brush::new(colors.border)?,
+            high_contrast: theme == EffectiveTheme::HighContrast,
             fonts: Fonts::new(dpi)?,
             dpi,
         })
@@ -147,6 +162,10 @@ impl Visual {
         match id {
             BRAND => self.fonts.brand.0,
             LIST_TITLE | DETAIL_TITLE | SETUP_TITLE => self.fonts.heading.0,
+            LANGUAGE_LABEL | THEME_LABEL | ACCOUNT_LABEL | FOLDER_LABEL | FILTER_LABEL
+            | PREFERENCES | ACCESS_NOTICE | MAIL_STATUS | COMPACT | NAV_LABEL => {
+                self.fonts.caption.0
+            }
             _ => self.fonts.body.0,
         }
     }
@@ -155,6 +174,7 @@ struct State {
     model: Model,
     visual: Rc<Visual>,
     controls: Vec<(i32, HWND)>,
+    rails: Vec<(i32, HWND)>,
     probe: StatusProbe,
     action: ActionProbe,
     notice: Notice,
@@ -164,6 +184,7 @@ struct State {
     painted: bool,
     rendered_language: Option<Language>,
     last_theme_poll: Instant,
+    motion: motion::SelectionMotion,
 }
 impl State {
     fn new(
@@ -179,6 +200,7 @@ impl State {
             model,
             visual,
             controls: Vec::new(),
+            rails: Vec::new(),
             probe: StatusProbe::new(probe),
             action: ActionProbe::new(callbacks.action),
             notice: Notice::Initial,
@@ -188,6 +210,7 @@ impl State {
             painted: false,
             rendered_language: None,
             last_theme_poll: Instant::now(),
+            motion: motion::SelectionMotion::default(),
         })
     }
     fn control(&self, id: i32) -> Option<HWND> {
@@ -353,6 +376,7 @@ pub(super) fn run(
                     REGISTRATION_STATUS,
                     NEXT_PAGE,
                     FOLDERS_NEXT,
+                    RELOAD_FOLDER,
                 ]
                 .iter()
                 .any(|id| state.control(*id) == Some(focus))
@@ -377,7 +401,7 @@ pub(super) fn run(
         None => Ok(()),
     }
 }
-fn create_controls(hwnd: HWND, context: &Context) -> Result<(), ErrorCode> {
+fn create_controls(hwnd: HWND, context: &Rc<Context>) -> Result<(), ErrorCode> {
     let mut controls = Vec::new();
     for id in [
         BRAND,
@@ -396,6 +420,9 @@ fn create_controls(hwnd: HWND, context: &Context) -> Result<(), ErrorCode> {
         FOLDER_LABEL,
         FOLDER,
         FOLDERS_NEXT,
+        FILTER_LABEL,
+        FILTER,
+        RELOAD_FOLDER,
         LIST_TITLE,
         MESSAGE_LIST,
         NEXT_PAGE,
@@ -411,13 +438,13 @@ fn create_controls(hwnd: HWND, context: &Context) -> Result<(), ErrorCode> {
         PREFERENCES,
     ] {
         let (class, style) = match id {
-            LANGUAGE | THEME | ACCOUNT | FOLDER => (
+            LANGUAGE | THEME | ACCOUNT | FOLDER | FILTER => (
                 w!("COMBOBOX"),
                 WS_CHILD
                     | WS_VISIBLE
                     | WS_TABSTOP
                     | WS_VSCROLL
-                    | WINDOW_STYLE(CBS_DROPDOWNLIST as u32),
+                    | WINDOW_STYLE((CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS) as u32),
             ),
             NAVIGATION | MESSAGE_LIST => (
                 w!("LISTBOX"),
@@ -425,13 +452,16 @@ fn create_controls(hwnd: HWND, context: &Context) -> Result<(), ErrorCode> {
                     | WS_VISIBLE
                     | WS_TABSTOP
                     | WS_VSCROLL
-                    | WINDOW_STYLE((LBS_NOTIFY | LBS_NOINTEGRALHEIGHT) as u32),
+                    | WINDOW_STYLE(
+                        (LBS_NOTIFY | LBS_NOINTEGRALHEIGHT | LBS_OWNERDRAWFIXED | LBS_HASSTRINGS)
+                            as u32,
+                    ),
             ),
             REFRESH => (
                 w!("BUTTON"),
                 WS_CHILD | WS_VISIBLE | WS_TABSTOP | WINDOW_STYLE(BS_OWNERDRAW as u32),
             ),
-            CONNECT | NEXT_PAGE | REGISTRATION_STATUS | FOLDERS_NEXT => (
+            CONNECT | NEXT_PAGE | REGISTRATION_STATUS | FOLDERS_NEXT | RELOAD_FOLDER => (
                 w!("BUTTON"),
                 WS_CHILD | WS_VISIBLE | WS_TABSTOP | WINDOW_STYLE(BS_OWNERDRAW as u32),
             ),
@@ -445,7 +475,19 @@ fn create_controls(hwnd: HWND, context: &Context) -> Result<(), ErrorCode> {
             ),
             _ => (
                 w!("STATIC"),
-                WS_CHILD | WS_VISIBLE | WINDOW_STYLE(SS_NOPREFIX.0),
+                WS_CHILD
+                    | WS_VISIBLE
+                    | WINDOW_STYLE(
+                        SS_NOPREFIX.0
+                            | if matches!(
+                                id,
+                                DETAIL_TITLE | SETUP_BODY | STATUS | MAIL_STATUS | PREFERENCES
+                            ) {
+                                SS_ENDELLIPSIS.0
+                            } else {
+                                0
+                            },
+                    ),
             ),
         };
         let child = unsafe {
@@ -465,9 +507,25 @@ fn create_controls(hwnd: HWND, context: &Context) -> Result<(), ErrorCode> {
             )
         }
         .map_err(|_| ErrorCode::InternalError)?;
+        if id == MESSAGE_LIST {
+            drawing::install_empty_state(child, context)?;
+        }
+        if matches!(id, LANGUAGE | THEME | ACCOUNT | FOLDER | FILTER) {
+            drawing::install_combo_skin(child, context)?;
+        }
         controls.push((id, child));
     }
+    let mut rails = Vec::new();
+    for (id, child) in &controls {
+        let kind = match *id {
+            NAVIGATION | MESSAGE_LIST => scrollbar::Kind::List,
+            DETAIL_BODY => scrollbar::Kind::Edit,
+            _ => continue,
+        };
+        rails.push((*id, scrollbar::attach(hwnd, *child, 500 + *id, kind)?));
+    }
     context.state.borrow_mut().controls = controls;
+    context.state.borrow_mut().rails = rails;
     Ok(())
 }
 fn caption(model: &Model, id: i32) -> String {
@@ -484,7 +542,7 @@ fn caption(model: &Model, id: i32) -> String {
         ACCESS_NOTICE => "gui_not_registered",
         DETAIL_TITLE => "detail_title",
         DETAIL_BODY => "detail_empty",
-        COMPACT => "compact_note",
+        COMPACT => "navigation_note",
         REFRESH => "refresh",
         CONNECT => "connect",
         ACCOUNT => "account",
@@ -492,6 +550,8 @@ fn caption(model: &Model, id: i32) -> String {
         NEXT_PAGE => "next_page",
         REGISTRATION_STATUS => "registration_status",
         FOLDERS_NEXT => "folders_next",
+        FILTER_LABEL => "filter",
+        RELOAD_FOLDER => "reload_folder",
         ACCOUNT_LABEL => "account",
         FOLDER_LABEL => "folder",
         PREFERENCES => "session_preferences",
@@ -556,13 +616,23 @@ fn render(hwnd: HWND, context: &Context) -> Result<(), ErrorCode> {
         }
         if !matches!(
             *id,
-            LANGUAGE | THEME | NAVIGATION | MESSAGE_LIST | ACCOUNT | FOLDER
+            LANGUAGE | THEME | NAVIGATION | MESSAGE_LIST | ACCOUNT | FOLDER | FILTER
         ) {
             let value = match *id {
                 SETUP_TITLE => String::new(),
                 SETUP_BODY => notice.caption(model.language()),
                 ACCESS_NOTICE => text(model.language(), "cached_notice").into(),
                 DETAIL_BODY => detail_caption(&workspace, model.language()),
+                DETAIL_TITLE => workspace
+                    .selected_message()
+                    .map(|row| {
+                        if row.subject.is_empty() {
+                            text(model.language(), "subject_empty").into()
+                        } else {
+                            row.subject.clone()
+                        }
+                    })
+                    .unwrap_or_else(|| caption(&model, DETAIL_TITLE)),
                 _ => caption(&model, *id),
             };
             unsafe { SetWindowTextW(*child, &HSTRING::from(value)) }
@@ -570,11 +640,20 @@ fn render(hwnd: HWND, context: &Context) -> Result<(), ErrorCode> {
         }
     }
     for (id, child) in &controls {
-        if *id == LANGUAGE || *id == THEME {
+        if matches!(*id, LANGUAGE | THEME | FILTER) {
             let (keys, index): (&[&str], usize) = if *id == LANGUAGE {
                 (
                     &["language_en", "language_ko"],
                     usize::from(model.language() == Language::Korean),
+                )
+            } else if *id == FILTER {
+                (
+                    &["filter_all", "filter_unread", "filter_favorite"],
+                    match workspace.filter() {
+                        ImapMetadataFilter::All => 0,
+                        ImapMetadataFilter::Unread => 1,
+                        ImapMetadataFilter::Favorite => 2,
+                    },
                 )
             } else {
                 (
@@ -694,13 +773,14 @@ fn render(hwnd: HWND, context: &Context) -> Result<(), ErrorCode> {
             }
             for row in workspace.messages() {
                 let value = HSTRING::from(format!(
-                    "{} | {}",
+                    "{} | {} | {}",
                     row.sender,
                     if row.subject.is_empty() {
                         text(model.language(), "subject_empty")
                     } else {
                         &row.subject
-                    }
+                    },
+                    row.date_utc
                 ));
                 if unsafe {
                     SendMessageW(
@@ -733,6 +813,8 @@ fn render(hwnd: HWND, context: &Context) -> Result<(), ErrorCode> {
                 | ACCOUNT
                 | FOLDER
                 | FOLDERS_NEXT
+                | FILTER
+                | RELOAD_FOLDER
                 | MESSAGE_LIST
         ) {
             let enabled = !pending
@@ -743,6 +825,7 @@ fn render(hwnd: HWND, context: &Context) -> Result<(), ErrorCode> {
                     ACCOUNT => available && !workspace.accounts().is_empty(),
                     FOLDER => available && !workspace.folders().is_empty(),
                     FOLDERS_NEXT => available && workspace.folder_cursor().is_some(),
+                    FILTER | RELOAD_FOLDER => available && workspace.selected_folder().is_some(),
                     MESSAGE_LIST => !workspace.messages().is_empty(),
                     NEXT_PAGE => available && workspace.next_cursor().is_some(),
                     _ => false,
@@ -773,6 +856,7 @@ fn render(hwnd: HWND, context: &Context) -> Result<(), ErrorCode> {
             4,
         );
     }
+    update_rails(context)?;
     invalidate(hwnd);
     drop(_applying);
     if context.pending_visual.get() {
@@ -791,15 +875,87 @@ fn invalidate(hwnd: HWND) {
         );
     }
 }
+fn invalidate_motion_control(context: &Context, id: i32) {
+    let child = context.state.borrow().control(id);
+    if let Some(child) = child {
+        unsafe {
+            let _ = InvalidateRect(Some(child), None, false);
+        }
+    }
+}
+fn cancel_motion(hwnd: HWND, context: &Context) {
+    let previous = context.state.borrow_mut().motion.cancel();
+    unsafe {
+        let _ = KillTimer(Some(hwnd), MOTION_TIMER);
+    }
+    if let Some(id) = previous {
+        invalidate_motion_control(context, id);
+    }
+}
+fn start_motion(hwnd: HWND, context: &Context, id: i32, from: Option<usize>, to: Option<usize>) {
+    cancel_motion(hwnd, context);
+    let high = context.state.borrow().model.effective_theme() == EffectiveTheme::HighContrast;
+    let enabled = motion::enabled(high);
+    let active = context
+        .state
+        .borrow_mut()
+        .motion
+        .start(id, from, to, Instant::now(), enabled);
+    if active && unsafe { SetTimer(Some(hwnd), MOTION_TIMER, 16, None) } == 0 {
+        context.state.borrow_mut().motion.cancel();
+    }
+}
+fn tick_motion(hwnd: HWND, context: &Context) {
+    let frame = context.state.borrow_mut().motion.tick(Instant::now());
+    match frame {
+        Some((id, active)) => {
+            if !active {
+                unsafe {
+                    let _ = KillTimer(Some(hwnd), MOTION_TIMER);
+                }
+            }
+            invalidate_motion_control(context, id);
+        }
+        None => unsafe {
+            let _ = KillTimer(Some(hwnd), MOTION_TIMER);
+        },
+    }
+}
 fn relayout(hwnd: HWND, context: &Context) -> Result<(), ErrorCode> {
     let mut rect = RECT::default();
     unsafe { GetClientRect(hwnd, &mut rect) }.map_err(|_| ErrorCode::InternalError)?;
-    let (dpi, controls) = {
+    let (visual, controls) = {
         let s = context.state.borrow();
-        (s.visual.dpi, s.controls.clone())
+        (Rc::clone(&s.visual), s.controls.clone())
     };
+    let dpi = visual.dpi;
     let layout = Layout::new(rect.right, rect.bottom, dpi);
     for (id, child) in controls {
+        unsafe {
+            if matches!(id, NAVIGATION | MESSAGE_LIST) {
+                SendMessageW(
+                    child,
+                    LB_SETITEMHEIGHT,
+                    Some(WPARAM(0)),
+                    Some(LPARAM(
+                        scale(if id == NAVIGATION { 32 } else { 52 }, dpi) as isize
+                    )),
+                );
+            } else if matches!(id, LANGUAGE | THEME | ACCOUNT | FOLDER | FILTER) {
+                SendMessageW(
+                    child,
+                    CB_SETITEMHEIGHT,
+                    Some(WPARAM(usize::MAX)),
+                    Some(LPARAM(scale(24, dpi) as isize)),
+                );
+                SendMessageW(
+                    child,
+                    CB_SETITEMHEIGHT,
+                    Some(WPARAM(0)),
+                    Some(LPARAM(scale(32, dpi) as isize)),
+                );
+            }
+        }
         if let Some(p) = layout.control(id) {
             unsafe {
                 let _ = ShowWindow(child, if p.visible { SW_SHOW } else { SW_HIDE });
@@ -808,7 +964,7 @@ fn relayout(hwnd: HWND, context: &Context) -> Result<(), ErrorCode> {
                     p.rect.left,
                     p.rect.top,
                     p.rect.right - p.rect.left,
-                    if matches!(id, LANGUAGE | THEME | ACCOUNT | FOLDER) {
+                    if matches!(id, LANGUAGE | THEME | ACCOUNT | FOLDER | FILTER) {
                         scale(200, dpi)
                     } else {
                         p.rect.bottom - p.rect.top
@@ -819,7 +975,44 @@ fn relayout(hwnd: HWND, context: &Context) -> Result<(), ErrorCode> {
             .map_err(|_| ErrorCode::InternalError)?;
         }
     }
+    update_rails(context)?;
     invalidate(hwnd);
+    Ok(())
+}
+fn update_rails(context: &Context) -> Result<(), ErrorCode> {
+    let (rails, visual, lang) = {
+        let state = context.state.borrow();
+        (
+            state.rails.clone(),
+            Rc::clone(&state.visual),
+            state.model.language(),
+        )
+    };
+    for (id, rail) in rails {
+        let key = match id {
+            NAVIGATION => "title",
+            MESSAGE_LIST => "list_title",
+            _ => "detail_title",
+        };
+        unsafe { SetWindowTextW(rail, &HSTRING::from(text(lang, key))) }
+            .map_err(|_| ErrorCode::InternalError)?;
+        scrollbar::set_name(rail, text(lang, key))?;
+        scrollbar::update(
+            rail,
+            scrollbar::Theme {
+                track: if id == NAVIGATION {
+                    visual.colors.background
+                } else {
+                    visual.colors.surface
+                },
+                thumb: visual.colors.muted,
+                hot: visual.colors.accent,
+                focus: visual.colors.focus,
+                high_contrast: visual.high_contrast,
+            },
+            visual.dpi,
+        )?;
+    }
     Ok(())
 }
 fn update_visual(
@@ -845,6 +1038,7 @@ fn update_visual(
     if !force && dpi == old_dpi && Colors::new(model.effective_theme()) == old_colors {
         return Ok(());
     }
+    cancel_motion(hwnd, context);
     let next = Rc::new(Visual::new(model.effective_theme(), dpi)?);
     let old = {
         let mut s = context.state.borrow_mut();
@@ -875,6 +1069,7 @@ fn begin_probe(hwnd: HWND, context: &Context) -> Result<(), ErrorCode> {
     Ok(())
 }
 fn begin_action(hwnd: HWND, context: &Context, action: MailAction) -> Result<(), ErrorCode> {
+    cancel_motion(hwnd, context);
     let started = {
         let mut s = context.state.borrow_mut();
         if s.busy() || context.closed.get() {
@@ -973,10 +1168,32 @@ fn command(hwnd: HWND, context: &Context, wparam: WPARAM, lparam: LPARAM) -> Res
             | NEXT_PAGE
             | REGISTRATION_STATUS
             | FOLDERS_NEXT
+            | FILTER
+            | RELOAD_FOLDER
             | MESSAGE_LIST
     ) && context.state.borrow().busy()
     {
         return Ok(());
+    }
+    if id == FILTER && notification == CBN_SELCHANGE as u16 {
+        let selected = unsafe { SendMessageW(child, CB_GETCURSEL, None, None) }.0;
+        let filter = match selected {
+            0 => ImapMetadataFilter::All,
+            1 => ImapMetadataFilter::Unread,
+            2 => ImapMetadataFilter::Favorite,
+            _ => return Ok(()),
+        };
+        let action = {
+            let mut state = context.state.borrow_mut();
+            if !state.workspace.set_filter(filter) {
+                return Ok(());
+            }
+            let Some(action) = state.workspace.message_action(false) else {
+                return Ok(());
+            };
+            action
+        };
+        return begin_action(hwnd, context, action);
     }
     if matches!(id, ACCOUNT | FOLDER) && notification == CBN_SELCHANGE as u16 {
         let selected = unsafe { SendMessageW(child, CB_GETCURSEL, None, None) }.0;
@@ -1014,16 +1231,21 @@ fn command(hwnd: HWND, context: &Context, wparam: WPARAM, lparam: LPARAM) -> Res
     if id == MESSAGE_LIST && notification == LBN_SELCHANGE as u16 {
         let selected = unsafe { SendMessageW(child, LB_GETCURSEL, None, None) }.0;
         if let Ok(index) = usize::try_from(selected) {
-            context.state.borrow_mut().workspace.select_message(index);
+            let previous = context.state.borrow().workspace.message_index();
+            let changed = context.state.borrow_mut().workspace.select_message(index);
+            if changed {
+                start_motion(hwnd, context, MESSAGE_LIST, previous, Some(index));
+            }
         }
         return render(hwnd, context);
     }
     if matches!(
         id,
-        REFRESH | CONNECT | REGISTRATION_STATUS | NEXT_PAGE | FOLDERS_NEXT
+        REFRESH | CONNECT | REGISTRATION_STATUS | NEXT_PAGE | FOLDERS_NEXT | RELOAD_FOLDER
     ) && notification == BN_CLICKED as u16
     {
         if id == REFRESH {
+            cancel_motion(hwnd, context);
             {
                 let mut s = context.state.borrow_mut();
                 s.workspace.clear();
@@ -1058,6 +1280,17 @@ fn command(hwnd: HWND, context: &Context, wparam: WPARAM, lparam: LPARAM) -> Res
                 };
                 action
             }
+            RELOAD_FOLDER => {
+                let Some(action) = context
+                    .state
+                    .borrow_mut()
+                    .workspace
+                    .restart_current_folder()
+                else {
+                    return Ok(());
+                };
+                action
+            }
             _ => return Ok(()),
         };
         return begin_action(hwnd, context, action);
@@ -1088,7 +1321,17 @@ fn command(hwnd: HWND, context: &Context, wparam: WPARAM, lparam: LPARAM) -> Res
             .ok()
             .and_then(|i| Navigation::ALL.get(i))
             .ok_or(ErrorCode::InternalError)?;
+        let previous = Navigation::ALL
+            .iter()
+            .position(|item| *item == context.state.borrow().model.selected());
         context.state.borrow_mut().model.set_selected(*nav);
+        start_motion(
+            hwnd,
+            context,
+            NAVIGATION,
+            previous,
+            usize::try_from(selected).ok(),
+        );
         render(hwnd, context)?;
     }
     Ok(())
@@ -1172,9 +1415,11 @@ fn handle(hwnd: HWND, message: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
             let mut state = context.state.borrow_mut();
             state.probe.close();
             state.action.close();
+            state.motion.cancel();
         }
         unsafe {
             let _ = KillTimer(Some(hwnd), TIMER);
+            let _ = KillTimer(Some(hwnd), MOTION_TIMER);
             PostQuitMessage(0);
         }
         return LRESULT(0);
@@ -1199,20 +1444,12 @@ fn handle(hwnd: HWND, message: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
         let surface = matches!(
             id,
             Some(
-                NAV_LABEL
-                    | NAVIGATION
-                    | LIST_TITLE
+                LIST_TITLE
                     | SECTION
                     | SETUP_TITLE
-                    | SETUP_BODY
                     | ACCESS_NOTICE
                     | DETAIL_TITLE
                     | DETAIL_BODY
-                    | COMPACT
-                    | LANGUAGE
-                    | THEME
-                    | ACCOUNT
-                    | FOLDER
                     | MESSAGE_LIST
             )
         );
@@ -1225,10 +1462,16 @@ fn handle(hwnd: HWND, message: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
                     Some(
                         SETUP_BODY
                             | ACCESS_NOTICE
-                            | DETAIL_BODY
                             | PREFERENCES
                             | SUBTITLE
                             | MAIL_STATUS
+                            | COMPACT
+                            | NAV_LABEL
+                            | LANGUAGE_LABEL
+                            | THEME_LABEL
+                            | ACCOUNT_LABEL
+                            | FOLDER_LABEL
+                            | FILTER_LABEL
                     )
                 ) {
                     visual.colors.muted
@@ -1251,25 +1494,47 @@ fn handle(hwnd: HWND, message: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
             visual.background.0.0
         } as isize);
     }
+    if message == WM_MEASUREITEM && lparam.0 != 0 {
+        let measure = unsafe { &mut *(lparam.0 as *mut MEASUREITEMSTRUCT) };
+        if matches!(measure.CtlType, ODT_LISTBOX | ODT_COMBOBOX) {
+            let dpi = context.state.borrow().visual.dpi;
+            measure.itemHeight = scale(
+                match measure.CtlID as i32 {
+                    NAVIGATION => 32,
+                    MESSAGE_LIST => 52,
+                    _ => 32,
+                },
+                dpi,
+            ) as u32;
+            return LRESULT(1);
+        }
+    }
     if message == WM_DRAWITEM && lparam.0 != 0 {
         let draw = unsafe { &*(lparam.0 as *const DRAWITEMSTRUCT) };
-        if draw.CtlType == ODT_BUTTON
-            && [
-                REFRESH,
-                CONNECT,
-                REGISTRATION_STATUS,
-                NEXT_PAGE,
-                FOLDERS_NEXT,
-            ]
-            .iter()
-            .any(|id| draw.CtlID == *id as u32)
-        {
-            draw_button(context, draw);
+        if drawing::item(context, draw) {
             return LRESULT(1);
         }
     }
     let result = match message {
+        WM_VSCROLL if lparam.0 != 0 => {
+            let rail = HWND(lparam.0 as *mut _);
+            let owned = context
+                .state
+                .borrow()
+                .rails
+                .iter()
+                .any(|(_, hwnd)| *hwnd == rail);
+            if owned {
+                scrollbar::scroll(rail, (wparam.0 & 0xffff) as u16)
+            } else {
+                Ok(())
+            }
+        }
         WM_COMMAND => command(hwnd, context, wparam, lparam),
+        WM_TIMER if wparam.0 == MOTION_TIMER => {
+            tick_motion(hwnd, context);
+            Ok(())
+        }
         WM_TIMER if wparam.0 == TIMER => {
             if context.applying.get() {
                 Ok(())
@@ -1284,6 +1549,7 @@ fn handle(hwnd: HWND, message: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
         }
         WM_SIZE => relayout(hwnd, context),
         WM_SETTINGCHANGE | WM_THEMECHANGED | WM_SYSCOLORCHANGE => {
+            cancel_motion(hwnd, context);
             update_visual(hwnd, context, None, false)
         }
         WM_GETMINMAXINFO => {
@@ -1337,10 +1603,7 @@ fn paint(hwnd: HWND, context: &Context) -> LRESULT {
     let filled = if valid {
         unsafe {
             let background = FillRect(dc, &p.rcPaint, visual.background.0) != 0;
-            for panel in layout.panels() {
-                FillRect(dc, &panel, visual.surface.0);
-                FrameRect(dc, &panel, visual.border.0);
-            }
+            drawing::shell(dc, &visual, &layout);
             background
         }
     } else {
@@ -1380,43 +1643,6 @@ fn paint(hwnd: HWND, context: &Context) -> LRESULT {
         }
     }
     LRESULT(0)
-}
-fn draw_button(context: &Context, draw: &DRAWITEMSTRUCT) {
-    let (visual, caption) = {
-        let s = context.state.borrow();
-        (Rc::clone(&s.visual), caption(&s.model, draw.CtlID as i32))
-    };
-    let mut caption: Vec<u16> = caption.encode_utf16().collect();
-    let mut rect = draw.rcItem;
-    unsafe {
-        FillRect(draw.hDC, &rect, visual.surface.0);
-        FrameRect(draw.hDC, &rect, visual.border.0);
-        let old = SelectObject(draw.hDC, HGDIOBJ(visual.fonts.body.0.0));
-        SetTextColor(
-            draw.hDC,
-            if draw.itemState.0 & ODS_DISABLED.0 != 0 {
-                visual.colors.muted
-            } else {
-                visual.colors.text
-            },
-        );
-        SetBkColor(draw.hDC, visual.colors.surface);
-        DrawTextW(
-            draw.hDC,
-            &mut caption,
-            &mut rect,
-            DT_SINGLELINE | DT_CENTER | DT_VCENTER | DT_NOPREFIX,
-        );
-        SelectObject(draw.hDC, old);
-        if draw.itemState.0 & ODS_FOCUS.0 != 0 {
-            rect.left += 3;
-            rect.top += 3;
-            rect.right -= 3;
-            rect.bottom -= 3;
-            SetTextColor(draw.hDC, visual.colors.focus);
-            let _ = DrawFocusRect(draw.hDC, &rect);
-        }
-    }
 }
 
 #[cfg(test)]

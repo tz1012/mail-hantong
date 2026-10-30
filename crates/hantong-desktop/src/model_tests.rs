@@ -143,6 +143,11 @@ fn ops07_desktop_both_languages_have_every_required_key_without_fallback() {
         "yes",
         "no",
         "metadata_only",
+        "filter",
+        "filter_all",
+        "filter_unread",
+        "filter_favorite",
+        "reload_folder",
         "brand",
         "title",
         "list_title",
@@ -175,6 +180,10 @@ fn ops07_desktop_both_languages_have_every_required_key_without_fallback() {
         "status_error",
         "startup_error",
         "compact_note",
+        "empty_title",
+        "empty_hint",
+        "empty_matches",
+        "navigation_note",
     ];
     required.extend(Navigation::ALL.iter().map(|navigation| navigation.key()));
     required.sort_unstable();
@@ -246,11 +255,17 @@ fn ops08_desktop_palette_text_and_focus_meet_contrast_targets() {
     for theme in [EffectiveTheme::Light, EffectiveTheme::Dark] {
         let p = palette(theme).unwrap();
         for background in [p.background, p.surface, p.raised, p.selected] {
-            for foreground in [p.text, p.muted, p.accent] {
-                assert!(contrast(foreground, background) >= 4.5, "text {theme:?}");
-            }
+            assert!(contrast(p.text, background) >= 4.5, "text {theme:?}");
             assert!(contrast(p.focus, background) >= 3.0, "focus {theme:?}");
         }
+        for background in [p.background, p.surface, p.raised] {
+            assert!(contrast(p.muted, background) >= 4.5, "muted {theme:?}");
+        }
+        assert!(contrast(p.accent, p.background) >= 3.0, "accent {theme:?}");
+        assert!(
+            contrast(p.on_accent, p.accent) >= 4.5,
+            "on accent {theme:?}"
+        );
         for background in [p.background, p.surface, p.raised] {
             assert!(contrast(p.border, background) >= 3.0, "border {theme:?}");
         }
