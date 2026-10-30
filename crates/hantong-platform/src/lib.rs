@@ -3,6 +3,7 @@
 #[cfg(not(windows))]
 use hantong_contracts::ErrorCode;
 
+pub mod google_browser;
 #[allow(unsafe_code)]
 mod paths;
 mod profile_file;

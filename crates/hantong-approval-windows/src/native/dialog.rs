@@ -18,6 +18,7 @@ pub(super) enum DialogReview {
     ScopeRefresh(ScopeRefreshReview),
     Send(hantong_approval::SendReview),
     Smtp(hantong_approval::SmtpSetupReview),
+    Google(hantong_approval::GoogleSetupReview),
 }
 impl ReviewSnapshot for DialogReview {
     fn created_at_utc_ms(&self) -> i64 {
@@ -27,6 +28,7 @@ impl ReviewSnapshot for DialogReview {
             Self::ScopeRefresh(review) => review.created_at_utc_ms(),
             Self::Send(review) => review.created_at_utc_ms(),
             Self::Smtp(review) => review.created_at_utc_ms(),
+            Self::Google(review) => review.created_at_utc_ms,
         }
     }
     fn expires_at_utc_ms(&self) -> i64 {
@@ -36,10 +38,14 @@ impl ReviewSnapshot for DialogReview {
             Self::ScopeRefresh(review) => review.expires_at_utc_ms(),
             Self::Send(review) => review.expires_at_utc_ms(),
             Self::Smtp(review) => review.expires_at_utc_ms(),
+            Self::Google(review) => review.expires_at_utc_ms,
         }
     }
 }
 impl DialogReview {
+    pub(super) fn is_google(&self) -> bool {
+        matches!(self, Self::Google(_))
+    }
     pub(super) fn is_smtp(&self) -> bool {
         matches!(self, Self::Smtp(_))
     }
@@ -76,6 +82,7 @@ impl DialogReview {
             Self::ScopeRefresh(review) => Ok(review.summary(language)),
             Self::Send(review) => Ok(review.summary(language)),
             Self::Smtp(review) => Ok(review.summary(language)),
+            Self::Google(review) => Ok(review.summary(language)),
         }
     }
 }
@@ -86,6 +93,7 @@ pub(super) enum DialogBinding {
     ScopeRefresh(CapturedReview<ScopeRefreshReview>),
     Send(CapturedReview<hantong_approval::SendReview>),
     Smtp(CapturedReview<hantong_approval::SmtpSetupReview>),
+    Google(CapturedReview<hantong_approval::GoogleSetupReview>),
 }
 impl DialogBinding {
     pub(super) fn review(&self) -> DialogReview {
@@ -95,6 +103,7 @@ impl DialogBinding {
             Self::ScopeRefresh(binding) => DialogReview::ScopeRefresh(binding.review.clone()),
             Self::Send(binding) => DialogReview::Send(binding.review.clone()),
             Self::Smtp(binding) => DialogReview::Smtp(binding.review.clone()),
+            Self::Google(binding) => DialogReview::Google(binding.review.clone()),
         }
     }
     pub(super) fn started(&self) -> Instant {
@@ -104,6 +113,7 @@ impl DialogBinding {
             Self::ScopeRefresh(binding) => binding.started,
             Self::Send(binding) => binding.started,
             Self::Smtp(binding) => binding.started,
+            Self::Google(binding) => binding.started,
         }
     }
     pub(super) fn validate(&self, expected: &DialogReview) -> Result<(), ErrorCode> {
@@ -117,6 +127,7 @@ impl DialogBinding {
             }
             (Self::Send(binding), DialogReview::Send(review)) => binding.validate(review),
             (Self::Smtp(binding), DialogReview::Smtp(review)) => binding.validate(review),
+            (Self::Google(binding), DialogReview::Google(review)) => binding.validate(review),
             _ => Err(ErrorCode::ScopeDenied),
         }
     }
@@ -141,6 +152,9 @@ impl DialogBinding {
             (Self::Smtp(binding), Some(pending)) => binding
                 .into_verified_smtp(pending)
                 .map(|v| DialogVerified::Smtp(Box::new(v))),
+            (Self::Google(binding), None) => binding
+                .into_verified_google()
+                .map(|v| DialogVerified::Google(Box::new(v))),
             _ => Err(ErrorCode::InternalError),
         }
     }
@@ -151,6 +165,7 @@ pub(super) enum DialogVerified {
     ScopeRefresh(Box<VerifiedScopeRefresh>),
     Send(Box<crate::VerifiedSend>),
     Smtp(Box<crate::VerifiedSmtpSetup>),
+    Google(Box<crate::VerifiedGoogleSetup>),
 }
 
 #[cfg(test)]

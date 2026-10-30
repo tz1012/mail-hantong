@@ -53,11 +53,33 @@ class ToolSchemaContractTests(unittest.TestCase):
         self.assertFalse(body["additionalProperties"])
         self.assertEqual(body["properties"]["tool"]["const"], "mail.messages.get")
         variants = body["properties"]["params"]["oneOf"]
-        self.assertEqual({v["properties"]["mode"]["const"] for v in variants}, {"imap_body", "locator"})
+        self.assertEqual({v["properties"]["mode"]["const"] for v in variants}, {"imap_body", "locator", "gmail_body"})
         for variant in variants:
             self.assertFalse(variant["additionalProperties"])
             self.assertIn("account_id", variant["required"])
-            self.assertIn("max_bytes", variant["required"])
+            if variant["properties"]["mode"]["const"] == "gmail_body":
+                self.assertIn("message_id", variant["required"])
+                self.assertEqual(variant["properties"]["max_bytes"]["maximum"], 65536)
+                self.assertNotIn("uid", variant["properties"])
+            else:
+                self.assertIn("max_bytes", variant["required"])
+
+    def test_acc03_gmail_discovery_requires_account_and_sync_cas_without_token_inputs(self):
+        found = set()
+        for tool in ("mail.folders.list", "mail.messages.search", "mail.messages.get", "mail.sync.page"):
+            for variant in self.load(tool + ".schema.json")["properties"]["params"]["oneOf"]:
+                mode = variant["properties"].get("mode", {}).get("const", "")
+                if not mode.startswith("gmail_"):
+                    continue
+                found.add(mode)
+                self.assertFalse(variant["additionalProperties"])
+                self.assertIn("account_id", variant["required"])
+                self.assertEqual(variant["properties"]["account_id"]["pattern"], "^google_[0-9a-f]{64}$")
+                self.assertFalse({"token", "access_token", "refresh_token", "approval_id", "callback", "code"} & variant["properties"].keys())
+                if mode == "gmail_page":
+                    self.assertTrue({"expected_version", "operation_id", "idempotency_key"} <= set(variant["required"]))
+                    self.assertEqual(variant["properties"]["limit"]["maximum"], 32)
+        self.assertEqual(found, {"gmail_labels", "gmail_messages", "gmail_body", "gmail_page", "gmail_status"})
 
 
 if __name__ == "__main__":

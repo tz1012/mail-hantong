@@ -1,0 +1,14 @@
+title=Google 메일 계정 연결
+intro=Google 로그인이 완료됐습니다. 보호된 연결을 저장하기 전에 정확한 계정을 확인하세요.
+verify=본인 확인 후 계정 연결
+verification=이 Google 계정의 읽기 전용 메일 연결을 위해 본인을 확인하세요.
+readonly=Gmail 읽기 전용: 라벨·메일 메타데이터·텍스트 본문을 가져옵니다. Gmail 수정이나 발송 권한은 활성화하지 않습니다.
+footer=인증 정보는 Windows 보호 저장소에 보관합니다. 기존 클라이언트는 별도의 계정 권한 검토가 필요합니다. 발송이나 외부 AI 전송 승인이 아닙니다.
+account=로컬 계정 ID
+email=확인된 이메일
+subject=Google 고유 계정 ID
+client=데스크톱 OAuth 클라이언트
+name=표시 이름
+scopes=Google에서 확인한 권한 범위
+new_account=새 로컬 Google 계정 연결을 만듭니다.
+reconnect=기존 Google 계정의 보호된 연결을 교체합니다. 저장된 메일과 기존 계정 권한 범위는 유지합니다.

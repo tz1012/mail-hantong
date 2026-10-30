@@ -9,9 +9,11 @@ const INITIAL_PREVIEW_TABLES: [&str; 4] = [
 
 fn seed_v16_fixture(f: &Fixture) {
     seed_v15_fixture(f);
-    Store { connection: f.keyed() }
-        .migrate_with_backup(15, 16, SCHEMA_V16, apply_v16_migration)
-        .unwrap();
+    Store {
+        connection: f.keyed(),
+    }
+    .migrate_with_backup(15, 16, SCHEMA_V16, apply_v16_migration)
+    .unwrap();
 }
 
 fn product_table_names(c: &rusqlite::Connection) -> rusqlite::Result<Vec<String>> {
@@ -107,7 +109,9 @@ fn sync01_v16_to_v17_preserves_all_frozen_rows_sequence_and_message_identity() {
         })
         .unwrap();
 
-    let store = Store { connection: f.keyed() };
+    let store = Store {
+        connection: f.keyed(),
+    };
     store.migrate_v16_to_v17().unwrap();
     store
         .with_connection(|c| {
@@ -165,15 +169,16 @@ fn sync01_v16_to_v17_preserves_all_frozen_rows_sequence_and_message_identity() {
 }
 
 #[test]
-fn sync01_fresh_v18_has_exact_table_count_and_empty_initial_preview_ledgers() {
+fn sync01_fresh_v19_has_exact_table_count_and_empty_initial_preview_ledgers() {
     let f = Fixture::new();
     let store = f.open().unwrap();
     store
         .with_connection(|c| {
-            assert_eq!(product_table_names(c)?.len(), 41);
+            assert_eq!(product_table_names(c)?.len(), 46);
             assert_initial_tables_empty(c)?;
             assert_v18_tables_empty(c)?;
-            validate_schema(c, SCHEMA, 18)
+            assert_v19_tables_empty(c)?;
+            validate_schema(c, SCHEMA, 19)
         })
         .unwrap();
 }
@@ -191,7 +196,9 @@ fn sync01_v16_to_v17_validation_failure_rolls_back_schema_rows_and_sequence() {
             validate_schema(c, SCHEMA_V16, 16)
         })
         .unwrap();
-    let store = Store { connection: f.keyed() };
+    let store = Store {
+        connection: f.keyed(),
+    };
     let before_rows = store.with_connection(v15_product_rows).unwrap();
     let before_tables = store.with_connection(product_table_names).unwrap();
     let before_metadata = store
@@ -268,4 +275,10 @@ fn sync01_v16_to_v17_validation_failure_rolls_back_schema_rows_and_sequence() {
         })
         .unwrap();
     assert!(f.0.join("data/backup-before-v16.db").is_file());
+}
+
+fn frozen_product_table_names(schema: &str) -> rusqlite::Result<Vec<String>> {
+    let reference = rusqlite::Connection::open_in_memory()?;
+    reference.execute_batch(schema)?;
+    product_table_names(&reference)
 }

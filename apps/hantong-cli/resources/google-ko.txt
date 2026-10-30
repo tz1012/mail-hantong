@@ -1,0 +1,11 @@
+opening=시스템 브라우저에서 Google 로그인을 엽니다.
+browser_fallback=브라우저가 열리지 않으면 다음 주소를 여세요:
+setup=Google 설정:
+request_id=요청 ID:
+review=보호된 설정 창에서 정확한 계정과 읽기 전용 범위를 검토하세요.
+register=보호된 창에서 CLI 등록 내용을 검토하세요.
+refresh=보호된 창에서 CLI 계정 범위 변경을 검토하세요.
+connected=연결된 Google 계정:
+sync=Gmail 동기화:
+next_cursor=다음 커서:
+truncated=메일 본문이 길어 일부만 표시했습니다.

@@ -37,6 +37,7 @@ pub(crate) struct CoreExecutionAdapter<'a, 'server> {
     folder_worker: &'a crate::folder_worker::FolderWorkerHandle<'a>,
     uid_worker: Option<&'a crate::uid_worker::UidWorkerHandle<'a>>,
     send_ui: Option<&'a crate::registration::RegistrationHandle<'a>>,
+    google_worker: Option<&'a crate::google_worker::GoogleHandle<'a>>,
 }
 
 pub(crate) fn load_registration(
@@ -72,20 +73,22 @@ pub(crate) fn execute_with_uid<'server>(
     hantong_application::execute_tool(&mut adapter, &request.method, &request.params)
 }
 
-pub(crate) fn execute_with_send<'server>(
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn execute_with_google<'server>(
     store: &Store,
     policy: &mut ReadPolicy,
     worker: &crate::folder_worker::FolderWorkerHandle<'_>,
     uid_worker: Option<&crate::uid_worker::UidWorkerHandle<'_>>,
     send_ui: &crate::registration::RegistrationHandle<'_>,
+    google_worker: &crate::google_worker::GoogleHandle<'_>,
     connection: &mut AuthenticatedConnection<'server>,
     request: &RpcRequest,
 ) -> Result<Value, ErrorCode> {
     let mut adapter = CoreExecutionAdapter::new(connection, store, policy, worker, uid_worker);
     adapter.send_ui = Some(send_ui);
+    adapter.google_worker = Some(google_worker);
     hantong_application::execute_tool(&mut adapter, &request.method, &request.params)
 }
-
 impl<'a, 'server> CoreExecutionAdapter<'a, 'server> {
     pub(crate) fn new(
         connection: &'a mut AuthenticatedConnection<'server>,
@@ -101,6 +104,7 @@ impl<'a, 'server> CoreExecutionAdapter<'a, 'server> {
             folder_worker,
             uid_worker,
             send_ui: None,
+            google_worker: None,
         }
     }
 
@@ -138,6 +142,38 @@ fn durable_admission<T>(outcome: Result<T, ErrorCode>) -> Result<T, AuditHandoff
 
 impl<'a, 'server> ExecutionContext for CoreExecutionAdapter<'a, 'server> {
     type Output = Value;
+    fn read_google(
+        &mut self,
+        request: &hantong_contracts::google_mail::GoogleMailRequest,
+    ) -> Result<ReadResult<Value>, ErrorCode> {
+        let (value, count) = crate::google_worker::read(
+            self.store,
+            *self.connection.registration_id(),
+            self.connection.profile_epoch(),
+            request,
+        )?;
+        ReadResult::new(value, Some(count))
+    }
+    fn request_google_sync(
+        &mut self,
+        audit: [u8; 32],
+        request: &hantong_contracts::google::GoogleSyncRequest,
+    ) -> Result<AuditHandoff<Value>, ErrorCode> {
+        let worker = self.google_worker.ok_or(ErrorCode::CoreUnavailable)?;
+        Ok(
+            match worker.request(
+                audit,
+                *self.connection.registration_id(),
+                self.connection.profile_epoch(),
+                request,
+            )? {
+                AuditHandoff::Response(r) => AuditHandoff::response(
+                    serde_json::json!({"schema_version":1,"ok":true,"provider":"gmail","read_only":true,"account_id":request.account_id,"sync":crate::google_worker::receipt(&r)}),
+                ),
+                AuditHandoff::Error(e) => AuditHandoff::error(e),
+            },
+        )
+    }
 
     fn revalidate(&mut self) -> Result<(), ErrorCode> {
         let (_, current) = self.current_registration()?;

@@ -39,7 +39,7 @@ class PackageCliTests(unittest.TestCase):
         self.target = self.root / "target"
         self.binary_dir = self.target / package.TARGET / "release"
         self.binary_dir.mkdir(parents=True)
-        for path in ("LICENSE", "README.md", "docs/latest/CLI-LAUNCH.md",
+        for path in ("LICENSE", "README.md", "docs/latest/CLI-LAUNCH.md", "docs/latest/GOOGLE-MAIL.md",
                      "packaging/windows/install.ps1", "packaging/windows/uninstall.ps1", "packaging/windows/package-common.ps1"):
             source = self.root / path
             source.parent.mkdir(parents=True, exist_ok=True)
@@ -122,6 +122,7 @@ class PackageCliTests(unittest.TestCase):
             self.assertEqual([name for name in names if name.endswith(".exe")], sorted(f"bin/{binary}.exe" for binary in package.BINARIES.values()))
             self.assertFalse(any("profile" in name or ".env" in name or "gui.exe" in name for name in names))
             self.assertEqual(zipped.read("LICENSE"), (self.root / "LICENSE").read_bytes())
+            self.assertEqual(zipped.read("GOOGLE-MAIL.md"), (self.root / "docs/latest/GOOGLE-MAIL.md").read_bytes())
             self.assertTrue(any(name.endswith("openssl/LICENSE.txt") for name in names))
             self.assertTrue(any(name.endswith("sqlcipher/LICENSE-sqlcipher") for name in names))
             self.assertTrue(any(name.endswith("sqlcipher/LICENSE-libtomcrypt") for name in names))

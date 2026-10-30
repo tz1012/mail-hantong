@@ -142,6 +142,9 @@ impl Drop for OsBlob {
 }
 
 fn entropy(account: &str, kind: SecretKind) -> Vec<u8> {
+    if let SecretKind::GoogleOAuth(version) = kind {
+        return format!("mail-hantong.google.v3\0{account}\0{version}").into_bytes();
+    }
     format!("mail-hantong\0{account}\0{}", kind.name()).into_bytes()
 }
 fn input_blob(bytes: &[u8]) -> CRYPT_INTEGER_BLOB {
@@ -318,6 +321,15 @@ pub(super) fn read_mail_credential(
     slot: MailCredentialSlot,
 ) -> Result<SensitiveBuffer, SecretError> {
     let value = unprotect(path, account, SecretKind::Mail(slot))?;
+    Ok(SensitiveBuffer(value.checked(MAX_SECRET)?.to_vec()))
+}
+
+pub(super) fn read_google_credential(
+    path: &Path,
+    account: &str,
+    version: u64,
+) -> Result<SensitiveBuffer, SecretError> {
+    let value = unprotect(path, account, SecretKind::GoogleOAuth(version))?;
     Ok(SensitiveBuffer(value.checked(MAX_SECRET)?.to_vec()))
 }
 

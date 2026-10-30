@@ -15,6 +15,7 @@ use std::env;
 use std::io::{self, Write};
 mod ai;
 mod diagnostics;
+mod google;
 mod initial_sync;
 mod mail_send;
 mod message_body;
@@ -297,7 +298,7 @@ fn message(code: ErrorCode, lang: Lang) -> &'static str {
 
 fn help(lang: Lang) -> String {
     format!(
-        "mail-hantong / hantong\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}",
+        "mail-hantong / hantong\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}",
         resource(lang, "usage"),
         resource(lang, "preview_scope"),
         resource(lang, "quick_start"),
@@ -307,7 +308,8 @@ fn help(lang: Lang) -> String {
         resource(lang, "sync_initial_help"),
         resource(lang, "message_search_help"),
         resource(lang, "protected"),
-        resource(lang, "help_language")
+        resource(lang, "help_language"),
+        resource(lang, "google_help")
     )
 }
 
@@ -714,6 +716,19 @@ fn run_with_mail_actions(
                 };
                 folder_options.push((arg, value));
             }
+            "--client-id"
+            | "--reauthorize-account"
+            | "--force-consent"
+            | "--request-id"
+            | "--label-id"
+            | "--page-token"
+            | "--query"
+            | "--after" => {
+                let Some(value) = it.next() else {
+                    return emit_error(ErrorCode::InvalidInput, lang, json);
+                };
+                folder_options.push((arg, value));
+            }
             "--help" | "-h" if command.is_empty() => {
                 if want_help {
                     return emit_error(ErrorCode::InvalidInput, lang, json);
@@ -750,6 +765,11 @@ fn run_with_mail_actions(
     // parsing or dispatching any command so native/setup callbacks cannot run.
     if (want_help || want_version) && !command.is_empty() {
         return emit_error(ErrorCode::InvalidInput, lang, json);
+    }
+    let mut google_options = setup_options.clone();
+    google_options.extend(folder_options.iter().cloned());
+    if let Some(code) = google::try_run(&command, &google_options, lang, json, seen_no_input) {
+        return code;
     }
     if command.first().map(String::as_str) == Some("setup")
         && command.get(1).map(String::as_str) == Some("smtp")

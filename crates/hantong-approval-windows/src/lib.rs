@@ -4,7 +4,8 @@
 //! Core-owned native user verification. Never a CLI/MCP dependency.
 
 use hantong_approval::{
-    AccountSetupReview, RegistrationReview, ScopeRefreshReview, SendReview, SmtpSetupReview,
+    AccountSetupReview, GoogleSetupReview, RegistrationReview, ScopeRefreshReview, SendReview,
+    SmtpSetupReview,
 };
 use hantong_contracts::ErrorCode;
 use hantong_domain::config::{Language, Theme};
@@ -267,6 +268,73 @@ pub async fn review_scope_refresh(
     #[cfg(not(windows))]
     {
         let _ = (review, language, theme);
+        Err(ErrorCode::CapabilityUnsupported)
+    }
+}
+
+/// Single-use native account-connection verification, never a send approval.
+pub struct VerifiedGoogleSetup {
+    #[cfg(windows)]
+    binding: binding::CapturedReview<GoogleSetupReview>,
+    #[cfg(windows)]
+    verified_at_utc_ms: i64,
+    #[cfg(windows)]
+    pending: Option<hantong_secrets::google::PendingGoogleCredential>,
+    #[cfg(not(windows))]
+    _private: (),
+}
+impl fmt::Debug for VerifiedGoogleSetup {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("VerifiedGoogleSetup(<redacted>)")
+    }
+}
+impl VerifiedGoogleSetup {
+    pub fn consume(
+        self,
+        expected: &GoogleSetupReview,
+    ) -> Result<hantong_secrets::google::PendingGoogleCredential, ErrorCode> {
+        #[cfg(windows)]
+        {
+            self.binding.consume(expected, self.verified_at_utc_ms)?;
+            let pending = self.pending.ok_or(ErrorCode::InternalError)?;
+            validate_google_pending(expected, &pending)?;
+            Ok(pending)
+        }
+        #[cfg(not(windows))]
+        {
+            let _ = expected;
+            Err(ErrorCode::CapabilityUnsupported)
+        }
+    }
+}
+fn validate_google_pending(
+    review: &GoogleSetupReview,
+    pending: &hantong_secrets::google::PendingGoogleCredential,
+) -> Result<(), ErrorCode> {
+    if pending.identity() != &review.identity
+        || pending.binding(review.binding.credential_version)? != review.binding
+    {
+        return Err(ErrorCode::ScopeDenied);
+    }
+    Ok(())
+}
+pub async fn review_google_setup(
+    review: GoogleSetupReview,
+    pending: hantong_secrets::google::PendingGoogleCredential,
+    language: Option<Language>,
+    theme: Theme,
+) -> Result<VerifiedGoogleSetup, ErrorCode> {
+    review.validate()?;
+    validate_google_pending(&review, &pending)?;
+    #[cfg(windows)]
+    {
+        let mut verified = native::show_google_setup(review, language, theme).await?;
+        verified.pending = Some(pending);
+        Ok(verified)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (review, pending, language, theme);
         Err(ErrorCode::CapabilityUnsupported)
     }
 }

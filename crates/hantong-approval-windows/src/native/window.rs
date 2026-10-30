@@ -393,6 +393,12 @@ impl State {
                     hantong_approval::send_review::text(language, "verification"),
                 )?);
             }
+            DialogReview::Google(_) => {
+                self.operation = Some(ConsentOperation::start(
+                    hwnd,
+                    hantong_approval::google_setup_review::text(language, "verification"),
+                )?);
+            }
             DialogReview::ScopeRefresh(_) => {
                 self.operation = Some(ConsentOperation::start(
                     hwnd,
@@ -539,6 +545,20 @@ impl State {
             }
         }
 
+        if self.model.review().is_google() {
+            let key = match id {
+                HEADING => "title",
+                INTRO => "intro",
+                VERIFY => "verify",
+                FOOTER => "footer",
+                _ => return self.generic_caption(id),
+            };
+            return hantong_approval::google_setup_review::text(
+                self.model.presentation().language(),
+                key,
+            )
+            .to_owned();
+        }
         if self.model.review().is_send() {
             let key = match id {
                 HEADING => "title",
@@ -842,6 +862,7 @@ pub(super) fn run(
         DialogVerified::ScopeRefresh(_) => Err(ErrorCode::InternalError),
         DialogVerified::Send(_) => Err(ErrorCode::InternalError),
         DialogVerified::Smtp(_) => Err(ErrorCode::InternalError),
+        DialogVerified::Google(_) => Err(ErrorCode::InternalError),
     }
 }
 
@@ -865,6 +886,7 @@ pub(super) fn run_setup(
         DialogVerified::ScopeRefresh(_) => Err(ErrorCode::InternalError),
         DialogVerified::Send(_) => Err(ErrorCode::InternalError),
         DialogVerified::Smtp(_) => Err(ErrorCode::InternalError),
+        DialogVerified::Google(_) => Err(ErrorCode::InternalError),
     }
 }
 
@@ -924,6 +946,24 @@ pub(super) fn run_smtp_setup(
     }
 }
 
+pub(super) fn run_google_setup(
+    review: hantong_approval::GoogleSetupReview,
+    language: Option<Language>,
+    theme: Theme,
+    cancellation: Receiver<()>,
+) -> Result<crate::VerifiedGoogleSetup, ErrorCode> {
+    review.validate()?;
+    match run_dialog(
+        DialogReview::Google(review),
+        None,
+        language,
+        theme,
+        cancellation,
+    )? {
+        DialogVerified::Google(verified) => Ok(*verified),
+        _ => Err(ErrorCode::InternalError),
+    }
+}
 fn run_dialog(
     review: DialogReview,
     plan: Option<ImapPasswordCapturePlan>,
@@ -943,6 +983,7 @@ fn run_dialog(
         }
         DialogReview::Imap(review) => DialogBinding::Imap(CapturedReview::capture(review)?),
         DialogReview::Smtp(review) => DialogBinding::Smtp(CapturedReview::capture(review)?),
+        DialogReview::Google(review) => DialogBinding::Google(CapturedReview::capture(review)?),
         DialogReview::Send(review) => DialogBinding::Send(CapturedReview::capture(review)?),
         DialogReview::ScopeRefresh(review) => {
             DialogBinding::ScopeRefresh(CapturedReview::capture(review)?)

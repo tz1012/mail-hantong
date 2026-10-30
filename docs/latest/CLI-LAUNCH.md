@@ -2,14 +2,16 @@
 
 The command is `hantong`. English is the default; use `--lang ko` for Korean. The companion `mail-hantong-core` process handles encrypted local storage, mail operations and policy. The graphical mail application is not included in the CLI package.
 
-**Release status: Windows developer preview.** Package label `0.1.0-preview.3` identifies a preview of binaries reporting `0.1.0`. [Release downloads](https://github.com/tz1012/mail-hantong/releases) include checksums. Security review, clean Windows installation testing and real-provider interoperability remain open. macOS mail operations are not available yet.
+**Release status: Windows developer preview.** Package label `0.1.0-preview.4` identifies a preview of binaries reporting `0.1.0`. [Release downloads](https://github.com/tz1012/mail-hantong/releases) include checksums. Security review, clean Windows installation testing and real-provider interoperability remain open. macOS mail operations are not available yet.
 
 ## What works in this preview
+
+Preview.4 adds Google multi-account browser login and Gmail read-only mail. Preview.3 does not include these features. See [Google setup and commands](GOOGLE-MAIL.md) and [current verification status](https://github.com/tz1012/mail-hantong/blob/main/docs/latest/PROGRESS.md). First setup needs public Google Desktop OAuth client configuration; publisher verification remains a separate prerequisite.
 
 | Available | Not yet available |
 | --- | --- |
 | Windows 11 x64; English/Korean text and JSON output | macOS/Linux product mail operations |
-| Protected IMAP setup and explicit client registration | Gmail/Graph OAuth setup and provider certification |
+| Protected IMAP and multi-account Google browser setup; explicit client registration | Graph OAuth setup and Google publisher verification |
 | Account and cached folder listing; explicit folder refresh | Automatic background synchronization of every mailbox |
 | Bounded UID metadata collection, reconciliation and recovery | Attachments and rich HTML rendering |
 | Local metadata lookup, bounded text body reading and immutable drafts | Scheduled sending, contacts, tag editing and rules |

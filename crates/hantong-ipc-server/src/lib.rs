@@ -365,4 +365,5 @@ mod tests {
 
 pub mod scope_refresh_wire;
 
+mod google_setup_wire;
 mod smtp_setup_wire;

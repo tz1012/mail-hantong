@@ -374,4 +374,6 @@ mod tests {
 
 pub mod scope_refresh;
 
+pub mod google_mail;
+pub mod google_setup;
 pub mod smtp_setup;

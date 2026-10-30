@@ -1,0 +1,11 @@
+opening=Opening Google sign-in in your system browser.
+browser_fallback=If the browser did not open, use this URL:
+setup=Google setup:
+request_id=Request ID:
+review=Review the exact account and read-only scope in the protected setup window.
+register=Review the CLI registration in the protected window.
+refresh=Review the CLI account scope update in the protected window.
+connected=Connected Google account:
+sync=Gmail synchronization:
+next_cursor=Next cursor:
+truncated=The message body was truncated.

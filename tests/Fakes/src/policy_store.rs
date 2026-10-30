@@ -77,6 +77,51 @@ impl PolicyStoreFixture {
     pub fn open(&self) -> Result<Store, ErrorCode> {
         Store::open(self.root.join("data"), self.root.join("keys"))
     }
+    /// Synthetic Google identities and explicit test-only grants; never linked
+    /// into a product build or capable of creating OAuth credentials.
+    pub fn google_accounts(
+        &self,
+        identities: &[hantong_contracts::google::GoogleIdentity],
+    ) -> Result<(), ErrorCode> {
+        if identities.is_empty() || identities.len() > 8 {
+            return Err(ErrorCode::InvalidInput);
+        }
+        let store = self.open()?;
+        for identity in identities {
+            store.activate_google_account(
+                identity,
+                "fixture.apps.googleusercontent.com",
+                0,
+                None,
+            )?;
+        }
+        drop(store);
+        let accounts = format!(
+            "[{}]",
+            identities
+                .iter()
+                .map(|i| format!("\"{}\"", i.account_id))
+                .collect::<Vec<_>>()
+                .join(",")
+        );
+        let tools = hantong_contracts::auth::default_cli_body_tools();
+        let tools_json = format!(
+            "[{}]",
+            tools
+                .iter()
+                .map(|t| format!("\"{t}\""))
+                .collect::<Vec<_>>()
+                .join(",")
+        );
+        self.database()?.with_connection(|c|{
+            let tx=c.unchecked_transaction()?;
+            tx.execute("UPDATE client_registration_requests SET requested_accounts_json=?1,requested_tools_json=?2 WHERE request_id=(SELECT request_id FROM client_registrations WHERE registration_id=?3)",(&accounts,&tools_json,self.registration_id.as_slice()))?;
+            tx.execute("DELETE FROM client_registration_accounts WHERE registration_id=?1",[self.registration_id.as_slice()])?;
+            for i in identities {tx.execute("INSERT INTO client_registration_accounts VALUES(?1,?2)",(self.registration_id.as_slice(),&i.account_id))?;}
+            for tool in tools {tx.execute("INSERT OR IGNORE INTO client_registration_tools VALUES(?1,?2)",(self.registration_id.as_slice(),tool))?;}
+            tx.commit()
+        }).map_err(|_|ErrorCode::InternalError)
+    }
     fn database(&self) -> Result<KeyedConnection, ErrorCode> {
         KeyedConnection::open(self.root.join("data"), self.root.join("keys"))
             .map_err(|_| ErrorCode::InternalError)

@@ -176,7 +176,8 @@ fn sanitize_single_line(input: &str) -> String {
 
 fn item_label(item: &Value) -> String {
     if let Some(name) = item
-        .get("display_name")
+        .get("name")
+        .or_else(|| item.get("display_name"))
         .and_then(Value::as_str)
         .or_else(|| item.get("account_id").and_then(Value::as_str))
     {
@@ -190,6 +191,7 @@ fn item_label(item: &Value) -> String {
         .pointer("/from/mailbox")
         .and_then(Value::as_str)
         .or_else(|| item.get("from").and_then(Value::as_str))
+        .or_else(|| item.get("sender").and_then(Value::as_str))
         .unwrap_or("");
     if sender.is_empty() {
         sanitize_single_line(subject)
@@ -274,6 +276,16 @@ fn projected_label(page: &Value, item: &Value) -> String {
         format!("{subject}  —  {sender}")
     }
 }
+fn google_items(mut value: Value) -> Value {
+    let items = value
+        .get("labels")
+        .or_else(|| value.get("messages"))
+        .cloned()
+        .unwrap_or_else(|| Value::Array(vec![]));
+    value["items"] = items;
+    value
+}
+
 fn print_items(title: &str, value: &Value, selected: usize) {
     println!("\n{}", sanitize_single_line(title));
     let Some(items) = value.get("items").and_then(Value::as_array) else {
@@ -307,13 +319,144 @@ fn field(item: &Value, name: &str) -> Option<String> {
         .map(ToOwned::to_owned)
 }
 
+fn google_login_args(line: &str) -> Result<Option<Vec<String>>, String> {
+    if !line.starts_with("login") {
+        return Ok(None);
+    }
+    if line.len() > 1024 || line.chars().any(char::is_control) {
+        return Err("invalid Google login arguments".into());
+    }
+    let mut tokens = Vec::new();
+    let mut token = String::new();
+    let mut quoted = false;
+    let mut started = false;
+    for ch in line.chars() {
+        match ch {
+            '"' => {
+                quoted = !quoted;
+                started = true;
+            }
+            ch if ch.is_whitespace() && !quoted => {
+                if started {
+                    tokens.push(std::mem::take(&mut token));
+                    started = false;
+                }
+            }
+            ch => {
+                token.push(ch);
+                started = true;
+            }
+        }
+    }
+    if quoted {
+        return Err("invalid Google login arguments".into());
+    }
+    if started {
+        tokens.push(token)
+    }
+    if tokens.first().map(String::as_str) != Some("login")
+        || tokens.get(1).map(String::as_str) != Some("google")
+    {
+        return Ok(None);
+    }
+    if tokens.len() > 6 || tokens.len() % 2 != 0 {
+        return Err("invalid Google login arguments".into());
+    }
+    let mut seen = std::collections::BTreeSet::new();
+    for pair in tokens[2..].chunks_exact(2) {
+        if !seen.insert(&pair[0]) {
+            return Err("duplicate Google login option".into());
+        }
+        match pair[0].as_str() {
+            "--client-id" => {
+                let value = &pair[1];
+                let Some(prefix) = value.strip_suffix(".apps.googleusercontent.com") else {
+                    return Err("invalid public Desktop client ID".into());
+                };
+                if value.len() > 256
+                    || prefix.is_empty()
+                    || !prefix
+                        .bytes()
+                        .all(|b| b.is_ascii_alphanumeric() || b == b'-')
+                {
+                    return Err("invalid public Desktop client ID".into());
+                }
+            }
+            "--name"
+                if !pair[1].is_empty()
+                    && pair[1].len() <= 512
+                    && pair[1].chars().count() <= 128 => {}
+            _ => return Err("invalid Google login option".into()),
+        }
+    }
+    Ok(Some(tokens))
+}
+fn refresh_google_with(
+    account: &str,
+    label: &str,
+    timeout: Duration,
+    call: &mut impl FnMut(&[&str]) -> Result<Value, String>,
+    wait: &mut impl FnMut(Duration),
+) -> Result<(), String> {
+    let deadline = Instant::now() + timeout;
+    let mut result = call(&[
+        "gmail",
+        "sync",
+        "--account",
+        account,
+        "--label-id",
+        label,
+        "--limit",
+        "32",
+    ])?;
+    loop {
+        match result.pointer("/sync/state").and_then(Value::as_str) {
+            Some("completed") => return Ok(()),
+            Some("failed" | "interrupted") => return Err(
+                "Gmail synchronization failed; reconnect this account if authorization is required"
+                    .into(),
+            ),
+            Some("pending" | "running") => {}
+            _ => return Err("invalid Gmail synchronization status".into()),
+        }
+        if Instant::now() >= deadline {
+            return Err(
+                "Gmail synchronization timed out; inspect its status before retrying".into(),
+            );
+        }
+        let id = result
+            .pointer("/sync/execution_id")
+            .and_then(Value::as_str)
+            .ok_or_else(|| "invalid Gmail synchronization status".to_owned())?
+            .to_owned();
+        if id.len() != 64 || !id.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return Err("invalid Gmail synchronization ID".into());
+        }
+        wait(Duration::from_secs(1));
+        result = call(&[
+            "gmail",
+            "status",
+            "--account",
+            account,
+            "--execution-id",
+            &id,
+        ])?;
+    }
+}
+
 fn print_help(lang: Lang) {
     if lang == Lang::Ko {
         println!("hantong-t  j/k: 이동  Enter: 열기  h: 뒤로  r: 새로고침  q: 종료");
         println!("AI: ai login codex | ai login claude | ai codex | ai claude");
+        println!(
+            "Google: login google [--client-id ID] [--name \"이름\"]  Gmail에서 r: 선택 폴더 동기화"
+        );
     } else {
         println!("hantong-t  j/k: move  Enter: open  h: back  r: refresh  q: quit");
         println!("AI: ai login codex | ai login claude | ai codex | ai claude");
+        println!(
+            "Google: login google [--client-id ID] [--name \"Name\"]  Gmail r: synchronize selected folder"
+        );
     }
 }
 
@@ -364,9 +507,25 @@ fn main() -> io::Result<()> {
     let mut selected = 0_usize;
     let mut account: Option<String> = None;
     let mut folder: Option<(String, String)> = None;
+    let mut gmail = false;
     loop {
         let page = match (screen, account.as_deref(), folder.as_ref()) {
             (0, _, _) => runner.call(&["accounts", "list"]),
+            (1, Some(id), _) if gmail => runner
+                .call(&["gmail", "labels", "--account", id])
+                .map(google_items),
+            (_, Some(id), Some((label, _))) if gmail => runner
+                .call(&[
+                    "gmail",
+                    "list",
+                    "--account",
+                    id,
+                    "--label-id",
+                    label,
+                    "--limit",
+                    "32",
+                ])
+                .map(google_items),
             (1, Some(id), _) => runner.call(&["folders", "list", "--account", id]),
             (_, Some(id), Some((wire, encoding))) => runner.call(&[
                 "search",
@@ -401,6 +560,38 @@ fn main() -> io::Result<()> {
             }
         };
         let Some(command) = read_command() else { break };
+        match google_login_args(&command) {
+            Ok(Some(arguments)) => {
+                let outcome = Command::new(&runner.program)
+                    .args(["--lang", runner.lang.flag()])
+                    .args(&arguments)
+                    .stdin(Stdio::inherit())
+                    .stdout(Stdio::inherit())
+                    .stderr(Stdio::inherit())
+                    .status();
+                if !matches!(outcome,Ok(status) if status.success()) {
+                    eprintln!(
+                        "{}",
+                        if lang == Lang::Ko {
+                            "Google 연결을 완료하지 못했습니다."
+                        } else {
+                            "Google connection did not complete."
+                        }
+                    );
+                }
+                screen = 0;
+                selected = 0;
+                account = None;
+                folder = None;
+                gmail = false;
+                continue;
+            }
+            Err(error) => {
+                eprintln!("{}", sanitize_single_line(&error));
+                continue;
+            }
+            Ok(None) => {}
+        }
         match command.as_str() {
             "ai codex" | "ai claude" | "ai login codex" | "ai login claude" => {
                 let action = if command.starts_with("ai login ") {
@@ -435,7 +626,39 @@ fn main() -> io::Result<()> {
             "q" | "quit" | "exit" => break,
             "j" | "down" => selected = selected.saturating_add(1),
             "k" | "up" => selected = selected.saturating_sub(1),
-            "r" | "refresh" => {}
+            "r" | "refresh" => {
+                if gmail
+                    && screen > 0
+                    && let Some(id) = account.as_deref()
+                {
+                    let selected_label = if screen == 1 {
+                        snapshot
+                            .as_ref()
+                            .and_then(|s| rows(s).get(selected))
+                            .and_then(|item| field(item, "id"))
+                    } else {
+                        folder.as_ref().map(|f| f.0.clone())
+                    };
+                    let label = selected_label.as_deref().unwrap_or("INBOX");
+                    println!(
+                        "{}",
+                        if lang == Lang::Ko {
+                            "선택한 Gmail 폴더를 동기화합니다."
+                        } else {
+                            "Synchronizing the selected Gmail folder."
+                        }
+                    );
+                    if let Err(error) = refresh_google_with(
+                        id,
+                        label,
+                        Duration::from_secs(600),
+                        &mut |args| runner.call(args),
+                        &mut thread::sleep,
+                    ) {
+                        eprintln!("{}", sanitize(&error));
+                    }
+                }
+            }
             "h" | "back" => {
                 if screen > 0 {
                     screen -= 1;
@@ -457,8 +680,17 @@ fn main() -> io::Result<()> {
                     match screen {
                         0 => {
                             if let Some(id) = field(item, "account_id") {
+                                gmail =
+                                    item.get("provider").and_then(Value::as_str) == Some("gmail");
                                 account = Some(id);
                                 screen = 1;
+                                selected = 0;
+                            }
+                        }
+                        1 if gmail => {
+                            if let Some(label) = field(item, "id") {
+                                folder = Some((label, "gmail".into()));
+                                screen = 2;
                                 selected = 0;
                             }
                         }
@@ -469,6 +701,29 @@ fn main() -> io::Result<()> {
                                 folder = Some((wire, encoding));
                                 screen = 2;
                                 selected = 0;
+                            }
+                        }
+                        _ if gmail => {
+                            if let (Some(id), Some(message)) =
+                                (account.as_deref(), field(item, "id"))
+                            {
+                                match runner.call(&[
+                                    "gmail",
+                                    "read",
+                                    "--account",
+                                    id,
+                                    "--message-id",
+                                    &message,
+                                ]) {
+                                    Ok(v) => {
+                                        if let Some(text) =
+                                            v.pointer("/body/text").and_then(Value::as_str)
+                                        {
+                                            println!("\n{}\n", sanitize(text));
+                                        }
+                                    }
+                                    Err(e) => eprintln!("{}", sanitize(&e)),
+                                }
                             }
                         }
                         _ => {
@@ -505,6 +760,53 @@ fn main() -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn tui01_google_login_passes_only_bounded_explicit_arguments_without_shell() {
+        let args = google_login_args(
+            "login google --client-id fixture.apps.googleusercontent.com --name \"Work Gmail\"",
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(args.last().map(String::as_str), Some("Work Gmail"));
+        for input in [
+            "login google --access-token secret",
+            "login google --name x --name y",
+            "login google --client-id nope",
+            "login google && whoami",
+            "login google --name \"unfinished",
+        ] {
+            assert!(google_login_args(input).is_err(), "{input}");
+        }
+        assert!(google_login_args("ai codex").unwrap().is_none());
+    }
+    #[test]
+    fn tui01_google_explicit_refresh_polls_one_job_and_never_resubmits() {
+        let mut calls = Vec::new();
+        let mut step = 0;
+        refresh_google_with("account","Label_7",Duration::from_secs(10),&mut|args|{calls.push(args.iter().map(|s|(*s).to_owned()).collect::<Vec<_>>());step+=1;Ok(serde_json::json!({"sync":{"state":match step{1=>"pending",2=>"running",_=>"completed"},"execution_id":"a".repeat(64)}}))},&mut|_|{}).unwrap();
+        assert_eq!(calls.len(), 3);
+        assert_eq!(&calls[0][..2], ["gmail", "sync"]);
+        assert_eq!(calls[0][5], "Label_7");
+        assert!(calls[1..].iter().all(|args| args[1] == "status"));
+        let mut calls = 0;
+        assert!(refresh_google_with("account","INBOX",Duration::ZERO,&mut|_|{calls+=1;Ok(serde_json::json!({"sync":{"state":"pending","execution_id":"a".repeat(64)}}))},&mut|_|{}).is_err());
+        assert_eq!(calls, 1);
+    }
+
+    #[test]
+    fn tui01_google_labels_and_message_ids_keep_native_provider_identity() {
+        let labels = google_items(
+            serde_json::json!({"provider":"gmail","labels":[{"id":"Label_7","name":"Inbox\u{1b}[31m"}]}),
+        );
+        assert_eq!(field(&rows(&labels)[0], "id").as_deref(), Some("Label_7"));
+        assert!(!item_label(&rows(&labels)[0]).contains('\u{1b}'));
+        let messages = google_items(
+            serde_json::json!({"provider":"gmail","messages":[{"id":"18abc","subject":"Test","sender":"sender@example.test"}]}),
+        );
+        assert_eq!(field(&rows(&messages)[0], "id").as_deref(), Some("18abc"));
+        assert!(item_label(&rows(&messages)[0]).contains("sender@example.test"));
+        assert!(field(&rows(&messages)[0], "uidvalidity").is_none());
+    }
 
     #[test]
     fn tui01_navigation_uses_real_projection_and_bounded_input() {

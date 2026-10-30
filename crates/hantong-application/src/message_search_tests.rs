@@ -272,7 +272,11 @@ fn mail03_metadata_search_schema_describes_the_common_envelope_and_defaults() {
         json!(["schema_version", "request_id", "tool", "params"])
     );
     assert_eq!(schema["additionalProperties"], false);
-    let p = &schema["properties"]["params"];
+    let variants = schema["properties"]["params"]["oneOf"].as_array().unwrap();
+    let p = variants
+        .iter()
+        .find(|p| p["properties"]["mode"]["const"] == "imap_metadata")
+        .unwrap();
     assert_eq!(p["additionalProperties"], false);
     assert_eq!(
         p["required"],
@@ -283,4 +287,15 @@ fn mail03_metadata_search_schema_describes_the_common_envelope_and_defaults() {
     assert_eq!(p["properties"]["limit"]["default"], 16);
     assert_eq!(p["properties"]["cursor"]["type"], json!(["string", "null"]));
     assert_eq!(p["properties"]["cursor"]["minLength"], 1);
+    let gmail = variants
+        .iter()
+        .find(|p| p["properties"]["mode"]["const"] == "gmail_messages")
+        .unwrap();
+    assert_eq!(gmail["additionalProperties"], false);
+    assert_eq!(
+        gmail["properties"]["account_id"]["pattern"],
+        "^google_[0-9a-f]{64}$"
+    );
+    assert_eq!(gmail["properties"]["limit"]["default"], 32);
+    assert!(gmail["properties"].get("uid").is_none());
 }

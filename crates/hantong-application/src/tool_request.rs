@@ -22,6 +22,10 @@ use std::{collections::BTreeSet, fmt};
 
 #[derive(Clone, Eq, PartialEq)]
 pub enum ToolRequest {
+    Google {
+        request_id: String,
+        request: hantong_contracts::google_mail::GoogleMailRequest,
+    },
     DisplaySettingsGet {
         request_id: String,
     },
@@ -114,6 +118,7 @@ pub struct SendExecuteRequest {
 impl fmt::Debug for ToolRequest {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Google { .. } => f.write_str("ToolRequest::Google(<redacted>)"),
             Self::DisplaySettingsGet { .. } => {
                 f.write_str("ToolRequest::DisplaySettingsGet(<redacted>)")
             }
@@ -155,6 +160,16 @@ impl ToolRequest {
         let request_id = bounded_id(string(root.get("request_id").unwrap())?, 64)?;
         let tool = string(root.get("tool").unwrap())?;
         let params = object(root.get("params").unwrap())?;
+        if params
+            .get("mode")
+            .and_then(Value::as_str)
+            .is_some_and(|s| s.starts_with("gmail_"))
+        {
+            return Ok(Self::Google {
+                request_id,
+                request: hantong_contracts::google_mail::GoogleMailRequest::parse(tool, params)?,
+            });
+        }
         match tool {
             "app.settings.display.get" => {
                 exact_keys(params, &[])?;
@@ -365,6 +380,7 @@ impl ToolRequest {
 
     pub fn request_id(&self) -> &str {
         match self {
+            Self::Google { request_id, .. } => request_id,
             Self::DisplaySettingsGet { request_id }
             | Self::DiagnosticsSnapshot { request_id, .. } => request_id,
             Self::AccountsList(v) => &v.request_id,
@@ -383,6 +399,7 @@ impl ToolRequest {
 
     pub fn tool(&self) -> AuditTool {
         match self {
+            Self::Google { request, .. } => request.tool(),
             Self::DisplaySettingsGet { .. } => AuditTool::DisplaySettingsGet,
             Self::DiagnosticsSnapshot { .. } => AuditTool::DiagnosticsSnapshot,
             Self::AccountsList(_) => AuditTool::AccountsList,
@@ -399,6 +416,7 @@ impl ToolRequest {
 
     pub fn account_ids(&self) -> &[String] {
         match self {
+            Self::Google { request, .. } => request.account_ids(),
             Self::DisplaySettingsGet { .. } | Self::DiagnosticsSnapshot { .. } => &[],
             Self::AccountsList(value) => value.account_ids(),
             Self::FoldersList { request, .. } => request.account_ids(),

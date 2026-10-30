@@ -20,7 +20,7 @@ from traceability import source_hash, ValidationError
 
 ROOT = Path(__file__).resolve().parents[1]
 TARGET = "x86_64-pc-windows-msvc"
-DEFAULT_VERSION = "0.1.0-preview.3"
+DEFAULT_VERSION = "0.1.0-preview.4"
 BINARIES = {"hantong-cli": "hantong", "mail-hantong-core": "mail-hantong-core",
             "hantong-mcp": "hantong-mcp", "hantong-t": "hantong-t"}
 LICENSE_NAME = re.compile(r"^(?:licen[sc]e|copying|copyright|notice)(?:[._-].*)?$", re.I)
@@ -311,6 +311,7 @@ def package(root: Path = ROOT, *, version: str = DEFAULT_VERSION, output_dir: Pa
     runner = subprocess.run if runner is None else runner
     contents = {}
     required = {"LICENSE": "LICENSE", "README.md": "README.md", "CLI-LAUNCH.md": "docs/latest/CLI-LAUNCH.md",
+                "GOOGLE-MAIL.md": "docs/latest/GOOGLE-MAIL.md",
                 "install.ps1": "packaging/windows/install.ps1", "uninstall.ps1": "packaging/windows/uninstall.ps1",
                 "package-common.ps1": "packaging/windows/package-common.ps1"}
     for destination, source in required.items():

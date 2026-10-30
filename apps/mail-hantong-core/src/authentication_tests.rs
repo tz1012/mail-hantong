@@ -13,6 +13,8 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 #[path = "folder_integration_tests.rs"]
 mod folder_integration_tests;
+#[path = "google_integration_tests.rs"]
+mod google_integration_tests;
 #[path = "gui_read_integration_tests.rs"]
 mod gui_read_integration_tests;
 #[path = "read_policy_tests.rs"]
@@ -70,6 +72,7 @@ async fn bind_fixture_pipe() -> LocalPipeServer {
 
 #[derive(Clone, Copy, Debug)]
 enum PipeScenario {
+    Google,
     GuiReads,
     AppReads,
     Policy,
@@ -88,6 +91,9 @@ async fn run_isolated_pipe_scenario(scenario: PipeScenario) {
         let instance = random_nonce().unwrap();
         let mut listener = bind_fixture_pipe().await;
         match scenario {
+            PipeScenario::Google => {
+                google_integration_tests::run(&mut listener, client, server, instance).await
+            }
             PipeScenario::GuiReads => {
                 gui_read_integration_tests::run_gui_read_scenarios(
                     &mut listener,
@@ -140,6 +146,11 @@ async fn run_isolated_pipe_scenario(scenario: PipeScenario) {
     })
     .await
     .unwrap_or_else(|_| panic!("authenticated pipe scenario timed out: {scenario:?}"));
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn acc01_acc03_google_mail_uses_signed_ipc_policy_scope_and_durable_audit() {
+    run_isolated_pipe_scenario(PipeScenario::Google).await;
 }
 
 #[tokio::test(flavor = "current_thread")]

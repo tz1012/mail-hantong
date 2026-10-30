@@ -10,6 +10,8 @@
 
 ## 현재 상태
 
+Google 다중 계정 로그인·Gmail 읽기 구현(2026-10-30): 브라우저 OAuth/PKCE, 계정별 DPAPI 갱신, v19 캐시·동기화, native 확인과 CLI·터미널·공통 도구 연결을 구현했다. 최종 전체 검사 **1,612개 통과** 후 preview.4 패키지의 설치·업데이트·제거 검증을 진행 중이다. 실제 Google 프로젝트 등록·로그인·메일 호출은 수행하지 않았다. 보안·계약 변경은 **[사람 검토 필요]**다.
+
 2026-10-30 CLI preview.3 기능 묶음: 본문 읽기·암호화 캐시, 초안 작성, 개별 native 승인 발송 원장·SMTP, 최초 SMTP 보호 설정, 독립 MCP 등록·도구 조회/호출, Codex/Claude Console AI 대화, 공급자/모델/추론/fast/agent 세션 제어와 한 줄 설치를 연결했다. `/provider`와 `/provide`를 같은 명령으로 받고, 값 없는 공급자·모델·모드 명령은 상하키 선택을 제공한다. 최종 전체 검사 **1,565개 통과** 후 소스 `065366b`와 [개발 미리보기 v0.1.0-preview.3](https://github.com/tz1012/mail-hantong/releases/tag/v0.1.0-preview.3)을 공개했다. 공개 주소의 최종 ZIP으로 실제 임시 설치·실행·제거·데이터 보존을 재검증했다. 아래 preview.2의 1,450개는 직전 기준선으로 보존한다. 보안·계약 변경은 **[사람 검토 필요]**다.
 
 **우선순위 변경(사용자 지시, 2026-10-30): GUI보다 CLI 출시를 먼저 진행한다.** GUI 진행 파일은 보존하고 추가 디자인 작업을 중단했다. 상단 폴더 드롭다운 제거·왼쪽 실제 폴더 통합·스크롤 끝 자동 추가 로딩은 후속에 남긴다. 코어는 별도 프로세스이고 계정 비밀번호 입력·등록/권한 승인은 보호된 Windows 창을 유지한다.
@@ -20,7 +22,7 @@
 | --- | --- |
 | 기준 자료 | 사용자 승인으로 채택한 [Markdown 기준 요건](../requirements/README.md): 요건 170개·1단계 P0 144개·문장별 AC ID 341개. 작업 카드 정의 151개는 보존한다. |
 | 현재 카드 | 사용자 우선 지시에 따른 **CLI 개발 미리보기의 로컬 패키지·설치 검증**을 마쳤다. M9-10/11/15/16의 전체 설치·새 OS·서명·출시 게이트 완료가 아니다. M8 GUI 진행 파일은 보존했다. 보안·계약은 **사람 검토 필요**다. |
-| 최신 검증 | **1,565개 통과**(문서 29·빌드 도구 88·Rust 1,448). check-all build/test/fmt/Clippy·의존/문서/추적 통과, 동결 후 Windows/Linux 전체 target Clippy 통과. Windows PowerShell5.1 설치·preview.2→3 업데이트·반복·제거와 최종 공개 ZIP 재설치 검증 통과. Mac 실행·새 OS·실제 제공자 검증은 남아 있다. |
+| 최신 검증 | **1,612개 통과**(문서 29·빌드 도구 89·Rust 1,494). Windows check-all의 fmt/Clippy/build/test·문서/의존/추적 검사 통과. Linux 전체 target cross-Clippy 통과. 5계정 병렬·토큰/계정 격리·실제 서명 IPC·v19 이전/롤백을 검증했다. preview.4 설치·업데이트·제거 검증은 진행 중이며 실제 Google·새 OS·Mac 검증은 남아 있다. |
 | 제품 구현 | Rust workspace·영/한 CLI·Windows 코어/인증 IPC·DPAPI·SQLCipher·정책/감사·보호 설정/등록, 폴더·UID 수집/대조/복구·검색·본문·초안·native 개별 승인 발송, managed AI·MCP·한 줄 설치를 연결했다. 첨부·예약·주소록·규칙·전체 GUI·실제 제공자 검증은 후속이다. |
 | GitHub | 공개 저장소 [tz1012/mail-hantong](https://github.com/tz1012/mail-hantong), main remote 연결, 개발 미리보기 v0.1.0-preview.3과 ZIP/SHA256SUMS/BUILD-METADATA 게시. 실행 데이터·에이전트 상태는 소스에 포함하지 않는다. WinGet/MSI 등록과 서명은 아직 없다. |
 | 새 사용자 요청 | 진행 상황을 이 문서에 누적하고, GitHub에서 명령어로 설치 및 개발을 시작할 수 있는 경로를 마련한다. 상세 범위는 [공개와 설치 계획](DISTRIBUTION.md)에 기록한다. |
@@ -30,6 +32,18 @@
 | Mac 지원 방향 | 사용자 승인으로 정식 후속 목표에 포함했다. Windows 우선 출시 후 Mac 코어·CLI·최소 승인 도우미부터 제공하고 전체 GUI를 후속 제공한다. 구체적인 단계·일정·패키지는 미정이며 현재 제품은 미구현이다. |
 | 공개 사용 정책 | **[LICENSE Version 1.0](../../LICENSE) 정식 채택** — 개인·회사 내부 업무용 사용, 수정본 비공개 및 원본·수정본 무료 재배포 허용. 프로그램 판매·유료 제공 금지. 고지 유지·수정 표시·보증과 책임 조항 포함. 저작권자는 **Andrew Cho**, 웹사이트 **https://tzt.kr**, 연락처 **andrew@tzt.kr**이다. [한국어 안내](LICENSING.md), [ADR-016](../adr/ADR-016-license.md). |
 | 다음 제품 작업 | CLI 배포 기준선을 보존하고 첨부·초안 편집·예약·주소록·규칙 등 남은 P0와 사람 보안 검토·실제 제공자 검증을 이어간다. GUI 디자인·자동 추가 로딩·상단 폴더 선택 제거는 후속 범위다. |
+
+## CLI preview.4 — Google 다중 계정 브라우저 로그인·Gmail 읽기 (2026-10-30)
+
+- **범위**: ACC-01/02/03/04/05, SYNC-02. Google 고유 subject의 SHA256으로 계정을 식별하며 이메일이 같아도 다른 subject는 분리한다. 같은 계정 재연결은 CAS로 기존 ID·메일을 유지한다. 계정 수 자체를 제한하지 않으며 네트워크 동시 작업은 8개로 제한한다.
+- **인증**: 시스템 브라우저·PKCE S256·256bit state·5분 단일 loopback callback·실제 반환 scope·검증된 UserInfo를 사용한다. 토큰 교환·조회·갱신과 Gmail HTTPS는 Secrets 안에서만 수행한다. 고정 Google 호스트·TLS·리다이렉트 금지·응답/시간 한도·계정별 refresh 잠금·세대별 DPAPI 저장을 적용했다.
+- **보호 연결**: Google 확인 결과를 불투명 pending credential과 함께 native 검토에 결속하고, 정확한 계정·클라이언트·권한·기존 연결 교체 여부와 Windows 본인 확인 후 저장한다. 기존 GUI 언어·테마를 따른다. CLI·MCP에는 승인 발급 기능이 없다.
+- **저장·정책**: v19에 Google 연결/라벨/메일/동기화 상태/실행 원장을 추가했다. 계정·현재 등록/epoch·권한·MCP AI 동의·operation/idempotency/version·페이지 토큰/라벨을 결속하고 감사와 결과를 원자적으로 확정한다. 재시작은 중단을 기록하고 네트워크 요청을 자동 재실행하지 않는다. 인증 만료 계정의 로컬 메일은 보존한다.
+- **사용 경로**: `hantong login google`, `setup google request/status`, `gmail labels/sync/status/list/read`. 첫 로그인 뒤 별도 등록/범위 확인과 INBOX 32개 가져오기를 연결했다. 공통 메일 도구에는 명시적 `gmail_*` 모드를 추가했다. 기존 터미널 화면도 같은 CLI를 사용하며 로그인·명시적 새로고침을 연결했다. 본문은 텍스트 64KiB 한도이며 첨부·외부 콘텐츠를 열거나 Gmail을 수정/발송하지 않는다.
+- **검증**: Windows Secrets/Contracts 261개, Store 451개 집중 검사 통과. 5계정 병렬/인증 실패 격리·잘못된 subject/epoch·중복 요청·v19 이전/롤백·실제 서명 IPC 통합 시험을 추가했다. 최종 `check-all` **1,612개 통과**(29+89+1,494), 로그 `target/google-preview4-check-all.log`, SHA256 `bdda4a0dd7d4be2139367b4ff41281af4994267b935fa6ed23031a4380a00372`. 소스 해시 `8d9f712e43c2a356b7c789f3c379e5319ff5767d6d00935058322ecbfb1b40de`; staged 소스 576개와 작업 파일 바이트 일치를 확인했다. 최신 Windows 전체 Clippy와 Linux 전체 target cross-Clippy도 통과했다.
+- **패키지**: `artifacts/cli/0.1.0-preview.4/` 생성. ZIP 21,657,672바이트, SHA256 `fac65f8bb44232846f60ffbd971cf67f33e860197cb33ba433a1a9b659d648ad`. 실제 빌드 소스 해시·모든 manifest 파일·체크섬·4개 실행 파일의 Windows 시스템 DLL 의존과 외부 VC++ 런타임 불필요를 확인했다. Google 사용 안내를 패키지에 포함했다. 설치·업데이트·제거 검증 결과는 완료 후 갱신한다.
+- **배포·한계**: 배포자 Google Desktop OAuth client ID는 아직 등록되어 있지 않다. 최초 실행은 사용자가 준비한 공개 client ID·Gmail API·동의/테스트 사용자 설정이 필요하다. 실제 Google 검증과 제한 범위 공개 앱 인증은 외부 출시 게이트다. 기존 full9 MCP 등록에 새 계정을 추가하는 별도 갱신 흐름은 아직 없다. 이 변경으로 기존 계정 권한이나 외부 AI 동의를 자동 확대하지 않는다. macOS/Linux 제품 메일은 여전히 미지원이다.
+- **문서/변경**: [Google 설정·명령 안내](GOOGLE-MAIL.md), [계약](../contracts/google-mail.md), [ADR-018](../adr/ADR-018-google-desktop-oauth.md). Contracts·Secrets·Store·Application·Approval/Windows·IPC·Core·CLI·터미널·패키징 및 해당 테스트를 변경했다. 보안·계약은 **[사람 검토 필요]**이며 요건 AC나 정식 출시 게이트를 통과로 올리지 않는다.
 
 ## CLI preview.3 — 본문·승인 발송·AI·MCP·명령 설치 (2026-10-30)
 

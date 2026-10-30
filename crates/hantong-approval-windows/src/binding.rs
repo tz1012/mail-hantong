@@ -151,6 +151,16 @@ impl CapturedReview<SendReview> {
         })
     }
 }
+impl CapturedReview<GoogleSetupReview> {
+    pub(super) fn into_verified_google(self) -> Result<VerifiedGoogleSetup, ErrorCode> {
+        let verified_at_utc_ms = self.verification_time()?;
+        Ok(VerifiedGoogleSetup {
+            binding: self,
+            verified_at_utc_ms,
+            pending: None,
+        })
+    }
+}
 
 impl CapturedReview<SmtpSetupReview> {
     pub(super) fn into_verified_smtp(
@@ -170,6 +180,92 @@ impl CapturedReview<SmtpSetupReview> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn acc02_google_review_binds_identity_client_scope_generation_user_and_time() {
+        let identity = hantong_contracts::google::GoogleIdentity {
+            account_id: format!("google_{}", "a".repeat(64)),
+            subject: "synthetic-subject".into(),
+            email: "fixture@example.test".into(),
+            granted_scopes: hantong_contracts::google::GOOGLE_SCOPES
+                .iter()
+                .map(|s| (*s).into())
+                .collect(),
+        };
+        let review = GoogleSetupReview {
+            request_id: [7; 32],
+            binding: hantong_contracts::google::GoogleAccountBinding {
+                account_id: identity.account_id.clone(),
+                subject: identity.subject.clone(),
+                client_id: "fixture.apps.googleusercontent.com".into(),
+                credential_version: 2,
+            },
+            identity,
+            expected_version: 1,
+            display_name: Some("Fixture".into()),
+            created_at_utc_ms: 1000,
+            expires_at_utc_ms: 301000,
+        };
+        review.validate().unwrap();
+        let captured = CapturedReview {
+            review: review.clone(),
+            started: Instant::now(),
+            captured_at_utc_ms: 1500,
+            user: context(8),
+            session: [4; 32],
+            nonce: [5; 32],
+        };
+        let mut changed = Vec::new();
+        let mut value = review.clone();
+        value.identity.email = "another@example.test".into();
+        changed.push(value);
+        let mut value = review.clone();
+        value.identity.subject = "another-subject".into();
+        changed.push(value);
+        let mut value = review.clone();
+        value
+            .identity
+            .granted_scopes
+            .push("https://mail.google.com/".into());
+        changed.push(value);
+        let mut value = review.clone();
+        value.binding.client_id = "other.apps.googleusercontent.com".into();
+        changed.push(value);
+        let mut value = review.clone();
+        value.binding.account_id = format!("google_{}", "b".repeat(64));
+        changed.push(value);
+        let mut value = review.clone();
+        value.expected_version = 2;
+        value.binding.credential_version = 3;
+        changed.push(value);
+        let mut value = review.clone();
+        value.display_name = Some("Changed".into());
+        changed.push(value);
+        let mut value = review.clone();
+        value.request_id = [8; 32];
+        changed.push(value);
+        for value in changed {
+            assert_eq!(
+                captured.validate_at(&value, 2000, Duration::ZERO, &context(8)),
+                Err(ErrorCode::ScopeDenied)
+            );
+        }
+        assert_eq!(
+            captured.validate_at(&review, 2000, Duration::ZERO, &context(9)),
+            Err(ErrorCode::ScopeDenied)
+        );
+        assert_eq!(
+            captured.validate_at(&review, 301000, Duration::ZERO, &context(8)),
+            Err(ErrorCode::ApprovalExpired)
+        );
+        assert_eq!(
+            captured.validate_at(&review, 2000, Duration::from_secs(300), &context(8)),
+            Err(ErrorCode::ApprovalExpired)
+        );
+        assert_eq!(
+            captured.consume_at(&review, 2000, 2001, Duration::ZERO, &context(8)),
+            Ok(review)
+        );
+    }
     fn review(id: u8) -> RegistrationReview {
         RegistrationReview::new([id; 32], 1, vec!["acct".into()], [3; 32], 1000, 301000).unwrap()
     }

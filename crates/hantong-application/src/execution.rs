@@ -57,6 +57,19 @@ pub trait ExecutionContext {
     fn begin_audit(&mut self, request: &ToolRequest) -> Result<[u8; 32], ErrorCode>;
     fn check_scope(&mut self, request: &ToolRequest) -> Result<(), ErrorCode>;
     fn check_policy(&mut self, request: &ToolRequest) -> Result<(), ErrorCode>;
+    fn read_google(
+        &mut self,
+        _request: &hantong_contracts::google_mail::GoogleMailRequest,
+    ) -> Result<ReadResult<Self::Output>, ErrorCode> {
+        Err(ErrorCode::CapabilityUnsupported)
+    }
+    fn request_google_sync(
+        &mut self,
+        _audit_id: [u8; 32],
+        _request: &hantong_contracts::google::GoogleSyncRequest,
+    ) -> Result<AuditHandoff<Self::Output>, ErrorCode> {
+        Err(ErrorCode::CapabilityUnsupported)
+    }
     fn read_display_settings(&mut self) -> Result<ReadResult<Self::Output>, ErrorCode> {
         Err(ErrorCode::CapabilityUnsupported)
     }
@@ -247,6 +260,16 @@ pub fn execute_tool<C: ExecutionContext>(
     }
 
     match request {
+        ToolRequest::Google { request, .. } => match request {
+            hantong_contracts::google_mail::GoogleMailRequest::Sync(r) => {
+                match context.request_google_sync(audit_id, &r) {
+                    Ok(AuditHandoff::Response(value)) => Ok(value),
+                    Ok(AuditHandoff::Error(e)) => Err(e),
+                    Err(e) => finish_failure(context, audit_id, e),
+                }
+            }
+            other => finish_local_read(context.read_google(&other), context, audit_id),
+        },
         ToolRequest::DisplaySettingsGet { .. } => {
             finish_global_read(context.read_display_settings(), context, audit_id)
         }

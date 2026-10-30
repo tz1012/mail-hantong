@@ -13,12 +13,14 @@ pub enum SetupCommand {
     Registration(RegistrationCommand),
     Imap(ImapSetupCommand),
     Smtp(hantong_contracts::smtp_setup::SmtpSetupCommand),
+    Google(hantong_contracts::google_setup::GoogleSetupCommand),
     ScopeRefresh(ScopeRefreshCommand),
 }
 pub enum SetupReceipt {
     Registration(RegistrationReceipt),
     Imap(ImapSetupReceipt),
     Smtp(hantong_contracts::smtp_setup::SmtpSetupReceipt),
+    Google(hantong_contracts::google_setup::GoogleSetupReceipt),
     ScopeRefresh(ScopeRefreshReceipt),
 }
 
@@ -78,6 +80,23 @@ where
             return Err(ErrorCode::InternalError);
         }
         Ok(crate::registration_wire::result(&receipt))
+    } else if request.method.starts_with("setup.google.") {
+        if !(1..=16384).contains(&frame_length) {
+            return Err(ErrorCode::InvalidInput);
+        }
+        let command = crate::google_setup_wire::parse(request)?;
+        let expected = match &command {
+            hantong_contracts::google_setup::GoogleSetupCommand::Status(id) => Some(*id),
+            _ => None,
+        };
+        let SetupReceipt::Google(receipt) = callback(SetupCommand::Google(command))? else {
+            return Err(ErrorCode::InternalError);
+        };
+        receipt.validate().map_err(|_| ErrorCode::InternalError)?;
+        if expected.is_some_and(|id| id != receipt.request_id) {
+            return Err(ErrorCode::InternalError);
+        }
+        Ok(receipt.to_json())
     } else if request.method.starts_with("setup.smtp.") {
         if !(1..=16384).contains(&frame_length) {
             return Err(ErrorCode::InvalidInput);
@@ -250,6 +269,7 @@ mod tests {
                     SetupCommand::Registration(_) => SetupReceipt::Registration(reg.clone()),
                     SetupCommand::Imap(_) => imap_receipt([2; 32]),
                     SetupCommand::Smtp(_) => panic!("unexpected SMTP setup"),
+                    SetupCommand::Google(_) => panic!("unexpected Google setup"),
                     SetupCommand::ScopeRefresh(_) => panic!("unexpected scope refresh"),
                 })
             });

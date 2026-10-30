@@ -1170,6 +1170,10 @@ fn restore_v8_scope_schema(f: &Fixture) {
             let tx=rusqlite::Transaction::new_unchecked(c,rusqlite::TransactionBehavior::Immediate)?;
             assert_eq!(tx.query_row("SELECT (SELECT count(*) FROM mcp_registration_replacements)+(SELECT count(*) FROM mail_outbox)+(SELECT count(*) FROM mail_send_reviews)+(SELECT count(*) FROM mail_drafts)+(SELECT count(*) FROM mcp_ai_consents)+(SELECT count(*) FROM imap_body_cache)",[],|r|r.get::<_,i64>(0))?,0);
             tx.execute_batch("DROP TABLE mcp_registration_replacements;DROP TABLE mail_outbox;DROP TABLE mail_send_reviews;DROP TABLE mail_drafts;DROP TABLE mcp_ai_consents;DROP TABLE imap_body_cache;")?;
+            for table in ["google_sync_requests","google_sync_state","google_messages","google_labels","google_connections"] {
+                assert_eq!(tx.query_row(&format!("SELECT count(*) FROM {table}"),[],|r|r.get::<_,i64>(0))?,0);
+                tx.execute_batch(&format!("DROP TABLE {table};"))?;
+            }
             let columns="refresh_id,registration_id,base_registration_version,base_profile_epoch,target_profile_epoch,base_accounts_json,target_accounts_json,client_public_key_hash,server_public_key_hash,payload_hash,phase,version,created_at_utc_ms,expires_at_utc_ms,updated_at_utc_ms,decided_at_utc_ms,activated_at_utc_ms";
             tx.execute_batch(&format!("CREATE TEMP TABLE saved_v1 AS SELECT {columns} FROM client_scope_refreshes; DROP TABLE client_scope_refreshes;"))?;
             let schema=include_str!("../../../../docs/contracts/migrations/schema-v8.sql");

@@ -11,6 +11,8 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 
 mod database;
+pub mod google;
+pub use google::{GoogleAuthorization, PendingGoogleCredential, begin_google_authorization};
 pub mod imap_body;
 mod imap_probe;
 mod mail_credentials;
@@ -38,6 +40,7 @@ pub enum SecretKind {
     AppPassword,
     ModelApiKey,
     Mail(MailCredentialSlot),
+    GoogleOAuth(u64),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -69,6 +72,7 @@ impl SecretKind {
             Self::AppPassword => "app-password",
             Self::ModelApiKey => "model-api-key",
             Self::Mail(slot) => slot.name(),
+            Self::GoogleOAuth(_) => "google-oauth",
         }
     }
 }
@@ -151,6 +155,11 @@ impl SecretStore {
         kind: SecretKind,
         reader: R,
     ) -> Result<SecretHandle, SecretError> {
+        // Google publication accepts only a verified opaque pending credential.
+        // The legacy generic writer must not become a token injection surface.
+        if matches!(kind, SecretKind::GoogleOAuth(_)) {
+            return Err(SecretError::InvalidCredential);
+        }
         validate_account(account_id)?;
         let secret = SensitiveBuffer::read(reader)?;
         if secret.0.is_empty() {
@@ -220,6 +229,10 @@ impl SecretStore {
     }
     fn path_for(&self, account_id: &str, kind: SecretKind) -> PathBuf {
         let file = match kind {
+            SecretKind::GoogleOAuth(version) => format!(
+                "v3-{}--google-oauth-{version}.secret",
+                encode_base32hex(account_id.as_bytes())
+            ),
             SecretKind::Mail(slot) => format!(
                 "v2-{}--{}.secret",
                 encode_base32hex(account_id.as_bytes()),

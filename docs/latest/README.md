@@ -4,7 +4,7 @@
 
 ## 먼저 볼 문서
 
-현재 사용자 우선순위는 **GUI보다 CLI 출시**다. 터미널 사용 방식과 현재 지원 범위는 [CLI 설치·사용 안내](CLI-LAUNCH.md), 구현·검증 상태는 [PROGRESS.md](PROGRESS.md)를 확인한다.
+현재 사용자 우선순위는 **GUI보다 CLI 출시**다. 다중 Google 계정 브라우저 연결과 Gmail 읽기는 [Google 설정·사용 안내](GOOGLE-MAIL.md)를 참고한다. 터미널 사용 방식과 현재 지원 범위는 [CLI 설치·사용 안내](CLI-LAUNCH.md), 구현·검증 상태는 [PROGRESS.md](PROGRESS.md)를 확인한다.
 
 | 순서 | 문서 | 확인할 내용 |
 | --- | --- | --- |

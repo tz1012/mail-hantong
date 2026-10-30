@@ -26,6 +26,7 @@ enum Job {
     Registration([u8; 32]),
     Imap([u8; 32]),
     Smtp([u8; 32]),
+    Google([u8; 32]),
     ScopeRefresh([u8; 32]),
     SendReview([u8; 32]),
 }
@@ -50,6 +51,7 @@ struct Shared<'a> {
     secrets_root: &'a std::path::Path,
     policy: Rc<RefCell<hantong_policy::ReadPolicy>>,
     smtp_sessions: crate::setup_smtp::Sessions,
+    google_sessions: crate::setup_google::Sessions,
 }
 
 #[cfg(test)]
@@ -78,6 +80,7 @@ pub(crate) fn coordinator_with_policy<'a>(
         policy,
         scheduled: Cell::new(None),
         smtp_sessions: RefCell::new(std::collections::BTreeMap::new()),
+        google_sessions: RefCell::new(std::collections::BTreeMap::new()),
     });
     let (sender, receiver) = mpsc::channel(1);
     (
@@ -126,6 +129,47 @@ impl RegistrationHandle<'_> {
 
     pub(crate) fn setup_command(&self, command: SetupCommand) -> Result<SetupReceipt, ErrorCode> {
         match command {
+            SetupCommand::Google(command) => {
+                use hantong_contracts::google_setup::GoogleSetupCommand;
+                match command {
+                    GoogleSetupCommand::Status(id) => {
+                        crate::setup_google::status(&self.state.google_sessions, id)
+                            .map(SetupReceipt::Google)
+                    }
+                    GoogleSetupCommand::Request(input) => {
+                        if let Some(job) = self.state.scheduled.get() {
+                            if let Job::Google(id) = job
+                                && crate::setup_google::matches(
+                                    &self.state.google_sessions,
+                                    id,
+                                    &input,
+                                )
+                            {
+                                return crate::setup_google::status(
+                                    &self.state.google_sessions,
+                                    id,
+                                )
+                                .map(SetupReceipt::Google);
+                            }
+                            return Err(ErrorCode::RateLimited);
+                        }
+                        if self.sender.is_closed() {
+                            return Err(ErrorCode::CoreUnavailable);
+                        }
+                        let receipt = crate::setup_google::request(
+                            self.state.store,
+                            &self.state.google_sessions,
+                            input,
+                        )?;
+                        enqueue(
+                            &self.state.scheduled,
+                            &self.sender,
+                            Job::Google(receipt.request_id),
+                        )?;
+                        Ok(SetupReceipt::Google(receipt))
+                    }
+                }
+            }
             SetupCommand::Smtp(command) => {
                 use hantong_contracts::smtp_setup::{SmtpSetupCommand, SmtpSetupState};
                 match command {
@@ -208,6 +252,7 @@ impl RegistrationHandle<'_> {
                             | Job::ScopeRefresh(_)
                             | Job::SendReview(_)
                             | Job::Smtp(_)
+                            | Job::Google(_)
                     )
                 ) {
                     return Err(ErrorCode::RateLimited);
@@ -326,9 +371,11 @@ impl RegistrationHandle<'_> {
                             }
                             self.state.receipt(id, kind)
                         }
-                        Job::Imap(_) | Job::Smtp(_) | Job::ScopeRefresh(_) | Job::SendReview(_) => {
-                            Err(ErrorCode::RateLimited)
-                        }
+                        Job::Imap(_)
+                        | Job::Smtp(_)
+                        | Job::Google(_)
+                        | Job::ScopeRefresh(_)
+                        | Job::SendReview(_) => Err(ErrorCode::RateLimited),
                     };
                 }
                 let effects = NativeEffects {
@@ -399,6 +446,15 @@ impl RegistrationWorker<'_> {
         while let Some(job) = self.receiver.recv().await {
             let _window = ScheduledWindow(&self.state.scheduled);
             let result = match job {
+                Job::Google(id) => {
+                    crate::setup_google::run(
+                        self.state.store,
+                        self.state.secrets_root,
+                        &self.state.google_sessions,
+                        id,
+                    )
+                    .await
+                }
                 Job::Smtp(id) => {
                     crate::setup_smtp::run(
                         self.state.store,

@@ -10,6 +10,8 @@ mod execution_adapter;
 #[cfg(windows)]
 mod folder_worker;
 #[cfg(windows)]
+mod google_worker;
+#[cfg(windows)]
 mod identity;
 #[cfg(windows)]
 mod registration;
@@ -17,6 +19,8 @@ mod registration;
 mod scope_refresh;
 #[cfg(windows)]
 mod send_mail;
+#[cfg(windows)]
+mod setup_google;
 #[cfg(windows)]
 mod setup_imap;
 #[cfg(windows)]
@@ -120,19 +124,23 @@ fn start() -> Result<(), ErrorCode> {
             shared_slot,
             server_instance,
         );
+        let (google_handle, google_worker) =
+            google_worker::coordinator(&store, &directories.secrets)?;
         let server = hantong_ipc_server::authenticated_wire::serve_until_with_setup(
+            // All provider jobs have their own account-bound durable claims.
             shutdown,
             || event(EventKind::CoreTransportReady),
             &server_identity,
             server_instance,
             |id| execution_adapter::load_registration(&store, id),
             |session, request| {
-                execution_adapter::execute_with_send(
+                execution_adapter::execute_with_google(
                     &store,
                     &mut read_policy.borrow_mut(),
                     &folder_worker_handle,
                     Some(&uid_worker_handle),
                     &registration,
+                    &google_handle,
                     session,
                     request,
                 )
@@ -144,6 +152,7 @@ fn start() -> Result<(), ErrorCode> {
             result=registration_worker.run()=>{result?;return Err(ErrorCode::InternalError);},
             result=folder_worker.run()=>{result?;return Err(ErrorCode::InternalError);},
             result=uid_worker.run()=>{result?;return Err(ErrorCode::InternalError);},
+            result=google_worker.run()=>{result?;return Err(ErrorCode::InternalError);},
             result=server=>result?,
         }
         event(EventKind::CoreStopped);

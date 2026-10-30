@@ -12,6 +12,8 @@ irm https://raw.githubusercontent.com/tz1012/mail-hantong/main/install.ps1 | iex
 
 The installer verifies release checksums and adds the current user's launcher directory to PATH. This unsigned developer preview still needs human security review and real-provider validation.
 
+Preview.4 adds Google multi-account browser login and Gmail read-only synchronization. Preview.3 does not include them. See [Google setup and mail commands](docs/latest/GOOGLE-MAIL.md); initial setup requires public Google Desktop OAuth client configuration. Implementation and verification status are recorded in [PROGRESS.md](docs/latest/PROGRESS.md).
+
 Windows GUI는 `cargo run -p mail-hantong-gui -- --lang ko --theme system`으로 실행합니다. 영어는 `--lang en`, 테마는 `light`, `dark`, `system`입니다. GUI는 CLI와 별도 등록을 사용하며, 사용자가 연결을 요청하고 보호된 확인 창에서 검토한 계정의 저장된 폴더·메일 메타데이터만 읽습니다. 선택한 폴더에서 전체·읽지 않음·즐겨찾기로 목록을 좁히고 다시 조회할 수 있습니다. 현대적인 메일 화면의 구성과 참조 기준은 [디자인 가이드](docs/latest/DESIGN.md)에 기록합니다. 표시 설정 저장·본문·첨부·작성·발송은 아직 개발 중입니다. 최신 검증 여부는 [진행 기록](docs/latest/PROGRESS.md)을 확인하세요.
 
 Windows ships first. Planned macOS support starts with the local core, CLI, and a minimal approval helper; the full GUI follows later.

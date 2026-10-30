@@ -4,88 +4,131 @@
   "title": "mail.messages.get",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema_version", "request_id", "tool", "params"],
+  "required": [
+    "schema_version",
+    "request_id",
+    "tool",
+    "params"
+  ],
   "properties": {
-    "schema_version": {"type": "integer", "const": 1},
-    "request_id": {"type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[A-Za-z0-9._:-]+$"},
-    "tool": {"const": "mail.messages.get"},
+    "schema_version": {
+      "type": "integer",
+      "const": 1
+    },
+    "request_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[A-Za-z0-9._:-]+$"
+    },
+    "tool": {
+      "const": "mail.messages.get"
+    },
     "params": {
       "oneOf": [
-    {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "mode",
-        "account_id",
-        "mailbox_wire_hex",
-        "mailbox_encoding",
-        "uidvalidity",
-        "uid",
-        "max_bytes"
-      ],
-      "properties": {
-        "mode": {
-          "const": "imap_body"
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "mode",
+            "account_id",
+            "mailbox_wire_hex",
+            "mailbox_encoding",
+            "uidvalidity",
+            "uid",
+            "max_bytes"
+          ],
+          "properties": {
+            "mode": {
+              "const": "imap_body"
+            },
+            "account_id": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,128}$"
+            },
+            "mailbox_wire_hex": {
+              "type": "string",
+              "pattern": "^(?:[0-9a-f]{2}){1,1024}$"
+            },
+            "mailbox_encoding": {
+              "enum": [
+                "modified_utf7",
+                "utf8"
+              ]
+            },
+            "uidvalidity": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 4294967295
+            },
+            "uid": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 4294967295
+            },
+            "max_bytes": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1048576
+            }
+          }
         },
-        "account_id": {
-          "type": "string",
-          "pattern": "^[A-Za-z0-9_-]{1,128}$"
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "mode",
+            "account_id",
+            "internal_message_id",
+            "max_bytes"
+          ],
+          "properties": {
+            "mode": {
+              "const": "locator"
+            },
+            "account_id": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,128}$"
+            },
+            "internal_message_id": {
+              "type": "string",
+              "pattern": "^msg_[0-9a-f]{64}$"
+            },
+            "max_bytes": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1048576
+            }
+          }
         },
-        "mailbox_wire_hex": {
-          "type": "string",
-          "pattern": "^(?:[0-9a-f]{2}){1,1024}$"
-        },
-        "mailbox_encoding": {
-          "enum": [
-            "modified_utf7",
-            "utf8"
-          ]
-        },
-        "uidvalidity": {
-          "type": "integer",
-          "minimum": 1,
-          "maximum": 4294967295
-        },
-        "uid": {
-          "type": "integer",
-          "minimum": 1,
-          "maximum": 4294967295
-        },
-        "max_bytes": {
-          "type": "integer",
-          "minimum": 1,
-          "maximum": 1048576
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "mode",
+            "account_id",
+            "message_id"
+          ],
+          "properties": {
+            "mode": {
+              "const": "gmail_body"
+            },
+            "account_id": {
+              "type": "string",
+              "pattern": "^google_[0-9a-f]{64}$"
+            },
+            "message_id": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,128}$"
+            },
+            "max_bytes": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65536,
+              "default": 65536
+            }
+          }
         }
-      }
-    },
-    {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "mode",
-        "account_id",
-        "internal_message_id",
-        "max_bytes"
-      ],
-      "properties": {
-        "mode": {
-          "const": "locator"
-        },
-        "account_id": {
-          "type": "string",
-          "pattern": "^[A-Za-z0-9_-]{1,128}$"
-        },
-        "internal_message_id": {
-          "type": "string",
-          "pattern": "^msg_[0-9a-f]{64}$"
-        },
-        "max_bytes": {
-          "type": "integer",
-          "minimum": 1,
-          "maximum": 1048576
-        }
-      }
-    }
       ]
     }
   }
