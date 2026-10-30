@@ -20,7 +20,7 @@ from traceability import source_hash, ValidationError
 
 ROOT = Path(__file__).resolve().parents[1]
 TARGET = "x86_64-pc-windows-msvc"
-DEFAULT_VERSION = "0.1.0-preview.1"
+DEFAULT_VERSION = "0.1.0-preview.2"
 BINARIES = {"hantong-cli": "hantong", "mail-hantong-core": "mail-hantong-core"}
 LICENSE_NAME = re.compile(r"^(?:licen[sc]e|copying|copyright|notice)(?:[._-].*)?$", re.I)
 MAX_INPUT = 256 * 1024 * 1024

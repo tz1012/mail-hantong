@@ -12,13 +12,13 @@
 
 **우선순위 변경(사용자 지시, 2026-10-30): GUI보다 CLI 출시를 먼저 진행한다.** GUI 진행 파일은 보존하고 추가 디자인 작업을 중단했다. 상단 폴더 드롭다운 제거·왼쪽 실제 폴더 통합·스크롤 끝 자동 추가 로딩은 아직 미구현으로 후속에 남긴다. CLI는 터미널 명령형이며 전체 화면 TUI는 아니다. 코어는 별도 프로세스이고 계정 비밀번호 입력·등록/권한 승인은 보호된 Windows 창을 유지한다.
 
-현재 CLI 구현 범위의 Windows x64 개발 미리보기 ZIP, 체크섬·의존성 고지, 로컬 설치/제거 스크립트, 영한 사용 안내를 만들고 검증했다. `artifacts/cli/0.1.0-preview.1/`의 미리보기는 이 작업 PC의 로컬 산출물이다. 본문·첨부·작성·발송·예약·주소록·자동화까지 완료한 정식 출시로 표시하지 않는다. 공개 GitHub remote/릴리스는 아직 생성하지 않았다.
+현재 CLI 구현 범위의 Windows x64 개발 미리보기 ZIP, 체크섬·의존성 고지, 로컬 설치/제거 스크립트, 영한 사용 안내를 만들고 검증했다. 최신 산출물은 `artifacts/cli/0.1.0-preview.2/`다. 이 미리보기는 작업 PC의 로컬 산출물이며 본문·첨부·작성·발송·예약·주소록·자동화까지 완료한 정식 출시가 아니다. 공개 GitHub remote/릴리스는 아직 생성하지 않았다.
 
 | 항목 | 상태와 근거 |
 | --- | --- |
 | 기준 자료 | 사용자 승인으로 채택한 [Markdown 기준 요건](../requirements/README.md): 요건 170개·1단계 P0 144개·문장별 AC ID 341개. 작업 카드 정의 151개는 보존한다. |
 | 현재 카드 | 사용자 우선 지시에 따른 **CLI 개발 미리보기의 로컬 패키지·설치 검증**을 마쳤다. M9-10/11/15/16의 전체 설치·새 OS·서명·출시 게이트 완료가 아니다. M8 GUI 진행 파일은 보존했다. 보안·계약은 **사람 검토 필요**다. |
-| 최신 검증 | **1,448개 통과**(문서 29·빌드 도구 81·Rust 1,338). check-all 전체 build/test/fmt/Clippy·의존/문서/추적 검사 통과. CLI의 Linux x86_64·macOS arm64 대상 Clippy 통과. 실제 ZIP의 Windows PowerShell 5.1 설치·재설치·제거 검증 통과. 실제 Mac 실행·새 OS 시험·전체 기능 완료를 뜻하지 않는다. |
+| 최신 검증 | **1,450개 통과**(문서 29·빌드 도구 81·Rust 1,340). check-all 전체 build/test/fmt/Clippy·의존/문서/추적 검사 통과. CLI의 Linux x86_64·macOS arm64 대상 Clippy 통과 후 CLI Rust 소스 변경 없음. 실제 ZIP의 Windows PowerShell 5.1 설치·preview.1→2 업데이트·재설치·제거 검증 통과. 실제 Mac 실행·새 OS 시험·전체 기능 완료를 뜻하지 않는다. |
 | 제품 구현 | Rust workspace·영/한 CLI·Windows 코어/인증 IPC·DPAPI·SQLCipher·설정 검증·정책/감사·보호 등록/계정 설정 구현. 폴더·UID 수집/대조/복구·관측 요약·로컬 제목/발신자 목록과 GUI 메타데이터 읽기를 연결했다. CLI 미리보기 설치는 로컬 검증을 마쳤으며, 본문·첨부·발송·전체 GUI와 실제 제공자 검증은 미완료다. |
 | GitHub | 로컬 Git main 저장소를 초기화해 개발 기준선을 기록한다. 공개 저장소 주소·remote·릴리스·패키지 ID는 아직 없음. 빌드 산출물·실행 데이터·에이전트 상태는 제외한다. |
 | 새 사용자 요청 | 진행 상황을 이 문서에 누적하고, GitHub에서 명령어로 설치 및 개발을 시작할 수 있는 경로를 마련한다. 상세 범위는 [공개와 설치 계획](DISTRIBUTION.md)에 기록한다. |
@@ -29,7 +29,17 @@
 | 공개 사용 정책 | **[LICENSE Version 1.0](../../LICENSE) 정식 채택** — 개인·회사 내부 업무용 사용, 수정본 비공개 및 원본·수정본 무료 재배포 허용. 프로그램 판매·유료 제공 금지. 고지 유지·수정 표시·보증과 책임 조항 포함. 저작권자는 **Andrew Cho**, 웹사이트 **https://tzt.kr**, 연락처 **andrew@tzt.kr**이다. [한국어 안내](LICENSING.md), [ADR-016](../adr/ADR-016-license.md). |
 | 다음 제품 작업 | CLI 미리보기 검증 기준선을 보존하고 본문/첨부·작성/임시보관·승인 Outbox 등 메일 기능을 이어간다. GUI 추가 디자인·자동 추가 로딩·상단 폴더 선택 제거는 후속 범위다. |
 
-## CLI 미리보기 패키지와 통합 검증 (2026-10-30)
+## CLI preview.2 — 진단 권한 연결 수정 (2026-10-30)
+
+- preview.1 검증 뒤 개발을 이어가며 `clients refresh`의 fresh 목표가 기존 v5 계약의 A가 아닌 M으로 남은 누락을 수정했다. `apps/mail-hantong-core/src/scope_refresh.rs`의 helper 선택만 A로 연결했다. 새 CLI 옵션·RPC·DB 스키마·의존성은 없다. 기존 명시 요청·native 전체 범위 확인·opaque proof·프로필 발행·활성화 경로를 유지한다.
+- 기존 L/F/U/M pending/staged 목표와 프로필 bytes를 보존한다. 새 요청 자체는 권한을 부여하지 않는다. 같은 계정의 M→A는 별도 확인 뒤에만 활성화하고, 이미 같은 계정의 A이면 `CONFLICT`로 상태·이력을 보존한다. 실제 요청 큐가 저장한 목표도 A인지 검사했다. 신규 회귀2개를 포함한 관련13개 통과, 다른 담당자의 보안 경계 검토 CLEAR. **[사람 검토 필요]**는 유지한다.
+- 현재 fresh 갱신 승인 후 `hantong diagnostics snapshot --sections sync,recent_work,errors --hours 24 --limit 100 --json`과 저장된 CLI 언어 읽기를 사용할 수 있다. 과거 중단 요청을 재개하면 과거 권한을 유지하므로, 그 작업이 끝난 뒤 별도 새 갱신이 필요할 수 있다. `CLI-LAUNCH.md`에 해당 절차를 반영했다.
+- 최신 ZIP은 `artifacts/cli/0.1.0-preview.2/mail-hantong-cli-0.1.0-preview.2-windows-x86_64.zip`(17,152,461 bytes), SHA-256 `5a4da25a3576609922fbf21336f4ef8f4ec2a6f06ae6feeb30bdf23e1e8608ee`다. 이전 검증 산출물 preview.1은 보존하고 기본 패키지 label을2로 올렸다. 두 실행 파일의 Cargo 버전은 계속0.1.0이며 label과 구분한다.
+- Windows PowerShell 5.1에서 실제 preview.1 설치→preview.2 업데이트→재설치→영/한 도움말·JSON 오류/종료 코드→설치본 제거를 확인했다. 공백/한글 경로·기존 데이터 보존·양쪽 버전 실행 파일 제거가 통과했다. 실제 Core `run`·계정·Hello·메일은 실행하지 않았다. 로그 `target/cli-preview2-package-upgrade-smoke.log` exit0, SHA-256 `3ba36306d216708e5ce743ae9b0fd2182c52180d358a67842415dcb4b683f129`.
+- 최종 `target/cli-preview2-full-check.log` exit0, **1,450개 통과**, SHA-256 `ae6238a839451f6a97602b65e5d75e24419cb54579a7906c7238b9f391dae5db`. 패키지와 검사 소스 hash는 `338c891aa5d39e219f148dae15d680f00254d694129c7fcea7fe1973064c1e4e`로 같다. 새 Core의 정적 CRT 의존성 검증은 `target/cli-preview2-core-dependencies.log`에 기록했다. 공개·서명·깨끗한 Windows·실제 제공자/Mac/성능과 사람 보안 검토, 본문·첨부·작성·발송 등 제품 기능은 여전히 남아 있다.
+- 이전 미리보기 준비는 `5cc881a`, 이번 수정은 후속 `Connect explicit CLI scope refresh to app read permissions` 커밋으로 구분한다. 전체 제품이나 M1-10/M9 카드의 완료를 주장하지 않는다.
+
+## CLI preview.1 패키지와 통합 검증 (2026-10-30)
 
 - 산출물: `artifacts/cli/0.1.0-preview.1/`의 ZIP(17,151,556 bytes), `SHA256SUMS`, `BUILD-METADATA.json`. ZIP SHA-256은 `eca10406b1c669cfd08a4331a2bedaceaa7813b3669d13cf78a6b15a739b722c`이다. GUI 실행 파일 없이 `hantong.exe`·`mail-hantong-core.exe`만 포함하며, 패키지 표시는 `0.1.0-preview.1`, 실행 파일 버전은 `0.1.0`이다.
 - 구현: `scripts/package_cli.py`, `packaging/windows/` 설치·제거·공통 경로 검사, 잠금 파일에 결속한 의존성 고지, `CLI-LAUNCH.md` 영한 안내, CLI 도움말을 추가했다. 새 의존성은 없다. 134개 외부 crate의 보수적인 normal/build closure와 245개 고지 파일을 수집했다. 라이선스 원문이 빠진 두 IMAP crate는 정확한 upstream commit·Git blob·registry checksum·SHA-256으로 결속한 사본을 사용한다. 법률 검토나 완전한 SBOM 인증을 주장하지 않는다.

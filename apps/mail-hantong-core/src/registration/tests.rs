@@ -894,6 +894,14 @@ fn cli15_scope_refresh_queue_deduplicates_and_resumes_only_explicit_requests() {
     };
     assert_eq!(first.state(), P::Pending);
     let rid = *first.refresh_id();
+    assert_eq!(
+        store
+            .load_cli_scope_refresh(rid)
+            .unwrap()
+            .unwrap()
+            .target_tools(),
+        hantong_contracts::auth::default_cli_app_read_tools()
+    );
     assert_eq!(worker.receiver.try_recv().unwrap(), Job::ScopeRefresh(rid));
     assert!(
         matches!(handle.setup_command(command()).unwrap(),SetupReceipt::ScopeRefresh(r)if r==first)

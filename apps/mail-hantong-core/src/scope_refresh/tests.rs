@@ -214,13 +214,13 @@ impl Effects for Fake<'_> {
 }
 
 #[test]
-fn cli15_metadata_scope_fresh_request_offers_metadata_but_preserves_existing_targets() {
+fn cli15_app_read_scope_fresh_request_offers_app_reads_but_preserves_existing_targets() {
     let fixture = Fixture::new();
     let fresh =
         prepare_for_pin(&fixture.store, hantong_platform::sha256(&public()).unwrap()).unwrap();
     assert_eq!(
         fresh.target_tools(),
-        hantong_contracts::auth::default_cli_metadata_tools()
+        hantong_contracts::auth::default_cli_app_read_tools()
     );
     assert_eq!(
         fixture
@@ -250,6 +250,7 @@ fn cli15_metadata_scope_fresh_request_offers_metadata_but_preserves_existing_tar
         hantong_contracts::auth::default_cli_legacy_tools(),
         hantong_contracts::auth::default_cli_folder_tools(),
         hantong_contracts::auth::default_cli_uid_tools(),
+        hantong_contracts::auth::default_cli_metadata_tools(),
     ] {
         let fixture = Fixture::new();
         let pending = fixture.pending_with_scope(tools.clone());
@@ -279,6 +280,106 @@ fn cli15_metadata_scope_fresh_request_offers_metadata_but_preserves_existing_tar
             tools
         );
     }
+}
+
+#[test]
+fn cli15_app_read_scope_same_account_metadata_upgrade_requires_separate_activation() {
+    let fixture = Fixture::new();
+    let metadata =
+        fixture.pending_with_scope(hantong_contracts::auth::default_cli_metadata_tools());
+    let effects = Fake::new(&fixture.store);
+    commit_consumed_review(&effects, &metadata, &review_snapshot(&metadata).unwrap()).unwrap();
+    let metadata_history = fixture
+        .store
+        .load_cli_scope_refresh(*metadata.refresh_id())
+        .unwrap()
+        .unwrap();
+    let before = fixture
+        .store
+        .load_default_cli_registration()
+        .unwrap()
+        .unwrap();
+    let fresh =
+        prepare_for_pin(&fixture.store, hantong_platform::sha256(&public()).unwrap()).unwrap();
+    assert_eq!(fresh.base_registration(), &before);
+    assert_eq!(fresh.target_accounts(), before.scope.accounts());
+    assert_eq!(
+        fresh.target_tools(),
+        hantong_contracts::auth::default_cli_app_read_tools()
+    );
+    assert_eq!(
+        fixture.store.load_default_cli_registration().unwrap(),
+        Some(before.clone()),
+        "requesting app access must preserve the active metadata-only grant"
+    );
+    let effects = Fake::new(&fixture.store);
+    commit_consumed_review(&effects, &fresh, &review_snapshot(&fresh).unwrap()).unwrap();
+    let active = fixture
+        .store
+        .load_default_cli_registration()
+        .unwrap()
+        .unwrap();
+    assert_eq!(active.scope, fresh.target_scope());
+    assert_eq!(active.registration_id, before.registration_id);
+    assert_eq!(active.public_key, before.public_key);
+    assert_eq!(active.profile_epoch, before.profile_epoch + 1);
+    assert_eq!(
+        fixture
+            .store
+            .load_cli_scope_refresh(*metadata.refresh_id())
+            .unwrap(),
+        Some(metadata_history)
+    );
+}
+
+#[test]
+fn cli15_app_read_scope_same_account_noop_preserves_registration_and_history() {
+    let fixture = Fixture::new();
+    let pending = fixture.pending_with_scope(hantong_contracts::auth::default_cli_app_read_tools());
+    let effects = Fake::new(&fixture.store);
+    commit_consumed_review(&effects, &pending, &review_snapshot(&pending).unwrap()).unwrap();
+    let before = fixture
+        .store
+        .load_default_cli_registration()
+        .unwrap()
+        .unwrap();
+    let history = fixture
+        .store
+        .load_cli_scope_refresh(*pending.refresh_id())
+        .unwrap();
+    assert_eq!(
+        before.scope.accounts(),
+        fixture.store.list_registrable_account_ids().unwrap()
+    );
+    assert_eq!(
+        prepare_for_pin(&fixture.store, hantong_platform::sha256(&public()).unwrap()),
+        Err(ErrorCode::Conflict)
+    );
+    assert_eq!(
+        fixture.store.load_default_cli_registration().unwrap(),
+        Some(before)
+    );
+    assert_eq!(
+        fixture
+            .store
+            .load_cli_scope_refresh(*pending.refresh_id())
+            .unwrap(),
+        history
+    );
+    assert!(
+        fixture
+            .store
+            .load_pending_cli_scope_refresh()
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        fixture
+            .store
+            .list_staged_cli_scope_refreshes()
+            .unwrap()
+            .is_empty()
+    );
 }
 
 #[test]
