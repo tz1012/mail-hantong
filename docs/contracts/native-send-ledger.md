@@ -1,4 +1,8 @@
+> Latest user correction (2026-11-02): [all-terminal workflows](terminal-workflows.md) supersedes native-window and Windows Hello requirements for every CLI/TUI path. Confirmation happens in the same console; provider OAuth retains its browser. Legacy descriptions below remain historical context. Security code requires human review.
+
 # Native send ledger (implementation draft)
+
+2026-11-02 최신 개인 CLI 변경: [terminal-personal-send](terminal-personal-send.md)가 아래 개인 네이티브 창 예외를 대체한다. 개인 prepare/confirm/cancel은 창이나 Hello를 열지 않는다. 아래 불변 원장·정책·단일 claim·복구 계약은 그대로 적용하며 보호 등록의 기존 경로는 유지한다.
 
 Status: human security review required. APR-01, AI-09, SYNC-07, SEC-03.
 

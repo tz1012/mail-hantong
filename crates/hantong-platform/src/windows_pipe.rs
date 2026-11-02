@@ -75,6 +75,65 @@ pub fn current_peer_context() -> Result<PeerContext, ErrorCode> {
     Identity::current()?.context()
 }
 
+// PID is obtained from the connected pipe, never from a request. Keep the
+// process handle alive while checking its token and executable identity.
+fn process_matches_current_image(pid: u32) -> Result<bool, ErrorCode> {
+    use windows_sys::Win32::System::Threading::{
+        OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameW,
+    };
+    unsafe {
+        let process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+        if process.is_null() {
+            return Err(ErrorCode::AuthRequired);
+        }
+        let process = Token(process);
+        let mut token = ptr::null_mut();
+        if OpenProcessToken(process.0, TOKEN_QUERY, &mut token) == 0 {
+            return Err(ErrorCode::AuthRequired);
+        }
+        let token = Token(token);
+        let expected = Identity::current()?;
+        if token_sid(token.0, TokenUser).as_deref() != Some(expected.user.as_str())
+            || token_sid(token.0, TokenGroups).as_deref() != Some(expected.logon.as_str())
+        {
+            return Ok(false);
+        }
+        let mut buffer = vec![0u16; 32_768];
+        let mut length = buffer.len() as u32;
+        if QueryFullProcessImageNameW(process.0, 0, buffer.as_mut_ptr(), &mut length) == 0 {
+            return Err(ErrorCode::AuthRequired);
+        }
+        let observed = std::path::PathBuf::from(OsString::from_wide(&buffer[..length as usize]));
+        let observed = observed
+            .canonicalize()
+            .map_err(|_| ErrorCode::AuthRequired)?;
+        let current = std::env::current_exe()
+            .and_then(|p| p.canonicalize())
+            .map_err(|_| ErrorCode::AuthRequired)?;
+        if observed != current {
+            return Ok(false);
+        }
+        Ok(crate::sha256_release_file(&observed)? == crate::sha256_release_file(&current)?)
+    }
+}
+
+/// Foreground Core helpers accept responses only from their matching Core
+/// image and Windows logon. This is a protocol role check, not human presence.
+pub fn verify_core_helper_server(pipe: &NamedPipeClient) -> Result<(), ErrorCode> {
+    let mut pid = 0;
+    if unsafe {
+        windows_sys::Win32::System::Pipes::GetNamedPipeServerProcessId(
+            pipe.as_raw_handle() as HANDLE,
+            &mut pid,
+        )
+    } == 0
+        || !process_matches_current_image(pid)?
+    {
+        return Err(ErrorCode::AuthRequired);
+    }
+    Ok(())
+}
+
 fn endpoint_name() -> Result<String, ErrorCode> {
     let sid = current_user_sid().ok_or(ErrorCode::CapabilityUnsupported)?;
     if sid.is_empty() || sid.len() > 184 || !sid.starts_with("S-") {
@@ -420,6 +479,25 @@ pub struct LocalPipeConnection<'a> {
 }
 
 impl LocalPipeConnection<'_> {
+    pub fn peer_matches_current_image(&self) -> Result<bool, ErrorCode> {
+        let mut pid = 0;
+        let handle = self
+            .server
+            .inner
+            .as_ref()
+            .ok_or(ErrorCode::AuthRequired)?
+            .as_raw_handle();
+        if unsafe {
+            windows_sys::Win32::System::Pipes::GetNamedPipeClientProcessId(
+                handle as HANDLE,
+                &mut pid,
+            )
+        } == 0
+        {
+            return Err(ErrorCode::AuthRequired);
+        }
+        process_matches_current_image(pid)
+    }
     /// Available only after accept verified the pipe impersonation token. Both
     /// user and logon SID must match the listening process's OS identity.
     pub fn peer_context(&self) -> Result<PeerContext, ErrorCode> {
@@ -500,3 +578,14 @@ impl Drop for LocalPipeConnection<'_> {
 #[cfg(test)]
 #[path = "pipe_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+mod helper_identity_tests {
+    use super::*;
+    #[test]
+    fn sec03_terminal_helper_role_uses_observed_image_and_logon() {
+        let pid = unsafe { windows_sys::Win32::System::Threading::GetCurrentProcessId() };
+        assert_eq!(process_matches_current_image(pid), Ok(true));
+        assert_ne!(process_matches_current_image(0), Ok(true));
+    }
+}

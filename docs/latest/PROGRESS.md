@@ -1562,3 +1562,47 @@ Windows native 도구 환경에서 Core·CLI·Store·approval-windows 통합 che
 통합 검사 보완: Docs 29/Build 94 및 요건·아키텍처·추적은 재실행 통과했다. fmt가 발견한 새 요약 시험의 서식을 workspace formatter로 맞췄고, 새 Windows 시험의 잘못된 상수 import·고정 만료 시각을 수정했다. 다음 전체 검사에서 Store 476개 통과/새 provenance race 시험 1개 실패를 확인했다. 감사 기록을 변조 전에 만들도록 준비 순서를 고쳤으며, OAuth 출처가 불변 scope history와 충돌할 때의 정확한 거부 코드는 PolicyBlocked가 아닌 InternalError임을 고정했다. 발송·outbox가 생기지 않는 불변 조건은 유지한다. Core의 새 성공 시험은 열린 Store의 재개방 및 중복 공개 키 때문에 fixture가 Conflict를 낸 것을 확인해, 실제 등록·scope 전이 API와 별도 합성 공개 키로 교체했다. 변경 후 Core 발송 통합 시험 5개 통과(exit 0). 기존 실패 시험을 삭제하거나 skip하지 않았다. 제품의 실제 계정·비밀값·기존 만료 초안은 변경하지 않았다.
 
 최종 안정 소스의 `python -X utf8 scripts/check_all.py` exit 0. 배포 사본 source_hash `ac33a88a0dbc70e030e25bb25aaa4ce278fee606d3f192e2348396a429b20a25`: Rust 1,659개/30 suites/failed 0/ignored 0, Docs 29개, Build 94개/skip 0, 합계 **1,782개 통과**. fmt·Clippy(-D warnings)·전체 build·요건·아키텍처·추적 검사 통과. 로그 `target/personal-send-full-check.log` SHA-256 `e593e64a5ccaff355e5d7f2b41f8d61eb8bc55d25eef60fcc8da4af13ee35daa`(별도 배포 worktree). 검증 전 관찰한 Core11의 동일 경로·hash·인수를 복구했고 PID 34992다. 원본 미커밋·새 파일과 index를 보존했다. 새 경로의 정책·원장·네이티브 proof를 독립 코드 검토했으나 사람 보안 검토를 대신하지 않는다. 새 설치본 준비와 실제 발송/수신·조건부 베타 게시는 다음 단계다. **[사람 검토 필요]** 유지.
+
+## 2026-11-02 설치본 확인·실제 송수신 성공과 터미널 UX 재정정
+
+검증된 source_hash ac33a88a0dbc70e030e25bb25aaa4ce278fee606d3f192e2348396a429b20a25로 preview.12를 만들었다. ZIP SHA-256 74052e8e0fa321c93f556316a9ad82c437c6767694a5624d60ded49586ed4ecf. 기존 Core11을 관찰한 뒤 중지하고 실제 사용자 데이터 9개 파일을 보호 백업했다. 전후 snapshot SHA-256 2650cbb3eb69e62b543a611e7b1bd7064a50a3de53acb3d8d93a913cedb0c645 일치. 백업은 C:/Users/cyary/AppData/Local/mail-hantong-simple-send-test-20261102-2544e48433bd4342bc49986793468ac0. 기존 버전·키·계정·원본 변경을 유지했다.
+
+설치 후 Core 0개 상태에서 preview.12 init만 실행해 자동 기동·기존 계정 선택·작업 메뉴·정상 종료를 확인했다. 추가 Google 동의/Hello 없음. 공식 core status/clients verify/accounts list 모두 exit 0, Gmail 1개 ready, Core12 PID 40608. 실제 96,724바이트 메일의 텍스트 본문 5,856바이트/truncated=false를 재확인했다. 기존 만료 시험 초안의 새 review를 한 번 열고 사용자가 보내기를 선택했다. 공식 상태 sent, 본인 계정 수신과 합성 본문/23바이트 첨부 해시 일치, 자동 재발송 0을 확인했다. 원문·주소·비밀값은 진행 기록에 쓰지 않는다.
+
+beta.2도 로컬 준비했다. ZIP SHA-256 0332cce4e8f3a7b100e06872fb92855074eaf77a7c79b875bff4575e52b022c0, 같은 source_hash/built_from_current_workspace, metadata SHA-256 09a46e0eb403bf07857cf3a89b1ddf1ca91d29dddfe068248c7f2597ee18f0a3. CLI/Core/MCP 3개 바이너리는 실제 설치 preview.12와 동일하다. 실제 beta ZIP의 격리 설치·전체 파일 hash·help/version·제거·synthetic 데이터 보존을 통과했다. 별도 배포 사본 로컬 커밋 4b4336514c7f5cd004748630b887d2cd8d8e0e42; push/tag/release 게시 없음.
+
+사용자는 실제 확인창을 보고 별도 창 없이 CLI나 TUI에서 모든 것을 해결하라고 정정했다. 앞 네이티브 확인창 구현을 출시 기준으로 취급하지 않는다. 최신 AGENTS·ADR-029·terminal-personal-send 계약으로 교체하고 prepare(전체 preview, 효과 없음) → 터미널 보내기/취소 → confirm(단일 작업) 경로를 구현 중이다. 터미널 선택은 요청 의도이며 OS 사람 존재 확인이 아니고, TTY로 AI와 사람을 구별한다고 주장하지 않는다. 기존 계정·초안·성공 receipt·백업과 미커밋 파일은 보존하며 같은 메일을 재발송하지 않는다. 새 UX 통합 검사와 설치본 검증 전 beta 공개는 보류한다. **[사람 보안 검토 필요]** 유지.
+
+## 2026-11-02 모든 CLI 경로의 동일 터미널 확인으로 전환 중
+
+최신 사용자 지시를 개인 Gmail에 한정하지 않고 CLI 등록·MCP 등록·범위 변경·고급 Google/IMAP/SMTP 설정·메일 변경·보호 발송에 적용한다. Google 표준 OAuth 브라우저만 외부 단계로 남긴다. terminal-workflows 계약과 AGENTS 우선 지침을 추가했으며 앞 네이티브/Hello 지침은 해당 CLI 경로에서 대체된다. 터미널 선택은 사용 의도이고 OS 사람 존재 증거가 아니다.
+
+개인 Gmail은 mail.send.request prepare→전체 불변 preview→터미널 보내기/취소→confirm 1회로 연결했다. JSON·리다이렉션·--no-input에서는 확인하지 않는다. cancel/EOF는 발송하지 않으며 결과는 최대 5분 상태 조회만 하고 재전송하지 않는다. Core의 등록·scope·메일 변경·보호 발송에는 전용 티켓/작업을 추가했으며 아직 전체 통합 완료는 아니다. 보호 발송도 정책·감사·버전/hash·outbox claim·SEND_UNKNOWN 처리를 유지한다. 만료 티켓 정리와 64개 상한을 추가했다.
+
+같은 콘솔에서 실행하는 패키지 검증된 Core foreground helper와 별도 typed IPC를 추가 중이다. 서버는 pipe에서 관찰한 프로세스의 SID/logon·Core 실행 파일 경로/hash를 확인하고, helper도 연결된 서버의 동일 실행 파일을 확인한다. PID·approved·human을 JSON으로 받아 증거로 쓰지 않는다. Secrets는 콘솔 echo를 끄고 입력을 민감 버퍼와 DPAPI staging 내부에서만 처리하며 평문을 CLI/IPC/로그로 반환하지 않는다. Core가 발급한 정확한 요청·계정·endpoint·버전·서버·만료 결속 티켓으로 소비하도록 연결 중이다.
+
+Store schema23→24와 frozen v23 검사, terminal_cli 출처·scope hash10을 추가했다. 기존 approval_helper/google_oauth history는 보존한다. 대상 Store migration 시험 2개와 check 통과 보고를 받았다. 대상 개인 Core 시험 2개, 새 pure ticket 시험 2개, Secrets 238개 통과 보고는 최종 전체 검사와 구분한다. 부모 첫 통합 check는 병렬 구현 중 terminal_google::Pending 가시성 오류로 실패했고 해당 소유자에게 전달했다. 고급 Google·IMAP·SMTP 실제 wire/helper 연결과 최종 보안 검토·전체 검사는 진행 중이다. 아직 새 패키지 설치·schema24 실제 적용·베타 게시 없음. 실제 사용자 데이터·계정·키·성공한 기존 발송 receipt·보호 백업·원본 미커밋/새 파일을 유지한다. **[사람 보안 검토 필요]**.
+
+터미널 Core helper의 IMAP/SMTP Get→Core-issued secret ticket→숨김 capture→opaque staged handle→SecretSubmit→기존 credential/probe 전이를 실제 연결했다. 일반 CLI는 Secrets에 의존하지 않으며 백그라운드 Core는 콘솔 입력을 읽지 않는다. 고급 Google client ticket/stage는 pipe-observed 동일 Core image/SID/logon으로 제한하고, foreground에서만 숨김 입력한다. Google 계정 검토의 실제 만료·전체 binding hash·재연결 버전을 부작용 전에 재검사하도록 보완했다. Ctrl+C 입력 처리·초과 입력 drain·UTF-16 버퍼 zeroization·endpoint-bound credential envelope을 보강했다.
+
+독립 검토가 메일 변경 request의 TerminalGoogleMutation 즉시 enqueue를 발견했다. 이를 제거했고 `apr01_terminal_mutation_request_and_preview_never_schedule_before_confirm`가 실제 Windows 합성 Store에서 통과했다. request/preview/잘못된 hash 동안 worker 작업·provider claim이 없고, Confirm만 queued를 만들며 재사용 ticket은 거부됨을 검증한다. typed snapshot 전체 hash, frame 길이 제한, 제어·bidi·CR·U+2028/U+2029 escape 시험을 추가했다.
+
+첫 전체 검사(source_hash 5c7a18f27ab35348e1b896fc742a152ef265a4f477cd7723e1e0317f73ccfd65)는 Docs 29/Build 94·요건·아키텍처·추적·fmt 통과 후 Clippy가 CLI escape 분기의 중복을 발견해 exit101로 끝났다. 중복 분기를 합쳤으며 후속 정적 검사와 통합 검사를 이어간다. 같은 preview.12 경로·SHA-256 76bd1c20d5ae9ed379532a8c9199a624b6cf96165a1fdfd245125c3e8a348595의 Core를 복구했다(PID55680). 테스트 중 실제 사용자 데이터에 새 schema를 적용하지 않았다.
+
+추가 Store 검토에서 terminal_cli 판독 누락, hash10 SQL CHECK/계정 변경 검증의 과도한 제한과 초기 출처·epoch 고정으로 정상 terminal scope 전이가 막히는 문제를 발견했다. 대상 수정과 실제 Windows stage/reopen/history 회귀 시험을 진행한다. 따라서 cargo check·일부 pure hash 시험 통과만으로 전체 터미널 전환 또는 출시 완료를 선언하지 않는다. 새 패키지 설치·베타 게시 전 전체 검사와 설치본 확인이 남아 있다. 원본 HEAD/index/미커밋·새 파일, 실제 계정·비밀·백업·기존 성공 메일 receipt를 보존한다. **[사람 보안 검토 필요]**.
+
+## 2026-11-03 전체 CLI 터미널 흐름 통합·검증
+
+사용자의 “별도 창 없이 CLI나 TUI에서 모든 게 해결” 지시를 개인 Gmail뿐 아니라 고급 Google/IMAP/SMTP 설정, CLI/MCP 등록·권한 변경, 메일 변경과 보호 발송까지 적용했다. Google의 표준 로그인·동의 브라우저는 유지하며 한통 자체 검토·비밀 입력은 기존 콘솔에서 진행한다. 터미널 선택은 요청 의도이며 OS 사람 존재 증거가 아니다.
+
+Core 소유 foreground helper와 실제 pipe peer 이미지 검증, 원래 요청의 계정·등록·epoch·내용 hash·원래 만료에 결속한 일회용 ticket을 연결했다. Secrets가 숨김 입력·DPAPI staging·서버 endpoint 결속·일회용 소비를 담당한다. 요청 생성은 공급자 작업을 예약하지 않으며 Confirm 이후에만 작업을 한 번 예약한다. 사람 선택이 필요한 요청은 비대화형·JSON·입출력 리다이렉션에서 효과 전에 HUMAN_STEP_REQUIRED로 중단한다. SEND_UNKNOWN을 자동 재전송하지 않는 원칙을 유지한다.
+
+통합 중 수정한 문제: Google 변경의 Confirm 이전 작업 예약, terminal scope 범위·기존 channel 재사용·legacy native job 차단, 고급 설정의 실제 SecretSubmit 연결과 Google StageClient 뒤 OAuth 재개, 만료 후 효과/실패 보고 순서, SMTP 실패 상태 보존, 16KiB method 제한과 U+2028/U+2029 이스케이프, 구버전 manifest 없는 설치본의 업데이트 호환성. 설치기는 검증된 이전 Core만 식별·재관찰 후 중지하고 데이터·키·이전 버전을 보존한다. 제품에 테스트 환경변수 우회는 없다.
+
+기존 전체 검사 실패도 보존했다. 설치 시험의 legacy manifest 호환성 실패를 수정했고, 새 MCP 교체 시험은 기존 등록과 같은 공개키/이전 등록 없음으로 구성한 fixture 오류를 고쳤다. 제품의 중복키·교체 전이 차단을 완화하지 않았다. 코어 통합 시험에서 계정 없는 초기 CLI→첫 명시 계정의 v10 이력 판독을 거부하는 구현 문제를 수정하고 stage/reopen/activate 회귀 시험을 추가했다. 대상 계정은 계속 비어 있을 수 없다. 이전 native queue와 legacy 출처를 가정한 시험을 새 계약에 맞췄고, 같은 대상이라도 legacy pending/staged 행을 terminal 요청이 재사용하지 않는 회귀 시험을 추가했다. GUI 앱의 명시적 등록 연결은 유지하고 CLI에서 GUI 요청으로 폴백하는 경로를 막았다. 독립 정적 재검토는 알려진 차단 문제의 해결을 확인했으며 사람 보안 검토를 대체하지 않는다.
+
+원본 HEAD/index/미커밋·새 파일과 실제 계정·비밀·보호 백업·이전 성공 메일 receipt를 보존한다. 별도 release worktree에서 LF 소스로 검증하며 공개 대상에서 로컬 계정 검증 자료와 비밀 파일을 제외했다. **[사람 보안 검토 필요]**.
+
+Core targeted offline integration: 137 passed / 0 failed / 0 ignored; original Core12 restored with identical SHA-256, PID 13604. Empty-base Store regression: 1 passed. Final frozen-source check-all, new-package install, real terminal send and beta publication remain pending.
+
+최종 별도 배포 사본 source_hash `c33ad5e43110d784e0c8a80fd3392461b1979042e8b9abb3814ca67f83d47ce2`에서 check-all exit 0. Rust 1,703개/30 suites/ignored 0, Docs 29개·Build 101개/skip 0, 합계 **1,833개 통과**. fmt·Clippy(-D warnings)·전체 build·요건·아키텍처·추적 검사 통과. Store 484개와 Core 137개를 포함한다. 로그 `target/all-terminal-full-check.log` SHA-256 `0dd90fd618786ffefea835b46c436c296c65ade8485f2e30705ab1be2bace191`. 기존 Core12 동일 SHA-256 복구, PID 65196. 원본 index는 비어 있고 HEAD와 미커밋·새 파일을 유지한다. 이 자동 검사 결과는 실제 계정·네트워크 시험, 새 패키지 설치 또는 베타 게시 완료를 뜻하지 않는다. 다음 단계는 새 preview.13/beta.3 패키징과 보호 백업 후 설치본의 터미널 취소·실제 합성 메일 발송·수신 점검이다. **[사람 보안 검토 필요]**.

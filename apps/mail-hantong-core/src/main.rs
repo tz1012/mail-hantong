@@ -30,6 +30,14 @@ mod setup_smtp;
 #[cfg(windows)]
 mod storage;
 #[cfg(windows)]
+mod terminal_google;
+#[cfg(windows)]
+mod terminal_review;
+#[cfg(windows)]
+mod terminal_review_frontend;
+#[cfg(windows)]
+mod terminal_secret_input;
+#[cfg(windows)]
 mod uid_worker;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -177,6 +185,16 @@ fn start() -> Result<(), ErrorCode> {
 }
 
 fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> i32 {
+    let args: Vec<_> = args.into_iter().collect();
+    if args.first().and_then(|v| v.to_str()) == Some("terminal-review") {
+        #[cfg(windows)]
+        return match terminal_review_frontend::run(&args[1..], false) {
+            Ok(()) => 0,
+            Err(code) => emit_error(code, Lang::En),
+        };
+        #[cfg(not(windows))]
+        return emit_error(ErrorCode::CapabilityUnsupported, Lang::En);
+    }
     let mut lang = Lang::En;
     let mut command = None;
     let mut it = args.into_iter();

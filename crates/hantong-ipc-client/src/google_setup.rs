@@ -15,6 +15,7 @@ struct Wire {
     account_id: Option<String>,
     login_url: Option<String>,
     error_code: serde_json::Value,
+    client_ticket: Option<String>,
 }
 pub fn request(id: &str, c: &GoogleSetupCommand) -> Result<Vec<u8>, ErrorCode> {
     if id.is_empty()
@@ -41,6 +42,28 @@ pub fn request(id: &str, c: &GoogleSetupCommand) -> Result<Vec<u8>, ErrorCode> {
             (
                 "setup.google.status",
                 serde_json::json!({"protocol_version":1,"request_id":wire_hex::encode(r)}),
+            )
+        }
+        GoogleSetupCommand::ClientTicket(r) => {
+            if *r == [0; 32] {
+                return Err(ErrorCode::InvalidInput);
+            }
+            (
+                "setup.google.client_ticket",
+                serde_json::json!({"protocol_version":1,"request_id":wire_hex::encode(r)}),
+            )
+        }
+        GoogleSetupCommand::StageClient {
+            request_id,
+            ticket,
+            staged_handle,
+        } => {
+            if *request_id == [0; 32] || ticket.len() != 320 || *staged_handle == [0; 32] {
+                return Err(ErrorCode::InvalidInput);
+            }
+            (
+                "setup.google.stage_client",
+                serde_json::json!({"protocol_version":1,"request_id":wire_hex::encode(request_id),"ticket":wire_hex::encode(ticket),"staged_handle":wire_hex::encode(staged_handle)}),
             )
         }
     };
@@ -75,9 +98,15 @@ pub fn parse_response(
         account_id: w.account_id,
         login_url: w.login_url,
         error_code,
+        client_ticket: w
+            .client_ticket
+            .map(|v| wire_hex::decode_bounded(&v, 320))
+            .transpose()?,
     };
     r.validate()?;
-    if matches!(c,GoogleSetupCommand::Status(expected) if *expected!=r.request_id) {
+    if matches!(c,GoogleSetupCommand::Status(expected) | GoogleSetupCommand::ClientTicket(expected) if *expected!=r.request_id)
+        || matches!(c, GoogleSetupCommand::StageClient { request_id, .. } if *request_id != r.request_id)
+    {
         return Err(ErrorCode::InvalidInput);
     }
     Ok(r)
@@ -95,6 +124,13 @@ pub fn exchange(command: GoogleSetupCommand) -> Result<GoogleSetupReceipt, Error
                 tokio::time::timeout(std::time::Duration::from_secs(5), async {
                     use tokio::io::{AsyncReadExt, AsyncWriteExt};
                     let mut pipe = hantong_platform::connect().await?;
+                    if matches!(
+                        command,
+                        GoogleSetupCommand::ClientTicket(_)
+                            | GoogleSetupCommand::StageClient { .. }
+                    ) {
+                        hantong_platform::verify_core_helper_server(&pipe)?;
+                    }
                     let bytes = request("setup-google-1", &command)?;
                     pipe.write_u32_le(bytes.len() as u32)
                         .await
@@ -175,6 +211,7 @@ mod tests {
             account_id: None,
             login_url: None,
             error_code: None,
+            client_ticket: None,
         };
         let mut v = serde_json::json!({"jsonrpc":"2.0","id":"r","result":r.to_json()});
         assert!(parse_response(&serde_json::to_vec(&v).unwrap(), "r", &c).is_ok());

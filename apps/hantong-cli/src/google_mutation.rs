@@ -89,6 +89,19 @@ fn parse(command: &[String], options: &[(String, String)]) -> Result<Command, Er
     MutationPayload::from_json(&r.to_json())?;
     Ok(Command::Request(r))
 }
+fn interactive_request<T>(
+    json: bool,
+    no_input: bool,
+    stdin_tty: bool,
+    stdout_tty: bool,
+    request: impl FnOnce() -> Result<T, ErrorCode>,
+) -> Result<T, ErrorCode> {
+    if json || no_input || !stdin_tty || !stdout_tty {
+        return Err(ErrorCode::HumanStepRequired);
+    }
+    request()
+}
+
 pub(super) fn run(
     command: &[String],
     options: &[(String, String)],
@@ -102,7 +115,35 @@ pub(super) fn run(
     };
     let lang = resolve_lang();
     let result = match command {
-        Command::Request(r) => client::request_default(&r),
+        Command::Request(r) => {
+            use std::io::IsTerminal;
+            interactive_request(
+                json,
+                std::env::args_os().any(|arg| arg == "--no-input"),
+                std::io::stdin().is_terminal(),
+                std::io::stdout().is_terminal(),
+                || client::request_default(&r),
+            )
+            .and_then(|receipt| {
+                if !json && receipt.state == "pending" {
+                    super::terminal_workflows::maybe_review(
+                        hantong_contracts::terminal_review::TerminalReviewKind::GoogleMutation,
+                        receipt.review_id,
+                        lang,
+                    )?;
+                    let mut response = client::status_default(r.account_id(), receipt.review_id)?;
+                    for _ in 0..300 {
+                        if !matches!(response.state.as_str(), "pending" | "claimed") {
+                            break;
+                        }
+                        std::thread::sleep(std::time::Duration::from_secs(1));
+                        response = client::status_default(r.account_id(), receipt.review_id)?;
+                    }
+                    return Ok(response);
+                }
+                Ok(receipt)
+            })
+        }
         Command::Status(account, id) => client::status_default(&account, id),
     };
     match result {
@@ -129,6 +170,30 @@ pub(super) fn run(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn apr01_headless_mutation_never_calls_request() {
+        for (json, no_input, stdin_tty, stdout_tty) in [
+            (true, false, true, true),
+            (false, true, true, true),
+            (false, false, false, true),
+            (false, false, true, false),
+        ] {
+            let mut called = false;
+            let result = interactive_request(json, no_input, stdin_tty, stdout_tty, || {
+                called = true;
+                Ok(())
+            });
+            assert_eq!(result, Err(ErrorCode::HumanStepRequired));
+            assert!(!called);
+        }
+        let mut called = false;
+        interactive_request(false, false, true, true, || {
+            called = true;
+            Ok(())
+        })
+        .unwrap();
+        assert!(called);
+    }
     #[test]
     fn sec03_change_cli_rejects_send_delete_and_caller_approval() {
         for action in ["delete", "trash", "send", "batch"] {

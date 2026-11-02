@@ -6,12 +6,12 @@ use std::{
     path::PathBuf,
     sync::atomic::{AtomicU64, Ordering},
 };
-struct Fixture {
+pub(crate) struct Fixture {
     store: Option<Store>,
     root: PathBuf,
 }
 impl Fixture {
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         static NEXT: AtomicU64 = AtomicU64::new(0);
         let root = std::env::temp_dir().join(format!(
             "hantong-send-coordinator-{}-{}",
@@ -48,10 +48,13 @@ impl Fixture {
         let store = Some(Store::open(root.join("data"), root.join("keys")).unwrap());
         Self { root, store }
     }
-    fn store(&self) -> &Store {
+    pub(crate) fn store(&self) -> &Store {
         self.store.as_ref().unwrap()
     }
-    fn prepare(&self) -> PendingSend {
+    pub(crate) fn secrets_root(&self) -> &std::path::Path {
+        &self.root
+    }
+    pub(crate) fn prepare(&self) -> PendingSend {
         let make = |hash| {
             DraftCreateRequest::new(
                 "a",
@@ -76,7 +79,7 @@ impl Fixture {
             .unwrap();
         self.store().pending_mail_send(r.review_id).unwrap()
     }
-    fn prepare_personal(&self) -> PendingSend {
+    pub(crate) fn prepare_personal(&self) -> PendingSend {
         use hantong_contracts::{
             auth::{RequestedScope, default_cli_send_tools},
             client::ClientKind,

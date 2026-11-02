@@ -10,6 +10,7 @@ use hantong_contracts::{
 use hantong_ipc_client::profile::ParsedClientProfile;
 use hantong_ipc_server::setup_dispatch::{SetupCommand, SetupReceipt};
 use hantong_platform::{ClientSigningKey, ServerSigningKey};
+use hantong_secrets::{SecretStore, TerminalSecretBinding, TerminalSecretTicket};
 use hantong_store::{
     CliRegistrationStage, ClientKind, DEFAULT_CLI_LABEL, DEFAULT_GUI_LABEL, DEFAULT_MCP_LABEL,
     GuiRegistrationStage, McpMailRegistrationStage, McpRegistrationStage, RegistrationRecord,
@@ -22,14 +23,18 @@ use std::{
 use tokio::sync::mpsc;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[allow(dead_code)]
 enum Job {
     Registration([u8; 32]),
     Imap([u8; 32]),
     Smtp([u8; 32]),
     Google([u8; 32]),
     ScopeRefresh([u8; 32]),
-    SendReview([u8; 32]),
-    GoogleMutation([u8; 32]),
+    TerminalSend([u8; 32]),
+    TerminalProtectedSend([u8; 32]),
+    TerminalGoogleMutation([u8; 32]),
+    TerminalImap([u8; 32]),
+    TerminalSmtp([u8; 32]),
 }
 
 pub(crate) struct RegistrationHandle<'a> {
@@ -40,10 +45,94 @@ pub(crate) struct RegistrationWorker<'a> {
     state: Rc<Shared<'a>>,
     receiver: mpsc::Receiver<Job>,
 }
+#[cfg(test)]
+impl RegistrationWorker<'_> {
+    pub(crate) fn has_pending_job(&self) -> bool {
+        self.state.scheduled.get().is_some()
+    }
+}
 impl Drop for RegistrationWorker<'_> {
     fn drop(&mut self) {
         self.state.scheduled.set(None);
     }
+}
+
+fn registration_terminal_hash(request: &RegistrationRequest) -> Result<[u8; 32], ErrorCode> {
+    let bytes = serde_json::to_vec(&serde_json::json!({
+        "domain":"mail-hantong.terminal-registration.v1", "request_id":request.request_id.as_slice(),
+        "client_kind":request.client_kind.as_str(), "display_label":request.display_label,
+        "accounts":request.scope.accounts(), "tools":request.scope.tools(),
+        "version":request.version, "created":request.created_at_utc_ms, "expires":request.expires_at_utc_ms,
+    })).map_err(|_|ErrorCode::InternalError)?;
+    hantong_platform::sha256(&bytes)
+}
+
+fn google_terminal_hash(
+    identity: &hantong_contracts::google::GoogleIdentity,
+    binding: &hantong_contracts::google::GoogleAccountBinding,
+) -> Result<[u8; 32], ErrorCode> {
+    let bytes = serde_json::to_vec(&serde_json::json!({
+        "domain":"mail-hantong.terminal-google.v1", "account":binding.account_id,
+        "subject":identity.subject, "email":identity.email, "client_id":binding.client_id,
+        "mode":binding.access_mode.as_str(), "credential_version":binding.credential_version,
+        "granted_scopes":identity.granted_scopes,
+    }))
+    .map_err(|_| ErrorCode::InternalError)?;
+    hantong_platform::sha256(&bytes)
+}
+
+struct TerminalBindingInput<'a> {
+    kind: [u8; 16],
+    request_id: [u8; 32],
+    payload_hash: [u8; 32],
+    account_id: &'a str,
+    endpoint: &'a serde_json::Value,
+    version: u64,
+    expires_at_utc_ms: i64,
+    peer: &'a hantong_contracts::auth::PeerContext,
+    server: &'a ServerSigningKey,
+}
+
+fn terminal_binding(input: &TerminalBindingInput<'_>) -> Result<TerminalSecretBinding, ErrorCode> {
+    let endpoint_bytes =
+        serde_json::to_vec(input.endpoint).map_err(|_| ErrorCode::InternalError)?;
+    let mut canonical = Vec::new();
+    for value in [
+        b"terminal-endpoint-v1".as_slice(),
+        &input.kind,
+        input.account_id.as_bytes(),
+        &endpoint_bytes,
+    ] {
+        let len = u32::try_from(value.len()).map_err(|_| ErrorCode::InvalidInput)?;
+        canonical.extend_from_slice(&len.to_le_bytes());
+        canonical.extend_from_slice(value);
+    }
+    let hash = |value: &[u8]| hantong_platform::sha256(value);
+    TerminalSecretBinding::new(
+        input.kind,
+        input.request_id,
+        input.payload_hash,
+        hash(input.account_id.as_bytes())?,
+        hash(&canonical)?,
+        input.version,
+        hash(input.peer.user_sid().as_bytes())?,
+        hash(input.peer.logon_sid().as_bytes())?,
+        hash(&input.server.public_key()?)?,
+        input.expires_at_utc_ms,
+    )
+    .map_err(|_| ErrorCode::InvalidInput)
+}
+
+fn setup_fields(
+    account_id: &str,
+    endpoint: &serde_json::Value,
+) -> Result<Vec<hantong_contracts::terminal_review::TerminalReviewField>, ErrorCode> {
+    let value = endpoint;
+    Ok(vec![
+        crate::terminal_review::field("account", account_id.to_owned())?,
+        crate::terminal_review::field("endpoint", value.to_string())?,
+        crate::terminal_review::field("role", "terminal_setup".into())?,
+    ])
 }
 struct Shared<'a> {
     store: &'a Store,
@@ -53,6 +142,9 @@ struct Shared<'a> {
     policy: Rc<RefCell<hantong_policy::ReadPolicy>>,
     smtp_sessions: crate::setup_smtp::Sessions,
     google_sessions: crate::setup_google::Sessions,
+    terminal_reviews: RefCell<std::collections::BTreeMap<[u8; 32], crate::terminal_review::Entry>>,
+    terminal_captures:
+        RefCell<std::collections::BTreeMap<[u8; 32], crate::terminal_review::TerminalCapture>>,
 }
 
 #[cfg(test)]
@@ -82,6 +174,8 @@ pub(crate) fn coordinator_with_policy<'a>(
         scheduled: Cell::new(None),
         smtp_sessions: RefCell::new(std::collections::BTreeMap::new()),
         google_sessions: RefCell::new(std::collections::BTreeMap::new()),
+        terminal_reviews: RefCell::new(std::collections::BTreeMap::new()),
+        terminal_captures: RefCell::new(std::collections::BTreeMap::new()),
     });
     let (sender, receiver) = mpsc::channel(1);
     (
@@ -102,12 +196,7 @@ impl RegistrationHandle<'_> {
         if self.sender.is_closed() {
             return Err(ErrorCode::CoreUnavailable);
         }
-        if self
-            .state
-            .scheduled
-            .get()
-            .is_some_and(|job| !matches!(job, Job::SendReview(_)))
-        {
+        if self.state.scheduled.get().is_some() {
             return Err(ErrorCode::RateLimited);
         }
         let receipt = self
@@ -115,17 +204,1078 @@ impl RegistrationHandle<'_> {
             .store
             .request_mail_send_review(owner, epoch, request)?;
         if receipt.state == "pending" {
-            match self.state.scheduled.get() {
-                Some(Job::SendReview(id)) if id == receipt.review_id => {}
-                Some(_) => return Err(ErrorCode::RateLimited),
-                None => enqueue(
-                    &self.state.scheduled,
-                    &self.sender,
-                    Job::SendReview(receipt.review_id),
-                )?,
+            let pending = self.state.store.pending_mail_send(receipt.review_id)?;
+            if self.state.store.can_confirm_personal_mail_send(&pending)? {
+                // The legacy request is intentionally not allowed to open
+                // a native window for the personal terminal path.
+                return Err(ErrorCode::HumanStepRequired);
             }
+            // All CLI/TUI send reviews are issued through terminal.review;
+            // do not schedule a background native window here.
         }
         Ok(receipt)
+    }
+
+    pub(crate) fn prepare_personal_send(
+        &self,
+        owner: [u8; 16],
+        epoch: u64,
+        request: &hantong_contracts::mail_send::SendReviewRequest,
+    ) -> Result<serde_json::Value, ErrorCode> {
+        let receipt = self
+            .state
+            .store
+            .request_mail_send_review(owner, epoch, request)?;
+        if receipt.state != "pending" {
+            return crate::send_mail::render_with_preview(&receipt, None);
+        }
+        let pending = self.state.store.pending_mail_send(receipt.review_id)?;
+        if !self.state.store.can_confirm_personal_mail_send(&pending)? {
+            self.state
+                .store
+                .deny_mail_send(receipt.review_id, ErrorCode::PolicyBlocked)?;
+            return Err(ErrorCode::PolicyBlocked);
+        }
+        crate::send_mail::render_with_preview(&receipt, Some(&pending))
+    }
+
+    pub(crate) fn confirm_personal_send(
+        &self,
+        owner: [u8; 16],
+        epoch: u64,
+        request: &hantong_contracts::mail_send::PersonalSendConfirmRequest,
+    ) -> Result<hantong_store::mail_send::SendReceipt, ErrorCode> {
+        let current = self.state.store.mail_send_receipt(
+            owner,
+            epoch,
+            &request.account_id,
+            request.review_id,
+        )?;
+        if current.state != "pending" {
+            return Ok(current);
+        }
+        let pending = self.state.store.pending_mail_send(request.review_id)?;
+        if pending.owner_registration_id != owner
+            || pending.profile_epoch != epoch
+            || pending.request.account_id() != request.account_id
+            || pending.request.payload_hash() != &request.payload_hash
+            || !self.state.store.can_confirm_personal_mail_send(&pending)?
+        {
+            return Err(ErrorCode::PolicyBlocked);
+        }
+        if self.sender.is_closed() {
+            return Err(ErrorCode::CoreUnavailable);
+        }
+        match self.state.scheduled.get() {
+            Some(Job::TerminalSend(id)) if id == request.review_id => {}
+            Some(_) => return Err(ErrorCode::RateLimited),
+            None => enqueue(
+                &self.state.scheduled,
+                &self.sender,
+                Job::TerminalSend(request.review_id),
+            )?,
+        }
+        self.state
+            .store
+            .mail_send_receipt(owner, epoch, &request.account_id, request.review_id)
+    }
+
+    pub(crate) fn cancel_personal_send(
+        &self,
+        owner: [u8; 16],
+        epoch: u64,
+        request: &hantong_contracts::mail_send::SendReviewStatusRequest,
+    ) -> Result<hantong_store::mail_send::SendReceipt, ErrorCode> {
+        let current = self.state.store.mail_send_receipt(
+            owner,
+            epoch,
+            &request.account_id,
+            request.review_id,
+        )?;
+        if current.state != "pending" {
+            return Ok(current);
+        }
+        let pending = self.state.store.pending_mail_send(request.review_id)?;
+        if pending.owner_registration_id != owner
+            || pending.profile_epoch != epoch
+            || pending.request.account_id() != request.account_id
+            || !self.state.store.can_confirm_personal_mail_send(&pending)?
+        {
+            return Err(ErrorCode::PolicyBlocked);
+        }
+        self.state
+            .store
+            .deny_mail_send(request.review_id, ErrorCode::ApprovalRequired)?;
+        self.state
+            .store
+            .mail_send_receipt(owner, epoch, &request.account_id, request.review_id)
+    }
+
+    /// Handles the foreground terminal review bootstrap surface. The pipe
+    /// supplies `observed_peer`; no caller-provided PID, role or approval bit
+    /// is accepted. Tickets are kept in Core memory and consumed once.
+    pub(crate) fn terminal_review_command(
+        &self,
+        command: hantong_contracts::terminal_review::TerminalReviewCommand,
+        observed_peer: &hantong_contracts::auth::PeerContext,
+    ) -> Result<hantong_contracts::terminal_review::TerminalReviewReceipt, ErrorCode> {
+        use hantong_contracts::terminal_review::{TerminalReviewCommand, TerminalReviewKind};
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|_| ErrorCode::InternalError)?
+            .as_millis()
+            .try_into()
+            .map_err(|_| ErrorCode::InternalError)?;
+        match command {
+            TerminalReviewCommand::Get(request) => {
+                if request.kind == TerminalReviewKind::GoogleMutation {
+                    let pending = self
+                        .state
+                        .store
+                        .pending_google_mutation(request.request_id)?;
+                    if request
+                        .account_id
+                        .as_deref()
+                        .is_some_and(|a| a != pending.request.account_id())
+                        || (request.payload_hash != [0; 32]
+                            && request.payload_hash != *pending.request.payload_hash())
+                    {
+                        return Err(ErrorCode::PolicyBlocked);
+                    }
+                    let fields = vec![
+                        crate::terminal_review::field(
+                            "account",
+                            pending.request.account_id().into(),
+                        )?,
+                        crate::terminal_review::field("sender", pending.sender.clone())?,
+                        crate::terminal_review::field(
+                            "operation",
+                            pending.request.to_json().to_string(),
+                        )?,
+                        crate::terminal_review::field(
+                            "before_labels",
+                            pending.before_labels.join(", "),
+                        )?,
+                    ];
+                    return crate::terminal_review::make_entry_ticket(
+                        &mut self.state.terminal_reviews.borrow_mut(),
+                        hantong_platform::random_nonce()?,
+                        TerminalReviewKind::GoogleMutation,
+                        pending.review_id,
+                        pending.request.account_id().into(),
+                        *pending.request.payload_hash(),
+                        pending.owner_registration_id,
+                        pending.profile_epoch,
+                        pending.expires_at_utc_ms,
+                        observed_peer.clone(),
+                        now,
+                        fields,
+                    );
+                }
+                if request.kind == TerminalReviewKind::ProtectedSend {
+                    let pending = self.state.store.pending_mail_send(request.request_id)?;
+                    if request
+                        .account_id
+                        .as_deref()
+                        .is_some_and(|a| a != pending.request.account_id())
+                        || (request.payload_hash != [0; 32]
+                            && request.payload_hash != *pending.request.payload_hash())
+                        || self.state.store.can_confirm_personal_mail_send(&pending)?
+                    {
+                        return Err(ErrorCode::PolicyBlocked);
+                    }
+                    let preview = crate::send_mail::preview(&pending)?;
+                    let fields = ["from", "to", "subject", "body", "attachments"]
+                        .into_iter()
+                        .filter_map(|key| preview.get(key).map(|v| (key, v)))
+                        .map(|(key, value)| {
+                            let text = if key == "body" || key == "from" || key == "subject" {
+                                value.as_str().unwrap_or_default().to_owned()
+                            } else {
+                                serde_json::to_string(value).unwrap_or_default()
+                            };
+                            crate::terminal_review::field(key, text)
+                        })
+                        .collect::<Result<Vec<_>, ErrorCode>>()?;
+                    return crate::terminal_review::make_entry_ticket(
+                        &mut self.state.terminal_reviews.borrow_mut(),
+                        hantong_platform::random_nonce()?,
+                        TerminalReviewKind::ProtectedSend,
+                        pending.review_id,
+                        pending.request.account_id().into(),
+                        *pending.request.payload_hash(),
+                        pending.owner_registration_id,
+                        pending.profile_epoch,
+                        pending.expires_at_utc_ms,
+                        observed_peer.clone(),
+                        now,
+                        fields,
+                    );
+                }
+                if request.kind == TerminalReviewKind::ScopeRefresh {
+                    let refresh = self
+                        .state
+                        .store
+                        .load_cli_scope_refresh(request.request_id)?
+                        .ok_or(ErrorCode::NotFound)?;
+                    if refresh.phase() != hantong_store::scope_refresh::ScopeRefreshPhase::Pending
+                        || refresh.decision_channel() != "terminal_cli"
+                        || (request.payload_hash != [0; 32]
+                            && refresh.payload_hash() != &request.payload_hash)
+                        || request
+                            .account_id
+                            .as_deref()
+                            .is_some_and(|a| !refresh.target_accounts().iter().any(|v| v == a))
+                    {
+                        return Err(ErrorCode::PolicyBlocked);
+                    }
+                    let fields = vec![
+                        crate::terminal_review::field(
+                            "accounts",
+                            refresh.target_accounts().join(", "),
+                        )?,
+                        crate::terminal_review::field("tools", refresh.target_tools().join(", "))?,
+                        crate::terminal_review::field(
+                            "profile_epoch",
+                            refresh.target_profile_epoch().to_string(),
+                        )?,
+                    ];
+                    return crate::terminal_review::make_entry_ticket(
+                        &mut self.state.terminal_reviews.borrow_mut(),
+                        hantong_platform::random_nonce()?,
+                        TerminalReviewKind::ScopeRefresh,
+                        *refresh.refresh_id(),
+                        refresh
+                            .target_accounts()
+                            .first()
+                            .cloned()
+                            .unwrap_or_default(),
+                        *refresh.payload_hash(),
+                        refresh.base_registration().registration_id,
+                        refresh.base_registration().profile_epoch,
+                        refresh.expires_at_utc_ms(),
+                        observed_peer.clone(),
+                        now,
+                        fields,
+                    );
+                }
+                if request.kind == TerminalReviewKind::Registration {
+                    let registration = self
+                        .state
+                        .store
+                        .get_registration_request(request.request_id)?
+                        .ok_or(ErrorCode::NotFound)?;
+                    if !matches!(registration.client_kind, ClientKind::Cli | ClientKind::Mcp)
+                        || registration.state != RegistrationRequestState::Pending
+                        || !supported_identity(
+                            registration.client_kind,
+                            &registration.display_label,
+                            registration.scope.tools(),
+                        )
+                    {
+                        return Err(ErrorCode::Conflict);
+                    }
+                    let owner =
+                        hantong_platform::registration_id_for_request(registration.request_id)?;
+                    let authoritative_hash = registration_terminal_hash(&registration)?;
+                    if request.payload_hash != [0; 32] && request.payload_hash != authoritative_hash
+                    {
+                        return Err(ErrorCode::PolicyBlocked);
+                    }
+                    let fields = vec![
+                        crate::terminal_review::field("client", registration.display_label)?,
+                        crate::terminal_review::field(
+                            "accounts",
+                            registration.scope.accounts().join(", "),
+                        )?,
+                        crate::terminal_review::field(
+                            "tools",
+                            registration.scope.tools().join(", "),
+                        )?,
+                    ];
+                    return crate::terminal_review::make_entry_ticket(
+                        &mut self.state.terminal_reviews.borrow_mut(),
+                        hantong_platform::random_nonce()?,
+                        TerminalReviewKind::Registration,
+                        registration.request_id,
+                        registration
+                            .scope
+                            .accounts()
+                            .first()
+                            .cloned()
+                            .unwrap_or_default(),
+                        authoritative_hash,
+                        owner,
+                        1,
+                        registration.expires_at_utc_ms,
+                        observed_peer.clone(),
+                        now,
+                        fields,
+                    );
+                }
+                if request.kind == TerminalReviewKind::GoogleSetup {
+                    let (identity, binding, expires_at_utc_ms) =
+                        crate::setup_google::advanced_terminal_preview(
+                            &self.state.google_sessions,
+                            request.request_id,
+                            observed_peer,
+                        )?;
+                    let payload_hash = google_terminal_hash(&identity, &binding)?;
+                    if request.payload_hash != [0; 32] && request.payload_hash != payload_hash {
+                        return Err(ErrorCode::PolicyBlocked);
+                    }
+                    let fields = vec![
+                        crate::terminal_review::field("account", binding.account_id.clone())?,
+                        crate::terminal_review::field("email", identity.email.clone())?,
+                        crate::terminal_review::field("client_id", binding.client_id.clone())?,
+                        crate::terminal_review::field(
+                            "access_mode",
+                            binding.access_mode.as_str().into(),
+                        )?,
+                    ];
+                    return crate::terminal_review::make_entry_ticket(
+                        &mut self.state.terminal_reviews.borrow_mut(),
+                        hantong_platform::random_nonce()?,
+                        TerminalReviewKind::GoogleSetup,
+                        request.request_id,
+                        binding.account_id,
+                        payload_hash,
+                        request.request_id[..16]
+                            .try_into()
+                            .map_err(|_| ErrorCode::InvalidInput)?,
+                        1,
+                        expires_at_utc_ms,
+                        observed_peer.clone(),
+                        now,
+                        fields,
+                    );
+                }
+                if matches!(
+                    request.kind,
+                    TerminalReviewKind::ImapSetup | TerminalReviewKind::SmtpSetup
+                ) {
+                    let (account_id, payload_hash, version, expires_at, endpoint_json, ticket) =
+                        if request.kind == TerminalReviewKind::ImapSetup {
+                            let setup =
+                                crate::setup_imap::load(self.state.store, request.request_id)?;
+                            let i = setup.intent();
+                            if setup.phase()
+                                != hantong_store::imap_setup::ImapSetupPhase::ReviewPending
+                                || request
+                                    .account_id
+                                    .as_deref()
+                                    .is_some_and(|a| a != i.draft().account_id())
+                                || (request.payload_hash != [0; 32]
+                                    && request.payload_hash != *i.review_payload_hash())
+                            {
+                                return Err(ErrorCode::PolicyBlocked);
+                            }
+                            let endpoint_json = serde_json::to_value(i.endpoint())
+                                .map_err(|_| ErrorCode::InternalError)?;
+                            let binding = terminal_binding(&TerminalBindingInput {
+                                kind: *b"terminal-imap-v1",
+                                request_id: *i.request_id(),
+                                payload_hash: *i.review_payload_hash(),
+                                account_id: i.draft().account_id(),
+                                endpoint: &endpoint_json,
+                                version: i.endpoint().settings_version(),
+                                expires_at_utc_ms: setup.expires_at_utc_ms(),
+                                peer: observed_peer,
+                                server: self.state.server,
+                            })?;
+                            let ticket = SecretStore::open(self.state.secrets_root)
+                                .map_err(|_| ErrorCode::InternalError)?
+                                .issue_terminal_secret_ticket(binding)
+                                .map_err(|_| ErrorCode::InternalError)?;
+                            (
+                                i.draft().account_id().to_owned(),
+                                *i.review_payload_hash(),
+                                i.endpoint().settings_version(),
+                                setup.expires_at_utc_ms(),
+                                endpoint_json,
+                                ticket,
+                            )
+                        } else {
+                            let context = crate::setup_smtp::validate_terminal_context(
+                                self.state.store,
+                                &self.state.smtp_sessions,
+                                request.request_id,
+                            )?;
+                            if request
+                                .account_id
+                                .as_deref()
+                                .is_some_and(|a| a != context.account_id)
+                                || (request.payload_hash != [0; 32]
+                                    && request.payload_hash != context.payload_hash)
+                            {
+                                return Err(ErrorCode::PolicyBlocked);
+                            }
+                            let endpoint_json = serde_json::to_value(&context.endpoint)
+                                .map_err(|_| ErrorCode::InternalError)?;
+                            let binding = terminal_binding(&TerminalBindingInput {
+                                kind: *b"terminal-smtp-v1",
+                                request_id: context.request_id,
+                                payload_hash: context.payload_hash,
+                                account_id: &context.account_id,
+                                endpoint: &endpoint_json,
+                                version: context.account_version,
+                                expires_at_utc_ms: context.expires_at_utc_ms,
+                                peer: observed_peer,
+                                server: self.state.server,
+                            })?;
+                            let ticket = SecretStore::open(self.state.secrets_root)
+                                .map_err(|_| ErrorCode::InternalError)?
+                                .issue_terminal_secret_ticket(binding)
+                                .map_err(|_| ErrorCode::InternalError)?;
+                            (
+                                context.account_id,
+                                context.payload_hash,
+                                context.account_version,
+                                context.expires_at_utc_ms,
+                                endpoint_json,
+                                ticket,
+                            )
+                        };
+                    if expires_at <= now {
+                        return Err(ErrorCode::ApprovalExpired);
+                    }
+                    let owner: [u8; 16] = request.request_id[..16]
+                        .try_into()
+                        .map_err(|_| ErrorCode::InvalidInput)?;
+                    let fields = setup_fields(&account_id, &endpoint_json)?;
+                    let review_ticket = hantong_platform::random_nonce()?;
+                    let mut receipt = crate::terminal_review::make_entry_ticket(
+                        &mut self.state.terminal_reviews.borrow_mut(),
+                        review_ticket,
+                        request.kind,
+                        request.request_id,
+                        account_id,
+                        payload_hash,
+                        owner,
+                        version,
+                        expires_at,
+                        observed_peer.clone(),
+                        now,
+                        fields,
+                    )?;
+                    if let Some(entry) = self
+                        .state
+                        .terminal_reviews
+                        .borrow_mut()
+                        .get_mut(&review_ticket)
+                    {
+                        entry.secret_ticket = Some(ticket);
+                        receipt.secret_ticket_opaque =
+                            entry.secret_ticket.as_ref().map(|t| t.to_opaque().to_vec());
+                    }
+                    return Ok(receipt);
+                }
+                if request.kind != TerminalReviewKind::PersonalSend {
+                    return Err(ErrorCode::CapabilityUnsupported);
+                }
+                let pending = self.state.store.pending_mail_send(request.request_id)?;
+                if request
+                    .account_id
+                    .as_deref()
+                    .is_some_and(|v| v != pending.request.account_id())
+                    || (request.payload_hash != [0; 32]
+                        && request.payload_hash != *pending.request.payload_hash())
+                    || !self.state.store.can_confirm_personal_mail_send(&pending)?
+                {
+                    return Err(ErrorCode::PolicyBlocked);
+                }
+                let preview = crate::send_mail::preview(&pending)?;
+                let mut fields = Vec::new();
+                for key in ["from", "to", "subject", "body", "attachments"] {
+                    if let Some(value) = preview.get(key) {
+                        let text = if key == "body" || key == "from" || key == "subject" {
+                            value.as_str().unwrap_or_default().to_owned()
+                        } else {
+                            serde_json::to_string(value).map_err(|_| ErrorCode::InternalError)?
+                        };
+                        fields.push(crate::terminal_review::field(key, text)?);
+                    }
+                }
+                return crate::terminal_review::make_ticket(
+                    &mut self.state.terminal_reviews.borrow_mut(),
+                    &pending,
+                    observed_peer.clone(),
+                    now,
+                    fields,
+                );
+            }
+            TerminalReviewCommand::Confirm(request) => {
+                let valid = {
+                    let entries = self.state.terminal_reviews.borrow();
+                    let entry = entries.get(&request.ticket).ok_or(ErrorCode::NotFound)?;
+                    matches!(
+                        entry.kind,
+                        TerminalReviewKind::PersonalSend
+                            | TerminalReviewKind::ProtectedSend
+                            | TerminalReviewKind::ScopeRefresh
+                            | TerminalReviewKind::Registration
+                            | TerminalReviewKind::GoogleMutation
+                            | TerminalReviewKind::GoogleSetup
+                    ) && entry.payload_hash == request.snapshot_hash
+                        && entry.expires_at_utc_ms > now
+                        && entry.peer == *observed_peer
+                };
+                if !valid {
+                    return Err(ErrorCode::PolicyBlocked);
+                }
+                {
+                    let entries = self.state.terminal_reviews.borrow();
+                    let entry = entries.get(&request.ticket).ok_or(ErrorCode::NotFound)?;
+                    match entry.kind {
+                        TerminalReviewKind::Registration => {
+                            let current = self
+                                .state
+                                .store
+                                .get_registration_request(entry.request_id)?
+                                .ok_or(ErrorCode::NotFound)?;
+                            if registration_terminal_hash(&current)? != entry.payload_hash
+                                || entry.owner
+                                    != hantong_platform::registration_id_for_request(
+                                        current.request_id,
+                                    )?
+                                || current.state != RegistrationRequestState::Pending
+                            {
+                                return Err(ErrorCode::Conflict);
+                            }
+                        }
+                        TerminalReviewKind::ScopeRefresh => {
+                            let current = self
+                                .state
+                                .store
+                                .load_cli_scope_refresh(entry.request_id)?
+                                .ok_or(ErrorCode::NotFound)?;
+                            if current.payload_hash() != &entry.payload_hash
+                                || current.base_registration().registration_id != entry.owner
+                                || current.base_registration().profile_epoch != entry.epoch
+                                || current.phase()
+                                    != hantong_store::scope_refresh::ScopeRefreshPhase::Pending
+                            {
+                                return Err(ErrorCode::Conflict);
+                            }
+                        }
+                        TerminalReviewKind::GoogleMutation => {
+                            let current =
+                                self.state.store.pending_google_mutation(entry.request_id)?;
+                            if current.request.payload_hash() != &entry.payload_hash
+                                || current.owner_registration_id != entry.owner
+                                || current.profile_epoch != entry.epoch
+                            {
+                                return Err(ErrorCode::Conflict);
+                            }
+                        }
+                        TerminalReviewKind::GoogleSetup => {
+                            let (identity, binding, _) =
+                                crate::setup_google::advanced_terminal_preview(
+                                    &self.state.google_sessions,
+                                    entry.request_id,
+                                    observed_peer,
+                                )?;
+                            let hash = google_terminal_hash(&identity, &binding)?;
+                            if hash != entry.payload_hash {
+                                return Err(ErrorCode::Conflict);
+                            }
+                        }
+                        TerminalReviewKind::ProtectedSend | TerminalReviewKind::PersonalSend => {
+                            let current = self.state.store.pending_mail_send(entry.request_id)?;
+                            if current.request.payload_hash() != &entry.payload_hash
+                                || current.owner_registration_id != entry.owner
+                                || current.profile_epoch != entry.epoch
+                            {
+                                return Err(ErrorCode::Conflict);
+                            }
+                        }
+                        _ => return Err(ErrorCode::CapabilityUnsupported),
+                    }
+                }
+                let entry = self
+                    .state
+                    .terminal_reviews
+                    .borrow_mut()
+                    .remove(&request.ticket)
+                    .ok_or(ErrorCode::Conflict)?;
+                if entry.kind == TerminalReviewKind::GoogleSetup {
+                    crate::setup_google::complete_advanced_terminal(
+                        self.state.store,
+                        self.state.secrets_root,
+                        &self.state.google_sessions,
+                        entry.request_id,
+                        observed_peer,
+                    )?;
+                    return Ok(hantong_contracts::terminal_review::TerminalReviewReceipt {
+                        secret_ticket_opaque: None,
+                        kind: entry.kind,
+                        request_id: entry.request_id,
+                        ticket: None,
+                        snapshot_hash: entry.payload_hash,
+                        owner_registration_id: entry.owner,
+                        profile_epoch: entry.epoch,
+                        expires_at_utc_ms: entry.expires_at_utc_ms,
+                        state: "ready".into(),
+                        fields: Vec::new(),
+                    });
+                }
+                if entry.kind == TerminalReviewKind::ScopeRefresh {
+                    crate::scope_refresh::run_terminal_job(
+                        self.state.store,
+                        self.state.server,
+                        entry.request_id,
+                    )?;
+                    let refresh = self
+                        .state
+                        .store
+                        .load_cli_scope_refresh(entry.request_id)?
+                        .ok_or(ErrorCode::InternalError)?;
+                    return Ok(hantong_contracts::terminal_review::TerminalReviewReceipt {
+                        secret_ticket_opaque: None,
+                        kind: entry.kind,
+                        request_id: entry.request_id,
+                        ticket: None,
+                        snapshot_hash: entry.payload_hash,
+                        owner_registration_id: entry.owner,
+                        profile_epoch: refresh.target_profile_epoch(),
+                        expires_at_utc_ms: entry.expires_at_utc_ms,
+                        state: "ready".into(),
+                        fields: Vec::new(),
+                    });
+                }
+                if entry.kind == TerminalReviewKind::Registration {
+                    let effects = NativeEffects {
+                        store: self.state.store,
+                        server: self.state.server,
+                    };
+                    let request = effects.request(entry.request_id)?;
+                    commit_terminal_registration(&effects, &request)?;
+                    return Ok(hantong_contracts::terminal_review::TerminalReviewReceipt {
+                        secret_ticket_opaque: None,
+                        kind: entry.kind,
+                        request_id: entry.request_id,
+                        ticket: None,
+                        snapshot_hash: entry.payload_hash,
+                        owner_registration_id: entry.owner,
+                        profile_epoch: 1,
+                        expires_at_utc_ms: entry.expires_at_utc_ms,
+                        state: "ready".into(),
+                        fields: Vec::new(),
+                    });
+                }
+                if entry.kind == TerminalReviewKind::GoogleMutation {
+                    return match self.state.scheduled.get() {
+                        Some(Job::TerminalGoogleMutation(id)) if id == entry.request_id => {
+                            Ok(hantong_contracts::terminal_review::TerminalReviewReceipt {
+                                secret_ticket_opaque: None,
+                                kind: entry.kind,
+                                request_id: entry.request_id,
+                                ticket: None,
+                                snapshot_hash: entry.payload_hash,
+                                owner_registration_id: entry.owner,
+                                profile_epoch: entry.epoch,
+                                expires_at_utc_ms: entry.expires_at_utc_ms,
+                                state: "queued".into(),
+                                fields: Vec::new(),
+                            })
+                        }
+                        Some(_) => Err(ErrorCode::RateLimited),
+                        None => {
+                            enqueue(
+                                &self.state.scheduled,
+                                &self.sender,
+                                Job::TerminalGoogleMutation(entry.request_id),
+                            )?;
+                            Ok(hantong_contracts::terminal_review::TerminalReviewReceipt {
+                                secret_ticket_opaque: None,
+                                kind: entry.kind,
+                                request_id: entry.request_id,
+                                ticket: None,
+                                snapshot_hash: entry.payload_hash,
+                                owner_registration_id: entry.owner,
+                                profile_epoch: entry.epoch,
+                                expires_at_utc_ms: entry.expires_at_utc_ms,
+                                state: "queued".into(),
+                                fields: Vec::new(),
+                            })
+                        }
+                    };
+                }
+                if entry.kind == TerminalReviewKind::ProtectedSend {
+                    match self.state.scheduled.get() {
+                        Some(Job::TerminalProtectedSend(id)) if id == entry.request_id => {}
+                        Some(_) => return Err(ErrorCode::RateLimited),
+                        None => enqueue(
+                            &self.state.scheduled,
+                            &self.sender,
+                            Job::TerminalProtectedSend(entry.request_id),
+                        )?,
+                    }
+                    return Ok(hantong_contracts::terminal_review::TerminalReviewReceipt {
+                        secret_ticket_opaque: None,
+                        kind: entry.kind,
+                        request_id: entry.request_id,
+                        ticket: None,
+                        snapshot_hash: entry.payload_hash,
+                        owner_registration_id: entry.owner,
+                        profile_epoch: entry.epoch,
+                        expires_at_utc_ms: entry.expires_at_utc_ms,
+                        state: "queued".into(),
+                        fields: Vec::new(),
+                    });
+                }
+                let confirm = hantong_contracts::mail_send::PersonalSendConfirmRequest::new(
+                    &entry.account_id,
+                    entry.request_id,
+                    entry.payload_hash,
+                )?;
+                self.confirm_personal_send(entry.owner, entry.epoch, &confirm)
+                    .map(
+                        |receipt| hantong_contracts::terminal_review::TerminalReviewReceipt {
+                            secret_ticket_opaque: None,
+                            kind: entry.kind,
+                            request_id: entry.request_id,
+                            ticket: None,
+                            snapshot_hash: entry.payload_hash,
+                            owner_registration_id: entry.owner,
+                            profile_epoch: entry.epoch,
+                            expires_at_utc_ms: entry.expires_at_utc_ms,
+                            state: if receipt.state == "pending" {
+                                "queued".into()
+                            } else {
+                                receipt.state.into()
+                            },
+                            fields: Vec::new(),
+                        },
+                    )
+            }
+            TerminalReviewCommand::Cancel(request) => {
+                let valid = {
+                    let entries = self.state.terminal_reviews.borrow();
+                    let entry = entries.get(&request.ticket).ok_or(ErrorCode::NotFound)?;
+                    matches!(
+                        entry.kind,
+                        TerminalReviewKind::PersonalSend
+                            | TerminalReviewKind::ProtectedSend
+                            | TerminalReviewKind::ScopeRefresh
+                            | TerminalReviewKind::Registration
+                            | TerminalReviewKind::GoogleMutation
+                            | TerminalReviewKind::ImapSetup
+                            | TerminalReviewKind::SmtpSetup
+                    ) && entry.kind == request.get.kind
+                        && entry.request_id == request.get.request_id
+                        && (request.get.payload_hash == [0; 32]
+                            || entry.payload_hash == request.get.payload_hash)
+                        && request
+                            .get
+                            .account_id
+                            .as_deref()
+                            .is_none_or(|v| v == entry.account_id)
+                        && entry.peer == *observed_peer
+                        && entry.expires_at_utc_ms > now
+                };
+                if !valid {
+                    return Err(ErrorCode::PolicyBlocked);
+                }
+                let entry = self
+                    .state
+                    .terminal_reviews
+                    .borrow_mut()
+                    .remove(&request.ticket)
+                    .ok_or(ErrorCode::Conflict)?;
+                if entry.kind == TerminalReviewKind::ImapSetup {
+                    let current = crate::setup_imap::load(self.state.store, entry.request_id)?;
+                    self.state
+                        .store
+                        .close_imap_setup_review(&current, ErrorCode::ApprovalDenied)?;
+                    return Ok(hantong_contracts::terminal_review::TerminalReviewReceipt {
+                        secret_ticket_opaque: None,
+                        kind: entry.kind,
+                        request_id: entry.request_id,
+                        ticket: None,
+                        snapshot_hash: entry.payload_hash,
+                        owner_registration_id: entry.owner,
+                        profile_epoch: entry.epoch,
+                        expires_at_utc_ms: entry.expires_at_utc_ms,
+                        state: "denied".into(),
+                        fields: Vec::new(),
+                    });
+                }
+                if entry.kind == TerminalReviewKind::SmtpSetup {
+                    return Ok(hantong_contracts::terminal_review::TerminalReviewReceipt {
+                        secret_ticket_opaque: None,
+                        kind: entry.kind,
+                        request_id: entry.request_id,
+                        ticket: None,
+                        snapshot_hash: entry.payload_hash,
+                        owner_registration_id: entry.owner,
+                        profile_epoch: entry.epoch,
+                        expires_at_utc_ms: entry.expires_at_utc_ms,
+                        state: "denied".into(),
+                        fields: Vec::new(),
+                    });
+                }
+                if entry.kind == TerminalReviewKind::ScopeRefresh {
+                    let refresh = self
+                        .state
+                        .store
+                        .load_cli_scope_refresh(entry.request_id)?
+                        .ok_or(ErrorCode::NotFound)?;
+                    self.state.store.deny_cli_scope_refresh(&refresh)?;
+                    return Ok(hantong_contracts::terminal_review::TerminalReviewReceipt {
+                        secret_ticket_opaque: None,
+                        kind: entry.kind,
+                        request_id: entry.request_id,
+                        ticket: None,
+                        snapshot_hash: entry.payload_hash,
+                        owner_registration_id: entry.owner,
+                        profile_epoch: entry.epoch,
+                        expires_at_utc_ms: entry.expires_at_utc_ms,
+                        state: "denied".into(),
+                        fields: Vec::new(),
+                    });
+                }
+                if entry.kind == TerminalReviewKind::Registration {
+                    let current = self
+                        .state
+                        .store
+                        .get_registration_request(entry.request_id)?
+                        .ok_or(ErrorCode::NotFound)?;
+                    match current.client_kind {
+                        ClientKind::Mcp => self
+                            .state
+                            .store
+                            .deny_mcp_registration_request(entry.request_id, current.version)?,
+                        ClientKind::Gui => return Err(ErrorCode::CapabilityUnsupported),
+                        ClientKind::Cli => self
+                            .state
+                            .store
+                            .deny_cli_registration_request(entry.request_id, current.version)?,
+                    };
+                    return Ok(hantong_contracts::terminal_review::TerminalReviewReceipt {
+                        secret_ticket_opaque: None,
+                        kind: entry.kind,
+                        request_id: entry.request_id,
+                        ticket: None,
+                        snapshot_hash: entry.payload_hash,
+                        owner_registration_id: entry.owner,
+                        profile_epoch: entry.epoch,
+                        expires_at_utc_ms: entry.expires_at_utc_ms,
+                        state: "denied".into(),
+                        fields: Vec::new(),
+                    });
+                }
+                if entry.kind == TerminalReviewKind::GoogleMutation {
+                    self.state
+                        .store
+                        .deny_google_mutation(entry.request_id, ErrorCode::ApprovalRequired)?;
+                    return Ok(hantong_contracts::terminal_review::TerminalReviewReceipt {
+                        secret_ticket_opaque: None,
+                        kind: entry.kind,
+                        request_id: entry.request_id,
+                        ticket: None,
+                        snapshot_hash: entry.payload_hash,
+                        owner_registration_id: entry.owner,
+                        profile_epoch: entry.epoch,
+                        expires_at_utc_ms: entry.expires_at_utc_ms,
+                        state: "denied".into(),
+                        fields: Vec::new(),
+                    });
+                }
+                if entry.kind == TerminalReviewKind::ProtectedSend {
+                    self.state
+                        .store
+                        .deny_mail_send(entry.request_id, ErrorCode::ApprovalRequired)?;
+                    return Ok(hantong_contracts::terminal_review::TerminalReviewReceipt {
+                        secret_ticket_opaque: None,
+                        kind: entry.kind,
+                        request_id: entry.request_id,
+                        ticket: None,
+                        snapshot_hash: entry.payload_hash,
+                        owner_registration_id: entry.owner,
+                        profile_epoch: entry.epoch,
+                        expires_at_utc_ms: entry.expires_at_utc_ms,
+                        state: "denied".into(),
+                        fields: Vec::new(),
+                    });
+                }
+                let status = hantong_contracts::mail_send::SendReviewStatusRequest {
+                    account_id: entry.account_id.clone(),
+                    review_id: entry.request_id,
+                };
+                self.cancel_personal_send(entry.owner, entry.epoch, &status)
+                    .map(
+                        |receipt| hantong_contracts::terminal_review::TerminalReviewReceipt {
+                            secret_ticket_opaque: None,
+                            kind: entry.kind,
+                            request_id: entry.request_id,
+                            ticket: None,
+                            snapshot_hash: entry.payload_hash,
+                            owner_registration_id: entry.owner,
+                            profile_epoch: entry.epoch,
+                            expires_at_utc_ms: entry.expires_at_utc_ms,
+                            state: receipt.state.into(),
+                            fields: Vec::new(),
+                        },
+                    )
+            }
+            TerminalReviewCommand::SecretSubmit(request) => {
+                let (kind, entry_snapshot) = {
+                    let entries = self.state.terminal_reviews.borrow();
+                    let entry = entries.get(&request.ticket).ok_or(ErrorCode::NotFound)?;
+                    if !matches!(
+                        entry.kind,
+                        TerminalReviewKind::ImapSetup | TerminalReviewKind::SmtpSetup
+                    ) || entry.payload_hash != request.snapshot_hash
+                        || entry.expires_at_utc_ms <= now
+                        || entry.peer != *observed_peer
+                    {
+                        return Err(ErrorCode::PolicyBlocked);
+                    }
+                    (
+                        entry.kind,
+                        (
+                            entry.request_id,
+                            entry.account_id.clone(),
+                            entry.payload_hash,
+                            entry.owner,
+                            entry.epoch,
+                            entry.expires_at_utc_ms,
+                        ),
+                    )
+                };
+                let opaque = TerminalSecretTicket::from_opaque(&request.secret_ticket_opaque)
+                    .map_err(|_| ErrorCode::InvalidInput)?;
+                let (binding, ticket) = {
+                    let entries = self.state.terminal_reviews.borrow();
+                    let entry = entries.get(&request.ticket).ok_or(ErrorCode::NotFound)?;
+                    let ticket = entry.secret_ticket.as_ref().ok_or(ErrorCode::Conflict)?;
+                    if ticket.binding() != opaque.binding()
+                        || ticket.opaque_id() != opaque.opaque_id()
+                    {
+                        return Err(ErrorCode::PolicyBlocked);
+                    }
+                    (ticket.binding(), ticket.to_opaque())
+                };
+                let ticket = TerminalSecretTicket::from_opaque(&ticket)
+                    .map_err(|_| ErrorCode::InternalError)?;
+                if self.state.scheduled.get().is_some() {
+                    return Err(ErrorCode::RateLimited);
+                }
+                let expected_binding = if kind == TerminalReviewKind::ImapSetup {
+                    let setup = crate::setup_imap::load(self.state.store, entry_snapshot.0)?;
+                    let i = setup.intent();
+                    if setup.phase() != hantong_store::imap_setup::ImapSetupPhase::ReviewPending {
+                        return Err(ErrorCode::Conflict);
+                    }
+                    let endpoint =
+                        serde_json::to_value(i.endpoint()).map_err(|_| ErrorCode::InternalError)?;
+                    terminal_binding(&TerminalBindingInput {
+                        kind: *b"terminal-imap-v1",
+                        request_id: *i.request_id(),
+                        payload_hash: *i.review_payload_hash(),
+                        account_id: i.draft().account_id(),
+                        endpoint: &endpoint,
+                        version: i.endpoint().settings_version(),
+                        expires_at_utc_ms: entry_snapshot.5,
+                        peer: observed_peer,
+                        server: self.state.server,
+                    })?
+                } else {
+                    let context = crate::setup_smtp::validate_terminal_context(
+                        self.state.store,
+                        &self.state.smtp_sessions,
+                        entry_snapshot.0,
+                    )?;
+                    let endpoint = serde_json::to_value(&context.endpoint)
+                        .map_err(|_| ErrorCode::InternalError)?;
+                    terminal_binding(&TerminalBindingInput {
+                        kind: *b"terminal-smtp-v1",
+                        request_id: context.request_id,
+                        payload_hash: context.payload_hash,
+                        account_id: &context.account_id,
+                        endpoint: &endpoint,
+                        version: context.account_version,
+                        expires_at_utc_ms: entry_snapshot.5,
+                        peer: observed_peer,
+                        server: self.state.server,
+                    })?
+                };
+                if ticket.binding() != expected_binding || binding != expected_binding {
+                    return Err(ErrorCode::Conflict);
+                }
+                let handle = SecretStore::open(self.state.secrets_root)
+                    .map_err(|_| ErrorCode::InternalError)?
+                    .terminal_secret_handle_from_opaque(&ticket, request.staged_handle)
+                    .map_err(|_| ErrorCode::ScopeDenied)?;
+                if kind == TerminalReviewKind::ImapSetup {
+                    let setup = crate::setup_imap::load(self.state.store, entry_snapshot.0)?;
+                    let i = setup.intent();
+                    if setup.phase() != hantong_store::imap_setup::ImapSetupPhase::ReviewPending
+                        || i.draft().account_id() != entry_snapshot.1
+                        || *i.review_payload_hash() != entry_snapshot.2
+                    {
+                        return Err(ErrorCode::Conflict);
+                    }
+                } else {
+                    let context = crate::setup_smtp::terminal_context(
+                        &self.state.smtp_sessions,
+                        entry_snapshot.0,
+                    )?;
+                    if context.account_id != entry_snapshot.1
+                        || context.payload_hash != entry_snapshot.2
+                    {
+                        return Err(ErrorCode::Conflict);
+                    }
+                }
+                let capture = if kind == TerminalReviewKind::ImapSetup {
+                    crate::terminal_review::TerminalCapture::Imap {
+                        id: entry_snapshot.0,
+                        ticket,
+                        handle,
+                        binding,
+                    }
+                } else {
+                    crate::terminal_review::TerminalCapture::Smtp {
+                        id: entry_snapshot.0,
+                        ticket,
+                        handle,
+                        binding,
+                    }
+                };
+                let job = if kind == TerminalReviewKind::ImapSetup {
+                    Job::TerminalImap(entry_snapshot.0)
+                } else {
+                    Job::TerminalSmtp(entry_snapshot.0)
+                };
+                if let Some(existing) = self.state.scheduled.get()
+                    && existing != job
+                {
+                    return Err(ErrorCode::RateLimited);
+                }
+                enqueue(&self.state.scheduled, &self.sender, job)?;
+                self.state
+                    .terminal_captures
+                    .borrow_mut()
+                    .insert(entry_snapshot.0, capture);
+                self.state
+                    .terminal_reviews
+                    .borrow_mut()
+                    .remove(&request.ticket);
+                Ok(hantong_contracts::terminal_review::TerminalReviewReceipt {
+                    secret_ticket_opaque: None,
+                    kind,
+                    request_id: entry_snapshot.0,
+                    ticket: None,
+                    snapshot_hash: entry_snapshot.2,
+                    owner_registration_id: entry_snapshot.3,
+                    profile_epoch: entry_snapshot.4,
+                    expires_at_utc_ms: entry_snapshot.5,
+                    state: "queued".into(),
+                    fields: Vec::new(),
+                })
+            }
+        }
     }
 
     pub(crate) fn request_google_mutation(
@@ -141,7 +1291,7 @@ impl RegistrationHandle<'_> {
             .state
             .scheduled
             .get()
-            .is_some_and(|job| !matches!(job, Job::GoogleMutation(_)))
+            .is_some_and(|job| !matches!(job, Job::TerminalGoogleMutation(_)))
         {
             return Err(ErrorCode::RateLimited);
         }
@@ -149,17 +1299,8 @@ impl RegistrationHandle<'_> {
             .state
             .store
             .request_google_mutation(owner, epoch, request)?;
-        if receipt.state == "pending" {
-            match self.state.scheduled.get() {
-                Some(Job::GoogleMutation(id)) if id == receipt.review_id => {}
-                Some(_) => return Err(ErrorCode::RateLimited),
-                None => enqueue(
-                    &self.state.scheduled,
-                    &self.sender,
-                    Job::GoogleMutation(receipt.review_id),
-                )?,
-            }
-        }
+        // Preparing a mutation never schedules a provider effect. Only a
+        // consumed foreground review ticket may enqueue the terminal job.
         Ok(receipt)
     }
 
@@ -182,6 +1323,9 @@ impl RegistrationHandle<'_> {
         command: SetupCommand,
     ) -> Result<SetupReceipt, ErrorCode> {
         match command {
+            SetupCommand::TerminalReview(command) => self
+                .terminal_review_command(command, peer.ok_or(ErrorCode::AuthRequired)?)
+                .map(SetupReceipt::TerminalReview),
             SetupCommand::Google(command) => {
                 use hantong_contracts::google_setup::GoogleSetupCommand;
                 match command {
@@ -195,6 +1339,40 @@ impl RegistrationHandle<'_> {
                         }
                         crate::setup_google::status(&self.state.google_sessions, id)
                             .map(SetupReceipt::Google)
+                    }
+                    GoogleSetupCommand::ClientTicket(id) => {
+                        let peer = peer.ok_or(ErrorCode::AuthRequired)?;
+                        let ticket = crate::setup_google::terminal_client_ticket(
+                            self.state.secrets_root,
+                            &self.state.google_sessions,
+                            id,
+                            self.state.server,
+                            peer,
+                        )?;
+                        let mut receipt =
+                            crate::setup_google::status(&self.state.google_sessions, id)?;
+                        receipt.client_ticket = Some(ticket.to_vec());
+                        Ok(SetupReceipt::Google(receipt))
+                    }
+                    GoogleSetupCommand::StageClient {
+                        request_id,
+                        ticket,
+                        staged_handle,
+                    } => {
+                        let peer = peer.ok_or(ErrorCode::AuthRequired)?;
+                        let staged = crate::setup_google::stage_terminal_client(
+                            self.state.secrets_root,
+                            &self.state.google_sessions,
+                            request_id,
+                            &ticket,
+                            staged_handle,
+                            peer,
+                        )?;
+                        enqueue(&self.state.scheduled, &self.sender, Job::Google(request_id))?;
+                        let mut receipt =
+                            crate::setup_google::status(&self.state.google_sessions, request_id)?;
+                        receipt.client_ticket = Some(staged.to_vec());
+                        Ok(SetupReceipt::Google(receipt))
                     }
                     GoogleSetupCommand::Request(input) => {
                         if let Some(job) = self.state.scheduled.get() {
@@ -248,59 +1426,25 @@ impl RegistrationHandle<'_> {
             SetupCommand::Smtp(command) => {
                 use hantong_contracts::smtp_setup::{SmtpSetupCommand, SmtpSetupState};
                 match command {
-                    SmtpSetupCommand::Status(id) => crate::setup_smtp::status(
-                        &self.state.smtp_sessions,
-                        id,
-                        self.state.scheduled.get() == Some(Job::Smtp(id)),
-                    )
-                    .map(SetupReceipt::Smtp),
+                    SmtpSetupCommand::Status(id) => {
+                        crate::setup_smtp::status(&self.state.smtp_sessions, id, true)
+                            .map(SetupReceipt::Smtp)
+                    }
                     SmtpSetupCommand::Request(input) => {
-                        if self.sender.is_closed() {
-                            return Err(ErrorCode::CoreUnavailable);
-                        }
-                        if self
-                            .state
-                            .scheduled
-                            .get()
-                            .is_some_and(|job| !matches!(job, Job::Smtp(_)))
-                        {
-                            return Err(ErrorCode::RateLimited);
-                        }
-                        if let Some(Job::Smtp(id)) = self.state.scheduled.get() {
-                            if !crate::setup_smtp::matches(&self.state.smtp_sessions, id, &input) {
-                                return Err(ErrorCode::RateLimited);
-                            }
-                            return crate::setup_smtp::status(&self.state.smtp_sessions, id, true)
-                                .map(SetupReceipt::Smtp);
-                        }
                         let r = crate::setup_smtp::request(
                             self.state.store,
                             self.state.secrets_root,
                             &self.state.smtp_sessions,
                             input,
                         )?;
-                        if r.state == SmtpSetupState::Pending {
-                            match self.state.scheduled.get() {
-                                Some(Job::Smtp(id)) if id == r.request_id => {}
-                                Some(_) => return Err(ErrorCode::RateLimited),
-                                None => enqueue(
-                                    &self.state.scheduled,
-                                    &self.sender,
-                                    Job::Smtp(r.request_id),
-                                )?,
-                            }
-                        }
+                        let _ = SmtpSetupState::Pending;
                         Ok(SetupReceipt::Smtp(r))
                     }
                 }
             }
             SetupCommand::ScopeRefresh(ScopeRefreshCommand::Status(id)) => {
-                crate::scope_refresh::status(
-                    self.state.store,
-                    id,
-                    self.state.scheduled.get() == Some(Job::ScopeRefresh(id)),
-                )
-                .map(SetupReceipt::ScopeRefresh)
+                crate::scope_refresh::status(self.state.store, id, !self.sender.is_closed())
+                    .map(SetupReceipt::ScopeRefresh)
             }
             SetupCommand::ScopeRefresh(
                 command @ (ScopeRefreshCommand::Request
@@ -391,7 +1535,8 @@ impl RegistrationHandle<'_> {
                     _ => crate::scope_refresh::prepare(self.state.store, self.state.server)?,
                 };
                 let id = *request.refresh_id();
-                enqueue(&self.state.scheduled, &self.sender, Job::ScopeRefresh(id))?;
+                // Terminal review owns the explicit confirm/deny transition;
+                // preparing a scope never opens or schedules a native review.
                 crate::scope_refresh::status(self.state.store, id, true)
                     .map(SetupReceipt::ScopeRefresh)
             }
@@ -401,8 +1546,7 @@ impl RegistrationHandle<'_> {
                     Some(
                         Job::Registration(_)
                             | Job::ScopeRefresh(_)
-                            | Job::GoogleMutation(_)
-                            | Job::SendReview(_)
+                            | Job::TerminalGoogleMutation(_)
                             | Job::Smtp(_)
                             | Job::Google(_)
                     )
@@ -411,6 +1555,12 @@ impl RegistrationHandle<'_> {
                 }
                 let parent = self.state.store.resolve_imap_setup_leaf(id)?;
                 let leaf_id = *parent.intent().request_id();
+                if parent.phase() == hantong_store::imap_setup::ImapSetupPhase::ReviewPending
+                    && parent.intent().resume_binding().is_some()
+                {
+                    return crate::setup_imap::status(self.state.store, leaf_id, true)
+                        .map(SetupReceipt::Imap);
+                }
                 if let Some(Job::Imap(active_id)) = self.state.scheduled.get() {
                     if active_id != leaf_id {
                         return Err(ErrorCode::RateLimited);
@@ -432,18 +1582,35 @@ impl RegistrationHandle<'_> {
                 if self.sender.is_closed() {
                     return Err(ErrorCode::InternalError);
                 }
+                if let Some(existing) = self
+                    .state
+                    .store
+                    .list_imap_setup_requests()?
+                    .into_iter()
+                    .find(|candidate| {
+                        candidate.phase()
+                            == hantong_store::imap_setup::ImapSetupPhase::ReviewPending
+                            && candidate.intent().draft() == parent.intent().draft()
+                            && candidate.intent().endpoint() == parent.intent().endpoint()
+                            && candidate
+                                .intent()
+                                .resume_binding()
+                                .and_then(|b| b.existing_versions())
+                                .is_some()
+                    })
+                {
+                    let id = *existing.intent().request_id();
+                    return crate::setup_imap::status(self.state.store, id, true)
+                        .map(SetupReceipt::Imap);
+                }
                 let child = crate::setup_imap::prepare_resume(self.state.store, &parent)?;
                 let child_id = *child.intent().request_id();
-                enqueue(&self.state.scheduled, &self.sender, Job::Imap(child_id))?;
                 crate::setup_imap::status(self.state.store, child_id, true).map(SetupReceipt::Imap)
             }
             SetupCommand::Registration(c) => self.command(c).map(SetupReceipt::Registration),
-            SetupCommand::Imap(ImapSetupCommand::Status(id)) => crate::setup_imap::status(
-                self.state.store,
-                id,
-                self.state.scheduled.get() == Some(Job::Imap(id)),
-            )
-            .map(SetupReceipt::Imap),
+            SetupCommand::Imap(ImapSetupCommand::Status(id)) => {
+                crate::setup_imap::status(self.state.store, id, true).map(SetupReceipt::Imap)
+            }
             SetupCommand::Imap(ImapSetupCommand::Request(input)) => {
                 if let Some(job) = self.state.scheduled.get() {
                     let Job::Imap(id) = job else {
@@ -460,12 +1627,23 @@ impl RegistrationHandle<'_> {
                     return crate::setup_imap::status(self.state.store, id, true)
                         .map(SetupReceipt::Imap);
                 }
-                if self.sender.is_closed() {
-                    return Err(ErrorCode::InternalError);
+                if let Some(existing) = self
+                    .state
+                    .store
+                    .list_imap_setup_requests()?
+                    .into_iter()
+                    .find(|candidate| {
+                        candidate.phase()
+                            == hantong_store::imap_setup::ImapSetupPhase::ReviewPending
+                            && crate::setup_imap::matches(candidate, &input).unwrap_or(false)
+                    })
+                {
+                    let id = *existing.intent().request_id();
+                    return crate::setup_imap::status(self.state.store, id, true)
+                        .map(SetupReceipt::Imap);
                 }
                 let request = crate::setup_imap::create(self.state.store, &input)?;
                 let id = *request.intent().request_id();
-                enqueue(&self.state.scheduled, &self.sender, Job::Imap(id))?;
                 crate::setup_imap::status(self.state.store, id, true).map(SetupReceipt::Imap)
             }
         }
@@ -542,8 +1720,10 @@ impl RegistrationHandle<'_> {
                         | Job::Smtp(_)
                         | Job::Google(_)
                         | Job::ScopeRefresh(_)
-                        | Job::GoogleMutation(_)
-                        | Job::SendReview(_) => Err(ErrorCode::RateLimited),
+                        | Job::TerminalGoogleMutation(_)
+                        | Job::TerminalSend(_) => Err(ErrorCode::RateLimited),
+                        Job::TerminalProtectedSend(_) => Err(ErrorCode::RateLimited),
+                        Job::TerminalImap(_) | Job::TerminalSmtp(_) => Err(ErrorCode::RateLimited),
                     };
                 }
                 let effects = NativeEffects {
@@ -600,12 +1780,15 @@ impl RegistrationHandle<'_> {
                 {
                     return Err(ErrorCode::Conflict);
                 }
-                enqueue(
-                    &self.state.scheduled,
-                    &self.sender,
-                    Job::Registration(request.request_id),
-                )?;
-                receipt(&request, RegistrationProgress::Pending)
+                let receipt = receipt(&request, RegistrationProgress::Pending)?;
+                if gui {
+                    enqueue(
+                        &self.state.scheduled,
+                        &self.sender,
+                        Job::Registration(*receipt.request_id()),
+                    )?;
+                }
+                Ok(receipt)
             }
         }
     }
@@ -723,23 +1906,88 @@ impl RegistrationWorker<'_> {
                     )
                     .await
                 }
-                Job::SendReview(id) => {
+                Job::TerminalSend(id) => {
                     crate::send_mail::run_job(
                         self.state.store,
                         self.state.secrets_root,
                         &self.state.policy,
                         id,
+                        true,
+                        true,
                     )
                     .await
                 }
-                Job::GoogleMutation(id) => {
+                Job::TerminalProtectedSend(id) => {
+                    crate::send_mail::run_job(
+                        self.state.store,
+                        self.state.secrets_root,
+                        &self.state.policy,
+                        id,
+                        true,
+                        false,
+                    )
+                    .await
+                }
+                Job::TerminalGoogleMutation(id) => {
                     crate::google_mutation::run_job(
                         self.state.store,
                         self.state.secrets_root,
                         &self.state.policy,
                         id,
+                        true,
                     )
                     .await
+                }
+                Job::TerminalImap(id) => {
+                    let capture = self.state.terminal_captures.borrow_mut().remove(&id);
+                    match capture {
+                        Some(crate::terminal_review::TerminalCapture::Imap {
+                            id,
+                            ticket,
+                            handle,
+                            binding,
+                        }) => {
+                            crate::setup_imap::terminal_submit(
+                                self.state.store,
+                                self.state.secrets_root,
+                                id,
+                                ticket,
+                                handle,
+                                binding,
+                            )
+                            .await
+                        }
+                        Some(crate::terminal_review::TerminalCapture::Smtp { .. }) => {
+                            Err(ErrorCode::Conflict)
+                        }
+                        None => Err(ErrorCode::NotFound),
+                    }
+                }
+                Job::TerminalSmtp(id) => {
+                    let capture = self.state.terminal_captures.borrow_mut().remove(&id);
+                    match capture {
+                        Some(crate::terminal_review::TerminalCapture::Smtp {
+                            id,
+                            ticket,
+                            handle,
+                            binding,
+                        }) => {
+                            crate::setup_smtp::terminal_submit(
+                                self.state.store,
+                                self.state.secrets_root,
+                                &self.state.smtp_sessions,
+                                id,
+                                ticket,
+                                handle,
+                                binding,
+                            )
+                            .await
+                        }
+                        Some(crate::terminal_review::TerminalCapture::Imap { .. }) => {
+                            Err(ErrorCode::Conflict)
+                        }
+                        None => Err(ErrorCode::NotFound),
+                    }
                 }
                 Job::Registration(id) => self.state.review(id).await,
                 Job::ScopeRefresh(id) => {
@@ -1121,6 +2369,79 @@ fn commit_google_oauth_registration(
     effects.activate(&record, hash)?;
     effects.cleanup_publication(&mut publication)
 }
+
+fn commit_terminal_registration(
+    effects: &NativeEffects<'_>,
+    expected: &RegistrationRequest,
+) -> Result<(), ErrorCode> {
+    if !matches!(expected.client_kind, ClientKind::Cli | ClientKind::Mcp)
+        || expected.state != RegistrationRequestState::Pending
+        || !supported_identity(
+            expected.client_kind,
+            &expected.display_label,
+            expected.scope.tools(),
+        )
+    {
+        return Err(ErrorCode::Conflict);
+    }
+    let current = effects.request(expected.request_id)?;
+    if &current != expected {
+        return Err(ErrorCode::Conflict);
+    }
+    let now = effects.now()?;
+    if now < current.created_at_utc_ms || now >= current.expires_at_utc_ms {
+        return Err(ErrorCode::ApprovalExpired);
+    }
+    let public = effects.server_public()?;
+    cleanup_orphan(effects, &current)?;
+    let id = hantong_platform::registration_id_for_request(current.request_id)?;
+    let key = effects.create_key(id)?;
+    let client_public = effects.key_public(&key)?;
+    let server_hash = hantong_platform::sha256(&public)?;
+    let stage = if current.client_kind == ClientKind::Mcp {
+        if current.scope.tools() == hantong_contracts::auth::mcp_mail_tools() {
+            effects.store.stage_terminal_mcp_mail_registration(
+                &McpMailRegistrationStage::new_terminal_mcp_mail(
+                    current.clone(),
+                    id,
+                    client_public,
+                    server_hash,
+                    effects.store.load_mcp_registration()?,
+                )?,
+            )
+        } else {
+            effects
+                .store
+                .stage_terminal_mcp_registration(&McpRegistrationStage::new_terminal_mcp(
+                    current.clone(),
+                    id,
+                    client_public,
+                    server_hash,
+                )?)
+        }
+    } else {
+        effects
+            .store
+            .stage_terminal_cli_registration(&CliRegistrationStage::new_terminal_cli(
+                current.clone(),
+                id,
+                client_public,
+                server_hash,
+            )?)
+    };
+    let record = match stage {
+        Ok(record) => record,
+        Err(error) => {
+            let _ = delete_unlinked(effects, expected.request_id, key, client_public);
+            return Err(error);
+        }
+    };
+    let bytes = profile_bytes(&record, public)?;
+    let mut publication = effects.publish(&bytes)?;
+    let hash = hantong_platform::sha256(&public)?;
+    effects.activate(&record, hash)?;
+    effects.cleanup_publication(&mut publication)
+}
 fn recover_record<E: Effects>(effects: &E, record: &RegistrationRecord) -> Result<(), ErrorCode> {
     validate_initial_record(record)?;
     let request = effects.request(record.request_id)?;
@@ -1155,7 +2476,7 @@ fn validate_initial_record(record: &RegistrationRecord) -> Result<(), ErrorCode>
         || record.requests_per_minute != 60
         || !matches!(
             record.approved_channel.as_str(),
-            "approval_helper" | "google_oauth"
+            "approval_helper" | "google_oauth" | "terminal_cli"
         )
     {
         return Err(ErrorCode::Conflict);

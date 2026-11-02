@@ -2,7 +2,7 @@
 
 A multi-account mail hub for Windows, with a shared core service, the `hantong` CLI, MCP access, and an optional GUI. GUI languages are Korean and English; themes are light, dark, and system. The CLI defaults to English and supports Korean.
 
-**Status: Windows CLI developer preview.** [Download releases](https://github.com/tz1012/mail-hantong/releases). The CLI runs in a terminal; account setup and outgoing-mail authorization use a protected Windows confirmation window. See the [CLI installation and usage guide](docs/latest/CLI-LAUNCH.md) for body reading, composing, sending, AI sessions, MCP tools and remaining limitations.
+**Status: Windows CLI beta candidate under verification.** [Download releases](https://github.com/tz1012/mail-hantong/releases). Account setup, feature selection, composing and Send/Cancel use the same terminal. Google OAuth opens its standard provider browser. See the [CLI installation and usage guide](docs/latest/CLI-LAUNCH.md) for body reading, composing, sending, AI sessions, MCP tools and remaining limitations.
 
 Install or update from PowerShell on Windows x64:
 
@@ -60,7 +60,7 @@ python -X utf8 scripts/check_requirements.py
 
 [채택된 기준 요건](docs/requirements/README.md)의 무결성은 `check_requirements.py`로 검사합니다. [과거 요건 분할 검토본](docs/proposals/M0-00/README.md)은 원문 대응 증거로 보관하며 `prepare_requirements.py --check`로 별도 검증합니다. 후자는 기준 요건을 덮어쓰지 않습니다.
 
-등록 연결 개발 명령은 Windows 11에서 `cargo run -p hantong-cli -- clients register`, `cargo run -p hantong-cli -- clients status <request_id>`, `cargo run -p hantong-cli -- clients verify`입니다. 먼저 코어를 실행해야 합니다. 등록 요청은 코어 소유 창을 열며 사용자의 Windows Hello 확인 후 기본 읽기 전용 프로필을 발행합니다. CLI는 승인하지 않습니다. `verify`는 기존 프로필과 서버 신원만 확인합니다. 현재 등록 권한은 요청 당시 존재하는 계정 snapshot의 accounts.list로 제한되고, 계정이 없으면 권한도 0개입니다. 계정 설정·전체 GUI와 실제 Hello·사람 보안 검토가 남아 있습니다. 개발 자동 시험은 실제 사용자 등록이나 계정 로그인을 실행하지 않습니다.
+등록 연결 개발 명령은 Windows 11에서 `cargo run -p hantong-cli -- clients register`, `cargo run -p hantong-cli -- clients status <request_id>`, `cargo run -p hantong-cli -- clients verify`입니다. 먼저 코어를 실행해야 합니다. 등록 요청은 같은 터미널에서 대상 계정과 기능을 보여 주고 선택을 받은 뒤 Core가 프로필을 발행합니다. Windows Hello나 별도 한통 창을 열지 않습니다. `verify`는 기존 프로필과 서버 신원만 확인합니다. 권한은 요청에 결속된 계정과 도구로 제한되며 빈 계정은 권한 0개입니다. 터미널 선택은 OS 사람 존재 증명이 아닙니다. 사람 보안 검토는 별도로 남아 있고 자동 시험은 실제 계정 로그인이나 외부 서비스에 연결하지 않습니다.
 
 등록된 계정 조회는 `cargo run -p hantong-cli -- accounts list --json` 또는 `cargo run -p hantong-cli -- --lang ko accounts list`로 실행합니다. `--include-capabilities`를 추가하면 저장된 기능 식별자도 반환합니다. 상호 인증·현재 계정 범위·등록별 호출 한도·감사를 거친 로컬 계정 표시 자료이며, 지금 외부 메일 서버에 접속했다는 뜻은 아닙니다. 빈 권한은 SCOPE_DENIED이고 계정을 자동 추가하지 않습니다. 기본 CLI 범위 갱신의 bounded progress 요청/조회도 다음 명령으로 제공됩니다.
 
@@ -69,10 +69,10 @@ cargo run -p hantong-cli -- clients refresh
 cargo run -p hantong-cli -- clients refresh-status <refresh_id>
 ```
 
-범위 갱신은 현재 등록의 최초 요청·키·서버 pin을 보존하고, 현재 계정 snapshot과 계정 목록·폴더 목록/갱신·IMAP UID 메타데이터 한 페이지 수집 권한을 native 검토 대상으로 삼습니다. 새 권한은 새 명시 요청에서만 제안하며, 기존 대기/복구 요청의 범위를 바꾸지 않습니다. revoked 등록을 되살리지 않으며, native 확인·Core stage/activate·보호 프로필 배포의 실제 효과는 사람 검토가 필요한 Windows 경계입니다. 발송 명령은 계속 차단됩니다.
+범위 갱신은 최초 요청·키·서버 pin을 보존하고 현재 계정과 새로 사용할 기능을 같은 터미널에서 확인합니다. 새 권한은 명시 요청에서만 제안하며 기존 대기/복구 요청의 범위를 바꾸거나 revoked 등록을 되살리지 않습니다. Core의 stage/activate·보호 프로필 배포와 발송 정책은 계속 적용합니다. 발송은 전체 메일 내용을 확인한 뒤 보내기를 선택해야 실행됩니다.
 
 
-신규 IMAP 연결 개발 명령은 다음과 같습니다. 코어를 먼저 실행하고 실제 서버 정보로 바꿉니다. 요청은 세션 ID를 반환하고 코어의 영/한 설정 확인 창을 엽니다. 비밀번호는 그 보호 입력 창에서만 입력하며 Windows Hello 확인 뒤 저장과 1회 TLS/AUTH 진단을 실행합니다. 이 기능은 메일 수신·발송을 수행하지 않습니다.
+신규 IMAP 연결 개발 명령은 다음과 같습니다. 코어를 먼저 실행하고 서버 정보를 지정합니다. 같은 터미널에서 설정을 확인하고 비밀번호를 숨김 입력하면 보호 저장과 1회 TLS/AUTH 진단을 실행합니다. 비밀번호를 명령 인자나 JSON에 넣지 않습니다. 이 설정 단계는 메일을 발송하지 않습니다.
 
 ```powershell
 cargo run -p hantong-cli -- setup imap request --host imap.example.com --port 993 --tls implicit_tls --login user@example.com --name Personal
@@ -80,7 +80,7 @@ cargo run -p hantong-cli -- setup imap status <request_id> --json
 cargo run -p hantong-cli -- setup imap resume <request_id> --json
 ```
 
-`starttls_required`도 선택할 수 있습니다. `--lang ko`는 CLI 출력 언어를 바꾸고 확인 창은 저장된 GUI 언어·테마를 따릅니다. `--no-input`은 터미널 질문을 없애며 사람 확인 창을 생략하지 않습니다. `ready`는 해당 연결 진단 결과이며 CLI 권한을 자동 부여하지 않습니다. 기존 등록이 없으면 별도로 `clients register`를 실행하고, 이미 등록이 있으면 상태·계정 범위 재검토가 필요합니다. 중단/실패한 요청은 `resume`으로 같은 대상의 새 시도를 시작할 수 있습니다. 과거 이력을 보존하고 보호 입력·Hello 확인을 다시 요구합니다. 진행 중인 같은 시도나 이미 연결을 마친 시도는 상태만 반환합니다. 원래 대상이나 계정 버전이 바뀌면 재개를 거부하며 reset은 아직 지원하지 않습니다. 개발 자동 시험에서는 실제 계정이나 Hello를 사용하지 않았고 사람 보안·화면 검토가 남아 있습니다.
+`starttls_required`도 선택할 수 있습니다. `--lang ko`로 한국어 터미널을 사용합니다. `--no-input`, JSON, 입출력 리다이렉션에서는 대화형 확인을 수행하지 않습니다. `ready`는 연결 진단 결과이며 CLI 권한을 자동 부여하지 않습니다. 기존 등록이 없으면 `clients register`, 기존 등록의 계정·기능 변경에는 `clients refresh`를 사용합니다. 중단/실패한 요청은 `resume`으로 같은 대상의 새 시도를 시작하며 과거 이력을 보존합니다. 원래 대상이나 계정 버전이 바뀌면 재개를 거부합니다. 사람 보안 검토는 별도로 남아 있습니다.
 
 
 IMAP 폴더와 한 페이지 메타데이터 수집의 개발용 명령도 제공됩니다. `folders list --account ACCOUNT --json` 결과의 `wire_hex`와 `encoding`을 그대로 사용하고, `sync cursor`에서 확인한 catalog generation/cursor version을 `sync page`에 지정합니다. 처음부터 전체 mailbox를 자동 수집하지 않습니다.

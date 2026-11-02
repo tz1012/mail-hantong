@@ -5,6 +5,7 @@ use hantong_contracts::{
     smtp_setup::{SmtpSetupInput, SmtpSetupReceipt, SmtpSetupState},
 };
 use hantong_domain::mail_connection::{MailConnectionConfig, SmtpEndpointConfig};
+use hantong_secrets::{TerminalSecretBinding, TerminalSecretHandle, TerminalSecretTicket};
 use hantong_store::{
     Store,
     mail_connection::{MailMutation, smtp_payload_hash},
@@ -18,6 +19,15 @@ pub(crate) struct Session {
     account_version: u64,
     created: i64,
     receipt: SmtpSetupReceipt,
+}
+
+pub(crate) struct TerminalContext {
+    pub account_id: String,
+    pub endpoint: SmtpEndpointConfig,
+    pub account_version: u64,
+    pub request_id: [u8; 32],
+    pub payload_hash: [u8; 32],
+    pub expires_at_utc_ms: i64,
 }
 fn request_nonce() -> Result<[u8; 32], ErrorCode> {
     #[cfg(windows)]
@@ -117,11 +127,45 @@ pub(crate) fn request(
     );
     Ok(receipt)
 }
-pub(crate) fn matches(sessions: &Sessions, id: [u8; 32], input: &SmtpSetupInput) -> bool {
-    sessions
+pub(crate) fn terminal_context(
+    sessions: &Sessions,
+    id: [u8; 32],
+) -> Result<TerminalContext, ErrorCode> {
+    let session = sessions
         .borrow()
         .get(&id)
-        .is_some_and(|s| &s.input == input)
+        .cloned()
+        .ok_or(ErrorCode::NotFound)?;
+    let payload_hash = smtp_payload_hash(session.input.account_id(), &session.endpoint, 0)?;
+    Ok(TerminalContext {
+        account_id: session.input.account_id().to_owned(),
+        endpoint: session.endpoint,
+        account_version: session.account_version,
+        request_id: session.receipt.request_id,
+        payload_hash,
+        expires_at_utc_ms: session.receipt.expires_at_utc_ms,
+    })
+}
+
+pub(crate) fn validate_terminal_context(
+    store: &Store,
+    sessions: &Sessions,
+    id: [u8; 32],
+) -> Result<TerminalContext, ErrorCode> {
+    let context = terminal_context(sessions, id)?;
+    let snapshot = sessions
+        .borrow()
+        .get(&id)
+        .cloned()
+        .ok_or(ErrorCode::NotFound)?;
+    if snapshot.receipt.state != SmtpSetupState::Pending
+        || snapshot.receipt.error_code.is_some()
+        || now()? >= snapshot.receipt.expires_at_utc_ms
+    {
+        return Err(ErrorCode::Conflict);
+    }
+    validate(store, &snapshot)?;
+    Ok(context)
 }
 pub(crate) fn status(
     sessions: &Sessions,
@@ -228,6 +272,77 @@ async fn finish(store: &Store, root: &Path, s: &Session) -> Result<(), ErrorCode
         &mutation,
         s.account_version,
     )?;
+    Ok(())
+}
+
+/// Completes SMTP setup using a Secrets-owned staged terminal credential.
+/// The native approval window is deliberately absent from this path.
+pub(crate) async fn terminal_submit(
+    store: &Store,
+    root: &Path,
+    sessions: &Sessions,
+    id: [u8; 32],
+    ticket: TerminalSecretTicket,
+    handle: TerminalSecretHandle,
+    expected_binding: TerminalSecretBinding,
+) -> Result<(), ErrorCode> {
+    let result =
+        terminal_submit_inner(store, root, sessions, id, ticket, handle, expected_binding).await;
+    if let Err(error) = result
+        && let Some(session) = sessions.borrow_mut().get_mut(&id)
+    {
+        session.receipt.state = match error {
+            ErrorCode::ApprovalExpired => SmtpSetupState::Expired,
+            ErrorCode::ApprovalDenied => SmtpSetupState::Denied,
+            ErrorCode::ApprovalRequired => SmtpSetupState::Interrupted,
+            _ => SmtpSetupState::Failed,
+        };
+        session.receipt.error_code = Some(error);
+    }
+    result
+}
+
+async fn terminal_submit_inner(
+    store: &Store,
+    root: &Path,
+    sessions: &Sessions,
+    id: [u8; 32],
+    ticket: TerminalSecretTicket,
+    handle: TerminalSecretHandle,
+    expected_binding: TerminalSecretBinding,
+) -> Result<(), ErrorCode> {
+    let snapshot = sessions
+        .borrow()
+        .get(&id)
+        .cloned()
+        .ok_or(ErrorCode::NotFound)?;
+    validate(store, &snapshot)?;
+    let hash = smtp_payload_hash(snapshot.input.account_id(), &snapshot.endpoint, 0)?;
+    if ticket.binding().expires_at_utc_ms() <= now()? {
+        return Err(ErrorCode::ApprovalExpired);
+    }
+    secrets(root)?
+        .consume_terminal_smtp_credential(
+            ticket,
+            handle,
+            expected_binding,
+            snapshot.input.account_id(),
+            &snapshot.endpoint,
+        )
+        .map_err(|_| ErrorCode::ScopeDenied)?;
+    validate(store, &snapshot)?;
+    let key = hantong_contracts::wire_hex::encode(&snapshot.receipt.request_id);
+    let mutation = MailMutation::new(key.clone(), key, 0, hash)?;
+    store.put_initial_smtp_connection(
+        snapshot.input.account_id(),
+        &snapshot.endpoint,
+        &mutation,
+        snapshot.account_version,
+    )?;
+    let mut map = sessions.borrow_mut();
+    let session = map.get_mut(&id).ok_or(ErrorCode::InternalError)?;
+    session.receipt.state = SmtpSetupState::Ready;
+    session.receipt.error_code = None;
     Ok(())
 }
 #[cfg(test)]

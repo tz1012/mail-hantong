@@ -52,7 +52,40 @@ pub(super) fn run(command: &[String], options: &[(String, String)], lang: Lang, 
         Ok(c) => c,
         Err(e) => return emit_error(e, lang, json),
     };
-    match hantong_ipc_client::smtp_setup::exchange(command) {
+    let is_request = matches!(command, SmtpSetupCommand::Request(_));
+    if is_request {
+        use std::io::IsTerminal;
+        if json
+            || std::env::args_os().any(|v| v == "--no-input")
+            || !std::io::stdin().is_terminal()
+            || !std::io::stdout().is_terminal()
+        {
+            return emit_error(ErrorCode::HumanStepRequired, lang, json);
+        }
+    }
+    match hantong_ipc_client::smtp_setup::exchange(command).and_then(|r| {
+        if is_request && !json && r.state == hantong_contracts::smtp_setup::SmtpSetupState::Pending
+        {
+            super::terminal_workflows::maybe_review(
+                hantong_contracts::terminal_review::TerminalReviewKind::SmtpSetup,
+                r.request_id,
+                lang,
+            )?;
+            let mut response =
+                hantong_ipc_client::smtp_setup::exchange(SmtpSetupCommand::Status(r.request_id))?;
+            for _ in 0..300 {
+                if response.state != hantong_contracts::smtp_setup::SmtpSetupState::Pending {
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_secs(1));
+                response = hantong_ipc_client::smtp_setup::exchange(SmtpSetupCommand::Status(
+                    r.request_id,
+                ))?;
+            }
+            return Ok(response);
+        }
+        Ok(r)
+    }) {
         Ok(r) => {
             let id = wire_hex::encode(&r.request_id);
             if json {

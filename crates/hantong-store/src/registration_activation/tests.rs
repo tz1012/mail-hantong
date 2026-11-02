@@ -188,6 +188,29 @@ fn cli07_stage_is_atomic_provisioning_then_activation_survives_reopen() {
     f.reopen();
     assert_eq!(f.store().load_registration(rid(1)).unwrap(), Some(active));
 }
+
+#[test]
+fn terminal_cli_stage_and_activation_survive_reopen() {
+    let mut f = Fixture::new();
+    f.account("a");
+    let request = f.request(91, &["a"]);
+    let id = rid(91);
+    let stage =
+        CliRegistrationStage::new_terminal_cli(request, id, public_key(), server_hash()).unwrap();
+    let staged = f.store().stage_terminal_cli_registration(&stage).unwrap();
+    assert_eq!(staged.approved_channel, "terminal_cli");
+    assert_eq!(staged.state, RegistrationState::Provisioning);
+    f.reopen();
+    let active = f
+        .store()
+        .activate_cli_registration(id, 1, server_hash())
+        .unwrap();
+    assert_eq!(active.approved_channel, "terminal_cli");
+    assert_eq!(
+        f.store().load_default_cli_registration().unwrap(),
+        Some(active)
+    );
+}
 #[test]
 fn cli07_stage_empty_scope_grants_zero_and_input_validation_is_fixed() {
     let f = Fixture::new();

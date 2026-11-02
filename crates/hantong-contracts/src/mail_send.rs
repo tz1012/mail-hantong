@@ -199,3 +199,63 @@ impl fmt::Debug for SendReviewStatusRequest {
         f.write_str("SendReviewStatusRequest(<redacted>)")
     }
 }
+
+/// Explicit terminal interaction intent for an already immutable personal
+/// review. This is not an assertion of OS-verified human presence.
+#[derive(Clone, PartialEq, Eq)]
+pub struct PersonalSendConfirmRequest {
+    pub account_id: String,
+    pub review_id: [u8; 32],
+    pub payload_hash: [u8; 32],
+}
+impl PersonalSendConfirmRequest {
+    pub fn new(
+        account_id: &str,
+        review_id: [u8; 32],
+        payload_hash: [u8; 32],
+    ) -> Result<Self, ErrorCode> {
+        if account_id.is_empty()
+            || account_id.len() > 128
+            || !account_id
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b"_-".contains(&b))
+            || review_id == [0; 32]
+            || payload_hash == [0; 32]
+        {
+            return Err(ErrorCode::InvalidInput);
+        }
+        Ok(Self {
+            account_id: account_id.into(),
+            review_id,
+            payload_hash,
+        })
+    }
+}
+impl fmt::Debug for PersonalSendConfirmRequest {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("PersonalSendConfirmRequest(<redacted>)")
+    }
+}
+
+#[cfg(test)]
+mod terminal_tests {
+    use super::*;
+    #[test]
+    fn apr01_terminal_confirm_requires_exact_account_and_nonzero_binding() {
+        assert!(PersonalSendConfirmRequest::new("account", [1; 32], [2; 32]).is_ok());
+        for account in ["", "all accounts", "../account", "account\n"] {
+            assert_eq!(
+                PersonalSendConfirmRequest::new(account, [1; 32], [2; 32]),
+                Err(ErrorCode::InvalidInput)
+            );
+        }
+        assert_eq!(
+            PersonalSendConfirmRequest::new("account", [0; 32], [2; 32]),
+            Err(ErrorCode::InvalidInput)
+        );
+        assert_eq!(
+            PersonalSendConfirmRequest::new("account", [1; 32], [0; 32]),
+            Err(ErrorCode::InvalidInput)
+        );
+    }
+}

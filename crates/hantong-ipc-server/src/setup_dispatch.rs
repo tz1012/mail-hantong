@@ -6,6 +6,7 @@ use hantong_contracts::{
     imap_setup::{ImapSetupCommand, ImapSetupReceipt},
     registration::{RegistrationCommand, RegistrationReceipt},
     scope_refresh::{ScopeRefreshCommand, ScopeRefreshReceipt},
+    terminal_review::{TerminalReviewCommand, TerminalReviewReceipt},
 };
 use serde_json::{Value, json};
 
@@ -29,6 +30,7 @@ pub enum SetupCommand {
     Smtp(hantong_contracts::smtp_setup::SmtpSetupCommand),
     Google(hantong_contracts::google_setup::GoogleSetupCommand),
     ScopeRefresh(ScopeRefreshCommand),
+    TerminalReview(TerminalReviewCommand),
 }
 pub enum SetupReceipt {
     Registration(RegistrationReceipt),
@@ -36,6 +38,7 @@ pub enum SetupReceipt {
     Smtp(hantong_contracts::smtp_setup::SmtpSetupReceipt),
     Google(hantong_contracts::google_setup::GoogleSetupReceipt),
     ScopeRefresh(ScopeRefreshReceipt),
+    TerminalReview(TerminalReviewReceipt),
 }
 
 /// Original frame length includes JSON whitespace; reserialization is not a bound.
@@ -56,7 +59,27 @@ fn dispatch<F>(
 where
     F: FnMut(SetupCommand) -> Result<SetupReceipt, ErrorCode>,
 {
-    if request.method.starts_with("registration.scope.") {
+    if request.method.starts_with("terminal.review.") {
+        if !(1..=16_384).contains(&frame_length) {
+            return Err(ErrorCode::InvalidInput);
+        }
+        let command = crate::terminal_review_wire::parse(request)?;
+        let SetupReceipt::TerminalReview(receipt) =
+            callback(SetupCommand::TerminalReview(command.clone()))?
+        else {
+            return Err(ErrorCode::InternalError);
+        };
+        receipt.validate()?;
+        let expected = match command {
+            TerminalReviewCommand::Get(v) => Some((v.kind, v.request_id)),
+            TerminalReviewCommand::Cancel(v) => Some((v.get.kind, v.get.request_id)),
+            TerminalReviewCommand::Confirm(_) | TerminalReviewCommand::SecretSubmit(_) => None,
+        };
+        if expected.is_some_and(|(kind, id)| receipt.kind != kind || receipt.request_id != id) {
+            return Err(ErrorCode::InternalError);
+        }
+        Ok(crate::terminal_review_wire::result(&receipt))
+    } else if request.method.starts_with("registration.scope.") {
         if !(1..=16_384).contains(&frame_length) {
             return Err(ErrorCode::InvalidInput);
         }
@@ -259,6 +282,20 @@ mod tests {
         assert!(accepted.get("result").is_some());
     }
     #[test]
+    fn sec03_terminal_review_production_dispatch_enforces_method_frame_limit() {
+        let get = request(
+            "terminal.review.get",
+            json!({"protocol_version":1,"kind":"registration",
+            "request_id":"01".repeat(32),"payload_hash":"00".repeat(32),"account_id":null}),
+        );
+        for length in [0, 16_385, 131_072] {
+            let denied = response(&get, length, &mut |_| {
+                panic!("oversize terminal request reached Core")
+            });
+            assert_eq!(denied["error"]["code"], "INVALID_INPUT");
+        }
+    }
+    #[test]
     fn setup06_completion_assertions_never_invoke_callback() {
         for method in [
             "setup.imap.approve",
@@ -290,6 +327,7 @@ mod tests {
                     SetupCommand::Smtp(_) => panic!("unexpected SMTP setup"),
                     SetupCommand::Google(_) => panic!("unexpected Google setup"),
                     SetupCommand::ScopeRefresh(_) => panic!("unexpected scope refresh"),
+                    SetupCommand::TerminalReview(_) => panic!("unexpected terminal review"),
                 })
             });
             assert_eq!(mismatch["error"]["code"], "INTERNAL_ERROR");

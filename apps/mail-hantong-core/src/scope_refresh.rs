@@ -94,14 +94,17 @@ fn prepare_add_for_pin(
         .ok_or(ErrorCode::ClientNotRegistered)?;
     let target = readonly_add_scope(&base.scope, account)?;
     if let Some(staged) = store.list_staged_cli_scope_refreshes()?.into_iter().next() {
-        if !matches_google_readonly_add(&staged, account) || staged.server_public_key_hash() != &pin
+        if staged.decision_channel() != "terminal_cli"
+            || !matches_google_readonly_add(&staged, account)
+            || staged.server_public_key_hash() != &pin
         {
             return Err(ErrorCode::Conflict);
         }
         return Ok(staged);
     }
     if let Some(pending) = store.load_pending_cli_scope_refresh()? {
-        if !matches_google_readonly_add(&pending, account)
+        if pending.decision_channel() != "terminal_cli"
+            || !matches_google_readonly_add(&pending, account)
             || pending.base_registration() != &base
             || pending.server_public_key_hash() != &pin
         {
@@ -111,7 +114,7 @@ fn prepare_add_for_pin(
             return Ok(pending);
         }
     }
-    store.create_cli_scope_refresh_with_scope(hantong_platform::random_nonce()?, target, pin)
+    store.create_terminal_cli_scope_refresh(hantong_platform::random_nonce()?, target, pin)
 }
 
 fn prepare_selected_for_pin(
@@ -135,7 +138,9 @@ fn prepare_selected_for_pin(
         }
     }
     if let Some(staged) = store.list_staged_cli_scope_refreshes()?.into_iter().next() {
-        if selected.is_some_and(|account| !matches_google_readonly(&staged, account)) {
+        if staged.decision_channel() != "terminal_cli"
+            || selected.is_some_and(|account| !matches_google_readonly(&staged, account))
+        {
             return Err(ErrorCode::Conflict);
         }
         return Ok(staged);
@@ -147,6 +152,7 @@ fn prepare_selected_for_pin(
             .load_default_cli_registration()?
             .ok_or(ErrorCode::NotFound)?;
         if &current != pending.base_registration()
+            || pending.decision_channel() != "terminal_cli"
             || match selected {
                 Some(account) => !matches_google_readonly(&pending, account),
                 None => store.list_registrable_account_ids()? != pending.target_accounts(),
@@ -158,7 +164,7 @@ fn prepare_selected_for_pin(
         }
         return Ok(pending);
     }
-    store.create_cli_scope_refresh_with_scope(
+    store.create_terminal_cli_scope_refresh(
         hantong_platform::random_nonce()?,
         RequestedScope::new(
             match selected {
@@ -204,6 +210,9 @@ pub(super) async fn run_job(
 ) -> Result<(), ErrorCode> {
     let effects = Native { store, server };
     let expected = effects.load(id)?;
+    if expected.decision_channel() == "terminal_cli" {
+        return Err(ErrorCode::Conflict);
+    }
     match expected.phase() {
         ScopeRefreshPhase::Staged => recover_staged(&effects, &expected),
         ScopeRefreshPhase::Active => Ok(()),
@@ -231,6 +240,25 @@ pub(super) async fn run_job(
         }
         _ => Err(ErrorCode::Conflict),
     }
+}
+
+/// Completes a pending terminal review after the Core-owned ticket has been
+/// consumed. The terminal channel is intent metadata; Store rechecks it and
+/// the immutable snapshot before staging and activation.
+pub(super) fn run_terminal_job(
+    store: &Store,
+    server: &ServerSigningKey,
+    id: [u8; 32],
+) -> Result<(), ErrorCode> {
+    let effects = Native { store, server };
+    let expected = effects.load(id)?;
+    if expected.phase() != ScopeRefreshPhase::Pending
+        || expected.decision_channel() != "terminal_cli"
+    {
+        return Err(ErrorCode::Conflict);
+    }
+    let staged = effects.stage(&expected)?;
+    recover_staged(&effects, &staged)
 }
 
 /// Completes the first personal CLI L->B/C transition after Google consent.
@@ -510,13 +538,17 @@ fn prepare_google_changes_for_pin(
         .ok_or(ErrorCode::ClientNotRegistered)?;
     let target = google_changes_scope(&base.scope, selected)?;
     if let Some(staged) = store.list_staged_cli_scope_refreshes()?.into_iter().next() {
-        if !matches_google_changes(&staged, selected) || staged.server_public_key_hash() != &pin {
+        if staged.decision_channel() != "terminal_cli"
+            || !matches_google_changes(&staged, selected)
+            || staged.server_public_key_hash() != &pin
+        {
             return Err(ErrorCode::Conflict);
         }
         return Ok(staged);
     }
     if let Some(pending) = store.load_pending_cli_scope_refresh()? {
-        if !matches_google_changes(&pending, selected)
+        if pending.decision_channel() != "terminal_cli"
+            || !matches_google_changes(&pending, selected)
             || pending.base_registration() != &base
             || pending.server_public_key_hash() != &pin
         {
@@ -526,7 +558,7 @@ fn prepare_google_changes_for_pin(
             return Ok(pending);
         }
     }
-    store.create_cli_scope_refresh_with_scope(hantong_platform::random_nonce()?, target, pin)
+    store.create_terminal_cli_scope_refresh(hantong_platform::random_nonce()?, target, pin)
 }
 pub(super) fn prepare_google_send(
     store: &Store,
@@ -570,13 +602,17 @@ fn prepare_google_send_for_pin(
     }
     let target = RequestedScope::new(accounts, hantong_contracts::auth::default_cli_send_tools())?;
     if let Some(staged) = store.list_staged_cli_scope_refreshes()?.into_iter().next() {
-        if !matches_google_send(&staged, selected) || staged.server_public_key_hash() != &pin {
+        if staged.decision_channel() != "terminal_cli"
+            || !matches_google_send(&staged, selected)
+            || staged.server_public_key_hash() != &pin
+        {
             return Err(ErrorCode::Conflict);
         }
         return Ok(staged);
     }
     if let Some(pending) = store.load_pending_cli_scope_refresh()? {
-        if !matches_google_send(&pending, selected)
+        if pending.decision_channel() != "terminal_cli"
+            || !matches_google_send(&pending, selected)
             || pending.base_registration() != &base
             || pending.server_public_key_hash() != &pin
         {
@@ -586,5 +622,5 @@ fn prepare_google_send_for_pin(
             return Ok(pending);
         }
     }
-    store.create_cli_scope_refresh_with_scope(hantong_platform::random_nonce()?, target, pin)
+    store.create_terminal_cli_scope_refresh(hantong_platform::random_nonce()?, target, pin)
 }

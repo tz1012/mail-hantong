@@ -127,6 +127,52 @@ fn ai07_mcp_fresh_full_mail_is_not_enabled_until_protected_profile_activation() 
     );
 }
 
+#[test]
+fn terminal_mcp_read_and_full_stages_survive_reopen() {
+    let mut f = Fixture::new();
+    f.account("a");
+    let read = mcp_request(&f, 93, &["a"]);
+    let read_stage =
+        McpRegistrationStage::new_terminal_mcp(read, rid(93), mcp_public_key(), server_hash())
+            .unwrap();
+    let read_record = f
+        .store()
+        .stage_terminal_mcp_registration(&read_stage)
+        .unwrap();
+    assert_eq!(read_record.approved_channel, "terminal_cli");
+    f.reopen();
+    let read_active = f
+        .store()
+        .activate_mcp_registration(rid(93), 1, server_hash())
+        .unwrap();
+    assert_eq!(read_active.approved_channel, "terminal_cli");
+
+    let full = full_mail_request(&f, 94);
+    let full_stage = McpMailRegistrationStage::new_terminal_mcp_mail(
+        full,
+        rid(94),
+        public_key(),
+        server_hash(),
+        Some(read_active),
+    )
+    .unwrap();
+    let full_record = f
+        .store()
+        .stage_terminal_mcp_mail_registration(&full_stage)
+        .unwrap();
+    assert_eq!(full_record.approved_channel, "terminal_cli");
+    f.reopen();
+    let full_active = f
+        .store()
+        .activate_mcp_registration(rid(94), 1, server_hash())
+        .unwrap();
+    assert_eq!(full_active.approved_channel, "terminal_cli");
+    assert_eq!(
+        full_active.scope.tools(),
+        hantong_contracts::auth::mcp_mail_tools()
+    );
+}
+
 fn mcp_scope(accounts: &[&str]) -> RequestedScope {
     RequestedScope::new(
         accounts.iter().map(|account| (*account).into()).collect(),

@@ -31,7 +31,9 @@ pub use windows_identity::{
     validate_public_key, verify_signature,
 };
 #[cfg(windows)]
-pub use windows_pipe::{LocalPipeConnection, LocalPipeServer, connect, current_peer_context};
+pub use windows_pipe::{
+    LocalPipeConnection, LocalPipeServer, connect, current_peer_context, verify_core_helper_server,
+};
 
 #[cfg(not(windows))]
 pub struct LocalPipeServer;

@@ -147,3 +147,65 @@ fn acc02_v23_migration_failure_rolls_back_schema22_and_google_v8_rows() {
         Ok(())
     }).unwrap();
 }
+
+fn v23_product_rows(c: &rusqlite::Connection) -> rusqlite::Result<V14TableRows> {
+    let template = rusqlite::Connection::open_in_memory()?;
+    template.execute_batch(SCHEMA_V23)?;
+    frozen_product_table_names(SCHEMA_V23)?.into_iter()
+        .filter(|name| name != "app_metadata")
+        .map(|name| {
+            let mut query = template.prepare(&format!("PRAGMA table_info({name})"))?;
+            let columns = query.query_map([], |row| row.get::<_, String>(1))?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            Ok((name.clone(), read_table_columns(c, &name, &columns)?))
+        }).collect()
+}
+
+#[test]
+fn acc02_v24_migration_preserves_all_v23_rows_fk_sequence_and_google_history() {
+    let f = Fixture::new();
+    let (pin, account) = seed_v22_google_body(&f);
+    let store = Store { connection:f.keyed() };
+    store.migrate_v22_to_v23().unwrap();
+    store.with_connection(|c| {
+        c.execute("INSERT INTO sqlite_sequence(name,seq) SELECT 'audit_starts',9000 WHERE NOT EXISTS(SELECT 1 FROM sqlite_sequence WHERE name='audit_starts')",[])?;
+        c.execute("UPDATE sqlite_sequence SET seq=9000 WHERE name='audit_starts'",[])?;
+        validate_schema(c,SCHEMA_V23,23)
+    }).unwrap();
+    let before = store.with_connection(v23_product_rows).unwrap();
+    store.migrate_v23_to_v24().unwrap();
+    store.with_connection(|c| {
+        assert_eq!(before,v23_product_rows(c)?);
+        assert_eq!(c.query_row("SELECT seq FROM sqlite_sequence WHERE name='audit_starts'",[],|r|r.get::<_,i64>(0))?,9000);
+        assert!(c.prepare("PRAGMA foreign_key_check")?.query([])?.next()?.is_none());
+        validate_schema(c,SCHEMA,24)
+    }).unwrap();
+    let next = store.create_terminal_cli_scope_refresh([31;32],
+        hantong_contracts::auth::RequestedScope::new(vec![account],hantong_contracts::auth::default_cli_send_tools()).unwrap(),pin).unwrap();
+    assert_eq!(next.decision_channel(),"terminal_cli");
+    let staged = store.stage_cli_scope_refresh(&next).unwrap();
+    store.activate_cli_scope_refresh(&staged).unwrap();
+    assert_eq!(store.load_cli_scope_refresh([2;32]).unwrap().unwrap().decision_channel(),"google_oauth");
+    drop(store);
+    let reopened = f.open().unwrap();
+    assert_eq!(reopened.load_cli_scope_refresh([31;32]).unwrap().unwrap().decision_channel(),"terminal_cli");
+    assert!(f.0.join("data/backup-before-v23.db").is_file());
+}
+
+#[test]
+fn acc02_v24_migration_failure_rolls_back_all_v23_rows_and_schema() {
+    let f = Fixture::new();
+    seed_v22_google_body(&f);
+    let store = Store { connection:f.keyed() };
+    store.migrate_v22_to_v23().unwrap();
+    let before = store.with_connection(v23_product_rows).unwrap();
+    assert_eq!(store.migrate_with_backup(23,24,SCHEMA,|c| {
+        c.execute_batch(MIGRATION_V23_TO_V24)?;
+        c.execute_batch("CREATE TABLE unexpected_terminal_failure(value)")
+    }),Err(ErrorCode::InternalError));
+    store.with_connection(|c| {
+        assert_eq!(before,v23_product_rows(c)?);
+        assert!(c.prepare("PRAGMA foreign_key_check")?.query([])?.next()?.is_none());
+        validate_schema(c,SCHEMA_V23,23)
+    }).unwrap();
+}

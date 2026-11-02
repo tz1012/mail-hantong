@@ -1,4 +1,8 @@
+> Latest user correction (2026-11-02): [all-terminal workflows](terminal-workflows.md) supersedes native-window and Windows Hello requirements for every CLI/TUI path. Confirmation happens in the same console; provider OAuth retains its browser. Legacy descriptions below remain historical context. Security code requires human review.
+
 # CLI 발송 계약
+
+2026-11-02 최신 UX: 일반 개인 Gmail 발송은 [terminal-personal-send](terminal-personal-send.md)의 prepare → 터미널 전체 preview → 명시적 보내기/취소 → 결과로 완료한다. 아래 개인 네이티브 창 예외는 대체됐다. `hantong send`도 터미널 대화형 확인을 사용하고 JSON/no-input/리다이렉션 발송은 HUMAN_STEP_REQUIRED로 거부한다. 상태 조회는 계속 자동화할 수 있다. CLI 입력을 OS 사람 존재 증거로 취급하지 않는다.
 
 상태: 구현 초안, **사람 보안 검토 필요**. APR-01, AI-09, SYNC-07.
 상세 원장·정책 계약은 [native-send-ledger.md](native-send-ledger.md)를 따른다.

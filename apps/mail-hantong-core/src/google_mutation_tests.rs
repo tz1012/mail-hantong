@@ -154,6 +154,78 @@ fn run<F: std::future::Future>(future: F) -> F::Output {
 }
 
 #[test]
+fn apr01_terminal_mutation_request_and_preview_never_schedule_before_confirm() {
+    use hantong_contracts::terminal_review::{
+        TerminalReviewCommand as C, TerminalReviewConfirm, TerminalReviewGet,
+        TerminalReviewKind as K,
+    };
+    let f = Fixture::new();
+    let pending = f.pending("terminal-choice");
+    let server =
+        hantong_platform::ServerSigningKey::create(hantong_platform::random_nonce().unwrap())
+            .unwrap();
+    let (handle, worker) = crate::registration::coordinator(f.store(), &server, &f.root);
+    let receipt = handle
+        .request_google_mutation(REGISTRATION, 1, &pending.request)
+        .unwrap();
+    assert_eq!(receipt.state, "pending");
+    assert!(!worker.has_pending_job());
+    let peer =
+        hantong_contracts::auth::PeerContext::new("S-1-5-21-1-2-3-1001", "S-1-5-5-1-2").unwrap();
+    let preview = handle
+        .terminal_review_command(
+            C::Get(
+                TerminalReviewGet::new(
+                    K::GoogleMutation,
+                    pending.review_id,
+                    Some(f.account.clone()),
+                    [0; 32],
+                )
+                .unwrap(),
+            ),
+            &peer,
+        )
+        .unwrap();
+    assert!(!worker.has_pending_job());
+    assert_eq!(
+        f.store()
+            .google_mutation_receipt(REGISTRATION, 1, &f.account, pending.review_id)
+            .unwrap()
+            .state,
+        "pending"
+    );
+    let ticket = preview.ticket.unwrap();
+    let wrong = TerminalReviewConfirm::new(ticket, [9; 32]).unwrap();
+    assert!(
+        handle
+            .terminal_review_command(C::Confirm(wrong), &peer)
+            .is_err()
+    );
+    assert!(!worker.has_pending_job());
+    let confirm = TerminalReviewConfirm::new(ticket, preview.snapshot_hash).unwrap();
+    let confirmed = handle
+        .terminal_review_command(C::Confirm(confirm.clone()), &peer)
+        .unwrap();
+    confirmed.validate().unwrap();
+    assert_eq!(confirmed.state, "queued");
+    assert!(worker.has_pending_job());
+    assert!(
+        handle
+            .terminal_review_command(C::Confirm(confirm), &peer)
+            .is_err()
+    );
+    // No worker was run: neither preparing nor previewing nor enqueueing the
+    // confirmed job has performed a provider write or claimed the request.
+    assert_eq!(
+        f.store()
+            .google_mutation_receipt(REGISTRATION, 1, &f.account, pending.review_id)
+            .unwrap()
+            .state,
+        "pending"
+    );
+}
+
+#[test]
 fn apr01_google_mutation_claims_before_one_provider_poll_and_records_terminal_receipts() {
     for (outcome, state, error) in [
         (MutationOutcome::Accepted, "accepted", None),

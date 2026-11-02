@@ -1,3 +1,5 @@
+> Latest user correction (2026-11-02): [all-terminal workflows](terminal-workflows.md) supersedes native-window and Windows Hello requirements for every CLI/TUI path. Confirmation happens in the same console; provider OAuth retains its browser. Legacy descriptions below remain historical context. Security code requires human review.
+
 # 암호화 데이터베이스 계약 v1
 
 상태: M1-04 구현 기준 및 v12 UID 공개 작업·명시 권한 갱신 확장, **사람 보안 검토 필요**. 코어의 암호화 저장소 연결은 구현됐으며 메일 API 활성화와는 별개다. `SEC-01`, `SEC-02`와 [ADR-004](../adr/ADR-004-encrypted-storage.md)를 함께 적용한다.

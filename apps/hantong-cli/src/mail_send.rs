@@ -83,6 +83,141 @@ fn output_review(v: client::ReviewResponse, lang: Lang, json: bool) -> i32 {
     }
     v.error_code.map_or(0, ErrorCode::exit_code)
 }
+
+fn terminal_safe(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    for c in value.chars() {
+        if matches!(c, '\u{2028}'..='\u{202e}' | '\u{2066}'..='\u{2069}' | '\u{200e}' | '\u{200f}')
+        {
+            out.push_str(&format!("\\u{{{:04x}}}", c as u32));
+        } else if c == '\r' {
+            out.push_str("\\r");
+        } else if c == '\n' || c == '\t' {
+            out.push(c);
+        } else if c.is_control() {
+            out.push('\u{fffd}');
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
+fn interactive_send(
+    request: SendReviewRequest,
+    lang: Lang,
+) -> Result<client::ReviewResponse, ErrorCode> {
+    use std::io::{BufRead, IsTerminal, Read, Write};
+    if !std::io::stdin().is_terminal() || !std::io::stdout().is_terminal() {
+        return Err(ErrorCode::HumanStepRequired);
+    }
+    let personal = if request.account_id().starts_with("google_") {
+        hantong_ipc_client::google_mail::verify_default_personal(
+            request.account_id(),
+            hantong_contracts::google_setup::GoogleLocalProfile::PersonalReadSend,
+        )?
+    } else {
+        false
+    };
+    if !personal {
+        let receipt = client::request_default(&request)?;
+        if receipt.state == "pending" {
+            super::core_start::review(
+                hantong_contracts::terminal_review::TerminalReviewKind::ProtectedSend,
+                receipt.review_id,
+                Some(request.account_id()),
+                Some(*request.payload_hash()),
+                lang,
+            )?;
+            let status = SendReviewStatusRequest {
+                account_id: request.account_id().into(),
+                review_id: receipt.review_id,
+            };
+            let mut response = client::status_default(&status)?;
+            for _ in 0..300 {
+                if !matches!(response.state.as_str(), "pending" | "sending") {
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_secs(1));
+                response = client::status_default(&status)?;
+            }
+            return Ok(response);
+        }
+        return Ok(receipt);
+    }
+    let prepared = client::prepare_default(&request)?;
+    let Some(preview) = prepared.preview.as_ref() else {
+        return Ok(prepared.receipt);
+    };
+    println!(
+        "{}: {}\n{}: {}\n{}: {}\n{}:\n{}",
+        resource(lang, "preview_from"),
+        terminal_safe(&preview.from),
+        resource(lang, "preview_to"),
+        terminal_safe(&preview.to.join(", ")),
+        resource(lang, "preview_subject"),
+        terminal_safe(&preview.subject),
+        resource(lang, "preview_body"),
+        terminal_safe(&preview.body)
+    );
+    if !preview.attachments.is_empty() {
+        println!("{}:", resource(lang, "preview_attachments"));
+        for a in &preview.attachments {
+            println!(
+                "- {} | {} | {} bytes",
+                terminal_safe(&a.filename),
+                terminal_safe(&a.media_type),
+                a.size
+            );
+        }
+    }
+    print!("{} ", resource(lang, "send_prompt"));
+    std::io::stdout()
+        .flush()
+        .map_err(|_| ErrorCode::CoreUnavailable)?;
+    let mut input = String::new();
+    let count = std::io::stdin()
+        .lock()
+        .take(257)
+        .read_line(&mut input)
+        .map_err(|_| ErrorCode::CoreUnavailable)?;
+    if count > 256 {
+        let _ = client::cancel_default(&SendReviewStatusRequest {
+            account_id: request.account_id().into(),
+            review_id: prepared.receipt.review_id,
+        });
+        return Err(ErrorCode::InvalidInput);
+    }
+    if input.trim() != "1" {
+        let _ = client::cancel_default(&hantong_contracts::mail_send::SendReviewStatusRequest {
+            account_id: request.account_id().into(),
+            review_id: prepared.receipt.review_id,
+        });
+        return Ok(client::ReviewResponse {
+            state: "interrupted".into(),
+            error_code: Some(ErrorCode::ApprovalRequired),
+            ..prepared.receipt
+        });
+    }
+    let mut response = client::confirm_default(
+        &hantong_contracts::mail_send::PersonalSendConfirmRequest::new(
+            request.account_id(),
+            prepared.receipt.review_id,
+            preview.payload_hash,
+        )?,
+    )?;
+    for _ in 0..300 {
+        if !matches!(response.state.as_str(), "pending" | "sending") {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_secs(1));
+        response = client::status_default(&SendReviewStatusRequest {
+            account_id: request.account_id().into(),
+            review_id: response.review_id,
+        })?;
+    }
+    Ok(response)
+}
 pub(super) fn run(
     command: &[String],
     options: &[(String, String)],
@@ -211,7 +346,7 @@ pub(super) fn run(
             }
             Err(e) => emit_error(e, lang, json),
         },
-        Command::Send(r) => match client::request_default(&r) {
+        Command::Send(r) => match interactive_send(r, lang) {
             Ok(v) => output_review(v, lang, json),
             Err(e) => emit_error(e, lang, json),
         },
@@ -229,6 +364,13 @@ enum Command {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn apr01_send_preview_escapes_carriage_return_and_terminal_controls() {
+        assert_eq!(
+            terminal_safe("first\roverwrite\u{1b}[2J\u{202e}x"),
+            "first\\roverwrite\u{fffd}[2J\\u{202e}x"
+        );
+    }
     #[test]
     fn cli_send_fields_reject_duplicates_and_unknown_authority() {
         assert!(fields(&[("--approved".into(), "yes".into())], &["--account"]).is_err());

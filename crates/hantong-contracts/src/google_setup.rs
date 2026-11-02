@@ -79,6 +79,12 @@ impl GoogleSetupInput {
 pub enum GoogleSetupCommand {
     Request(GoogleSetupInput),
     Status([u8; 32]),
+    ClientTicket([u8; 32]),
+    StageClient {
+        request_id: [u8; 32],
+        ticket: Vec<u8>,
+        staged_handle: [u8; 32],
+    },
 }
 #[derive(Clone, Eq, PartialEq)]
 pub struct GoogleSetupReceipt {
@@ -88,6 +94,7 @@ pub struct GoogleSetupReceipt {
     pub account_id: Option<String>,
     pub login_url: Option<String>,
     pub error_code: Option<ErrorCode>,
+    pub client_ticket: Option<Vec<u8>>,
 }
 impl std::fmt::Debug for GoogleSetupReceipt {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -114,7 +121,11 @@ impl GoogleSetupReceipt {
             "failed" | "interrupted" => self.error_code.is_some(),
             _ => false,
         };
-        if !valid
+        if self
+            .client_ticket
+            .as_ref()
+            .is_some_and(|v| v.len() != 32 && v.len() != 320)
+            || !valid
             || self.login_url.as_ref().is_some_and(|u| {
                 u.len() > 8192
                     || !u.starts_with("https://accounts.google.com/o/oauth2/v2/auth?")
@@ -127,7 +138,7 @@ impl GoogleSetupReceipt {
         Ok(())
     }
     pub fn to_json(&self) -> serde_json::Value {
-        serde_json::json!({"protocol_version":1,"request_id":crate::wire_hex::encode(&self.request_id),"expires_at_utc_ms":self.expires_at_utc_ms,"state":self.state,"account_id":self.account_id,"login_url":self.login_url,"error_code":self.error_code.map(ErrorCode::as_str)})
+        serde_json::json!({"protocol_version":1,"request_id":crate::wire_hex::encode(&self.request_id),"expires_at_utc_ms":self.expires_at_utc_ms,"state":self.state,"account_id":self.account_id,"login_url":self.login_url,"error_code":self.error_code.map(ErrorCode::as_str),"client_ticket":self.client_ticket.as_ref().map(|v| crate::wire_hex::encode(v))})
     }
 }
 

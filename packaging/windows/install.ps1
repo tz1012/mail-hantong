@@ -48,6 +48,96 @@ $createdShims = @()
 $promoted = $false
 $recorded = $false
 $firstInstall = $false
+
+# TESTABLE_CORE_STOP_FUNCTIONS_BEGIN
+function Get-CurrentUserSid {
+    return ([Security.Principal.WindowsIdentity]::GetCurrent()).User.Value
+}
+function Get-CoreProcessRecords {
+    return @(Get-CimInstance Win32_Process -Filter "Name = 'mail-hantong-core.exe'" |
+        ForEach-Object {
+            $owner = Invoke-CimMethod -InputObject $_ -MethodName GetOwner
+            $sid = $null
+            if ($owner.ReturnValue -eq 0) {
+                try { $sid = ([Security.Principal.NTAccount]"$($owner.Domain)\$($owner.User)").Translate([Security.Principal.SecurityIdentifier]).Value } catch { $sid = $null }
+            }
+            [pscustomobject]@{ Pid = [int]$_.ProcessId; Path = [string]$_.ExecutablePath; CommandLine = [string]$_.CommandLine; OwnerSid = $sid }
+        })
+}
+function Stop-CoreProcess([int] $ProcessId) {
+    Stop-Process -Id $ProcessId -Force -ErrorAction Stop
+}
+function Assert-OwnedCoreFile([string] $Path, $Record) {
+    Assert-SafePath $Path
+    $item = Get-Item -LiteralPath $Path -Force -ErrorAction Stop
+    if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or
+        -not ($item.PSIsContainer -eq $false) -or $item.Length -ne [int64]$Record.size) { throw 'Owned Core runtime is not a regular verified file' }
+    if ((Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash -ine [string]$Record.sha256) { throw 'Owned Core runtime hash changed' }
+}
+function Get-NormalizedWindowsPath([string] $Path) {
+    $normalized = $Path.Replace('/', '\')
+    if ($normalized.StartsWith('\\?\UNC\', [StringComparison]::OrdinalIgnoreCase)) {
+        $normalized = '\\' + $normalized.Substring(8)
+    } elseif ($normalized.StartsWith('\\?\', [StringComparison]::OrdinalIgnoreCase)) {
+        $normalized = $normalized.Substring(4)
+    }
+    if ($normalized.StartsWith('\\', [StringComparison]::Ordinal)) {
+        return '\\' + (($normalized.Substring(2)) -replace '\\{2,}', '\')
+    }
+    return $normalized -replace '\\{2,}', '\'
+}
+function Get-CanonicalWindowsPath([string] $Path) {
+    return (Get-NormalizedWindowsPath ([IO.Path]::GetFullPath($Path)))
+}
+function Test-CoreCommandLine([string] $CommandLine, [string] $ExecutablePath) {
+    $CommandLine = $CommandLine.Trim()
+    $argsPattern = '(?:run(?:\s+--lang\s+(?:en|ko))?|--lang\s+(?:en|ko)\s+run)'
+    if ($CommandLine -match "^$argsPattern$") { return $true }
+    if ($CommandLine -match '^(?:"([^"]+)"|(\S+))\s+(.+)$') {
+        $prefix = if ($Matches[1]) { $Matches[1] } else { $Matches[2] }
+        return ([StringComparer]::OrdinalIgnoreCase.Equals((Get-CanonicalWindowsPath $prefix), (Get-CanonicalWindowsPath $ExecutablePath)) -and $Matches[3] -match "^$argsPattern$")
+    }
+    return $false
+}
+function Stop-OwnedCoreForUpdate([string] $Root, $Versions) {
+    $currentSid = Get-CurrentUserSid
+    $owned = @{}
+    foreach ($version in $Versions) {
+        $core = @($version.files | Where-Object { [string]$_.path -ieq 'bin/mail-hantong-core.exe' })
+        $manifest = @($version.files | Where-Object { [string]$_.path -ieq 'release-manifest.json' })
+        if ($core.Count -ne 1 -or $manifest.Count -gt 1) { throw 'Cannot verify installed Core runtime ownership' }
+        $corePath = Get-ChildPath $Root "versions/$($version.version)/bin/mail-hantong-core.exe"
+        Assert-OwnedCoreFile $corePath $core[0]
+        # Older owned installations predate copying release-manifest.json.
+        # Validate that sibling when present, but retain the legacy upgrade path.
+        if ($manifest.Count -eq 1) {
+            $manifestPath = Get-ChildPath $Root "versions/$($version.version)/release-manifest.json"
+            Assert-OwnedCoreFile $manifestPath $manifest[0]
+        }
+        $owned[(Get-CanonicalWindowsPath $corePath)] = $true
+    }
+    $records = @(Get-CoreProcessRecords)
+    $candidates = @()
+    foreach ($record in $records) {
+        if ([string]::IsNullOrWhiteSpace($record.Path)) { throw 'Cannot verify Core executable path' }
+        $path = Get-CanonicalWindowsPath ([string]$record.Path)
+        if ($owned.ContainsKey($path)) {
+            if (-not (Test-CoreCommandLine ([string]$record.CommandLine) $path)) { throw 'Refusing to stop Core with an unsupported command line' }
+            if ([string]$record.OwnerSid -ne $currentSid) { throw 'Refusing to stop Core owned by another user' }
+            $candidates += [pscustomobject]@{ Pid = [int]$record.Pid; Path = $path; CommandLine = [string]$record.CommandLine; OwnerSid = [string]$record.OwnerSid }
+        }
+    }
+    if ($candidates.Count -eq 0) { return }
+    if ($candidates.Count -ne 1) { throw 'Multiple installed Core runtimes are running; refusing to stop an ambiguous process' }
+    $candidate = $candidates[0]
+    $fresh = @(Get-CoreProcessRecords | Where-Object { [int]$_.Pid -eq $candidate.Pid })
+    if ($fresh.Count -ne 1 -or -not [StringComparer]::OrdinalIgnoreCase.Equals((Get-CanonicalWindowsPath ([string]$fresh[0].Path)), $candidate.Path) -or
+        [string]$fresh[0].CommandLine -cne $candidate.CommandLine -or [string]$fresh[0].OwnerSid -cne $currentSid) {
+        throw 'Core process changed during installer validation; refusing to stop it'
+    }
+    Stop-CoreProcess $candidate.Pid
+}
+# TESTABLE_CORE_STOP_FUNCTIONS_END
 try {
     $versions = @()
     if (Test-Path -LiteralPath $marker) {
@@ -83,6 +173,12 @@ try {
         $stage = $null
         $promoted = $true
         $versions += [pscustomobject]@{ version = $release.version; files = @($ownedFiles) }
+    }
+    $activeVersion = $null
+    $currentPath = Get-ChildPath $root 'current.txt'
+    if (Test-Path -LiteralPath $currentPath -PathType Leaf) { $activeVersion = [IO.File]::ReadAllText($currentPath) }
+    if (-not $firstInstall -and $activeVersion -cne [string]$release.version) {
+        Stop-OwnedCoreForUpdate $root $versions
     }
     $bin = Get-ChildPath $root 'bin'
     $null = New-Item -ItemType Directory -Force -Path $bin

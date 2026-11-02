@@ -1,0 +1,5 @@
+review_title=Terminal review
+confirm_prompt=Enter 1 to confirm this operation, or 0 to cancel: 
+result_label=Result
+google_client=Google Desktop app setup. Enter the client secret only in the hidden input below.
+secret_prompt=Hidden credential input (input is not displayed; an empty line cancels):

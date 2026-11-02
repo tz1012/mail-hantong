@@ -89,6 +89,23 @@ impl CliRegistrationStage {
         client_public_key: [u8; 72],
         expected_server_public_key_hash: [u8; 32],
     ) -> Result<Self, ErrorCode> {
+        Self::new_for_channel(
+            flavor,
+            expected_request,
+            registration_id,
+            client_public_key,
+            expected_server_public_key_hash,
+            "approval_helper",
+        )
+    }
+    fn new_for_channel(
+        flavor: RegistrationFlavor,
+        expected_request: RegistrationRequest,
+        registration_id: [u8; 16],
+        client_public_key: [u8; 72],
+        expected_server_public_key_hash: [u8; 32],
+        decision_channel: &'static str,
+    ) -> Result<Self, ErrorCode> {
         if !flavor.matches_request(&expected_request)
             || expected_request.state != RegistrationRequestState::Pending
             || expected_request.request_id == [0; 32]
@@ -111,7 +128,7 @@ impl CliRegistrationStage {
             client_public_key,
             expected_server_public_key_hash,
             expected_mcp_replacement: None,
-            decision_channel: "approval_helper",
+            decision_channel,
         })
     }
 
@@ -141,6 +158,24 @@ impl CliRegistrationStage {
         )?;
         stage.decision_channel = "google_oauth";
         Ok(stage)
+    }
+
+    /// Terminal review provenance for the default personal CLI registration.
+    /// This is intent metadata, never OS human-presence evidence.
+    pub fn new_terminal_cli(
+        expected_request: RegistrationRequest,
+        registration_id: [u8; 16],
+        client_public_key: [u8; 72],
+        expected_server_public_key_hash: [u8; 32],
+    ) -> Result<Self, ErrorCode> {
+        Self::new_for_channel(
+            RegistrationFlavor::Cli,
+            expected_request,
+            registration_id,
+            client_public_key,
+            expected_server_public_key_hash,
+            "terminal_cli",
+        )
     }
 }
 
@@ -200,6 +235,26 @@ impl McpRegistrationStage {
             )?,
         })
     }
+    pub fn new_terminal_mcp(
+        expected_request: RegistrationRequest,
+        registration_id: [u8; 16],
+        client_public_key: [u8; 72],
+        expected_server_public_key_hash: [u8; 32],
+    ) -> Result<Self, ErrorCode> {
+        if expected_request.scope.tools() != hantong_contracts::auth::mcp_read_tools() {
+            return Err(ErrorCode::InvalidInput);
+        }
+        Ok(Self {
+            inner: CliRegistrationStage::new_for_channel(
+                RegistrationFlavor::Mcp,
+                expected_request,
+                registration_id,
+                client_public_key,
+                expected_server_public_key_hash,
+                "terminal_cli",
+            )?,
+        })
+    }
 }
 pub struct McpMailRegistrationStage {
     inner: CliRegistrationStage,
@@ -231,6 +286,27 @@ impl McpMailRegistrationStage {
         }
         let mut inner =
             CliRegistrationStage::new_for(RegistrationFlavor::Mcp, request, id, key, server_hash)?;
+        inner.expected_mcp_replacement = replaced;
+        Ok(Self { inner })
+    }
+    pub fn new_terminal_mcp_mail(
+        request: RegistrationRequest,
+        id: [u8; 16],
+        key: [u8; 72],
+        server_hash: [u8; 32],
+        replaced: Option<RegistrationRecord>,
+    ) -> Result<Self, ErrorCode> {
+        if request.scope.tools() != hantong_contracts::auth::mcp_mail_tools() {
+            return Err(ErrorCode::InvalidInput);
+        }
+        let mut inner = CliRegistrationStage::new_for_channel(
+            RegistrationFlavor::Mcp,
+            request,
+            id,
+            key,
+            server_hash,
+            "terminal_cli",
+        )?;
         inner.expected_mcp_replacement = replaced;
         Ok(Self { inner })
     }
@@ -420,6 +496,15 @@ impl Store {
         }
         self.stage_registration(stage, RegistrationFlavor::Cli)
     }
+    pub fn stage_terminal_cli_registration(
+        &self,
+        stage: &CliRegistrationStage,
+    ) -> Result<RegistrationRecord, ErrorCode> {
+        if stage.decision_channel != "terminal_cli" {
+            return Err(ErrorCode::InvalidInput);
+        }
+        self.stage_registration(stage, RegistrationFlavor::Cli)
+    }
     pub fn stage_gui_registration(
         &self,
         stage: &GuiRegistrationStage,
@@ -432,10 +517,28 @@ impl Store {
     ) -> Result<RegistrationRecord, ErrorCode> {
         self.stage_registration(&stage.inner, RegistrationFlavor::Mcp)
     }
+    pub fn stage_terminal_mcp_registration(
+        &self,
+        stage: &McpRegistrationStage,
+    ) -> Result<RegistrationRecord, ErrorCode> {
+        if stage.inner.decision_channel != "terminal_cli" {
+            return Err(ErrorCode::InvalidInput);
+        }
+        self.stage_registration(&stage.inner, RegistrationFlavor::Mcp)
+    }
     pub fn stage_mcp_mail_registration(
         &self,
         stage: &McpMailRegistrationStage,
     ) -> Result<RegistrationRecord, ErrorCode> {
+        self.stage_registration(&stage.inner, RegistrationFlavor::Mcp)
+    }
+    pub fn stage_terminal_mcp_mail_registration(
+        &self,
+        stage: &McpMailRegistrationStage,
+    ) -> Result<RegistrationRecord, ErrorCode> {
+        if stage.inner.decision_channel != "terminal_cli" {
+            return Err(ErrorCode::InvalidInput);
+        }
         self.stage_registration(&stage.inner, RegistrationFlavor::Mcp)
     }
     pub fn load_mcp_replaced_registration(
@@ -612,7 +715,10 @@ impl Store {
                     || registration.requests_per_minute != 60
                     || !(registration.approved_channel == "approval_helper"
                         || (flavor == RegistrationFlavor::Cli
-                            && registration.approved_channel == "google_oauth"))
+                            && (registration.approved_channel == "google_oauth"
+                                || registration.approved_channel == "terminal_cli"))
+                        || (flavor == RegistrationFlavor::Mcp
+                            && registration.approved_channel == "terminal_cli"))
                     || registration.scope != request.scope
                 { return Err(ErrorCode::InternalError); }
                 same_server(tx, &server)?;
@@ -915,7 +1021,8 @@ pub(super) fn validate_mcp_registration(
         || record.scope != request.scope
         || record.read_only != (record.scope.tools() != hantong_contracts::auth::mcp_mail_tools())
         || record.requests_per_minute != 60
-        || record.approved_channel != "approval_helper"
+        || !(record.approved_channel == "approval_helper"
+            || record.approved_channel == "terminal_cli")
         || record.profile_epoch != 1
         || record.registration_id
             != hantong_platform::registration_id_for_request(record.request_id)

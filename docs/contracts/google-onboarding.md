@@ -1,3 +1,5 @@
+> Latest user correction (2026-11-02): [all-terminal workflows](terminal-workflows.md) supersedes native-window and Windows Hello requirements for every CLI/TUI path. Confirmation happens in the same console; provider OAuth retains its browser. Legacy descriptions below remain historical context. Security code requires human review.
+
 # Google multi-account onboarding — 2026-11-01 implementation draft
 
 

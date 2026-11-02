@@ -1,0 +1,5 @@
+review_title=터미널 확인
+confirm_prompt=계속하려면 1을 입력하고 취소하려면 0을 입력하세요: 
+result_label=처리 결과
+google_client=Google Desktop 앱 설정입니다. 앱 비밀값은 아래 숨김 입력에서만 입력하세요.
+secret_prompt=숨김 자격 증명 입력 (화면에 표시되지 않으며 빈 줄은 취소합니다):

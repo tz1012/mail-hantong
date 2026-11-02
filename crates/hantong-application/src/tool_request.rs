@@ -80,6 +80,9 @@ pub enum ToolRequest {
 #[derive(Clone, Eq, PartialEq)]
 pub enum SendReviewAction {
     Request(hantong_contracts::mail_send::SendReviewRequest),
+    Prepare(hantong_contracts::mail_send::SendReviewRequest),
+    Confirm(hantong_contracts::mail_send::PersonalSendConfirmRequest),
+    Cancel(hantong_contracts::mail_send::SendReviewStatusRequest),
     Status(hantong_contracts::mail_send::SendReviewStatusRequest),
 }
 #[derive(Clone, Eq, PartialEq)]
@@ -181,7 +184,7 @@ impl ToolRequest {
             hantong_contracts::google_mutation::REQUEST_TOOL => {
                 let mode = string(params.get("mode").ok_or(ErrorCode::InvalidInput)?)?;
                 match mode {
-                    "request" => {
+                    "request" | "prepare" => {
                         exact_keys(params, &["mode", "request"])?;
                         let request =
                             hantong_contracts::google_mutation::MutationPayload::from_json(
@@ -303,7 +306,7 @@ impl ToolRequest {
             "mail.send.request" => {
                 let mode = string(params.get("mode").ok_or(ErrorCode::InvalidInput)?)?;
                 let action = match mode {
-                    "request" => {
+                    "request" | "prepare" => {
                         exact_keys(
                             params,
                             &[
@@ -316,20 +319,59 @@ impl ToolRequest {
                                 "payload_hash",
                             ],
                         )?;
-                        SendReviewAction::Request(
-                            hantong_contracts::mail_send::SendReviewRequest::new(
+                        let request = hantong_contracts::mail_send::SendReviewRequest::new(
+                            string(&params["account_id"])?,
+                            hantong_contracts::wire_hex::decode_fixed(string(
+                                &params["draft_id"],
+                            )?)?,
+                            u64::try_from(integer(&params["expected_version"])?)
+                                .map_err(|_| ErrorCode::InvalidInput)?,
+                            string(&params["operation_id"])?,
+                            string(&params["idempotency_key"])?,
+                            hantong_contracts::wire_hex::decode_fixed(string(
+                                &params["payload_hash"],
+                            )?)?,
+                        )?;
+                        if mode == "prepare" {
+                            SendReviewAction::Prepare(request)
+                        } else {
+                            SendReviewAction::Request(request)
+                        }
+                    }
+                    "confirm" => {
+                        exact_keys(params, &["mode", "account_id", "review_id", "payload_hash"])?;
+                        SendReviewAction::Confirm(
+                            hantong_contracts::mail_send::PersonalSendConfirmRequest::new(
                                 string(&params["account_id"])?,
                                 hantong_contracts::wire_hex::decode_fixed(string(
-                                    &params["draft_id"],
+                                    &params["review_id"],
                                 )?)?,
-                                u64::try_from(integer(&params["expected_version"])?)
-                                    .map_err(|_| ErrorCode::InvalidInput)?,
-                                string(&params["operation_id"])?,
-                                string(&params["idempotency_key"])?,
                                 hantong_contracts::wire_hex::decode_fixed(string(
                                     &params["payload_hash"],
                                 )?)?,
                             )?,
+                        )
+                    }
+                    "cancel" => {
+                        exact_keys(params, &["mode", "account_id", "review_id"])?;
+                        let account = string(&params["account_id"])?;
+                        let review_id = hantong_contracts::wire_hex::decode_fixed(string(
+                            &params["review_id"],
+                        )?)?;
+                        if review_id == [0; 32]
+                            || account.is_empty()
+                            || account.len() > 128
+                            || !account
+                                .bytes()
+                                .all(|b| b.is_ascii_alphanumeric() || b"_-".contains(&b))
+                        {
+                            return Err(ErrorCode::InvalidInput);
+                        }
+                        SendReviewAction::Cancel(
+                            hantong_contracts::mail_send::SendReviewStatusRequest {
+                                account_id: account.into(),
+                                review_id,
+                            },
                         )
                     }
                     "status" => {
@@ -511,8 +553,11 @@ impl ToolRequest {
             Self::GoogleMutation { account_ids, .. } => account_ids,
             Self::DraftCreate { request, .. } => request.account_ids(),
             Self::SendReview { action, .. } => match action {
-                SendReviewAction::Request(r) => r.account_ids(),
-                SendReviewAction::Status(r) => std::slice::from_ref(&r.account_id),
+                SendReviewAction::Request(r) | SendReviewAction::Prepare(r) => r.account_ids(),
+                SendReviewAction::Confirm(r) => std::slice::from_ref(&r.account_id),
+                SendReviewAction::Cancel(r) | SendReviewAction::Status(r) => {
+                    std::slice::from_ref(&r.account_id)
+                }
             },
             Self::SendExecute(value) => std::slice::from_ref(&value.account_id),
             Self::MessageLocator { account_id, .. } => std::slice::from_ref(account_id),
@@ -1344,6 +1389,68 @@ mod tests {
                 Err(ErrorCode::InvalidInput)
             );
         }
+    }
+
+    #[test]
+    fn apr01_terminal_send_modes_are_exact_and_authority_free() {
+        let base = serde_json::json!({
+            "mode":"prepare", "account_id":"a", "draft_id":"11".repeat(32),
+            "operation_id":"op", "idempotency_key":"key", "expected_version":1,
+            "payload_hash":"22".repeat(32)
+        });
+        assert!(matches!(
+            ToolRequest::validate(&envelope("mail.send.request", base.clone())).unwrap(),
+            ToolRequest::SendReview {
+                action: SendReviewAction::Prepare(_),
+                ..
+            }
+        ));
+        let mut extra = base.clone();
+        extra["approved"] = Value::Bool(true);
+        assert_eq!(
+            ToolRequest::validate(&envelope("mail.send.request", extra)),
+            Err(ErrorCode::InvalidInput)
+        );
+        for field in [
+            "account_id",
+            "draft_id",
+            "operation_id",
+            "idempotency_key",
+            "expected_version",
+            "payload_hash",
+        ] {
+            let mut missing = base.clone();
+            missing.as_object_mut().unwrap().remove(field);
+            assert_eq!(
+                ToolRequest::validate(&envelope("mail.send.request", missing)),
+                Err(ErrorCode::InvalidInput)
+            );
+        }
+        let confirm = serde_json::json!({
+            "mode":"confirm", "account_id":"a", "review_id":"33".repeat(32),
+            "payload_hash":"22".repeat(32)
+        });
+        assert!(matches!(
+            ToolRequest::validate(&envelope("mail.send.request", confirm)).unwrap(),
+            ToolRequest::SendReview {
+                action: SendReviewAction::Confirm(_),
+                ..
+            }
+        ));
+        let cancel =
+            serde_json::json!({"mode":"cancel", "account_id":"a", "review_id":"33".repeat(32)});
+        assert!(matches!(
+            ToolRequest::validate(&envelope("mail.send.request", cancel)).unwrap(),
+            ToolRequest::SendReview {
+                action: SendReviewAction::Cancel(_),
+                ..
+            }
+        ));
+        let unknown = serde_json::json!({"mode":"approved", "account_id":"a"});
+        assert_eq!(
+            ToolRequest::validate(&envelope("mail.send.request", unknown)),
+            Err(ErrorCode::InvalidInput)
+        );
     }
 }
 

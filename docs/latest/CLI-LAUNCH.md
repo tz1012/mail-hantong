@@ -2,11 +2,11 @@
 
 The command is `hantong`. English is the default; use `--lang ko` for Korean. The companion `mail-hantong-core` process handles encrypted local storage, mail operations and policy. The graphical mail application is not included in the CLI package.
 
-**Release status: Windows beta candidate under verification.** The planned label is `0.1.0-beta.1`; binaries report `0.1.0`. It will be published only after actual mail read/send verification. [Release downloads](https://github.com/tz1012/mail-hantong/releases) include checksums. Human security review, clean Windows VM testing and Google verification remain separate open gates. macOS mail operations are not available yet.
+**Release status: Windows beta candidate under verification.** The planned label is `0.1.0-beta.3`; binaries report `0.1.0`. The terminal workflow is being verified before publication. [Release downloads](https://github.com/tz1012/mail-hantong/releases) include checksums. Human security review, clean Windows VM testing and Google verification remain separate open gates. macOS mail operations are not available yet.
 
 ## What works in this preview
 
-The current candidate adds guided installation/startup, personal feature selection followed by Google consent, safe bounded Gmail text previews, and an explicit same-account read-to-send feature action. Publisher configuration is included, so ordinary users do not configure Google Cloud. Each actual send still requires native message review and human verification. See [Google setup and commands](GOOGLE-MAIL.md) and [current verification status](PROGRESS.md).
+The current candidate adds guided installation/startup, personal feature selection followed by Google consent, safe bounded Gmail text previews, and an explicit same-account read-to-send feature action. Publisher configuration is included, so ordinary users do not configure Google Cloud. Compose, complete message review, Send/Cancel, client registration and advanced settings use the same terminal. Google OAuth opens its standard provider browser. See [Google setup and commands](GOOGLE-MAIL.md) and [current verification status](PROGRESS.md).
 
 | Available | Not yet available |
 | --- | --- |
@@ -19,7 +19,9 @@ The current candidate adds guided installation/startup, personal feature selecti
 | Managed Codex / Claude Console AI sessions and MCP mail tools | Claude subscription OAuth in third-party products |
 | Core status, diagnostics and stable error/exit codes | Complete background mailbox synchronization |
 
-IMAP setup and registration use a small protected Windows window for password entry and human verification. Passwords and approval are not accepted through command arguments. A terminal with an interactive Windows desktop is required for these steps. `--no-input` does not bypass them.
+IMAP/SMTP and advanced Google setup use hidden credential input in the same console. Passwords are never accepted through command arguments or JSON. Core validates the complete pending request before applying the selected operation. Interactive steps require terminal input and output; `--no-input`, redirected output and JSON do not confirm an operation. Terminal confirmation expresses intent and does not provide Windows Hello human-presence verification.
+
+To review an agent-created pending request, use `hantong review --kind <kind> --request-id <id>`. Kinds include `registration`, `scope_refresh`, `google_setup`, `imap_setup`, `smtp_setup`, `google_mutation`, `personal_send` and `protected_send`. The terminal shows Core's complete stored request before offering Confirm/Cancel.
 
 ## Install with one command
 
@@ -229,8 +231,9 @@ The package tool builds the terminal distribution and core, records versions and
 
 ## Simple personal Gmail sending
 
-In the personal Gmail work menu, choose Compose, enter the recipients, subject,
-body and optional attachment, then open Review message. Read the complete native
-review and press Send. This bounded personal path does not request Windows Hello.
+In the personal Gmail work menu, choose Compose and enter the recipients, subject,
+body and optional attachment. Review the complete message in the same terminal,
+then choose Send or Cancel. This personal path opens no native HanTong window
+and requests no Windows Hello. Headless/JSON sending cannot confirm a message.
 Other registered profiles and protected settings retain their existing identity
 checks. Cancelling does not send; unknown is never automatically retried.

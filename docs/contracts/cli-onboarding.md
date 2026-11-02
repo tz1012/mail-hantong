@@ -1,4 +1,10 @@
+> Latest user correction (2026-11-02): [all-terminal workflows](terminal-workflows.md) supersedes native-window and Windows Hello requirements for every CLI/TUI path. Confirmation happens in the same console; provider OAuth retains its browser. Legacy descriptions below remain historical context. Security code requires human review.
+
 # Guided CLI first run
+
+Latest 2026-11-02 correction: compose/review/send/cancel use the terminal-only
+personal flow in terminal-personal-send.md. The previous native personal sending
+window is superseded. Provider OAuth still opens the browser.
 
 
 > 2026-11-02: [Google personal CLI extension](google-personal-cli.md) supersedes native-only account/CLI setup clauses only for the bounded guided personal flow. Live verified OAuth authorizes its fixed feature configuration; feature selection alone does not. Per-send/mutation approval and advanced native setup remain. Human security review required.

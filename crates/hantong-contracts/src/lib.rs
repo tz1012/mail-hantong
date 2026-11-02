@@ -174,3 +174,4 @@ mod tests {
 pub mod mail_send;
 pub mod scope_refresh;
 pub mod smtp_setup;
+pub mod terminal_review;

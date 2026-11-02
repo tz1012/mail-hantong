@@ -12,6 +12,7 @@ pub mod bootstrap;
 pub mod imap_setup_wire;
 pub mod registration_wire;
 pub mod setup_dispatch;
+pub mod terminal_review_wire;
 
 use hantong_contracts::ErrorCode;
 use serde::Deserializer;

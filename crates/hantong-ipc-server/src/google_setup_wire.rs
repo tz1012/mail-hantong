@@ -11,6 +11,43 @@ pub fn parse(r: &RpcRequest) -> Result<GoogleSetupCommand, ErrorCode> {
         return Err(ErrorCode::VersionMismatch);
     }
     match r.method.as_str() {
+        "setup.google.client_ticket" if p.len() == 2 => {
+            let id = wire_hex::decode_fixed(
+                p.get("request_id")
+                    .and_then(Value::as_str)
+                    .ok_or(ErrorCode::InvalidInput)?,
+            )?;
+            if id == [0; 32] {
+                return Err(ErrorCode::InvalidInput);
+            }
+            Ok(GoogleSetupCommand::ClientTicket(id))
+        }
+        "setup.google.stage_client" if p.len() == 4 => {
+            let id = wire_hex::decode_fixed(
+                p.get("request_id")
+                    .and_then(Value::as_str)
+                    .ok_or(ErrorCode::InvalidInput)?,
+            )?;
+            let ticket = wire_hex::decode_bounded(
+                p.get("ticket")
+                    .and_then(Value::as_str)
+                    .ok_or(ErrorCode::InvalidInput)?,
+                320,
+            )?;
+            let staged_handle = wire_hex::decode_fixed(
+                p.get("staged_handle")
+                    .and_then(Value::as_str)
+                    .ok_or(ErrorCode::InvalidInput)?,
+            )?;
+            if id == [0; 32] || ticket.len() != 320 || staged_handle == [0; 32] {
+                return Err(ErrorCode::InvalidInput);
+            }
+            Ok(GoogleSetupCommand::StageClient {
+                request_id: id,
+                ticket,
+                staged_handle,
+            })
+        }
         "setup.google.status" if p.len() == 2 => {
             let id = wire_hex::decode_fixed(
                 p.get("request_id")

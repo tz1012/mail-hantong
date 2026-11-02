@@ -14,6 +14,50 @@ use std::{cell::RefCell, path::Path, rc::Rc, time::Instant};
 pub(crate) fn render(r: &SendReceipt) -> serde_json::Value {
     serde_json::json!({"schema_version":1,"ok":true,"account_id":r.account_id,"review_id":hex(&r.review_id),"state":r.state,"error_code":r.error.map(ErrorCode::as_str)})
 }
+pub(crate) fn preview(p: &PendingSend) -> Result<serde_json::Value, ErrorCode> {
+    let sender = match &p.endpoint {
+        hantong_contracts::google_write::MailSendTarget::Gmail { sender, .. } => sender.clone(),
+        hantong_contracts::google_write::MailSendTarget::Smtp(_) => {
+            return Err(ErrorCode::PolicyBlocked);
+        }
+    };
+    let attachments = p
+        .draft
+        .attachments()
+        .iter()
+        .map(|a| -> Result<_, ErrorCode> {
+            Ok(serde_json::json!({
+                "filename": a.name(), "media_type": a.media_type(), "size": a.bytes().len(),
+                "sha256": hex(&hantong_platform::sha256(a.bytes())?),
+            }))
+        })
+        .collect::<Result<Vec<_>, ErrorCode>>()?;
+    let value = serde_json::json!({
+        "from": sender, "to": p.draft.recipients(), "subject": p.draft.subject(),
+        "body": p.draft.body(), "attachments": attachments,
+        "payload_hash": hex(p.draft.payload_hash()), "draft_id": hex(p.request.draft_id()),
+        "version": p.request.expected_version(),
+    });
+    Ok(value)
+}
+pub(crate) fn render_with_preview(
+    r: &SendReceipt,
+    p: Option<&PendingSend>,
+) -> Result<serde_json::Value, ErrorCode> {
+    let mut value = render(r);
+    value["preview"] = match p {
+        Some(p) => preview(p)?,
+        None => serde_json::Value::Null,
+    };
+    if serde_json::to_vec(&value)
+        .map_err(|_| ErrorCode::InternalError)?
+        .len()
+        > 1024 * 1024 - 256
+    {
+        return Err(ErrorCode::QuotaExceeded);
+    }
+    Ok(value)
+}
 pub(crate) fn hex(bytes: &[u8]) -> String {
     const DIGITS: &[u8; 16] = b"0123456789abcdef";
     let mut s = String::with_capacity(bytes.len() * 2);
@@ -42,6 +86,8 @@ pub(crate) async fn run_job(
     secrets_root: &Path,
     policy: &Rc<RefCell<ReadPolicy>>,
     id: [u8; 32],
+    terminal: bool,
+    personal: bool,
 ) -> Result<(), ErrorCode> {
     let p = match store.pending_mail_send(id) {
         Ok(p) => p,
@@ -50,41 +96,26 @@ pub(crate) async fn run_job(
             return Err(e);
         }
     };
-    let config = store.load_config()?.ok_or(ErrorCode::InternalError)?;
-    let expected = review(&p);
     // This is a persisted eligibility decision, never a caller-supplied claim
     // that a human launched the CLI. Claim rechecks it atomically after the UI.
-    let personal = match store.can_confirm_personal_mail_send(&p) {
-        Ok(personal) => personal,
-        Err(e) => {
-            store.deny_mail_send(id, e)?;
-            return Err(e);
-        }
-    };
-    let confirmation = if personal {
-        hantong_approval_windows::confirm_personal_send(
-            expected.clone(),
-            config.gui.language,
-            config.gui.theme,
-        )
-        .await
-        .and_then(|v| v.consume(&expected))
+    if terminal {
+        // Terminal confirmation is already represented by the explicit CLI
+        // action. No native approval window is opened on this branch.
     } else {
-        hantong_approval_windows::review_send(
+        let config = store.load_config()?.ok_or(ErrorCode::InternalError)?;
+        let expected = review(&p);
+        let confirmation = hantong_approval_windows::review_send(
             expected.clone(),
             config.gui.language,
             config.gui.theme,
         )
         .await
-        .and_then(|v| v.consume(&expected))
-    };
-    let _authority = match confirmation {
-        Ok(v) => v,
-        Err(e) => {
+        .and_then(|v| v.consume(&expected));
+        if let Err(e) = confirmation {
             store.deny_mail_send(id, e)?;
             return Err(e);
         }
-    };
+    }
     let submit = async {
         if let hantong_contracts::google_write::MailSendTarget::Gmail { binding, sender } =
             &p.endpoint
@@ -265,4 +296,4 @@ mod tests {
 
 #[cfg(test)]
 #[path = "send_mail/tests.rs"]
-mod integration_tests;
+pub(crate) mod integration_tests;

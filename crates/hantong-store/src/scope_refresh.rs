@@ -187,8 +187,9 @@ impl Store {
     ) -> Result<CliScopeRefresh, ErrorCode> {
         if refresh_id == [0; 32]
             || server_pin == [0; 32]
-            || target_scope.accounts().len() != 1
-            || target_scope.tools() != hantong_contracts::auth::default_cli_send_tools().as_slice()
+            || target_scope.accounts().is_empty()
+            || target_scope.accounts().len() > 128
+            || !hantong_contracts::auth::is_supported_default_cli_toolset(target_scope.tools())
         {
             return Err(ErrorCode::InvalidInput);
         }
@@ -211,6 +212,35 @@ impl Store {
                     return Err(ErrorCode::Conflict);
                 }
                 storage::create(tx, refresh_id, target_scope, server_pin, true, true)
+            })
+        }
+    }
+    /// Creates a default CLI scope refresh confirmed in the foreground
+    /// terminal. The terminal provenance is distinct from both OAuth and the
+    /// legacy approval helper; it is intent metadata, not OS presence proof.
+    pub fn create_terminal_cli_scope_refresh(
+        &self,
+        refresh_id: [u8; 32],
+        target_scope: RequestedScope,
+        server_pin: [u8; 32],
+    ) -> Result<CliScopeRefresh, ErrorCode> {
+        if refresh_id == [0; 32]
+            || server_pin == [0; 32]
+            || target_scope.accounts().is_empty()
+            || target_scope.accounts().len() > 128
+            || !hantong_contracts::auth::is_supported_default_cli_toolset(target_scope.tools())
+        {
+            return Err(ErrorCode::InvalidInput);
+        }
+        #[cfg(not(windows))]
+        {
+            let _ = (refresh_id, target_scope, server_pin);
+            Err(ErrorCode::CapabilityUnsupported)
+        }
+        #[cfg(windows)]
+        {
+            self.mail_transaction(rusqlite::TransactionBehavior::Immediate, |tx| {
+                storage::create_terminal(tx, refresh_id, target_scope, server_pin)
             })
         }
     }
@@ -396,6 +426,11 @@ pub(crate) fn validate_history_v17(c: &rusqlite::Connection) -> rusqlite::Result
 #[cfg(windows)]
 pub(crate) fn validate_history_v20(c: &rusqlite::Connection) -> rusqlite::Result<()> {
     storage::validate_history_v20(c)
+}
+
+#[cfg(windows)]
+pub(crate) fn validate_history_v23(c: &rusqlite::Connection) -> rusqlite::Result<()> {
+    storage::validate_history_v23(c)
 }
 #[cfg(windows)]
 pub(crate) fn validate_history_v21(c: &rusqlite::Connection) -> rusqlite::Result<()> {

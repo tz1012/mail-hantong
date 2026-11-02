@@ -9,6 +9,7 @@ use hantong_contracts::{
 use hantong_domain::{
     account_provisioning::NewImapAccountDraft, mail_connection::MailConnectionConfig,
 };
+use hantong_secrets::{TerminalSecretBinding, TerminalSecretHandle, TerminalSecretTicket};
 use hantong_store::{
     Store,
     account_provisioning::{InitialImapProbeOutcome, imap_account_stage_payload_hash},
@@ -119,7 +120,7 @@ pub(super) fn matches(
             && intent.draft().color() == input.color(),
     )
 }
-fn load(store: &Store, id: [u8; 32]) -> Result<ImapSetupRequest, ErrorCode> {
+pub(super) fn load(store: &Store, id: [u8; 32]) -> Result<ImapSetupRequest, ErrorCode> {
     store
         .load_imap_setup_request(id)?
         .ok_or(ErrorCode::NotFound)
@@ -387,6 +388,54 @@ pub(super) async fn review(
             Err(error)
         }
     }
+}
+
+/// Completes an IMAP setup after the inherited-console helper has staged the
+/// credential. The ticket binding is checked again before the existing store
+/// transition and probe pipeline runs.
+pub(super) async fn terminal_submit(
+    store: &Store,
+    secrets_root: &std::path::Path,
+    id: [u8; 32],
+    ticket: TerminalSecretTicket,
+    handle: TerminalSecretHandle,
+    expected_binding: TerminalSecretBinding,
+) -> Result<(), ErrorCode> {
+    let expected = load(store, id)?;
+    if expected.phase() != ImapSetupPhase::ReviewPending {
+        return Err(ErrorCode::Conflict);
+    }
+    let staged = stage(store, &expected)?;
+    let started = store.begin_imap_credential_store(&staged)?;
+    let i = started.intent();
+    let result = hantong_secrets::SecretStore::open(secrets_root)
+        .map_err(secret_error)?
+        .consume_terminal_imap_credential(
+            ticket,
+            handle,
+            expected_binding,
+            i.draft().account_id(),
+            i.endpoint(),
+        )
+        .map(|_| ())
+        .map_err(secret_error);
+    let returned = store.finish_imap_credential_store(&started, result)?;
+    result?;
+    let probing = store.begin_initial_imap_probe(&returned)?;
+    let outcome = match hantong_secrets::SecretStore::open(secrets_root) {
+        Ok(secrets) => {
+            secrets
+                .probe_imap(
+                    probing.intent().draft().account_id(),
+                    probing.intent().endpoint(),
+                )
+                .await
+        }
+        Err(e) => Err(hantong_secrets::MailProbeError::Credential(e)),
+    };
+    let outcome = probe_outcome(outcome, probing.intent().endpoint().settings_version());
+    store.finish_imap_setup_probe(&probing, &outcome)?;
+    Ok(())
 }
 
 #[cfg(test)]

@@ -1,5 +1,7 @@
 # 보안 불변 조건 — 구현 현황
 
+2026-11-02 최신 정정: 개인 Google CLI는 [terminal-personal-send](../contracts/terminal-personal-send.md)의 터미널 전체 preview와 명시적 보내기 선택을 사용한다. 아래 개인 네이티브 확인창 지침은 대체됐다. prepare는 창/발송을 예약하지 않고, confirm은 불변 account/review/hash 및 현재 owner/epoch/계정/권한을 검증한 뒤 단일 claim만 진행한다. 이 선택은 OS 사람 존재 증명이 아니며 같은 사용자 프로그램의 CLI 키 사용을 구별하지 못한다. 일반 RPC/JSON에서 자동 확인하거나 다른 등록으로 권한을 확장하지 않는다. **사람 보안 검토 필요**.
+
 상태: 구현 경계별 증거, **사람 검토 필요**. 이 목록은 완성된 보안 증명이 아니다. 최신 전체 실행 결과는 `docs/latest/PROGRESS.md`에서 확인한다.
 
 2026-11-02 사용자 결정: 일반 개인 CLI 계정 연결은 추가 한통/Hello 승인 대신 검증된 Google OAuth 완료에 결속한다. [개인 CLI 계약](../contracts/google-personal-cli.md)의 관찰된 OS 호출자·계정·모드·만료·일회 소비와 고정 기능 제한을 따른다. 기능 선택·기존 계정·클라이언트 요청은 권한 증거가 아니다. 발송/대량 변경의 사람 승인과 AI/MCP 별도 활성화는 유지한다. 이 변경은 **사람 보안 검토 필요**이며 사용자 UX 결정으로 보안 검토를 대체하지 않는다.

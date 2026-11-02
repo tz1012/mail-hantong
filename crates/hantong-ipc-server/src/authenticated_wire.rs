@@ -263,7 +263,8 @@ where
         SetupCommand::Imap(_)
         | SetupCommand::Smtp(_)
         | SetupCommand::Google(_)
-        | SetupCommand::ScopeRefresh(_) => Err(ErrorCode::InvalidInput),
+        | SetupCommand::ScopeRefresh(_)
+        | SetupCommand::TerminalReview(_) => Err(ErrorCode::InvalidInput),
     };
     dispatch_connection_with_setup(
         connection,
@@ -326,6 +327,15 @@ where
     )
     .await
     .map_err(|_| ErrorCode::AuthRequired)??;
+    if (request.method.starts_with("terminal.review.")
+        || matches!(
+            request.method.as_str(),
+            "setup.google.client_ticket" | "setup.google.stage_client"
+        ))
+        && !connection.peer_matches_current_image()?
+    {
+        return Err(ErrorCode::AuthRequired);
+    }
     if request.method == "auth.begin" {
         let authenticated = authenticate_after_begin(
             connection,
@@ -345,6 +355,7 @@ where
             || request.method.starts_with("setup.imap.")
             || request.method.starts_with("setup.smtp.")
             || request.method.starts_with("setup.google.")
+            || request.method.starts_with("terminal.review.")
         {
             crate::setup_dispatch::response(&request, frame_length, &mut |command| {
                 setup(&context, command)
@@ -409,7 +420,8 @@ where
         SetupCommand::Imap(_)
         | SetupCommand::Smtp(_)
         | SetupCommand::Google(_)
-        | SetupCommand::ScopeRefresh(_) => Err(ErrorCode::InvalidInput),
+        | SetupCommand::ScopeRefresh(_)
+        | SetupCommand::TerminalReview(_) => Err(ErrorCode::InvalidInput),
     };
     serve_until_with_setup(
         shutdown,

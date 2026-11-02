@@ -29,6 +29,81 @@ pub(super) fn ensure_started() -> Result<(), ErrorCode> {
     }
 }
 
+/// Run the package-verified Core helper in this console. No native window and
+/// no credential plaintext pass through the CLI.
+pub(super) fn review(
+    kind: hantong_contracts::terminal_review::TerminalReviewKind,
+    request_id: [u8; 32],
+    account_id: Option<&str>,
+    payload_hash: Option<[u8; 32]>,
+    lang: super::Lang,
+) -> Result<(), ErrorCode> {
+    use std::io::IsTerminal;
+    if !std::io::stdin().is_terminal() || !std::io::stdout().is_terminal() {
+        return Err(ErrorCode::HumanStepRequired);
+    }
+    hantong_contracts::terminal_review::TerminalReviewGet::new(
+        kind,
+        request_id,
+        account_id.map(str::to_owned),
+        payload_hash.unwrap_or([0; 32]),
+    )?;
+    #[cfg(not(windows))]
+    {
+        let _ = lang;
+        Err(ErrorCode::CapabilityUnsupported)
+    }
+    #[cfg(windows)]
+    {
+        use std::process::{Command, Stdio};
+        let current = canonical_regular_file(
+            &std::env::current_exe().map_err(|_| ErrorCode::CoreUnavailable)?,
+        )?;
+        if current.file_name().and_then(|v| v.to_str()) != Some(CLI_NAME) {
+            return Err(ErrorCode::CoreUnavailable);
+        }
+        let bin = current.parent().ok_or(ErrorCode::CoreUnavailable)?;
+        validate_package(bin)?;
+        let mut child = Command::new(bin.join(CORE_NAME));
+        child.args([
+            "terminal-review",
+            "--kind",
+            kind.as_str(),
+            "--request-id",
+            &hantong_contracts::wire_hex::encode(&request_id),
+            "--lang",
+            if matches!(lang, super::Lang::Ko) {
+                "ko"
+            } else {
+                "en"
+            },
+        ]);
+        if let Some(account) = account_id {
+            child.args(["--account-id", account]);
+        }
+        if let Some(hash) = payload_hash {
+            child.args([
+                "--payload-hash",
+                &hantong_contracts::wire_hex::encode(&hash),
+            ]);
+        }
+        let status = child
+            .stdin(Stdio::inherit())
+            .stdout(Stdio::inherit())
+            .stderr(Stdio::inherit())
+            .status()
+            .map_err(|_| ErrorCode::CoreUnavailable)?;
+        if status.success() {
+            Ok(())
+        } else {
+            Err(ErrorCode::ALL
+                .into_iter()
+                .find(|v| Some(v.exit_code()) == status.code())
+                .unwrap_or(ErrorCode::CoreUnavailable))
+        }
+    }
+}
+
 #[cfg(windows)]
 fn ensure_started_with<S, F>(mut status: S, mut start: F) -> Result<(), ErrorCode>
 where

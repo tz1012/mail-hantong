@@ -451,6 +451,51 @@ impl<'a, 'server> ExecutionContext for CoreExecutionAdapter<'a, 'server> {
             )?;
         ReadResult::new(crate::send_mail::render(&receipt), None)
     }
+    fn prepare_send_review(
+        &mut self,
+        r: &hantong_contracts::mail_send::SendReviewRequest,
+    ) -> Result<ReadResult<Value>, ErrorCode> {
+        let receipt = self
+            .send_ui
+            .as_ref()
+            .ok_or(ErrorCode::CoreUnavailable)?
+            .prepare_personal_send(
+                *self.connection.registration_id(),
+                self.connection.profile_epoch(),
+                r,
+            )?;
+        ReadResult::new(receipt, None)
+    }
+    fn confirm_personal_send(
+        &mut self,
+        r: &hantong_contracts::mail_send::PersonalSendConfirmRequest,
+    ) -> Result<ReadResult<Value>, ErrorCode> {
+        let receipt = self
+            .send_ui
+            .as_ref()
+            .ok_or(ErrorCode::CoreUnavailable)?
+            .confirm_personal_send(
+                *self.connection.registration_id(),
+                self.connection.profile_epoch(),
+                r,
+            )?;
+        ReadResult::new(crate::send_mail::render(&receipt), None)
+    }
+    fn cancel_personal_send(
+        &mut self,
+        r: &hantong_contracts::mail_send::SendReviewStatusRequest,
+    ) -> Result<ReadResult<Value>, ErrorCode> {
+        let receipt = self
+            .send_ui
+            .as_ref()
+            .ok_or(ErrorCode::CoreUnavailable)?
+            .cancel_personal_send(
+                *self.connection.registration_id(),
+                self.connection.profile_epoch(),
+                r,
+            )?;
+        ReadResult::new(crate::send_mail::render(&receipt), None)
+    }
     fn read_send_review(
         &mut self,
         r: &hantong_contracts::mail_send::SendReviewStatusRequest,

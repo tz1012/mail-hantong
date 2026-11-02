@@ -1,4 +1,10 @@
+> Latest user correction (2026-11-02): [all-terminal workflows](terminal-workflows.md) supersedes native-window and Windows Hello requirements for every CLI/TUI path. Confirmation happens in the same console; provider OAuth retains its browser. Legacy descriptions below remain historical context. Security code requires human review.
+
 # Google consent and personal CLI feature configuration
+
+Latest personal sending UX: [terminal-personal-send](terminal-personal-send.md)
+supersedes the native personal send window below. Preview, confirm, cancel and
+result remain in CLI. Terminal choice is intent, not OS human-presence proof.
 
 2026-11-02 owner decision: Google consent is the approval for connecting the
 ordinary personal CLI; HanTong presents feature selection, not an additional

@@ -26,6 +26,7 @@ mod onboarding;
 mod search;
 mod smtp_setup;
 mod sync;
+mod terminal_workflows;
 
 const EN_RESOURCES: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/resources/en.txt"));
 const KO_RESOURCES: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/resources/ko.txt"));
@@ -326,13 +327,19 @@ fn error_json(code: ErrorCode, lang: Lang) -> String {
 }
 
 fn run(args: impl IntoIterator<Item = String>) -> i32 {
+    let args: Vec<_> = args.into_iter().collect();
+    let lang = if args.windows(2).any(|v| v == ["--lang", "ko"]) {
+        Lang::Ko
+    } else {
+        Lang::En
+    };
     run_with_mail_actions(
         args,
-        hantong_ipc_client::registration::exchange,
+        |command| terminal_workflows::registration(command, lang),
         verify_profile,
         hantong_ipc_client::accounts::list_default_accounts,
-        hantong_ipc_client::imap_setup::exchange,
-        hantong_ipc_client::scope_refresh::exchange,
+        |command| terminal_workflows::imap(command, lang),
+        |command| terminal_workflows::scope(command, lang),
         (
             real_folder_action,
             sync::real_action,
@@ -725,6 +732,7 @@ fn run_with_mail_actions(
                 folder_options.push((arg, value));
             }
             "--resume-request"
+            | "--kind"
             | "--continue-account"
             | "--client-id"
             | "--reauthorize-account"
@@ -795,6 +803,37 @@ fn run_with_mail_actions(
     }
     let mut google_options = setup_options.clone();
     google_options.extend(folder_options.iter().cloned());
+    if matches!(command.as_slice(), [action] if action == "review") {
+        if json || seen_no_input || !terminal {
+            return emit_error(ErrorCode::HumanStepRequired, lang, json);
+        }
+        let result = (|| {
+            let mut fields = std::collections::BTreeMap::new();
+            for (key, value) in &google_options {
+                if !["--kind", "--request-id", "--account", "--payload-hash"]
+                    .contains(&key.as_str())
+                    || fields.insert(key.as_str(), value.as_str()).is_some()
+                {
+                    return Err(ErrorCode::InvalidInput);
+                }
+            }
+            let kind = hantong_contracts::terminal_review::TerminalReviewKind::parse(
+                fields.get("--kind").ok_or(ErrorCode::InvalidInput)?,
+            )?;
+            let request = hantong_contracts::wire_hex::decode_fixed(
+                fields.get("--request-id").ok_or(ErrorCode::InvalidInput)?,
+            )?;
+            let hash = fields
+                .get("--payload-hash")
+                .map(|v| hantong_contracts::wire_hex::decode_fixed(v))
+                .transpose()?;
+            core_start::review(kind, request, fields.get("--account").copied(), hash, lang)
+        })();
+        return match result {
+            Ok(()) => 0,
+            Err(code) => emit_error(code, lang, false),
+        };
+    }
     if let Some(code) = google::try_run(&command, &google_options, lang, json, seen_no_input) {
         return code;
     }
@@ -862,6 +901,11 @@ fn run_with_mail_actions(
     if command.first().is_some_and(|v| v == "draft" || v == "send")
         && !matches!(command.as_slice(),[a,b] if a=="send"&&b=="execute")
     {
+        if matches!(command.as_slice(), [action] if action == "send")
+            && (json || seen_no_input || !terminal)
+        {
+            return emit_error(ErrorCode::HumanStepRequired, lang, json);
+        }
         return mail_send::run(&command, &folder_options, lang, json, &mut resolve_lang);
     }
     if command.first().is_some_and(|v| v == "read") {
@@ -1369,6 +1413,23 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn apr01_headless_terminal_review_and_send_never_reach_effects() {
+        for args in [
+            vec!["--json", "review"],
+            vec!["--no-input", "review"],
+            vec!["--json", "send"],
+            vec!["--no-input", "send"],
+        ] {
+            assert_eq!(
+                super::run_with_registration(args.into_iter().map(String::from), |_| panic!(
+                    "headless operation reached registration"
+                )),
+                hantong_contracts::ErrorCode::HumanStepRequired.exit_code()
+            );
+        }
+    }
+
     #[test]
     fn sec03_explicit_readonly_cli_routes_one_account_and_rejects_authority_extensions() {
         let id = format!("google_{}", "1a".repeat(32));

@@ -85,14 +85,79 @@ fn status(io: &mut dyn Io, lang: Lang, response: &client::ReviewResponse) -> Res
     io.write("\n")
 }
 
+fn terminal_safe(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    for c in value.chars() {
+        if matches!(c, '\u{2028}'..='\u{202e}' | '\u{2066}'..='\u{2069}' | '\u{200e}' | '\u{200f}')
+        {
+            out.push_str(&format!("\\u{{{:04x}}}", c as u32));
+        } else if c == '\r' {
+            out.push_str("\\r");
+        } else if c == '\n' || c == '\t' {
+            out.push(c);
+        } else if c.is_control() {
+            out.push('\u{fffd}');
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
+fn show_preview(
+    io: &mut dyn Io,
+    lang: Lang,
+    preview: &client::PersonalSendPreview,
+) -> Result<(), ErrorCode> {
+    for (key, value) in [
+        ("preview_from", preview.from.as_str()),
+        ("preview_to", &preview.to.join(", ")),
+        ("preview_subject", preview.subject.as_str()),
+    ] {
+        io.write(resource(lang, key))?;
+        io.write(": ")?;
+        io.write(&terminal_safe(value))?;
+        io.write("\n")?;
+    }
+    io.write(resource(lang, "preview_body"))?;
+    io.write(":\n")?;
+    io.write(&terminal_safe(&preview.body))?;
+    io.write("\n")?;
+    if !preview.attachments.is_empty() {
+        io.write(resource(lang, "preview_attachments"))?;
+        io.write(":\n")?;
+        for attachment in &preview.attachments {
+            io.write("- ")?;
+            io.write(&terminal_safe(&attachment.filename))?;
+            io.write(" | ")?;
+            io.write(&terminal_safe(&attachment.media_type))?;
+            io.write(" | ")?;
+            io.write(&attachment.size.to_string())?;
+            io.write(" bytes\n")?;
+        }
+    }
+    Ok(())
+}
+
 trait Effects {
     fn verify(&mut self, account: &str) -> Result<bool, ErrorCode>;
     fn create(
         &mut self,
         request: &hantong_contracts::google_write::ComposeSnapshot,
     ) -> Result<client::DraftResponse, ErrorCode>;
-    fn request(&mut self, request: &SendReviewRequest)
-    -> Result<client::ReviewResponse, ErrorCode>;
+    fn request(
+        &mut self,
+        request: &SendReviewRequest,
+    ) -> Result<client::PersonalPrepareResponse, ErrorCode>;
+    fn confirm(
+        &mut self,
+        request: &hantong_contracts::mail_send::PersonalSendConfirmRequest,
+    ) -> Result<client::ReviewResponse, ErrorCode>;
+    fn cancel(
+        &mut self,
+        account: &str,
+        review_id: [u8; 32],
+    ) -> Result<client::ReviewResponse, ErrorCode>;
     fn status(
         &mut self,
         account: &str,
@@ -118,8 +183,24 @@ impl Effects for RealEffects {
     fn request(
         &mut self,
         request: &SendReviewRequest,
+    ) -> Result<client::PersonalPrepareResponse, ErrorCode> {
+        client::prepare_default(request)
+    }
+    fn confirm(
+        &mut self,
+        request: &hantong_contracts::mail_send::PersonalSendConfirmRequest,
     ) -> Result<client::ReviewResponse, ErrorCode> {
-        client::request_default(request)
+        client::confirm_default(request)
+    }
+    fn cancel(
+        &mut self,
+        account: &str,
+        review_id: [u8; 32],
+    ) -> Result<client::ReviewResponse, ErrorCode> {
+        client::cancel_default(&hantong_contracts::mail_send::SendReviewStatusRequest {
+            account_id: account.into(),
+            review_id,
+        })
     }
 
     fn status(
@@ -190,14 +271,6 @@ fn run_with_effects(
     let snapshot = client::prepare_compose(draft, attachment.into_iter().collect())?;
     let created = effects.create(&snapshot)?;
     say(io, lang, "draft_ready")?;
-    let Some(choice) = ask(io, lang, "review_prompt")? else {
-        say(io, lang, "cancelled")?;
-        return Ok(());
-    };
-    if choice != "1" {
-        say(io, lang, "cancelled")?;
-        return Ok(());
-    }
     let request = SendReviewRequest::new(
         account,
         created.draft_id,
@@ -206,7 +279,27 @@ fn run_with_effects(
         &idempotency,
         created.payload_hash,
     )?;
-    let mut response = effects.request(&request)?;
+    let prepared = effects.request(&request)?;
+    let Some(preview) = prepared.preview.as_ref() else {
+        return status(io, lang, &prepared.receipt);
+    };
+    show_preview(io, lang, preview)?;
+    let Some(choice) = ask(io, lang, "send_prompt")? else {
+        let _ = effects.cancel(account, prepared.receipt.review_id);
+        say(io, lang, "cancelled")?;
+        return Ok(());
+    };
+    if choice != "1" {
+        let _ = effects.cancel(account, prepared.receipt.review_id);
+        say(io, lang, "cancelled")?;
+        return Ok(());
+    }
+    let confirmation = hantong_contracts::mail_send::PersonalSendConfirmRequest::new(
+        account,
+        prepared.receipt.review_id,
+        preview.payload_hash,
+    )?;
+    let mut response = effects.confirm(&confirmation)?;
     if matches!(response.state.as_str(), "pending" | "sending") {
         say(io, lang, "review_waiting")?;
     }
@@ -257,6 +350,8 @@ mod tests {
         verified: bool,
         create_calls: usize,
         request_calls: usize,
+        confirm_calls: usize,
+        cancel_calls: usize,
         status_calls: usize,
         terminal_state: &'static str,
     }
@@ -279,13 +374,49 @@ mod tests {
             })
         }
 
-        fn request(&mut self, _: &SendReviewRequest) -> Result<client::ReviewResponse, ErrorCode> {
+        fn request(
+            &mut self,
+            _: &SendReviewRequest,
+        ) -> Result<client::PersonalPrepareResponse, ErrorCode> {
             self.request_calls += 1;
+            Ok(client::PersonalPrepareResponse {
+                receipt: client::ReviewResponse {
+                    account_id: "google_fixture".into(),
+                    review_id: [3; 32],
+                    state: "pending".into(),
+                    error_code: None,
+                },
+                preview: Some(client::PersonalSendPreview {
+                    from: "from@example.test".into(),
+                    to: vec!["to@example.test".into()],
+                    subject: "subject".into(),
+                    body: "body".into(),
+                    attachments: vec![],
+                    payload_hash: [2; 32],
+                    draft_id: [1; 32],
+                    version: 1,
+                }),
+            })
+        }
+        fn confirm(
+            &mut self,
+            _: &hantong_contracts::mail_send::PersonalSendConfirmRequest,
+        ) -> Result<client::ReviewResponse, ErrorCode> {
+            self.confirm_calls += 1;
             Ok(client::ReviewResponse {
                 account_id: "google_fixture".into(),
                 review_id: [3; 32],
                 state: "pending".into(),
                 error_code: None,
+            })
+        }
+        fn cancel(&mut self, _: &str, _: [u8; 32]) -> Result<client::ReviewResponse, ErrorCode> {
+            self.cancel_calls += 1;
+            Ok(client::ReviewResponse {
+                account_id: "google_fixture".into(),
+                review_id: [3; 32],
+                state: "interrupted".into(),
+                error_code: Some(ErrorCode::ApprovalRequired),
             })
         }
 
@@ -319,6 +450,8 @@ mod tests {
             verified: false,
             create_calls: 0,
             request_calls: 0,
+            confirm_calls: 0,
+            cancel_calls: 0,
             status_calls: 0,
             terminal_state: "sent",
         };
@@ -339,6 +472,8 @@ mod tests {
             verified: true,
             create_calls: 0,
             request_calls: 0,
+            confirm_calls: 0,
+            cancel_calls: 0,
             status_calls: 0,
             terminal_state: "sent",
         };
@@ -355,7 +490,8 @@ mod tests {
             Ok(())
         );
         assert_eq!(effects.create_calls, 1);
-        assert_eq!(effects.request_calls, 0);
+        assert_eq!(effects.request_calls, 1);
+        assert_eq!(effects.cancel_calls, 1);
     }
 
     #[test]
@@ -366,6 +502,8 @@ mod tests {
             verified: true,
             create_calls: 0,
             request_calls: 0,
+            confirm_calls: 0,
+            cancel_calls: 0,
             status_calls: 0,
             terminal_state: "sent",
         };
@@ -375,6 +513,7 @@ mod tests {
         );
         assert_eq!(effects.create_calls, 1);
         assert_eq!(effects.request_calls, 1);
+        assert_eq!(effects.confirm_calls, 1);
         assert_eq!(effects.status_calls, 1);
         assert!(io.output.contains("sent"));
     }
@@ -388,6 +527,8 @@ mod tests {
                 verified: true,
                 create_calls: 0,
                 request_calls: 0,
+                confirm_calls: 0,
+                cancel_calls: 0,
                 status_calls: 0,
                 terminal_state,
             };
@@ -414,6 +555,8 @@ mod tests {
                 verified: true,
                 create_calls: 0,
                 request_calls: 0,
+                confirm_calls: 0,
+                cancel_calls: 0,
                 status_calls: 0,
                 terminal_state: "sent",
             };
@@ -421,5 +564,26 @@ mod tests {
             assert_eq!(effects.create_calls, 0);
             assert_eq!(effects.request_calls, 0);
         }
+    }
+
+    #[test]
+    fn cli04_preview_escapes_controls_keeps_bidi_and_complete_body() {
+        let body = format!("start\u{001b}[31m\u{202e}middle\n{}", "x".repeat(20_000));
+        let preview = client::PersonalSendPreview {
+            from: "from@example.test".into(),
+            to: vec!["to@example.test".into()],
+            subject: "subject".into(),
+            body: body.clone(),
+            attachments: vec![],
+            payload_hash: [2; 32],
+            draft_id: [1; 32],
+            version: 1,
+        };
+        assert!(terminal_safe(&body).contains('\u{fffd}'));
+        assert!(terminal_safe(&body).contains("\\u{202e}"));
+        let mut io = TestIo::new(&[]);
+        show_preview(&mut io, Lang::En, &preview).unwrap();
+        assert!(io.output.contains(&"x".repeat(20_000)));
+        assert!(!io.output.contains('\u{001b}'));
     }
 }

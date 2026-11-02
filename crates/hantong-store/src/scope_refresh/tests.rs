@@ -15,6 +15,9 @@ struct Fixture {
 }
 impl Fixture {
     fn new() -> Self {
+        Self::with_accounts(&["a"])
+    }
+    fn with_accounts(accounts: &[&str]) -> Self {
         static NEXT: AtomicU64 = AtomicU64::new(0);
         let root = std::env::temp_dir().join(format!(
             "hantong-scope-refresh-{}-{}",
@@ -33,7 +36,7 @@ impl Fixture {
                 [1; 32],
                 ClientKind::Cli,
                 DEFAULT_CLI_LABEL,
-                &scope(&["a"]),
+                &scope(accounts),
             )
             .unwrap();
         let id = hantong_platform::registration_id_for_request(request.request_id).unwrap();
@@ -109,6 +112,55 @@ fn scope(accounts: &[&str]) -> RequestedScope {
         vec!["mail.accounts.list".into()],
     )
     .unwrap()
+}
+
+#[cfg(windows)]
+#[test]
+fn terminal_cli_scope_refresh_allows_account_grant_and_reopen() {
+    let mut f = Fixture::new();
+    let target = RequestedScope::new(
+        vec!["a".into(), "b".into()],
+        hantong_contracts::auth::default_cli_body_tools(),
+    )
+    .unwrap();
+    let pending = f
+        .store()
+        .create_terminal_cli_scope_refresh([41; 32], target.clone(), pin())
+        .unwrap();
+    assert_eq!(pending.decision_channel(), "terminal_cli");
+    assert_eq!(pending.target_accounts, vec!["a", "b"]);
+    let staged = f.store().stage_cli_scope_refresh(&pending).unwrap();
+    f.reopen();
+    let active = f.store().activate_cli_scope_refresh(&staged).unwrap();
+    assert_eq!(active.profile_epoch, 2);
+    assert_eq!(active.scope, target);
+}
+
+#[cfg(windows)]
+#[test]
+fn terminal_cli_first_account_grant_from_empty_base_survives_reopen() {
+    let mut f = Fixture::with_accounts(&[]);
+    assert!(f.registration.scope.accounts().is_empty());
+    let target = RequestedScope::new(
+        vec!["a".into()],
+        hantong_contracts::auth::default_cli_send_tools(),
+    )
+    .unwrap();
+    let pending = f
+        .store()
+        .create_terminal_cli_scope_refresh([42; 32], target.clone(), pin())
+        .unwrap();
+    assert!(pending.base_registration().scope.accounts().is_empty());
+    assert_eq!(pending.target_accounts(), &["a"]);
+    let staged = f.store().stage_cli_scope_refresh(&pending).unwrap();
+    f.reopen();
+    let active = f.store().activate_cli_scope_refresh(&staged).unwrap();
+    assert_eq!(active.scope, target);
+    f.reopen();
+    assert_eq!(
+        f.store().load_default_cli_registration().unwrap().unwrap(),
+        active
+    );
 }
 fn sql(f: &Fixture, sql: &str) {
     f.store().with_connection(|c| c.execute_batch(sql)).unwrap();

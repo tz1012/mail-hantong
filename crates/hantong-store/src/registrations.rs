@@ -389,8 +389,10 @@ pub(super) fn read_request(
                         channel.is_none() && decided.is_some_and(|time| time >= expires)
                     }
                     RegistrationRequestState::Approved | RegistrationRequestState::Denied => {
-                        matches!(channel, Some("approval_helper" | "gui" | "google_oauth"))
-                            && decided.is_some_and(|time| time >= created && time < expires)
+                        matches!(
+                            channel,
+                            Some("approval_helper" | "gui" | "google_oauth" | "terminal_cli")
+                        ) && decided.is_some_and(|time| time >= created && time < expires)
                     }
                 };
                 if !consistent
@@ -475,7 +477,10 @@ pub(super) fn read_registration_bare(
                     || version <= 0
                     || !(0..=1).contains(&read_only)
                     || !(1..=600).contains(&rate)
-                    || !matches!(channel, "approval_helper" | "gui" | "google_oauth")
+                    || !matches!(
+                        channel,
+                        "approval_helper" | "gui" | "google_oauth" | "terminal_cli"
+                    )
                     || approved <= 0
                     || updated < approved
                     || match state {

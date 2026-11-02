@@ -104,6 +104,24 @@ pub trait ExecutionContext {
     ) -> Result<ReadResult<Self::Output>, ErrorCode> {
         Err(ErrorCode::CapabilityUnsupported)
     }
+    fn prepare_send_review(
+        &mut self,
+        _request: &hantong_contracts::mail_send::SendReviewRequest,
+    ) -> Result<ReadResult<Self::Output>, ErrorCode> {
+        Err(ErrorCode::CapabilityUnsupported)
+    }
+    fn confirm_personal_send(
+        &mut self,
+        _request: &hantong_contracts::mail_send::PersonalSendConfirmRequest,
+    ) -> Result<ReadResult<Self::Output>, ErrorCode> {
+        Err(ErrorCode::CapabilityUnsupported)
+    }
+    fn cancel_personal_send(
+        &mut self,
+        _request: &hantong_contracts::mail_send::SendReviewStatusRequest,
+    ) -> Result<ReadResult<Self::Output>, ErrorCode> {
+        Err(ErrorCode::CapabilityUnsupported)
+    }
     fn read_send_review(
         &mut self,
         _request: &hantong_contracts::mail_send::SendReviewStatusRequest,
@@ -311,6 +329,9 @@ pub fn execute_tool<C: ExecutionContext>(
         ToolRequest::SendReview { action, .. } => {
             let result = match action {
                 crate::SendReviewAction::Request(r) => context.request_send_review(&r),
+                crate::SendReviewAction::Prepare(r) => context.prepare_send_review(&r),
+                crate::SendReviewAction::Confirm(r) => context.confirm_personal_send(&r),
+                crate::SendReviewAction::Cancel(r) => context.cancel_personal_send(&r),
                 crate::SendReviewAction::Status(r) => context.read_send_review(&r),
             };
             finish_local_read(result, context, audit_id)

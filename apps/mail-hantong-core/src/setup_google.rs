@@ -4,14 +4,10 @@ use hantong_contracts::{
     google_setup::{GoogleSetupInput, GoogleSetupReceipt},
 };
 use hantong_store::Store;
-use std::{cell::RefCell, collections::BTreeMap, path::Path};
+use std::{cell::RefCell, collections::BTreeMap, path::Path, rc::Rc};
 pub(crate) type Sessions = RefCell<BTreeMap<[u8; 32], Session>>;
-// Only fixed stage labels and stable error codes; never serialize setup values.
-fn setup_stage<T>(stage: &'static str, result: Result<T, ErrorCode>) -> Result<T, ErrorCode> {
-    use std::io::Write;
-    let event = serde_json::json!({"event":"google_client_setup_stage","stage":stage,"succeeded":result.is_ok(),"error_code":result.as_ref().err().map(|e| e.as_str())});
-    let _ = writeln!(std::io::stderr().lock(), "{event}");
-    result
+fn new_terminal_captures() -> Rc<crate::terminal_google::Captures> {
+    Rc::new(RefCell::new(BTreeMap::new()))
 }
 #[derive(Clone)]
 pub(crate) struct Session {
@@ -20,6 +16,15 @@ pub(crate) struct Session {
     receipt: GoogleSetupReceipt,
     /// Observed by the authenticated pipe, never supplied by setup JSON.
     peer: Option<hantong_contracts::auth::PeerContext>,
+    pub(crate) terminal_captures: Rc<crate::terminal_google::Captures>,
+    pub(crate) advanced_pending: Rc<RefCell<Option<AdvancedPending>>>,
+}
+pub(crate) struct AdvancedPending {
+    pub pending: hantong_secrets::google::PendingGoogleCredential,
+    pub identity: hantong_contracts::google::GoogleIdentity,
+    pub binding: hantong_contracts::google::GoogleAccountBinding,
+    pub expected_version: u64,
+    pub display_name: Option<String>,
 }
 
 /// Move-only proof produced only by a successful live Google OAuth exchange.
@@ -220,6 +225,7 @@ pub(crate) fn request_with_peer(
         account_id: None,
         login_url: None,
         error_code: None,
+        client_ticket: None,
     };
     sessions.insert(
         id,
@@ -228,6 +234,8 @@ pub(crate) fn request_with_peer(
             client_id,
             receipt: receipt.clone(),
             peer,
+            terminal_captures: new_terminal_captures(),
+            advanced_pending: Rc::new(RefCell::new(None)),
         },
     );
     Ok(receipt)
@@ -265,6 +273,170 @@ pub(crate) fn status(sessions: &Sessions, id: [u8; 32]) -> Result<GoogleSetupRec
         s.receipt.error_code = Some(ErrorCode::ApprovalExpired)
     }
     Ok(s.receipt.clone())
+}
+
+/// Issues the opaque Secrets ticket used by the foreground terminal helper.
+/// The ticket is bound to the authenticated pipe peer and Core server key.
+pub(crate) fn terminal_client_ticket(
+    root: &Path,
+    sessions: &Sessions,
+    id: [u8; 32],
+    server: &hantong_platform::ServerSigningKey,
+    peer: &hantong_contracts::auth::PeerContext,
+) -> Result<[u8; 320], ErrorCode> {
+    let session = sessions
+        .borrow()
+        .get(&id)
+        .cloned()
+        .ok_or(ErrorCode::NotFound)?;
+    if session.peer.as_ref() != Some(peer) {
+        return Err(ErrorCode::ScopeDenied);
+    }
+    if session.receipt.state != "awaiting_client"
+        || session.receipt.error_code.is_some()
+        || now()? >= session.receipt.expires_at_utc_ms
+    {
+        return Err(ErrorCode::ApprovalExpired);
+    }
+    crate::terminal_google::issue(
+        &session.terminal_captures,
+        root,
+        id,
+        &session.client_id,
+        peer,
+        server,
+        session.receipt.expires_at_utc_ms,
+    )
+}
+
+/// Stages the masked foreground input. The value remains in Secrets.
+pub(crate) fn stage_terminal_client(
+    root: &Path,
+    sessions: &Sessions,
+    id: [u8; 32],
+    opaque: &[u8],
+    staged_handle: [u8; 32],
+    peer: &hantong_contracts::auth::PeerContext,
+) -> Result<[u8; 32], ErrorCode> {
+    let session = sessions
+        .borrow()
+        .get(&id)
+        .cloned()
+        .ok_or(ErrorCode::NotFound)?;
+    if session.peer.as_ref() != Some(peer) {
+        return Err(ErrorCode::ScopeDenied);
+    }
+    if session.receipt.state != "awaiting_client"
+        || session.receipt.error_code.is_some()
+        || now()? >= session.receipt.expires_at_utc_ms
+    {
+        return Err(ErrorCode::ApprovalExpired);
+    }
+    crate::terminal_google::stage(&session.terminal_captures, root, id, opaque, staged_handle)
+}
+
+pub(crate) fn advanced_terminal_preview(
+    sessions: &Sessions,
+    id: [u8; 32],
+    peer: &hantong_contracts::auth::PeerContext,
+) -> Result<
+    (
+        hantong_contracts::google::GoogleIdentity,
+        hantong_contracts::google::GoogleAccountBinding,
+        i64,
+    ),
+    ErrorCode,
+> {
+    let session = sessions
+        .borrow()
+        .get(&id)
+        .cloned()
+        .ok_or(ErrorCode::NotFound)?;
+    if session.peer.as_ref() != Some(peer) {
+        return Err(ErrorCode::ScopeDenied);
+    }
+    if session.receipt.state != "awaiting_review"
+        || session.receipt.error_code.is_some()
+        || now()? >= session.receipt.expires_at_utc_ms
+    {
+        return Err(ErrorCode::ApprovalExpired);
+    }
+    let pending = session.advanced_pending.borrow();
+    let pending = pending.as_ref().ok_or(ErrorCode::ApprovalRequired)?;
+    Ok((
+        pending.identity.clone(),
+        pending.binding.clone(),
+        session.receipt.expires_at_utc_ms,
+    ))
+}
+
+pub(crate) fn complete_advanced_terminal(
+    store: &Store,
+    root: &Path,
+    sessions: &Sessions,
+    id: [u8; 32],
+    peer: &hantong_contracts::auth::PeerContext,
+) -> Result<(), ErrorCode> {
+    let session = sessions
+        .borrow()
+        .get(&id)
+        .cloned()
+        .ok_or(ErrorCode::NotFound)?;
+    if session.peer.as_ref() != Some(peer) {
+        return Err(ErrorCode::ScopeDenied);
+    }
+    if session.receipt.state != "awaiting_review"
+        || session.receipt.error_code.is_some()
+        || now()? >= session.receipt.expires_at_utc_ms
+    {
+        return Err(ErrorCode::ApprovalExpired);
+    }
+    let pending_ref = session.advanced_pending.borrow();
+    let pending = pending_ref.as_ref().ok_or(ErrorCode::NotFound)?;
+    let current = store.google_account_for_subject(&pending.identity.subject)?;
+    let matches_base = match current {
+        None => pending.expected_version == 0,
+        Some(current) => {
+            current.account_id == pending.binding.account_id
+                && current.client_id == pending.binding.client_id
+                && current.credential_version == pending.expected_version
+        }
+    };
+    if pending.binding.credential_version
+        != pending
+            .expected_version
+            .checked_add(1)
+            .ok_or(ErrorCode::Conflict)?
+        || !matches_base
+    {
+        return Err(ErrorCode::Conflict);
+    }
+    drop(pending_ref);
+    let pending = session
+        .advanced_pending
+        .borrow_mut()
+        .take()
+        .ok_or(ErrorCode::NotFound)?;
+    let secrets = hantong_secrets::SecretStore::open(root).map_err(|_| ErrorCode::InternalError)?;
+    pending.pending.store(&secrets, &pending.binding)?;
+    let actual = store.activate_google_account(
+        &pending.identity,
+        &pending.binding.client_id,
+        pending.expected_version,
+        pending.display_name.as_deref(),
+    )?;
+    if actual != pending.binding {
+        return Err(ErrorCode::Conflict);
+    }
+    // Confirmation was accepted before expiry above. Synchronous persistence
+    // may cross the deadline; do not report an expired decision after commit.
+    let mut sessions = sessions.borrow_mut();
+    let session = sessions.get_mut(&id).ok_or(ErrorCode::InternalError)?;
+    session.receipt.state = "ready".into();
+    session.receipt.login_url = None;
+    session.receipt.account_id = Some(actual.account_id);
+    session.receipt.error_code = None;
+    session.receipt.validate()
 }
 fn update(
     sessions: &Sessions,
@@ -310,13 +482,18 @@ pub(crate) async fn run(
         let state = match e {
             ErrorCode::ApprovalExpired => "expired",
             ErrorCode::ApprovalDenied => "denied",
-            ErrorCode::ApprovalRequired => "interrupted",
+            ErrorCode::ApprovalRequired => "awaiting_review",
+            ErrorCode::HumanStepRequired => "awaiting_client",
             _ => "failed",
         };
         if let Some(s) = sessions.borrow_mut().get_mut(&id) {
             s.receipt.state = state.into();
             s.receipt.login_url = None;
-            s.receipt.error_code = Some(e)
+            s.receipt.error_code = (!matches!(
+                e,
+                ErrorCode::ApprovalRequired | ErrorCode::HumanStepRequired
+            ))
+            .then_some(e)
         }
     }
     result
@@ -345,54 +522,22 @@ fn credential_source(
 }
 
 async fn capture_client(
-    store: &Store,
     sessions: &Sessions,
     id: [u8; 32],
     s: &Session,
+    root: &Path,
+    server: &hantong_platform::ServerSigningKey,
 ) -> Result<hantong_secrets::google::GoogleClientSecret, ErrorCode> {
     update(sessions, id, "awaiting_client", None, None, None)?;
-    let config = store.load_config()?.ok_or(ErrorCode::InternalError)?;
-    let hash = hantong_platform::random_nonce()?;
-    let plan = setup_stage(
-        "capture_plan",
-        hantong_secrets::ImapPasswordCapturePlan::for_google_client(&s.client_id, id, hash)
-            .map_err(|_| ErrorCode::InvalidInput),
-    )?;
-    let draft = hantong_domain::account_provisioning::NewImapAccountDraft::new(
-        "google-client".into(),
-        None,
-        None,
+    let peer = s.peer.as_ref().ok_or(ErrorCode::ScopeDenied)?;
+    crate::terminal_google::consume(
+        &s.terminal_captures,
+        root,
+        id,
+        server,
+        peer,
+        s.receipt.expires_at_utc_ms,
     )
-    .map_err(|_| ErrorCode::InvalidInput)?;
-    let created = now()?;
-    let capture = setup_stage(
-        "capture_review",
-        hantong_approval::AccountSetupReview::new(
-            draft,
-            plan.endpoint().clone(),
-            id,
-            hash,
-            *plan.nonce(),
-            created,
-            (created + 300000).min(status(sessions, id)?.expires_at_utc_ms),
-        ),
-    )?;
-    let client_review = setup_stage(
-        "client_review",
-        hantong_approval::GoogleClientReview::new(capture),
-    )?;
-    let verified_client = setup_stage(
-        "native_review",
-        hantong_approval_windows::review_google_client(
-            client_review.clone(),
-            plan,
-            config.gui.language,
-            config.gui.theme,
-        )
-        .await,
-    )?;
-    let client_secret = verified_client.consume(&client_review)?;
-    Ok(client_secret)
 }
 
 async fn connect(
@@ -423,7 +568,9 @@ async fn connect(
         Some(secret) => secret,
         None => match publisher {
             Some(configuration) => configuration.client_secret,
-            None if s.input.client_id.is_some() => capture_client(store, sessions, id, s).await?,
+            None if s.input.client_id.is_some() => {
+                capture_client(sessions, id, s, root, server).await?
+            }
             // Normal end users never configure a Google Cloud app. Only an
             // explicit advanced client-id request may open credential capture.
             None => return Err(ErrorCode::HumanStepRequired),
@@ -493,26 +640,22 @@ async fn connect(
         }
         pending
     } else {
-        let created = now()?;
-        let review = hantong_approval::GoogleSetupReview {
-            request_id: id,
+        *s.advanced_pending.borrow_mut() = Some(AdvancedPending {
+            pending,
             identity: identity.clone(),
             binding: binding.clone(),
             expected_version: expected,
             display_name: s.input.display_name.clone(),
-            created_at_utc_ms: created,
-            expires_at_utc_ms: (created + 300000).min(status(sessions, id)?.expires_at_utc_ms),
-        };
-        review.validate()?;
-        let config = store.load_config()?.ok_or(ErrorCode::InternalError)?;
-        let verified = hantong_approval_windows::review_google_setup(
-            review.clone(),
-            pending,
-            config.gui.language,
-            config.gui.theme,
-        )
-        .await?;
-        verified.consume(&review)?
+        });
+        update(
+            sessions,
+            id,
+            "awaiting_review",
+            None,
+            Some(binding.account_id),
+            None,
+        )?;
+        return Err(ErrorCode::ApprovalRequired);
     };
     if store
         .google_account_for_subject(&identity.subject)?
@@ -549,6 +692,23 @@ async fn connect(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn acc02_terminal_google_expiry_and_peer_are_checked_before_pending_credentials() {
+        let (session, _, _, peer) = authority_fixture(1);
+        let sessions = RefCell::new(BTreeMap::from([([2; 32], session)]));
+        assert_eq!(
+            advanced_terminal_preview(&sessions, [2; 32], &peer),
+            Err(ErrorCode::ApprovalExpired)
+        );
+        let other =
+            hantong_contracts::auth::PeerContext::new("S-1-5-21-100-200-300-401", "S-1-5-5-0-1")
+                .unwrap();
+        assert_eq!(
+            advanced_terminal_preview(&sessions, [2; 32], &other),
+            Err(ErrorCode::ScopeDenied)
+        );
+    }
 
     fn authority_fixture(
         expiry: i64,
@@ -590,8 +750,11 @@ mod tests {
                 account_id: Some(account_id.clone()),
                 login_url: None,
                 error_code: None,
+                client_ticket: None,
             },
             peer: Some(peer.clone()),
+            terminal_captures: new_terminal_captures(),
+            advanced_pending: Rc::new(RefCell::new(None)),
         };
         let binding = hantong_contracts::google::GoogleAccountBinding {
             access_mode: identity.access_mode,
@@ -802,6 +965,7 @@ mod tests {
             account_id: None,
             login_url: Some("https://accounts.google.com/o/oauth2/v2/auth?state=synthetic".into()),
             error_code: None,
+            client_ticket: None,
         };
         let sessions = RefCell::new(BTreeMap::from([(
             [1; 32],
@@ -810,6 +974,8 @@ mod tests {
                 client_id: input.client_id.clone().unwrap(),
                 receipt,
                 peer: None,
+                terminal_captures: new_terminal_captures(),
+                advanced_pending: Rc::new(RefCell::new(None)),
             },
         )]));
         let expired = status(&sessions, [1; 32]).unwrap();
@@ -907,8 +1073,11 @@ mod deadline_tests {
                     account_id: None,
                     login_url: None,
                     error_code: None,
+                    client_ticket: None,
                 },
                 peer: None,
+                terminal_captures: new_terminal_captures(),
+                advanced_pending: Rc::new(RefCell::new(None)),
             },
         )]));
         let first = status(&sessions, [1; 32]).unwrap();

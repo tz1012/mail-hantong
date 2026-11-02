@@ -11,8 +11,8 @@ ROOT = Path(__file__).resolve().parents[2]
 INSTALL = ROOT / "packaging" / "windows" / "install.ps1"
 UNINSTALL = ROOT / "packaging" / "windows" / "uninstall.ps1"
 POWERSHELL = shutil.which("pwsh") or (shutil.which("powershell.exe") if os.name == "nt" else None)
-def ps(script, *args):
-    return subprocess.run([POWERSHELL, "-NoProfile", "-NonInteractive", "-File", str(script), *map(str, args)], text=True, encoding="utf-8", errors="backslashreplace", capture_output=True, timeout=20)
+def ps(script, *args, env=None):
+    return subprocess.run([POWERSHELL, "-NoProfile", "-NonInteractive", "-File", str(script), *map(str, args)], env=env, text=True, encoding="utf-8", errors="backslashreplace", capture_output=True, timeout=20)
 
 @contextmanager
 def held_file(path, share="None"):
@@ -27,6 +27,102 @@ def held_file(path, share="None"):
             holder.communicate("release\n", timeout=10)
 @unittest.skipUnless(os.name == "nt" and POWERSHELL, "Windows PowerShell is required")
 class CliInstallerTests(unittest.TestCase):
+    def run_core_gate(self, root, install_root, record, fresh=None):
+        functions = INSTALL.read_text(encoding="utf-8").split("# TESTABLE_CORE_STOP_FUNCTIONS_BEGIN", 1)[1].split("# TESTABLE_CORE_STOP_FUNCTIONS_END", 1)[0]
+        records = root / "records.json"; records.write_text(json.dumps([record]), encoding="utf-8")
+        fresh_path = root / "fresh.json"
+        if fresh is not None: fresh_path.write_text(json.dumps([fresh]), encoding="utf-8")
+        stop_log = root / "stopped.log"
+        harness = f""". '{(INSTALL.parent / 'package-common.ps1').as_posix()}'
+$script:InstallBase = '{install_root.as_posix()}'
+{functions}
+function Get-CurrentUserSid {{ return 'S-1-5-21-test' }}
+$script:q = 0
+function Get-CoreProcessRecords {{ $script:q++; if ($script:q -gt 1 -and (Test-Path '{fresh_path.as_posix()}')) {{ return @(Get-Content '{fresh_path.as_posix()}' -Raw | ConvertFrom-Json) }}; return @(Get-Content '{records.as_posix()}' -Raw | ConvertFrom-Json) }}
+function Stop-CoreProcess([int] $ProcessId) {{ Add-Content -LiteralPath '{stop_log.as_posix()}' -Value ([string]$ProcessId) }}
+$state = Read-InstallState '{install_root.as_posix()}'
+Stop-OwnedCoreForUpdate '{install_root.as_posix()}' $state.versions
+"""
+        script = root / "gate-harness.ps1"; script.write_text(harness, encoding="utf-8")
+        return ps(script)
+
+    def test_inst01_update_stops_one_owned_old_version_core(self):
+        with tempfile.TemporaryDirectory() as td:
+            root, install_root = Path(td), Path(td) / "install"
+            self.assertEqual(ps(INSTALL, "-Source", self.bundle(root / "one", "1.0.0"), "-InstallRoot", install_root).returncode, 0)
+            record = {"Pid": 4101, "Path": str(install_root / "versions/1.0.0/bin/mail-hantong-core.exe"), "CommandLine": "run --lang en", "OwnerSid": "S-1-5-21-test"}
+            result = self.run_core_gate(root, install_root, record)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual((root / "stopped.log").read_text().strip(), "4101")
+
+    def test_inst01_update_denies_foreign_user_core(self):
+        with tempfile.TemporaryDirectory() as td:
+            root, install_root = Path(td), Path(td) / "install"
+            self.assertEqual(ps(INSTALL, "-Source", self.bundle(root / "one", "1.0.0"), "-InstallRoot", install_root).returncode, 0)
+            record = {"Pid": 4102, "Path": str(install_root / "versions/1.0.0/bin/mail-hantong-core.exe"), "CommandLine": "run", "OwnerSid": "S-1-5-21-foreign"}
+            result = self.run_core_gate(root, install_root, record)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertFalse((root / "stopped.log").exists())
+            self.assertEqual((install_root / "current.txt").read_text(), "1.0.0")
+
+    def test_inst01_update_denies_pid_path_change_before_stop(self):
+        with tempfile.TemporaryDirectory() as td:
+            root, install_root = Path(td), Path(td) / "install"
+            self.assertEqual(ps(INSTALL, "-Source", self.bundle(root / "one", "1.0.0"), "-InstallRoot", install_root).returncode, 0)
+            record = {"Pid": 4103, "Path": str(install_root / "versions/1.0.0/bin/mail-hantong-core.exe"), "CommandLine": "run", "OwnerSid": "S-1-5-21-test"}
+            fresh = dict(record, Pid=4104)
+            result = self.run_core_gate(root, install_root, record, fresh)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertFalse((root / "stopped.log").exists())
+            self.assertEqual((install_root / "current.txt").read_text(), "1.0.0")
+
+    def test_inst01_update_denies_foreign_core_path(self):
+        with tempfile.TemporaryDirectory() as td:
+            root, install_root = Path(td), Path(td) / "install"
+            self.assertEqual(ps(INSTALL, "-Source", self.bundle(root / "one", "1.0.0"), "-InstallRoot", install_root).returncode, 0)
+            record = {"Pid": 4104, "Path": str(root / "foreign/bin/mail-hantong-core.exe"), "CommandLine": "run --lang ko", "OwnerSid": "S-1-5-21-test"}
+            result = self.run_core_gate(root, install_root, record)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual((install_root / "current.txt").read_text(), "1.0.0")
+            self.assertFalse((root / "stopped.log").exists())
+
+    def test_inst01_legacy_version_without_release_manifest_remains_verifiable(self):
+        with tempfile.TemporaryDirectory() as td:
+            root, install_root = Path(td), Path(td) / "install"
+            self.assertEqual(ps(INSTALL, "-Source", self.bundle(root / "one", "1.0.0"), "-InstallRoot", install_root).returncode, 0)
+            state_path = install_root / "install-manifest.json"
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            state["versions"][0]["files"] = [entry for entry in state["versions"][0]["files"] if entry["path"] != "release-manifest.json"]
+            state_path.write_text(json.dumps(state), encoding="utf-8")
+            (install_root / "versions/1.0.0/release-manifest.json").unlink()
+            record = {"Pid": 4105, "Path": str(root / "foreign/bin/mail-hantong-core.exe"), "CommandLine": "run", "OwnerSid": "S-1-5-21-test"}
+            result = self.run_core_gate(root, install_root, record)
+            self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_inst01_production_script_has_no_test_process_overrides(self):
+        text = INSTALL.read_text(encoding="utf-8")
+        self.assertNotIn("HANTONG_TEST", text)
+        self.assertNotIn("ConvertFrom-Json", text)
+
+    def test_inst01_core_command_line_normalizes_windows_path_forms_but_keeps_strict_args(self):
+        functions = INSTALL.read_text(encoding="utf-8").split("# TESTABLE_CORE_STOP_FUNCTIONS_BEGIN", 1)[1].split("# TESTABLE_CORE_STOP_FUNCTIONS_END", 1)[0]
+        harness = f"""$script:InstallBase = 'C:\\'
+{functions}
+$path = 'C:\\Program Files\\Mail\\mail-hantong-core.exe'
+$cases = @(
+    @{{ line = '"\\\\?\\C:\\PROGRAM FILES\\Mail\\mail-hantong-core.exe" run '; expected = $true }}
+    @{{ line = '"C:\\Program Files\\Mail\\mail-hantong-core.exe" run --lang ko'; expected = $true }}
+    @{{ line = '"C:\\\\Program Files\\\\Mail\\\\mail-hantong-core.exe" run'; expected = $true }}
+    @{{ line = '"C:\\other.exe" run'; expected = $false }}
+    @{{ line = '"C:\\Program Files\\Mail\\mail-hantong-core.exe" terminal-review'; expected = $false }}
+)
+foreach ($case in $cases) {{ if ((Test-CoreCommandLine $case.line $path) -ne $case.expected) {{ throw ('unexpected command-line result: ' + $case.line) }} }}
+"""
+        with tempfile.TemporaryDirectory() as td:
+            script = Path(td) / "command-line-harness.ps1"
+            script.write_text(harness, encoding="utf-8")
+            result = ps(script)
+            self.assertEqual(result.returncode, 0, result.stderr)
     def test_inst01_non_utf8_child_error_is_preserved_and_returncode_is_not_hidden(self):
         with tempfile.TemporaryDirectory() as directory:
             script = Path(directory) / "non-utf8-error.ps1"

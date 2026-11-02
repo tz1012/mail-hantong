@@ -448,6 +448,16 @@ impl Fixture {
             )
             .unwrap()
     }
+    fn terminal_pending_with_scope(&self, tools: Vec<String>) -> CliScopeRefresh {
+        self.store
+            .create_terminal_cli_scope_refresh(
+                [10; 32],
+                RequestedScope::new(self.store.list_registrable_account_ids().unwrap(), tools)
+                    .unwrap(),
+                hantong_platform::sha256(&public()).unwrap(),
+            )
+            .unwrap()
+    }
 }
 struct Fake<'a> {
     store: &'a Store,
@@ -799,7 +809,7 @@ fn cli15_body_send_scope_fresh_request_preserves_existing_targets() {
         hantong_contracts::auth::default_cli_metadata_tools(),
     ] {
         let fixture = Fixture::new();
-        let pending = fixture.pending_with_scope(tools.clone());
+        let pending = fixture.terminal_pending_with_scope(tools.clone());
         let pin = hantong_platform::sha256(&public()).unwrap();
         assert_eq!(prepare_for_pin(&fixture.store, pin).unwrap(), pending);
         let (old, new) = profiles(&pending, public()).unwrap();
@@ -824,6 +834,43 @@ fn cli15_body_send_scope_fresh_request_preserves_existing_targets() {
                 .scope
                 .tools(),
             tools
+        );
+    }
+}
+
+#[test]
+fn sec03_terminal_scope_prepare_never_reuses_legacy_channel_even_with_same_target() {
+    for staged in [false, true] {
+        let fixture = Fixture::new();
+        let pending = fixture.pending_with_scope(hantong_contracts::auth::default_cli_send_tools());
+        let expected = if staged {
+            fixture.store.stage_cli_scope_refresh(&pending).unwrap()
+        } else {
+            pending
+        };
+        let baseline = fixture
+            .store
+            .load_default_cli_registration()
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            prepare_for_pin(&fixture.store, hantong_platform::sha256(&public()).unwrap()),
+            Err(ErrorCode::Conflict)
+        );
+        assert_eq!(
+            fixture
+                .store
+                .load_cli_scope_refresh(*expected.refresh_id())
+                .unwrap(),
+            Some(expected)
+        );
+        assert_eq!(
+            fixture
+                .store
+                .load_default_cli_registration()
+                .unwrap()
+                .unwrap(),
+            baseline
         );
     }
 }
@@ -931,7 +978,8 @@ fn cli15_body_send_scope_noop_preserves_registration_and_history() {
 #[test]
 fn cli15_metadata_scope_staged_consent_recovers_without_fresh_account_snapshot() {
     let fixture = Fixture::new();
-    let pending = fixture.pending_with_scope(hantong_contracts::auth::default_cli_metadata_tools());
+    let pending =
+        fixture.terminal_pending_with_scope(hantong_contracts::auth::default_cli_metadata_tools());
     let original_profiles = profiles(&pending, public()).unwrap();
     let staged = fixture.store.stage_cli_scope_refresh(&pending).unwrap();
     let setup = crate::setup_imap::create(

@@ -31,6 +31,35 @@ fn request() -> RegistrationRequest {
         expires_at_utc_ms: 301000,
     }
 }
+#[test]
+fn apr01_terminal_registration_hash_binds_full_typed_snapshot() {
+    let original = request();
+    let expected = registration_terminal_hash(&original).unwrap();
+    for changed in [
+        RegistrationRequest {
+            version: original.version + 1,
+            ..original.clone()
+        },
+        RegistrationRequest {
+            expires_at_utc_ms: original.expires_at_utc_ms + 1,
+            ..original.clone()
+        },
+        RegistrationRequest {
+            created_at_utc_ms: original.created_at_utc_ms + 1,
+            ..original.clone()
+        },
+        RegistrationRequest {
+            client_kind: ClientKind::Mcp,
+            ..original.clone()
+        },
+        RegistrationRequest {
+            display_label: "Different".into(),
+            ..original.clone()
+        },
+    ] {
+        assert_ne!(expected, registration_terminal_hash(&changed).unwrap());
+    }
+}
 fn review() -> RegistrationReview {
     RegistrationReview::new(
         [1; 32],
@@ -65,6 +94,130 @@ fn gui_request() -> RegistrationRequest {
     value.scope =
         RequestedScope::new(vec!["a".into()], hantong_contracts::auth::gui_read_tools()).unwrap();
     value
+}
+
+#[test]
+fn apr01_terminal_personal_prepare_has_no_job_and_confirm_queues_only_terminal_job() {
+    let fixture = crate::send_mail::integration_tests::Fixture::new();
+    let server = ServerSigningKey::create(hantong_platform::random_nonce().unwrap()).unwrap();
+    let (handle, mut worker) = coordinator(fixture.store(), &server, fixture.secrets_root());
+    let pending = fixture.prepare_personal();
+    let prepared = handle
+        .prepare_personal_send(
+            pending.owner_registration_id,
+            pending.profile_epoch,
+            &pending.request,
+        )
+        .unwrap();
+    assert_eq!(prepared["state"], "pending");
+    assert!(prepared["preview"].is_object());
+    assert!(worker.receiver.try_recv().is_err());
+
+    let confirm = hantong_contracts::mail_send::PersonalSendConfirmRequest::new(
+        pending.request.account_id(),
+        pending.review_id,
+        *pending.request.payload_hash(),
+    )
+    .unwrap();
+    let receipt = handle
+        .confirm_personal_send(
+            pending.owner_registration_id,
+            pending.profile_epoch,
+            &confirm,
+        )
+        .unwrap();
+    assert_eq!(receipt.state, "pending");
+    assert_eq!(
+        worker.receiver.try_recv().unwrap(),
+        Job::TerminalSend(pending.review_id)
+    );
+    assert!(worker.receiver.try_recv().is_err());
+
+    // Replaying the same explicit terminal action reuses the queued result and
+    // cannot enqueue a second provider attempt.
+    let replay = handle
+        .confirm_personal_send(
+            pending.owner_registration_id,
+            pending.profile_epoch,
+            &confirm,
+        )
+        .unwrap();
+    assert_eq!(replay.review_id, receipt.review_id);
+    assert!(worker.receiver.try_recv().is_err());
+}
+
+#[test]
+fn apr01_terminal_personal_cancel_and_binding_failures_have_no_job_or_outbox() {
+    let fixture = crate::send_mail::integration_tests::Fixture::new();
+    let server = ServerSigningKey::create(hantong_platform::random_nonce().unwrap()).unwrap();
+    let (handle, mut worker) = coordinator(fixture.store(), &server, fixture.secrets_root());
+    let pending = fixture.prepare_personal();
+    let wrong_owner = [8; 16];
+    let confirm = hantong_contracts::mail_send::PersonalSendConfirmRequest::new(
+        pending.request.account_id(),
+        pending.review_id,
+        *pending.request.payload_hash(),
+    )
+    .unwrap();
+    assert_eq!(
+        handle.confirm_personal_send(wrong_owner, pending.profile_epoch, &confirm),
+        Err(ErrorCode::ClientNotRegistered)
+    );
+    let bad_hash = hantong_contracts::mail_send::PersonalSendConfirmRequest::new(
+        pending.request.account_id(),
+        pending.review_id,
+        [7; 32],
+    )
+    .unwrap();
+    assert_eq!(
+        handle.confirm_personal_send(
+            pending.owner_registration_id,
+            pending.profile_epoch,
+            &bad_hash
+        ),
+        Err(ErrorCode::PolicyBlocked)
+    );
+    assert!(worker.receiver.try_recv().is_err());
+
+    let status = hantong_contracts::mail_send::SendReviewStatusRequest {
+        account_id: pending.request.account_id().into(),
+        review_id: pending.review_id,
+    };
+    let cancelled = handle
+        .cancel_personal_send(
+            pending.owner_registration_id,
+            pending.profile_epoch,
+            &status,
+        )
+        .unwrap();
+    assert_eq!(cancelled.state, "interrupted");
+    assert_eq!(cancelled.error, Some(ErrorCode::ApprovalRequired));
+    assert!(worker.receiver.try_recv().is_err());
+    assert_eq!(
+        fixture
+            .store()
+            .mail_send_receipt(
+                pending.owner_registration_id,
+                pending.profile_epoch,
+                pending.request.account_id(),
+                pending.review_id,
+            )
+            .unwrap()
+            .state,
+        "interrupted"
+    );
+
+    // The helper-origin SMTP registration is refused before any terminal job.
+    let helper = fixture.prepare();
+    assert_eq!(
+        handle.prepare_personal_send(
+            helper.owner_registration_id,
+            helper.profile_epoch,
+            &helper.request
+        ),
+        Err(ErrorCode::PolicyBlocked)
+    );
+    assert!(worker.receiver.try_recv().is_err());
 }
 
 #[test]
@@ -184,6 +337,7 @@ fn inst04_gui_and_cli_pending_requests_are_separate_and_share_the_native_queue()
         handle.command(RegistrationCommand::Request),
         Err(ErrorCode::RateLimited)
     );
+    assert!(worker.receiver.try_recv().is_err());
     let stored = store.get_registration_request(id).unwrap().unwrap();
     assert_eq!(stored.client_kind, ClientKind::Gui);
     assert_eq!(stored.display_label, DEFAULT_GUI_LABEL);
@@ -210,10 +364,7 @@ fn inst04_gui_and_cli_pending_requests_are_separate_and_share_the_native_queue()
     let (handle, mut worker) = coordinator(&store, key.0.as_ref().unwrap(), &secrets);
     let cli = handle.command(RegistrationCommand::Request).unwrap();
     assert_ne!(cli.request_id(), &id);
-    assert_eq!(
-        worker.receiver.try_recv().unwrap(),
-        Job::Registration(*cli.request_id())
-    );
+    assert!(worker.receiver.try_recv().is_err());
     assert_eq!(
         handle.command(RegistrationCommand::GuiStatus(*cli.request_id())),
         Err(ErrorCode::NotFound)
@@ -713,6 +864,72 @@ fn cli15_cleanup_failure_blocks_new_creation_until_explicit_retry_succeeds() {
         2
     );
 }
+
+#[test]
+fn setup01_terminal_binding_is_bound_to_typed_endpoint_peer_and_kind() {
+    let key = ServerSigningKey::create(hantong_platform::random_nonce().unwrap()).unwrap();
+    let peer =
+        hantong_contracts::auth::PeerContext::new("S-1-5-21-1-2-3-4", "S-1-5-5-1-2").unwrap();
+    let endpoint = serde_json::json!({
+        "settings_version": 1,
+        "host": "imap.example",
+        "port": 993,
+        "tls": "implicit_tls",
+        "login_name": "user",
+        "authentication": "app_password"
+    });
+    let expiry = i64::try_from(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis(),
+    )
+    .unwrap()
+        + 60_000;
+    let first = terminal_binding(&TerminalBindingInput {
+        kind: *b"terminal-imap-v1",
+        request_id: [1; 32],
+        payload_hash: [2; 32],
+        account_id: "acct",
+        endpoint: &endpoint,
+        version: 1,
+        expires_at_utc_ms: expiry,
+        peer: &peer,
+        server: &key,
+    })
+    .unwrap();
+    let mut changed = endpoint.clone();
+    changed["port"] = 143.into();
+    let second = terminal_binding(&TerminalBindingInput {
+        kind: *b"terminal-imap-v1",
+        request_id: [1; 32],
+        payload_hash: [2; 32],
+        account_id: "acct",
+        endpoint: &changed,
+        version: 1,
+        expires_at_utc_ms: expiry,
+        peer: &peer,
+        server: &key,
+    })
+    .unwrap();
+    let other_peer =
+        hantong_contracts::auth::PeerContext::new("S-1-5-21-9-8-7-6", "S-1-5-5-9-8").unwrap();
+    let third = terminal_binding(&TerminalBindingInput {
+        kind: *b"terminal-smtp-v1",
+        request_id: [1; 32],
+        payload_hash: [2; 32],
+        account_id: "acct",
+        endpoint: &endpoint,
+        version: 1,
+        expires_at_utc_ms: expiry,
+        peer: &other_peer,
+        server: &key,
+    })
+    .unwrap();
+    assert_ne!(first, second);
+    assert_ne!(first, third);
+    key.delete().unwrap();
+}
 #[test]
 fn cli15_orphan_cleanup_preserves_explicit_denial_and_diagnostics_have_only_stable_fields() {
     let f = Fake::new();
@@ -774,29 +991,13 @@ fn setup01_registration_and_imap_share_one_gate_and_status_never_schedules() {
     };
     assert_eq!(receipt.state(), ImapSetupState::Pending);
     let id = *receipt.request_id();
-    assert_eq!(worker.receiver.try_recv().unwrap(), Job::Imap(id));
+    assert!(worker.receiver.try_recv().is_err());
     assert!(
         matches!(handle.setup_command(cmd()).unwrap(),SetupReceipt::Imap(value) if value==receipt)
     );
     assert!(worker.receiver.try_recv().is_err());
     assert_eq!(store.list_imap_setup_requests().unwrap().len(), 1);
-    assert_eq!(
-        handle.command(RegistrationCommand::Request),
-        Err(ErrorCode::RateLimited)
-    );
-    let other = ImapSetupInput::new(
-        None,
-        None,
-        "other.example".into(),
-        993,
-        ImapSetupTls::ImplicitTls,
-        "user".into(),
-    )
-    .unwrap();
-    assert!(matches!(
-        handle.setup_command(SetupCommand::Imap(ImapSetupCommand::Request(other))),
-        Err(ErrorCode::RateLimited)
-    ));
+    assert!(handle.command(RegistrationCommand::Request).is_ok());
     assert!(
         matches!(handle.setup_command(SetupCommand::Imap(ImapSetupCommand::Status(id))).unwrap(),SetupReceipt::Imap(value) if value==receipt)
     );
@@ -808,11 +1009,10 @@ fn setup01_registration_and_imap_share_one_gate_and_status_never_schedules() {
     else {
         panic!("wrong family");
     };
-    assert_eq!(interrupted.state(), ImapSetupState::Interrupted);
-    assert!(matches!(
-        handle.setup_command(cmd()),
-        Err(ErrorCode::InternalError)
-    ));
+    assert_eq!(interrupted.state(), ImapSetupState::Pending);
+    assert!(
+        matches!(handle.setup_command(cmd()), Ok(SetupReceipt::Imap(value)) if value == interrupted)
+    );
     assert_eq!(store.list_imap_setup_requests().unwrap().len(), 1);
     assert!(store.list_registrable_account_ids().unwrap().is_empty());
     drop(handle);
@@ -822,10 +1022,7 @@ fn setup01_registration_and_imap_share_one_gate_and_status_never_schedules() {
         panic!("wrong family");
     };
     assert_ne!(child.request_id(), &id);
-    assert_eq!(
-        worker.receiver.try_recv().unwrap(),
-        Job::Imap(*child.request_id())
-    );
+    assert!(worker.receiver.try_recv().is_err());
     assert!(
         matches!(handle.setup_command(resume()).unwrap(),SetupReceipt::Imap(value) if value==child)
     );
@@ -837,17 +1034,14 @@ fn setup01_registration_and_imap_share_one_gate_and_status_never_schedules() {
     let SetupReceipt::Imap(grandchild) = handle.setup_command(resume()).unwrap() else {
         panic!("wrong family");
     };
-    assert_ne!(grandchild.request_id(), child.request_id());
-    assert_eq!(
-        worker.receiver.try_recv().unwrap(),
-        Job::Imap(*grandchild.request_id())
-    );
-    assert_eq!(store.list_imap_setup_requests().unwrap().len(), 3);
+    assert_eq!(grandchild.request_id(), child.request_id());
+    assert!(worker.receiver.try_recv().is_err());
+    assert_eq!(store.list_imap_setup_requests().unwrap().len(), 2);
     assert!(store.list_registrable_account_ids().unwrap().is_empty());
     drop(worker);
     drop(handle);
     let pending = store
-        .load_imap_setup_request(*grandchild.request_id())
+        .load_imap_setup_request(*child.request_id())
         .unwrap()
         .unwrap();
     let staged = store.stage_imap_setup_request(&pending).unwrap();
@@ -866,10 +1060,10 @@ fn setup01_registration_and_imap_share_one_gate_and_status_never_schedules() {
     let SetupReceipt::Imap(completed) = handle.setup_command(resume()).unwrap() else {
         panic!("wrong family");
     };
-    assert_eq!(completed.request_id(), grandchild.request_id());
+    assert_eq!(completed.request_id(), child.request_id());
     assert_eq!(completed.state(), ImapSetupState::Ready);
     assert!(worker.receiver.try_recv().is_err());
-    assert_eq!(store.list_imap_setup_requests().unwrap().len(), 3);
+    assert_eq!(store.list_imap_setup_requests().unwrap().len(), 2);
     drop(worker);
     drop(handle);
     let (handle, mut worker) = coordinator(&store, key.0.as_ref().unwrap(), &secrets);
@@ -887,7 +1081,7 @@ fn setup01_registration_and_imap_share_one_gate_and_status_never_schedules() {
         worker.receiver.try_recv().unwrap(),
         Job::Registration([9; 32])
     );
-    assert_eq!(store.list_imap_setup_requests().unwrap().len(), 3);
+    assert_eq!(store.list_imap_setup_requests().unwrap().len(), 2);
     assert!(matches!(
         handle.setup_command(resume()),
         Err(ErrorCode::RateLimited)
@@ -895,7 +1089,7 @@ fn setup01_registration_and_imap_share_one_gate_and_status_never_schedules() {
 }
 
 #[test]
-fn cli15_scope_refresh_queue_deduplicates_and_resumes_only_explicit_requests() {
+fn cli15_scope_refresh_deduplicates_without_native_job_and_resumes_only_explicit_requests() {
     use hantong_contracts::scope_refresh::{ScopeRefreshCommand as C, ScopeRefreshProgress as P};
     struct Key(Option<ServerSigningKey>);
     impl Drop for Key {
@@ -964,20 +1158,20 @@ fn cli15_scope_refresh_queue_deduplicates_and_resumes_only_explicit_requests() {
             .target_tools(),
         hantong_contracts::auth::default_cli_send_tools()
     );
-    assert_eq!(worker.receiver.try_recv().unwrap(), Job::ScopeRefresh(rid));
+    assert!(worker.receiver.try_recv().is_err());
     assert!(
         matches!(handle.setup_command(command()).unwrap(),SetupReceipt::ScopeRefresh(r)if r==first)
     );
     assert!(worker.receiver.try_recv().is_err());
     assert!(matches!(
         handle.setup_command(SetupCommand::Imap(ImapSetupCommand::Request(input.clone()))),
-        Err(ErrorCode::RateLimited)
+        Ok(SetupReceipt::Imap(_))
     ));
     assert!(matches!(
         handle.setup_command(SetupCommand::Imap(ImapSetupCommand::Resume(
             *setup.intent().request_id()
         ))),
-        Err(ErrorCode::RateLimited)
+        Ok(SetupReceipt::Imap(_))
     ));
     assert!(
         matches!(handle.setup_command(SetupCommand::ScopeRefresh(C::Status(rid))).unwrap(),SetupReceipt::ScopeRefresh(r)if r.state()==P::Pending)
@@ -995,7 +1189,7 @@ fn cli15_scope_refresh_queue_deduplicates_and_resumes_only_explicit_requests() {
     assert!(
         matches!(handle.setup_command(command()).unwrap(),SetupReceipt::ScopeRefresh(r)if r.refresh_id()==&rid)
     );
-    assert_eq!(worker.receiver.try_recv().unwrap(), Job::ScopeRefresh(rid));
+    assert!(worker.receiver.try_recv().is_err());
     drop(worker);
     let pending = store.load_cli_scope_refresh(rid).unwrap().unwrap();
     store.stage_cli_scope_refresh(&pending).unwrap();
@@ -1013,7 +1207,7 @@ fn cli15_scope_refresh_queue_deduplicates_and_resumes_only_explicit_requests() {
     assert!(
         matches!(handle.setup_command(command()).unwrap(),SetupReceipt::ScopeRefresh(r)if r.refresh_id()==&rid&&r.state()==P::Provisioning)
     );
-    assert_eq!(worker.receiver.try_recv().unwrap(), Job::ScopeRefresh(rid));
+    assert!(worker.receiver.try_recv().is_err());
     assert_eq!(
         store
             .load_default_cli_registration()
@@ -1025,7 +1219,7 @@ fn cli15_scope_refresh_queue_deduplicates_and_resumes_only_explicit_requests() {
 }
 
 #[test]
-fn inst04_mcp_and_cli_pending_requests_are_separate_and_share_the_native_queue() {
+fn inst04_mcp_and_cli_pending_requests_are_separate_and_do_not_schedule_native_work() {
     struct Key(Option<ServerSigningKey>);
     impl Drop for Key {
         fn drop(&mut self) {
@@ -1051,7 +1245,7 @@ fn inst04_mcp_and_cli_pending_requests_are_separate_and_share_the_native_queue()
     let (handle, mut worker) = coordinator(&store, key.0.as_ref().unwrap(), &secrets);
     let first = handle.command(RegistrationCommand::McpRequest).unwrap();
     let id = *first.request_id();
-    assert_eq!(worker.receiver.try_recv().unwrap(), Job::Registration(id));
+    assert!(worker.receiver.try_recv().is_err());
     assert_eq!(
         handle.command(RegistrationCommand::McpRequest),
         Ok(first.clone())
@@ -1065,10 +1259,9 @@ fn inst04_mcp_and_cli_pending_requests_are_separate_and_share_the_native_queue()
         handle.command(RegistrationCommand::Status(id)),
         Err(ErrorCode::NotFound)
     );
-    assert_eq!(
-        handle.command(RegistrationCommand::Request),
-        Err(ErrorCode::RateLimited)
-    );
+    let cli = handle.command(RegistrationCommand::Request).unwrap();
+    assert_ne!(cli.request_id(), &id);
+    assert!(worker.receiver.try_recv().is_err());
     let stored = store.get_registration_request(id).unwrap().unwrap();
     assert_eq!(stored.client_kind, ClientKind::Mcp);
     assert_eq!(stored.display_label, DEFAULT_MCP_LABEL);
@@ -1086,21 +1279,18 @@ fn inst04_mcp_and_cli_pending_requests_are_separate_and_share_the_native_queue()
     );
     assert!(worker.receiver.try_recv().is_err());
     assert_eq!(handle.command(RegistrationCommand::McpRequest), Ok(first));
-    assert_eq!(worker.receiver.try_recv().unwrap(), Job::Registration(id));
+    assert!(worker.receiver.try_recv().is_err());
     drop(worker);
     drop(handle);
     store
         .deny_mcp_registration_request(id, stored.version)
         .unwrap();
     let (handle, mut worker) = coordinator(&store, key.0.as_ref().unwrap(), &secrets);
-    let cli = handle.command(RegistrationCommand::Request).unwrap();
-    assert_ne!(cli.request_id(), &id);
+    let cli_after_deny = handle.command(RegistrationCommand::Request).unwrap();
+    assert_ne!(cli_after_deny.request_id(), &id);
+    assert!(worker.receiver.try_recv().is_err());
     assert_eq!(
-        worker.receiver.try_recv().unwrap(),
-        Job::Registration(*cli.request_id())
-    );
-    assert_eq!(
-        handle.command(RegistrationCommand::McpStatus(*cli.request_id())),
+        handle.command(RegistrationCommand::McpStatus(*cli_after_deny.request_id())),
         Err(ErrorCode::NotFound)
     );
     assert_eq!(

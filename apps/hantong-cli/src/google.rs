@@ -322,8 +322,9 @@ fn show_deadline(lang: Lang, expires: i64) -> Result<(), ErrorCode> {
 }
 fn wait_registration(account: GoogleReadAccount, lang: Lang) -> Result<(), ErrorCode> {
     println!("{}", resource(lang, "register"));
-    let mut r = hantong_ipc_client::registration::exchange(
+    let mut r = super::terminal_workflows::registration(
         RegistrationCommand::RequestGoogleReadOnly(account),
+        lang,
     )?;
     show_deadline(lang, r.expires_at_utc_ms())?;
     let until = Instant::now() + Duration::from_secs(300);
@@ -345,9 +346,8 @@ fn wait_registration(account: GoogleReadAccount, lang: Lang) -> Result<(), Error
 }
 fn wait_refresh(account: GoogleReadAccount, lang: Lang) -> Result<(), ErrorCode> {
     println!("{}", resource(lang, "refresh"));
-    let mut r = hantong_ipc_client::scope_refresh::exchange(
-        ScopeRefreshCommand::AddGoogleReadOnly(account),
-    )?;
+    let mut r =
+        super::terminal_workflows::scope(ScopeRefreshCommand::AddGoogleReadOnly(account), lang)?;
     show_deadline(lang, r.expires_at_utc_ms())?;
     let until = Instant::now() + Duration::from_secs(300);
     loop {
@@ -471,6 +471,16 @@ fn login_inner(
                 .min(300_000);
             stage_deadline = Instant::now() + Duration::from_millis(remaining as u64);
             previous = receipt.state.clone();
+            if matches!(
+                receipt.state.as_str(),
+                "awaiting_client" | "awaiting_review"
+            ) {
+                super::terminal_workflows::maybe_review(
+                    hantong_contracts::terminal_review::TerminalReviewKind::GoogleSetup,
+                    receipt.request_id,
+                    lang,
+                )?;
+            }
         }
         if Instant::now() >= stage_deadline {
             return Err(ErrorCode::ApprovalExpired);
@@ -698,14 +708,38 @@ pub(super) fn try_run(
     };
     if matches!(
         action,
-        Action::Login(_) | Action::Resume(_) | Action::Continue(_)
-    ) && (no_input || json_output || !std::io::stdin().is_terminal())
+        Action::Login(_)
+            | Action::Resume(_)
+            | Action::Continue(_)
+            | Action::Setup(GoogleSetupCommand::Request(_))
+    ) && (no_input
+        || json_output
+        || !std::io::stdin().is_terminal()
+        || !std::io::stdout().is_terminal())
     {
         return Some(emit_error(ErrorCode::HumanStepRequired, lang, json_output));
     }
     let result = match action {
         Action::Setup(command) => {
-            hantong_ipc_client::google_setup::exchange(command).map(|r| r.to_json())
+            let is_request = matches!(command, GoogleSetupCommand::Request(_));
+            hantong_ipc_client::google_setup::exchange(command).and_then(|r| {
+                if is_request
+                    && !json_output
+                    && !no_input
+                    && matches!(r.state.as_str(), "awaiting_client" | "awaiting_review")
+                {
+                    super::terminal_workflows::maybe_review(
+                        hantong_contracts::terminal_review::TerminalReviewKind::GoogleSetup,
+                        r.request_id,
+                        lang,
+                    )?;
+                    return hantong_ipc_client::google_setup::exchange(GoogleSetupCommand::Status(
+                        r.request_id,
+                    ))
+                    .map(|r| r.to_json());
+                }
+                Ok(r.to_json())
+            })
         }
         Action::Login(input) => login(GoogleSetupCommand::Request(input), lang),
         Action::Resume(id) => login(GoogleSetupCommand::Status(id), lang),
