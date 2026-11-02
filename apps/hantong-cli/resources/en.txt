@@ -1,7 +1,7 @@
 usage=Usage: hantong [--lang en|ko] [--json] [--no-input] <command>
-commands=Commands: core status; clients register; clients status <request_id>; clients verify; clients refresh; clients refresh-status <refresh_id>; setup imap request; setup imap status <request_id>; setup imap resume <request_id>; accounts list; folders list; folders refresh; folders refresh-status; sync cursor; sync page; sync status; sync reconcile; sync reconcile-status; sync recover; sync recover-status; sync inspect; sync initial-start; sync initial-status; sync initial-plan; sync initial-resume; sync initial-pause; search; read; draft create; send; send status; diagnostics snapshot
-preview_scope=Developer preview: IMAP and Google multi-account read-only mail, text bodies, drafts and individually approved SMTP sending. Mail operations require Windows 11 x64.
-quick_start=Start mail-hantong-core run in another terminal, then hantong core status --json. Account setup and client registration require the protected Windows confirmation window. See CLI-LAUNCH.md for setup and command examples.
+commands=Commands: core status; clients register; clients register-readonly <google_account_id>; clients status <request_id>; clients verify; clients refresh; clients refresh-readonly <google_account_id>; clients add-readonly <google_account_id>; clients refresh-gmail-send <google_account_ids>; clients refresh-gmail-changes <google_account_ids>; clients refresh-status <refresh_id>; setup imap request; setup imap status <request_id>; setup imap resume <request_id>; accounts list; folders list; folders refresh; folders refresh-status; sync cursor; sync page; sync status; sync reconcile; sync reconcile-status; sync recover; sync recover-status; sync inspect; sync initial-start; sync initial-status; sync initial-plan; sync initial-resume; sync initial-pause; search; read; draft create; send; send status; change draft-save; change labels; change status; diagnostics snapshot
+preview_scope=Developer preview: IMAP and Google multi-account mail, text bodies, drafts, individually approved sending, and approved Gmail draft/label changes. Google starts read-only; write features require explicit account permissions. Mail operations require Windows 11 x64.
+quick_start=Start here: hantong init. The interactive guide prepares the installed core, connects Google accounts and opens protected permission reviews. Run hantong with no command in a terminal to open the same guide. See CLI-LAUNCH.md.
 folder_name=Folder
 sync_cursor=Local UID cursor
 sync_catalog_generation=Catalog generation
@@ -178,4 +178,4 @@ send_review_id=Review ID
 send_state=Delivery state
 smtp_setup_request=SMTP setup request
 smtp_setup_state=State
-google_help=Google: login google [--client-id ID] [--name NAME]; setup google request/status; gmail labels/sync/status/list/read --account ACCOUNT_ID. The first connection needs public Google Desktop OAuth client configuration; see GOOGLE-MAIL.md.
+google_help=Google: gmail accounts; login google [--client-id ID] [--name NAME]; login google --reauthorize-account ACCOUNT_ID; login google --resume-request REQUEST_ID; login google --continue-account ACCOUNT_ID; gmail labels/sync/status/list/read --account ACCOUNT_ID. Configure the app once, then reuse the protected same-client configuration. See GOOGLE-MAIL.md.

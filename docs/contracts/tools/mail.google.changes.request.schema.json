@@ -1,0 +1,188 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "request_id",
+    "tool",
+    "params"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "request_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[A-Za-z0-9._:-]+$"
+    },
+    "tool": {
+      "const": "mail.google.changes.request"
+    },
+    "params": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "mode",
+            "request"
+          ],
+          "properties": {
+            "mode": {
+              "const": "request"
+            },
+            "request": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "account_id",
+                    "operation_id",
+                    "idempotency_key",
+                    "expected_version",
+                    "payload_hash",
+                    "kind",
+                    "draft_id"
+                  ],
+                  "properties": {
+                    "account_id": {
+                      "type": "string",
+                      "pattern": "^google_[0-9a-f]{64}$"
+                    },
+                    "operation_id": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 128,
+                      "pattern": "^[A-Za-z0-9._:-]+$"
+                    },
+                    "idempotency_key": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 128,
+                      "pattern": "^[A-Za-z0-9._:-]+$"
+                    },
+                    "expected_version": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 9223372036854775807
+                    },
+                    "payload_hash": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$"
+                    },
+                    "kind": {
+                      "const": "save_draft"
+                    },
+                    "draft_id": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$"
+                    }
+                  }
+                },
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "account_id",
+                    "operation_id",
+                    "idempotency_key",
+                    "expected_version",
+                    "payload_hash",
+                    "kind",
+                    "message_id",
+                    "add_labels",
+                    "remove_labels"
+                  ],
+                  "properties": {
+                    "account_id": {
+                      "type": "string",
+                      "pattern": "^google_[0-9a-f]{64}$"
+                    },
+                    "operation_id": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 128,
+                      "pattern": "^[A-Za-z0-9._:-]+$"
+                    },
+                    "idempotency_key": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 128,
+                      "pattern": "^[A-Za-z0-9._:-]+$"
+                    },
+                    "expected_version": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 9223372036854775807
+                    },
+                    "payload_hash": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$"
+                    },
+                    "kind": {
+                      "const": "labels"
+                    },
+                    "message_id": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256,
+                      "pattern": "^[A-Za-z0-9_-]+$"
+                    },
+                    "add_labels": {
+                      "type": "array",
+                      "maxItems": 100,
+                      "uniqueItems": true,
+                      "items": {
+                        "type": "string",
+                        "pattern": "^(UNREAD|STARRED|IMPORTANT|INBOX|CATEGORY_(PERSONAL|SOCIAL|PROMOTIONS|UPDATES|FORUMS)|Label_[A-Za-z0-9_-]+)$",
+                        "maxLength": 256
+                      }
+                    },
+                    "remove_labels": {
+                      "type": "array",
+                      "maxItems": 100,
+                      "uniqueItems": true,
+                      "items": {
+                        "type": "string",
+                        "pattern": "^(UNREAD|STARRED|IMPORTANT|INBOX|CATEGORY_(PERSONAL|SOCIAL|PROMOTIONS|UPDATES|FORUMS)|Label_[A-Za-z0-9_-]+)$",
+                        "maxLength": 256
+                      }
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "mode",
+            "account_id",
+            "review_id"
+          ],
+          "properties": {
+            "mode": {
+              "const": "status"
+            },
+            "account_id": {
+              "type": "string",
+              "pattern": "^google_[0-9a-f]{64}$"
+            },
+            "review_id": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            }
+          }
+        }
+      ]
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "mail.google.changes.request.schema.json",
+  "title": "mail.google.changes.request"
+}

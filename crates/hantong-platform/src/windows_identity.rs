@@ -1,11 +1,13 @@
 #![allow(unsafe_code)]
 
 use hantong_contracts::ErrorCode;
-use std::{ffi::OsStr, os::windows::ffi::OsStrExt, ptr};
+use std::{ffi::OsStr, fs::File, io::Read, os::windows::ffi::OsStrExt, path::Path, ptr};
 use windows_sys::Win32::Security::Cryptography::*;
 
 const MAX_TRANSCRIPT: usize = 32 * 1024;
 pub const MAX_STORAGE_PAYLOAD: usize = 8 * 1024 * 1024 + 4096;
+pub const MAX_RELEASE_FILE: u64 = 512 * 1024 * 1024;
+const RELEASE_FILE_CHUNK: usize = 64 * 1024;
 const PUBLIC_BLOB_LEN: usize = 72;
 const SIGNATURE_LEN: usize = 64;
 const NTE_EXISTS_STATUS: i32 = windows_sys::Win32::Foundation::NTE_EXISTS;
@@ -84,6 +86,84 @@ impl Drop for BcryptHash {
     }
 }
 
+struct BcryptHasher {
+    // Drop the hash before its backing object and algorithm provider.
+    hash: BcryptHash,
+    _object: Vec<u8>,
+    _algorithm: BcryptAlg,
+}
+
+impl BcryptHasher {
+    fn new() -> Result<Self, ErrorCode> {
+        let mut alg = ptr::null_mut();
+        let status = unsafe {
+            BCryptOpenAlgorithmProvider(&mut alg, BCRYPT_SHA256_ALGORITHM, ptr::null(), 0)
+        };
+        if !ok_nt(status) || alg.is_null() {
+            return Err(ErrorCode::InternalError);
+        }
+        let algorithm = BcryptAlg(alg);
+        let mut object_len = 0u32;
+        let mut result_len = 0u32;
+        let status = unsafe {
+            BCryptGetProperty(
+                algorithm.0,
+                BCRYPT_OBJECT_LENGTH,
+                (&mut object_len as *mut u32).cast(),
+                4,
+                &mut result_len,
+                0,
+            )
+        };
+        if !ok_nt(status) || result_len != 4 || object_len == 0 || object_len > 1024 * 1024 {
+            return Err(ErrorCode::InternalError);
+        }
+        let mut object = vec![0u8; object_len as usize];
+        let mut hash = ptr::null_mut();
+        let status = unsafe {
+            BCryptCreateHash(
+                algorithm.0,
+                &mut hash,
+                object.as_mut_ptr(),
+                object_len,
+                ptr::null(),
+                0,
+                0,
+            )
+        };
+        if !ok_nt(status) || hash.is_null() {
+            return Err(ErrorCode::InternalError);
+        }
+        Ok(Self {
+            _algorithm: algorithm,
+            _object: object,
+            hash: BcryptHash(hash),
+        })
+    }
+
+    fn update(&mut self, input: &[u8]) -> Result<(), ErrorCode> {
+        if input.is_empty() {
+            return Ok(());
+        }
+        let status = unsafe { BCryptHashData(self.hash.0, input.as_ptr(), input.len() as u32, 0) };
+        if ok_nt(status) {
+            Ok(())
+        } else {
+            Err(ErrorCode::InternalError)
+        }
+    }
+
+    fn finish(self) -> Result<[u8; 32], ErrorCode> {
+        let mut out = [0u8; 32];
+        let status = unsafe { BCryptFinishHash(self.hash.0, out.as_mut_ptr(), 32, 0) };
+        if ok_nt(status) {
+            Ok(out)
+        } else {
+            Err(ErrorCode::InternalError)
+        }
+    }
+}
+
 /// Current-user CNG key with private material kept inside the provider.
 pub struct ClientSigningKey {
     material: SigningMaterial,
@@ -139,56 +219,48 @@ fn sha256_with_limit(input: &[u8], max_len: usize) -> Result<[u8; 32], ErrorCode
     if input.len() > max_len {
         return Err(ErrorCode::InvalidInput);
     }
-    let mut alg = ptr::null_mut();
-    let status =
-        unsafe { BCryptOpenAlgorithmProvider(&mut alg, BCRYPT_SHA256_ALGORITHM, ptr::null(), 0) };
-    if !ok_nt(status) || alg.is_null() {
-        return Err(ErrorCode::InternalError);
+    let mut hasher = BcryptHasher::new()?;
+    hasher.update(input)?;
+    hasher.finish()
+}
+
+/// Hashes an installed release file in bounded chunks, without applying the
+/// smaller IPC transcript limit or retaining the file in memory.
+pub fn sha256_release_file(path: impl AsRef<Path>) -> Result<[u8; 32], ErrorCode> {
+    let mut file = File::open(path).map_err(|_| ErrorCode::CoreUnavailable)?;
+    let expected_len = file
+        .metadata()
+        .map_err(|_| ErrorCode::CoreUnavailable)?
+        .len();
+    if expected_len > MAX_RELEASE_FILE {
+        return Err(ErrorCode::InvalidInput);
     }
-    let alg = BcryptAlg(alg);
-    let mut object_len = 0u32;
-    let mut result_len = 0u32;
-    let status = unsafe {
-        BCryptGetProperty(
-            alg.0,
-            BCRYPT_OBJECT_LENGTH,
-            (&mut object_len as *mut u32).cast(),
-            4,
-            &mut result_len,
-            0,
-        )
-    };
-    if !ok_nt(status) || result_len != 4 || object_len == 0 || object_len > 1024 * 1024 {
-        return Err(ErrorCode::InternalError);
+    let mut hasher = BcryptHasher::new()?;
+    let mut buffer = [0u8; RELEASE_FILE_CHUNK];
+    let mut total = 0u64;
+    loop {
+        let read = file
+            .read(&mut buffer)
+            .map_err(|_| ErrorCode::CoreUnavailable)?;
+        if read == 0 {
+            break;
+        }
+        total = total
+            .checked_add(read as u64)
+            .ok_or(ErrorCode::CoreUnavailable)?;
+        if total > expected_len || total > MAX_RELEASE_FILE {
+            return Err(ErrorCode::CoreUnavailable);
+        }
+        hasher.update(&buffer[..read])?;
     }
-    let mut object = vec![0u8; object_len as usize];
-    let mut hash = ptr::null_mut();
-    let status = unsafe {
-        BCryptCreateHash(
-            alg.0,
-            &mut hash,
-            object.as_mut_ptr(),
-            object_len,
-            ptr::null(),
-            0,
-            0,
-        )
-    };
-    if !ok_nt(status) || hash.is_null() {
-        return Err(ErrorCode::InternalError);
+    let final_len = file
+        .metadata()
+        .map_err(|_| ErrorCode::CoreUnavailable)?
+        .len();
+    if total != expected_len || final_len != expected_len {
+        return Err(ErrorCode::CoreUnavailable);
     }
-    let hash = BcryptHash(hash);
-    let status = unsafe { BCryptHashData(hash.0, input.as_ptr(), input.len() as u32, 0) };
-    if !ok_nt(status) {
-        return Err(ErrorCode::InternalError);
-    }
-    let mut out = [0u8; 32];
-    let status = unsafe { BCryptFinishHash(hash.0, out.as_mut_ptr(), 32, 0) };
-    if ok_nt(status) {
-        Ok(out)
-    } else {
-        Err(ErrorCode::InternalError)
-    }
+    hasher.finish()
 }
 
 /// Public selector derivation only. Private key material is generated by the KSP.
@@ -651,6 +723,20 @@ mod tests {
         let mut unaligned = [0u8; PUBLIC_BLOB_LEN + 1];
         unaligned[1..].copy_from_slice(&public);
         assert!(verify_signature(&unaligned[1..], message, &sig).unwrap());
+    }
+
+    #[test]
+    fn inst01_release_file_hash_streams_beyond_transcript_limit() {
+        let path = std::env::temp_dir().join(format!(
+            "hantong-release-hash-{}-{}.bin",
+            std::process::id(),
+            random_nonce().unwrap()[0]
+        ));
+        let data: Vec<u8> = (0..(64 * 1024 + 17)).map(|n| (n % 251) as u8).collect();
+        std::fs::write(&path, &data).unwrap();
+        let streamed = sha256_release_file(&path).unwrap();
+        assert_eq!(streamed, sha256_storage_payload(&data).unwrap());
+        let _ = std::fs::remove_file(path);
     }
     #[test]
     fn cli07_registration_key_selector_has_stable_domain_and_rejects_zero() {

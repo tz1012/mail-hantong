@@ -82,6 +82,7 @@ pub(super) async fn run(
     );
     fixture
         .google_accounts(&[GoogleIdentity {
+            access_mode: hantong_contracts::google_write::GoogleAccessMode::ReadOnly,
             account_id: account.clone(),
             subject: subject.into(),
             email: "fixture@example.test".into(),
@@ -104,6 +105,7 @@ pub(super) async fn run(
                     kind: "system".into(),
                 }],
                 messages: vec![GoogleMessage {
+                    attachment_checks: None,
                     id: "message1".into(),
                     thread_id: "thread1".into(),
                     internal_date_ms: 1,
@@ -197,6 +199,34 @@ pub(super) async fn run(
             .await;
         let denied: Value = serde_json::from_slice(&denied).unwrap();
         assert_eq!(denied["error"]["code"], "SCOPE_DENIED");
+        // A signed read profile cannot turn cached untrusted content into
+        // mutation authority, including by requesting or inspecting a review.
+        let change = hantong_contracts::google_write::MessageLabelChange::new(
+            account.clone(),
+            "message1".into(),
+            vec!["STARRED".into()],
+            vec![],
+        )
+        .unwrap();
+        let payload = hantong_contracts::google_mutation::MutationPayload::Labels {
+            payload_hash: hantong_platform::sha256_storage_payload(&change.canonical_payload())
+                .unwrap(),
+            change,
+            expected_version: 1,
+            operation_id: "signed-denied-change".into(),
+            idempotency_key: "signed-denied-change".into(),
+        };
+        for params in [
+            json!({"mode":"request","request":payload.to_json()}),
+            json!({"mode":"status","account_id":account,"review_id":"11".repeat(32)}),
+        ] {
+            let raw = h
+                .rpc(hantong_contracts::google_mutation::REQUEST_TOOL, params)
+                .await;
+            let denied: Value = serde_json::from_slice(&raw).unwrap();
+            assert_eq!(denied["error"]["code"], "SCOPE_DENIED");
+        }
+        assert!(store.google_message(&account, "message1").is_ok());
         assert_eq!(calls.load(Ordering::SeqCst), 1);
     };
     tokio::select! {result=worker.run()=>panic!("unexpected Google worker exit: {result:?}"),_ =scenario=>{}}

@@ -16,6 +16,11 @@ fn main() {
     let en = keys(Path::new("resources/en.txt"));
     let ko = keys(Path::new("resources/ko.txt"));
     assert_eq!(en, ko, "English and Korean CLI resource keys must match");
+    assert_eq!(
+        keys(Path::new("resources/onboarding-en.txt")),
+        keys(Path::new("resources/onboarding-ko.txt")),
+        "English and Korean onboarding resource keys must match"
+    );
     for key in [
         "usage",
         "commands",
@@ -80,4 +85,6 @@ fn main() {
     }
     println!("cargo:rerun-if-changed=resources/en.txt");
     println!("cargo:rerun-if-changed=resources/ko.txt");
+    println!("cargo:rerun-if-changed=resources/onboarding-en.txt");
+    println!("cargo:rerun-if-changed=resources/onboarding-ko.txt");
 }

@@ -185,9 +185,13 @@ mod storage {
         }
         Ok(())
     }
-    fn binding(c: &Connection, account: &str) -> Result<GoogleAccountBinding, ErrorCode> {
+    pub(crate) fn binding(
+        c: &Connection,
+        account: &str,
+    ) -> Result<GoogleAccountBinding, ErrorCode> {
         validate_google_account_id(account)?;
-        let value = db(c.query_row("SELECT g.subject,g.client_id,g.credential_version,a.provider,a.provider_subject FROM google_connections g JOIN accounts a USING(account_id) WHERE g.account_id=?1",[account],|r| Ok((GoogleAccountBinding {account_id:account.into(),subject:r.get(0)?,client_id:r.get(1)?,credential_version:integer(r,2)?},r.get::<_,String>(3)?,r.get::<_,Option<String>>(4)?))).optional())?.ok_or(ErrorCode::NotFound)?;
+        let value = db(c.query_row("SELECT g.subject,g.client_id,g.credential_version,a.provider,a.provider_subject,a.granted_scopes FROM google_connections g JOIN accounts a USING(account_id) WHERE g.account_id=?1",[account],|r| Ok((GoogleAccountBinding {access_mode: hantong_contracts::google_write::GoogleAccessMode::from_requested_scopes(&serde_json::from_str::<Vec<String>>(&r.get::<_,String>(5)?).map_err(|_|rusqlite::Error::InvalidQuery)?).map_err(|_|rusqlite::Error::InvalidQuery)?,
+account_id:account.into(),subject:r.get(0)?,client_id:r.get(1)?,credential_version:integer(r,2)?},r.get::<_,String>(3)?,r.get::<_,Option<String>>(4)?))).optional())?.ok_or(ErrorCode::NotFound)?;
         check_subject(&value.0)?;
         if value.1 != "gmail" || value.2.as_deref() != Some(&value.0.subject) {
             return Err(ErrorCode::InternalError);
@@ -265,9 +269,31 @@ mod storage {
                 _ => {}
             }
             let version = expected + 1;
-            let scopes =
-                serde_json::to_string(&GOOGLE_SCOPES).map_err(|_| ErrorCode::InternalError)?;
-            let capabilities = r#"["mail.folders.list","mail.messages.get","mail.messages.search","mail.sync.page"]"#;
+            let scopes = serde_json::to_string(i.access_mode.required_scopes())
+                .map_err(|_| ErrorCode::InternalError)?;
+            let mut supported = vec![
+                "mail.folders.list",
+                "mail.messages.get",
+                "mail.messages.search",
+                "mail.sync.page",
+            ];
+            if i.access_mode
+                .check_operation(hantong_contracts::google_write::GoogleOperation::Send)
+                .is_ok()
+            {
+                supported.extend([
+                    "mail.drafts.create",
+                    "mail.send.request",
+                    "mail.send.execute",
+                ]);
+            }
+            supported.sort_unstable();
+            if i.access_mode == hantong_contracts::google_write::GoogleAccessMode::Modify {
+                supported.push(hantong_contracts::google_mutation::REQUEST_TOOL);
+            }
+            supported.sort_unstable();
+            let capabilities =
+                serde_json::to_string(&supported).map_err(|_| ErrorCode::InternalError)?;
             if expected == 0 {
                 let exists:bool=db(c.query_row("SELECT EXISTS(SELECT 1 FROM accounts WHERE account_id=?1 OR (provider='gmail' AND provider_subject=?2))",params![i.account_id,i.subject],|r|r.get(0)))?;
                 if exists {
@@ -306,7 +332,14 @@ mod storage {
     }
 
     fn request_json(r: &GoogleSyncRequest) -> Value {
-        json!({"account_id":r.account_id,"label_id":r.label_id,"page_token":r.page_token,"limit":r.limit,"expected_version":r.expected_version,"operation_id":r.operation_id,"idempotency_key":r.idempotency_key})
+        let mut value = json!({"account_id":r.account_id,"label_id":r.label_id,"page_token":r.page_token,"limit":r.limit,"expected_version":r.expected_version,"operation_id":r.operation_id,"idempotency_key":r.idempotency_key});
+        if let Some(message) = &r.message_id {
+            value["message_id"] = message.clone().into();
+        }
+        if r.verify_attachments {
+            value["verify_attachments"] = true.into();
+        }
+        value
     }
     fn string(v: &Value, key: &str) -> Result<String, ErrorCode> {
         v.get(key)
@@ -329,6 +362,15 @@ mod storage {
     fn parse_request(raw: &str) -> Result<GoogleSyncRequest, ErrorCode> {
         let v: Value = serde_json::from_str(raw).map_err(|_| ErrorCode::InternalError)?;
         let r = GoogleSyncRequest {
+            message_id: match v.get("message_id") {
+                None => None,
+                Some(Value::String(id)) => Some(id.clone()),
+                _ => return Err(ErrorCode::InternalError),
+            },
+            verify_attachments: match v.get("verify_attachments") {
+                None => false,
+                Some(v) => v.as_bool().ok_or(ErrorCode::InternalError)?,
+            },
             account_id: string(&v, "account_id")?,
             label_id: opt_string(&v, "label_id")?,
             page_token: opt_string(&v, "page_token")?,
@@ -631,6 +673,11 @@ mod storage {
             if p.account_id != j.pending.binding.account_id
                 || p.subject != j.pending.binding.subject
                 || p.messages.len() > usize::from(j.pending.request.limit)
+                || j.pending
+                    .request
+                    .message_id
+                    .as_ref()
+                    .is_some_and(|id| p.messages.len() != 1 || p.messages[0].id != *id)
             {
                 return terminal(c, &j, Some(ErrorCode::InvalidInput), false, 0, None);
             }
@@ -643,6 +690,12 @@ mod storage {
                     "INSERT INTO google_labels VALUES(?1,?2,?3,?4)",
                     params![p.account_id, l.id, l.name, l.kind],
                 ))?;
+            }
+            if p.messages
+                .iter()
+                .any(|m| m.attachment_checks.is_some() != j.pending.request.verify_attachments)
+            {
+                return terminal(c, &j, Some(ErrorCode::InvalidInput), false, 0, None);
             }
             for m in &p.messages {
                 one(c.execute("INSERT INTO google_messages(account_id,message_id,internal_date_ms,message_json) VALUES(?1,?2,?3,?4) ON CONFLICT(account_id,message_id) DO UPDATE SET internal_date_ms=excluded.internal_date_ms,message_json=excluded.message_json",params![p.account_id,m.id,m.internal_date_ms,message_json(m).to_string()]))?;
@@ -732,11 +785,21 @@ mod storage {
         })
     }
     fn message_json(m: &GoogleMessage) -> Value {
-        json!({"id":m.id,"thread_id":m.thread_id,"internal_date_ms":m.internal_date_ms,"label_ids":m.label_ids,"subject":m.subject,"sender":m.sender,"snippet":m.snippet,"body_text":m.body_text,"body_error":m.body_error,"body_truncated":m.body_truncated,"size":m.size})
+        json!({"attachment_checks":m.attachment_checks.as_ref().map(|checks|checks.iter().map(|a|a.to_json()).collect::<Vec<_>>()),"id":m.id,"thread_id":m.thread_id,"internal_date_ms":m.internal_date_ms,"label_ids":m.label_ids,"subject":m.subject,"sender":m.sender,"snippet":m.snippet,"body_text":m.body_text,"body_error":m.body_error,"body_truncated":m.body_truncated,"size":m.size})
     }
     fn parse_message(raw: &str) -> Result<GoogleMessage, ErrorCode> {
         let v: Value = serde_json::from_str(raw).map_err(|_| ErrorCode::InternalError)?;
         let m = GoogleMessage {
+            attachment_checks: match v.get("attachment_checks") {
+                None | Some(Value::Null) => None,
+                Some(v) => Some(
+                    v.as_array()
+                        .ok_or(ErrorCode::InternalError)?
+                        .iter()
+                        .map(hantong_contracts::google::GoogleAttachmentCheck::from_json)
+                        .collect::<Result<Vec<_>, _>>()?,
+                ),
+            },
             id: string(&v, "id")?,
             thread_id: string(&v, "thread_id")?,
             internal_date_ms: v
@@ -876,3 +939,6 @@ mod tests;
 pub(super) fn validate_history(c: &rusqlite::Connection) -> rusqlite::Result<()> {
     storage::validate_history(c)
 }
+
+#[cfg(windows)]
+pub(crate) use storage::binding as google_binding_in_transaction;

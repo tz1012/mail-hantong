@@ -63,7 +63,7 @@ fn acc01_sync02_v18_to_v19_preserves_every_frozen_table_highwater_and_no_consent
     store
         .with_connection(|c| {
             assert_eq!(before, v18_product_rows(c)?);
-            assert_eq!(product_table_names(c)?.len(), 46);
+            assert_eq!(product_table_names(c)?.len(), 48);
             assert_eq!(
                 c.query_row(
                     "SELECT seq FROM sqlite_sequence WHERE name='audit_starts'",
@@ -74,7 +74,7 @@ fn acc01_sync02_v18_to_v19_preserves_every_frozen_table_highwater_and_no_consent
             );
             assert_v19_tables_empty(c)?;
             assert_v18_tables_empty(c)?;
-            validate_schema(c, SCHEMA, 19)
+            validate_schema(c, SCHEMA, CURRENT_SCHEMA_VERSION)
         })
         .unwrap();
     assert!(f.0.join("data/backup-before-v18.db").is_file());
@@ -100,7 +100,7 @@ fn acc01_v19_validation_failure_rolls_back_ddl_rows_sequence_and_version() {
     };
     let before = store.with_connection(v18_product_rows).unwrap();
     assert_eq!(
-        store.migrate_with_backup(18, 19, SCHEMA, |c| {
+        store.migrate_with_backup(18, 19, SCHEMA_V19, |c| {
             c.execute_batch(MIGRATION_V18_TO_V19)?;
             c.execute_batch("CREATE TABLE unexpected_google_schema(value)")
         }),

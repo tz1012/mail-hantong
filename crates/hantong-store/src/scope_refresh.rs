@@ -1,5 +1,5 @@
 //! Default CLI scope history is stored data, never proof of user presence.
-use crate::{RegistrationRecord, Store};
+use crate::{DEFAULT_CLI_LABEL, RegistrationRecord, Store};
 use hantong_contracts::ErrorCode;
 use hantong_contracts::auth::{RequestedScope, default_cli_legacy_tools};
 use std::fmt;
@@ -21,6 +21,7 @@ pub enum ScopeRefreshPhase {
 pub struct CliScopeRefresh {
     refresh_id: [u8; 32],
     hash_version: u8,
+    decision_channel: String,
     base_registration: RegistrationRecord,
     target_accounts: Vec<String>,
     target_tools: Vec<String>,
@@ -46,6 +47,9 @@ impl CliScopeRefresh {
     }
     pub fn base_registration(&self) -> &RegistrationRecord {
         &self.base_registration
+    }
+    pub fn decision_channel(&self) -> &str {
+        &self.decision_channel
     }
     pub fn target_accounts(&self) -> &[String] {
         &self.target_accounts
@@ -130,7 +134,83 @@ impl Store {
                     refresh_id,
                     target_scope,
                     expected_server_public_key_hash,
+                    false,
+                    false,
                 )
+            })
+        }
+    }
+    /// Creates the first personal Google CLI scope change. The Google consent
+    /// provenance is checked against the active registration; the normal CLI
+    /// refresh path remains unchanged.
+    pub fn create_google_oauth_cli_scope_refresh(
+        &self,
+        refresh_id: [u8; 32],
+        target_scope: RequestedScope,
+        server_pin: [u8; 32],
+    ) -> Result<CliScopeRefresh, ErrorCode> {
+        if refresh_id == [0; 32]
+            || server_pin == [0; 32]
+            || target_scope.accounts().len() != 1
+            || !(target_scope.tools()
+                == hantong_contracts::auth::default_cli_body_tools().as_slice()
+                || target_scope.tools()
+                    == hantong_contracts::auth::default_cli_send_tools().as_slice())
+        {
+            return Err(ErrorCode::InvalidInput);
+        }
+        #[cfg(not(windows))]
+        {
+            let _ = (refresh_id, target_scope, server_pin);
+            Err(ErrorCode::CapabilityUnsupported)
+        }
+        #[cfg(windows)]
+        {
+            self.mail_transaction(rusqlite::TransactionBehavior::Immediate, |tx| {
+                let channel: String = tx.query_row(
+                    "SELECT approved_channel FROM client_registrations WHERE client_kind='cli' AND display_label=?1 AND state='active'",
+                    [DEFAULT_CLI_LABEL], |r| r.get(0)).map_err(|_| ErrorCode::NotFound)?;
+                if channel != "google_oauth" { return Err(ErrorCode::Conflict); }
+                if target_scope.tools() == hantong_contracts::auth::default_cli_send_tools().as_slice()
+                    && target_scope.accounts().len() != 1 { return Err(ErrorCode::InvalidInput); }
+                storage::create(tx, refresh_id, target_scope, server_pin, true, false)
+            })
+        }
+    }
+    /// Creates the only supported personal compose upgrade: the exact active
+    /// OAuth-origin B profile to the same account's C profile.
+    pub fn create_google_oauth_cli_send_upgrade(
+        &self,
+        refresh_id: [u8; 32],
+        target_scope: RequestedScope,
+        server_pin: [u8; 32],
+    ) -> Result<CliScopeRefresh, ErrorCode> {
+        if refresh_id == [0; 32]
+            || server_pin == [0; 32]
+            || target_scope.accounts().len() != 1
+            || target_scope.tools() != hantong_contracts::auth::default_cli_send_tools().as_slice()
+        {
+            return Err(ErrorCode::InvalidInput);
+        }
+        #[cfg(not(windows))]
+        {
+            let _ = (refresh_id, target_scope, server_pin);
+            Err(ErrorCode::CapabilityUnsupported)
+        }
+        #[cfg(windows)]
+        {
+            self.mail_transaction(rusqlite::TransactionBehavior::Immediate, |tx| {
+                let channel: String = tx
+                    .query_row(
+                        "SELECT approved_channel FROM client_registrations WHERE client_kind='cli' AND display_label=?1 AND state='active'",
+                        [DEFAULT_CLI_LABEL],
+                        |r| r.get(0),
+                    )
+                    .map_err(|_| ErrorCode::NotFound)?;
+                if channel != "google_oauth" {
+                    return Err(ErrorCode::Conflict);
+                }
+                storage::create(tx, refresh_id, target_scope, server_pin, true, true)
             })
         }
     }
@@ -311,4 +391,18 @@ fn cli15_refresh_requires_the_windows_store() {
 #[cfg(windows)]
 pub(crate) fn validate_history_v17(c: &rusqlite::Connection) -> rusqlite::Result<()> {
     storage::validate_history_v17(c)
+}
+
+#[cfg(windows)]
+pub(crate) fn validate_history_v20(c: &rusqlite::Connection) -> rusqlite::Result<()> {
+    storage::validate_history_v20(c)
+}
+#[cfg(windows)]
+pub(crate) fn validate_history_v21(c: &rusqlite::Connection) -> rusqlite::Result<()> {
+    storage::validate_history_v21(c)
+}
+
+#[cfg(windows)]
+pub(crate) fn validate_history_v22(c: &rusqlite::Connection) -> rusqlite::Result<()> {
+    storage::validate_history_v22(c)
 }

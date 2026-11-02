@@ -2,7 +2,8 @@
 use crate::registration_review::ReviewSnapshot;
 use hantong_contracts::{
     ErrorCode,
-    mail_send::{DraftCreateRequest, SendReviewRequest},
+    google_write::{ComposeSnapshot, GoogleOperation, MailSendTarget},
+    mail_send::SendReviewRequest,
 };
 use hantong_domain::{config::Language, mail_connection::SmtpEndpointConfig};
 use std::fmt;
@@ -13,8 +14,8 @@ pub struct SendReview {
     pub owner_registration_id: [u8; 16],
     pub profile_epoch: u64,
     pub account_version: u64,
-    pub endpoint: SmtpEndpointConfig,
-    pub draft: DraftCreateRequest,
+    pub endpoint: MailSendTarget<SmtpEndpointConfig>,
+    pub draft: ComposeSnapshot,
     pub request: SendReviewRequest,
     pub created_at_utc_ms: i64,
     pub expires_at_utc_ms: i64,
@@ -48,6 +49,13 @@ impl SendReview {
         {
             return Err(ErrorCode::InvalidInput);
         }
+        if let MailSendTarget::Gmail { binding, .. } = &self.endpoint {
+            binding.validate()?;
+            binding.access_mode.check_operation(GoogleOperation::Send)?;
+            if binding.account_id != self.draft.account_id() {
+                return Err(ErrorCode::ScopeDenied);
+            }
+        }
         if self.summary(Language::En).encode_utf16().count() > 2 * 1024 * 1024
             || self.summary(Language::Ko).encode_utf16().count() > 2 * 1024 * 1024
         {
@@ -57,16 +65,28 @@ impl SendReview {
     }
     pub fn summary(&self, lang: Language) -> String {
         let label = |key| text(lang, key);
-        format!(
-            "{}: {}\r\n{}: {}\r\n{}: {}:{} ({:?})\r\n{}: {}\r\n{}: {}\r\n{}: {}\r\n\r\n{}:\r\n{}\r\n\r\n{}",
+        let (sender, server) = match &self.endpoint {
+            MailSendTarget::Smtp(smtp) => (
+                smtp.login_name(),
+                format!(
+                    "{}:{} ({:?})",
+                    visible(smtp.host()),
+                    smtp.port(),
+                    smtp.tls()
+                ),
+            ),
+            MailSendTarget::Gmail { sender, .. } => {
+                (sender.as_str(), "gmail.googleapis.com (HTTPS)".into())
+            }
+        };
+        let mut summary = format!(
+            "{}: {}\r\n{}: {}\r\n{}: {}\r\n{}: {}\r\n{}: {}\r\n{}: {}\r\n\r\n{}:\r\n{}\r\n",
             label("account"),
             visible(self.draft.account_id()),
             label("from"),
-            visible(self.endpoint.login_name()),
+            visible(sender),
             label("server"),
-            visible(self.endpoint.host()),
-            self.endpoint.port(),
-            self.endpoint.tls(),
+            server,
             label("to"),
             self.draft
                 .recipients()
@@ -79,12 +99,36 @@ impl SendReview {
             label("operation"),
             visible(self.request.operation_id()),
             label("body"),
-            visible(self.draft.body()),
-            label("footer")
-        )
+            visible(self.draft.body())
+        );
+        if !self.draft.attachments().is_empty() {
+            summary.push_str(&format!("\r\n{}:\r\n", label("attachments")));
+            for attachment in self.draft.attachments() {
+                summary.push_str(&format!(
+                    "{} | {} | {} bytes\r\n",
+                    visible(attachment.name()),
+                    attachment.media_type(),
+                    attachment.bytes().len()
+                ));
+                if attachment.media_type() == "text/plain"
+                    && let Ok(text) = std::str::from_utf8(attachment.bytes())
+                {
+                    summary.push_str(&visible(text));
+                    summary.push_str("\r\n");
+                }
+            }
+            summary.push_str(&format!(
+                "{}: {}\r\n",
+                label("payload"),
+                hantong_contracts::wire_hex::encode(self.request.payload_hash())
+            ));
+        }
+        summary.push_str("\r\n");
+        summary.push_str(label("footer"));
+        summary
     }
 }
-fn visible(value: &str) -> String {
+pub(crate) fn visible(value: &str) -> String {
     let mut out = String::new();
     for c in value.replace("\r\n", "\n").chars() {
         match c {

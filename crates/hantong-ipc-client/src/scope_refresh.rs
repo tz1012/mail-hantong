@@ -21,6 +21,23 @@ pub fn request(id: &str, command: ScopeRefreshCommand) -> Result<Vec<u8>, ErrorC
         return Err(ErrorCode::InvalidInput);
     }
     let (method, params) = match command {
+        ScopeRefreshCommand::RequestGoogleSend(accounts) => (
+            "registration.scope.google_send.request",
+            json!({"protocol_version":1,"account_ids":accounts.accounts()}),
+        ),
+
+        ScopeRefreshCommand::RequestGoogleChanges(accounts) => (
+            "registration.scope.google_changes.request",
+            json!({"protocol_version":1,"account_ids":accounts.accounts()}),
+        ),
+        ScopeRefreshCommand::RequestGoogleReadOnly(account) => (
+            "registration.scope.google_readonly.request",
+            json!({"protocol_version":1,"account_id":account.account_id()}),
+        ),
+        ScopeRefreshCommand::AddGoogleReadOnly(account) => (
+            "registration.scope.google_readonly.add",
+            json!({"protocol_version":1,"account_id":account.account_id()}),
+        ),
         ScopeRefreshCommand::Request => {
             ("registration.scope.request", json!({"protocol_version":1}))
         }
@@ -266,6 +283,19 @@ mod tests {
             "r",
             ScopeRefreshCommand::Status([1; 32]),
         )
+    }
+    #[test]
+    fn sec03_google_readonly_client_sends_only_explicit_selector() {
+        let id = format!("google_{}", "1a".repeat(32));
+        let account = hantong_contracts::registration::GoogleReadAccount::parse(&id).unwrap();
+        let value: Value = serde_json::from_slice(
+            &request("r", ScopeRefreshCommand::RequestGoogleReadOnly(account)).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            value,
+            json!({"jsonrpc":"2.0","id":"r","method":"registration.scope.google_readonly.request","params":{"protocol_version":1,"account_id":id}})
+        );
     }
     #[test]
     fn cli15_scope_refresh_requests_only_fixed_request_or_opaque_status() {

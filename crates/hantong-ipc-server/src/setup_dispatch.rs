@@ -9,6 +9,20 @@ use hantong_contracts::{
 };
 use serde_json::{Value, json};
 
+/// Observed OS pipe identity, never decoded from request JSON.
+pub struct SetupRequestContext {
+    peer: hantong_contracts::auth::PeerContext,
+}
+impl SetupRequestContext {
+    #[cfg(windows)]
+    pub(crate) fn new(peer: hantong_contracts::auth::PeerContext) -> Self {
+        Self { peer }
+    }
+    pub fn peer(&self) -> &hantong_contracts::auth::PeerContext {
+        &self.peer
+    }
+}
+
 pub enum SetupCommand {
     Registration(RegistrationCommand),
     Imap(ImapSetupCommand),
@@ -48,7 +62,11 @@ where
         }
         let command = crate::scope_refresh_wire::parse(request)?;
         let expected_id = match command {
-            ScopeRefreshCommand::Request => None,
+            ScopeRefreshCommand::Request
+            | ScopeRefreshCommand::RequestGoogleReadOnly(_)
+            | ScopeRefreshCommand::AddGoogleReadOnly(_)
+            | ScopeRefreshCommand::RequestGoogleSend(_)
+            | ScopeRefreshCommand::RequestGoogleChanges(_) => None,
             ScopeRefreshCommand::Status(id) => Some(id),
         };
         let SetupReceipt::ScopeRefresh(receipt) = callback(SetupCommand::ScopeRefresh(command))?
@@ -66,6 +84,7 @@ where
         let command = crate::registration_wire::parse(request)?;
         let expected_id = match command {
             RegistrationCommand::Request
+            | RegistrationCommand::RequestGoogleReadOnly(_)
             | RegistrationCommand::GuiRequest
             | RegistrationCommand::McpRequest => None,
             RegistrationCommand::Status(id)

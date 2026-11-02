@@ -1,9 +1,32 @@
 //! Public registration progress data, never an approval or authentication proof.
 use crate::ErrorCode;
 
+/// An explicitly selected Gmail account; never a credential or authorization.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub struct GoogleReadAccount([u8; 32]);
+impl GoogleReadAccount {
+    pub fn parse(value: &str) -> Result<Self, ErrorCode> {
+        crate::google::validate_google_account_id(value)?;
+        Ok(Self(crate::wire_hex::decode_fixed(
+            value
+                .strip_prefix("google_")
+                .ok_or(ErrorCode::InvalidInput)?,
+        )?))
+    }
+    pub fn account_id(self) -> String {
+        format!("google_{}", crate::wire_hex::encode(&self.0))
+    }
+}
+impl std::fmt::Debug for GoogleReadAccount {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("GoogleReadAccount(<redacted>)")
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum RegistrationCommand {
     Request,
+    RequestGoogleReadOnly(GoogleReadAccount),
     Status([u8; 32]),
     GuiRequest,
     GuiStatus([u8; 32]),
@@ -15,6 +38,9 @@ impl std::fmt::Debug for RegistrationCommand {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(match self {
             Self::Request => "RegistrationCommand::Request",
+            Self::RequestGoogleReadOnly(_) => {
+                "RegistrationCommand::RequestGoogleReadOnly(<redacted>)"
+            }
             Self::Status(_) => "RegistrationCommand::Status(<redacted>)",
             Self::McpRequest => "RegistrationCommand::McpRequest",
             Self::McpStatus(_) => "RegistrationCommand::McpStatus(<redacted>)",

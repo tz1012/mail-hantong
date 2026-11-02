@@ -297,7 +297,7 @@ fn bound_arguments(name: &str, arguments: Value, accounts: &[String]) -> Result<
 #[cfg(windows)]
 fn compose_arguments(mut value: Value) -> Result<Value, ErrorCode> {
     let map = value.as_object().ok_or(ErrorCode::InvalidInput)?;
-    let fields = [
+    let mut fields = vec![
         "account_id",
         "to",
         "subject",
@@ -306,6 +306,9 @@ fn compose_arguments(mut value: Value) -> Result<Value, ErrorCode> {
         "idempotency_key",
         "expected_version",
     ];
+    if map.contains_key("attachments") {
+        fields.push("attachments");
+    }
     if map.len() != fields.len()
         || fields.iter().any(|f| !map.contains_key(*f))
         || map["expected_version"] != 0
@@ -330,6 +333,43 @@ fn compose_arguments(mut value: Value) -> Result<Value, ErrorCode> {
         0,
         [0; 32],
     )?;
+    let attachments = match map.get("attachments") {
+        None => vec![],
+        Some(value) => {
+            let items = value
+                .as_array()
+                .filter(|v| v.len() <= 8)
+                .ok_or(ErrorCode::InvalidInput)?;
+            items
+                .iter()
+                .map(|v| {
+                    let a = v.as_object().ok_or(ErrorCode::InvalidInput)?;
+                    if a.len() != 3
+                        || !["filename", "media_type", "content_hex"]
+                            .iter()
+                            .all(|k| a.contains_key(*k))
+                    {
+                        return Err(ErrorCode::InvalidInput);
+                    }
+                    hantong_contracts::google_write::AttachmentSnapshot::new(
+                        a["filename"]
+                            .as_str()
+                            .ok_or(ErrorCode::InvalidInput)?
+                            .into(),
+                        a["media_type"]
+                            .as_str()
+                            .ok_or(ErrorCode::InvalidInput)?
+                            .into(),
+                        wire_hex::decode_bounded(
+                            a["content_hex"].as_str().ok_or(ErrorCode::InvalidInput)?,
+                            hantong_contracts::google_write::MAX_ATTACHMENT_BYTES,
+                        )?,
+                    )
+                })
+                .collect::<Result<Vec<_>, ErrorCode>>()?
+        }
+    };
+    let draft = hantong_contracts::google_write::ComposeSnapshot::new(draft, attachments)?;
     value["payload_hash"] = json!(wire_hex::encode(&hantong_platform::sha256_storage_payload(
         &draft.canonical_payload()
     )?));
@@ -356,6 +396,26 @@ fn local_refs(v: &mut Value) {
         }
         Value::Array(a) => a.iter_mut().for_each(local_refs),
         _ => {}
+    }
+}
+
+#[cfg(all(test, windows))]
+mod attachment_hash_tests {
+    use super::*;
+    #[test]
+    fn gmail_write_mcp_attachment_hash_binds_bytes_and_rejects_client_authority() {
+        let raw = json!({"account_id":"synthetic","to":["recipient@example.test"],"subject":"synthetic","body":"synthetic","operation_id":"op","idempotency_key":"key","expected_version":0,"attachments":[{"filename":"fixture.txt","media_type":"text/plain","content_hex":"616263"}]});
+        let first = compose_arguments(raw.clone()).unwrap();
+        let mut changed = raw.clone();
+        changed["attachments"][0]["content_hex"] = "616264".into();
+        assert_ne!(
+            first["payload_hash"],
+            compose_arguments(changed).unwrap()["payload_hash"]
+        );
+        let mut forged = raw;
+        forged["attachments"][0]["approved"] = true.into();
+        assert!(compose_arguments(forged).is_err());
+        assert!(compose_arguments(first).is_err());
     }
 }
 struct Strict(Value);

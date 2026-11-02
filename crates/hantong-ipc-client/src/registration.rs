@@ -22,6 +22,10 @@ pub fn request(id: &str, command: RegistrationCommand) -> Result<Vec<u8>, ErrorC
     }
     let (method, params) = match command {
         RegistrationCommand::Request => ("registration.request", json!({"protocol_version":1})),
+        RegistrationCommand::RequestGoogleReadOnly(account) => (
+            "registration.google_readonly.request",
+            json!({"protocol_version":1,"account_id":account.account_id()}),
+        ),
         RegistrationCommand::McpRequest => {
             ("registration.mcp.request", json!({"protocol_version":1}))
         }
@@ -280,6 +284,19 @@ mod tests {
             "r",
             RegistrationCommand::Status([1; 32]),
         )
+    }
+    #[test]
+    fn sec03_google_readonly_client_sends_only_explicit_selector() {
+        let id = format!("google_{}", "1a".repeat(32));
+        let account = hantong_contracts::registration::GoogleReadAccount::parse(&id).unwrap();
+        let value: Value = serde_json::from_slice(
+            &request("r", RegistrationCommand::RequestGoogleReadOnly(account)).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            value,
+            json!({"jsonrpc":"2.0","id":"r","method":"registration.google_readonly.request","params":{"protocol_version":1,"account_id":id}})
+        );
     }
     #[test]
     fn sec03_gui_registration_uses_distinct_methods_and_binds_status_id() {

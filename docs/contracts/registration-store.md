@@ -1,5 +1,8 @@
 # 서버 신원·클라이언트 등록 저장 계약 v1
 
+
+> 2026-11-02: [Google personal CLI extension](google-personal-cli.md) supersedes native-only account/CLI setup clauses only for the bounded guided personal flow. Live verified OAuth authorizes its fixed feature configuration; feature selection alone does not. Per-send/mutation approval and advanced native setup remain. Human security review required.
+
 상태: M1-02의 영속 기반, 사람 보안 검토 필요. DB v2 기반을 만들며 등록 승인 UI·제품 인증 활성화를 뜻하지 않는다. 일반 CLI/MCP 도구에는 활성화·승인 발급 작업을 추가하지 않는다.
 
 ## DB v2와 이전

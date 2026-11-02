@@ -1,0 +1,6 @@
+title=Google client credential
+intro=Enter the client secret for this Google Desktop client. It will be sent only to Google for token exchange and refresh.
+verify=Verify and continue
+verification=Verify use of this Google client credential.
+password=Google client secret
+footer=After account connection is verified, this credential is stored with the account in Windows protected storage. Cancelling discards the entered value. Gmail access remains read-only. Later accounts using this app reuse its protected app credential; account tokens stay separate.

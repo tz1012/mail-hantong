@@ -36,6 +36,7 @@ impl GoogleSetupReview {
         if self.request_id == [0; 32]
             || self.identity.account_id != self.binding.account_id
             || self.identity.subject != self.binding.subject
+            || self.identity.access_mode != self.binding.access_mode
             || self.expected_version.checked_add(1) != Some(self.binding.credential_version)
             || self.created_at_utc_ms <= 0
             || !matches!(
@@ -70,7 +71,14 @@ impl GoogleSetupReview {
             visible(self.display_name.as_deref().unwrap_or(&self.identity.email)),
             text(language, "scopes"),
             visible(&self.identity.granted_scopes.join(" ")),
-            text(language, "readonly"),
+            text(
+                language,
+                match self.identity.access_mode {
+                    hantong_contracts::google_write::GoogleAccessMode::ReadOnly => "readonly",
+                    hantong_contracts::google_write::GoogleAccessMode::ReadSend => "read_send",
+                    hantong_contracts::google_write::GoogleAccessMode::Modify => "modify",
+                }
+            ),
             if self.expected_version > 0 {
                 text(language, "reconnect")
             } else {

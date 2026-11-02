@@ -22,6 +22,12 @@ use std::{collections::BTreeSet, fmt};
 
 #[derive(Clone, Eq, PartialEq)]
 pub enum ToolRequest {
+    GoogleMutation {
+        request_id: String,
+        account_ids: Vec<String>,
+        request: Option<hantong_contracts::google_mutation::MutationPayload>,
+        review_id: Option<[u8; 32]>,
+    },
     Google {
         request_id: String,
         request: hantong_contracts::google_mail::GoogleMailRequest,
@@ -48,7 +54,7 @@ pub enum ToolRequest {
     },
     DraftCreate {
         request_id: String,
-        request: hantong_contracts::mail_send::DraftCreateRequest,
+        request: hantong_contracts::google_write::ComposeSnapshot,
     },
     SendReview {
         request_id: String,
@@ -129,6 +135,7 @@ impl fmt::Debug for ToolRequest {
             Self::FoldersList { .. } => f.write_str("ToolRequest::FoldersList(<redacted>)"),
             Self::FoldersRefresh { .. } => f.write_str("ToolRequest::FoldersRefresh(<redacted>)"),
             Self::SyncPage { .. } => f.write_str("ToolRequest::SyncPage(<redacted>)"),
+            Self::GoogleMutation { .. } => f.write_str("ToolRequest::GoogleMutation(<redacted>)"),
             Self::DraftCreate { .. } => f.write_str("ToolRequest::DraftCreate(<redacted>)"),
             Self::SendReview { .. } => f.write_str("ToolRequest::SendReview(<redacted>)"),
             Self::SendExecute(_) => f.write_str("ToolRequest::SendExecute(<redacted>)"),
@@ -171,6 +178,42 @@ impl ToolRequest {
             });
         }
         match tool {
+            hantong_contracts::google_mutation::REQUEST_TOOL => {
+                let mode = string(params.get("mode").ok_or(ErrorCode::InvalidInput)?)?;
+                match mode {
+                    "request" => {
+                        exact_keys(params, &["mode", "request"])?;
+                        let request =
+                            hantong_contracts::google_mutation::MutationPayload::from_json(
+                                &params["request"],
+                            )?;
+                        Ok(Self::GoogleMutation {
+                            request_id,
+                            account_ids: request.account_ids(),
+                            request: Some(request),
+                            review_id: None,
+                        })
+                    }
+                    "status" => {
+                        exact_keys(params, &["mode", "account_id", "review_id"])?;
+                        let account = string(&params["account_id"])?;
+                        hantong_contracts::google::validate_google_account_id(account)?;
+                        let id = hantong_contracts::wire_hex::decode_fixed(string(
+                            &params["review_id"],
+                        )?)?;
+                        if id == [0; 32] {
+                            return Err(ErrorCode::InvalidInput);
+                        }
+                        Ok(Self::GoogleMutation {
+                            request_id,
+                            account_ids: vec![account.into()],
+                            request: None,
+                            review_id: Some(id),
+                        })
+                    }
+                    _ => Err(ErrorCode::InvalidInput),
+                }
+            }
             "app.settings.display.get" => {
                 exact_keys(params, &[])?;
                 Ok(Self::DisplaySettingsGet { request_id })
@@ -193,19 +236,20 @@ impl ToolRequest {
                 action: parse_uid_page(params)?,
             }),
             "mail.drafts.create" => {
-                exact_keys(
-                    params,
-                    &[
-                        "account_id",
-                        "to",
-                        "subject",
-                        "body",
-                        "operation_id",
-                        "idempotency_key",
-                        "expected_version",
-                        "payload_hash",
-                    ],
-                )?;
+                let mut allowed = vec![
+                    "account_id",
+                    "to",
+                    "subject",
+                    "body",
+                    "operation_id",
+                    "idempotency_key",
+                    "expected_version",
+                    "payload_hash",
+                ];
+                if params.contains_key("attachments") {
+                    allowed.push("attachments");
+                }
+                exact_keys(params, &allowed)?;
                 let recipients = params
                     .get("to")
                     .unwrap()
@@ -225,6 +269,32 @@ impl ToolRequest {
                         .map_err(|_| ErrorCode::InvalidInput)?,
                     hantong_contracts::wire_hex::decode_fixed(string(&params["payload_hash"])?)?,
                 )?;
+                let attachments = match params.get("attachments") {
+                    None => vec![],
+                    Some(value) => {
+                        let values = value.as_array().ok_or(ErrorCode::InvalidInput)?;
+                        if values.len() > hantong_contracts::google_write::MAX_ATTACHMENT_COUNT {
+                            return Err(ErrorCode::InvalidInput);
+                        }
+                        values
+                            .iter()
+                            .map(|v| {
+                                let a = v.as_object().ok_or(ErrorCode::InvalidInput)?;
+                                exact_keys(a, &["filename", "media_type", "content_hex"])?;
+                                hantong_contracts::google_write::AttachmentSnapshot::new(
+                                    string(&a["filename"])?.into(),
+                                    string(&a["media_type"])?.into(),
+                                    hantong_contracts::wire_hex::decode_bounded(
+                                        string(&a["content_hex"])?,
+                                        hantong_contracts::google_write::MAX_ATTACHMENT_BYTES,
+                                    )?,
+                                )
+                            })
+                            .collect::<Result<Vec<_>, ErrorCode>>()?
+                    }
+                };
+                let request =
+                    hantong_contracts::google_write::ComposeSnapshot::new(request, attachments)?;
                 Ok(Self::DraftCreate {
                     request_id,
                     request,
@@ -387,6 +457,7 @@ impl ToolRequest {
             Self::FoldersList { request_id, .. }
             | Self::FoldersRefresh { request_id, .. }
             | Self::SyncPage { request_id, .. } => request_id,
+            Self::GoogleMutation { request_id, .. } => request_id,
             Self::DraftCreate { request_id, .. } | Self::SendReview { request_id, .. } => {
                 request_id
             }
@@ -406,6 +477,7 @@ impl ToolRequest {
             Self::FoldersList { .. } => AuditTool::FoldersList,
             Self::FoldersRefresh { .. } => AuditTool::FoldersRefresh,
             Self::SyncPage { .. } => AuditTool::SyncPage,
+            Self::GoogleMutation { .. } => AuditTool::GoogleMutationRequest,
             Self::DraftCreate { .. } => AuditTool::DraftCreate,
             Self::SendReview { .. } => AuditTool::SendRequest,
             Self::SendExecute(_) => AuditTool::SendExecute,
@@ -436,6 +508,7 @@ impl ToolRequest {
                 UidPageAction::InitialStatus(v) => v.account_ids(),
                 UidPageAction::InitialPlan(v) => v.account_ids(),
             },
+            Self::GoogleMutation { account_ids, .. } => account_ids,
             Self::DraftCreate { request, .. } => request.account_ids(),
             Self::SendReview { action, .. } => match action {
                 SendReviewAction::Request(r) => r.account_ids(),
@@ -1271,5 +1344,51 @@ mod tests {
                 Err(ErrorCode::InvalidInput)
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod compose_attachment_tests {
+    use super::*;
+    fn envelope() -> Value {
+        serde_json::json!({"schema_version":1,"request_id":"synthetic","tool":"mail.drafts.create","params":{
+            "account_id":"synthetic-account","to":["receiver@example.test"],"subject":"synthetic","body":"synthetic",
+            "operation_id":"op","idempotency_key":"key","expected_version":0,"payload_hash":"00".repeat(32),
+            "attachments":[{"filename":"fixture.txt","media_type":"text/plain","content_hex":"616263"}]
+        }})
+    }
+    #[test]
+    fn gmail_write_compose_wire_snapshots_bytes_and_rejects_authority_path_and_invalid_hex() {
+        let v = envelope();
+        let ToolRequest::DraftCreate { request, .. } = ToolRequest::validate(&v).unwrap() else {
+            panic!("wrong request")
+        };
+        assert_eq!(request.attachments()[0].bytes(), b"abc");
+        for (key, value) in [
+            ("approved", serde_json::json!(true)),
+            ("path", serde_json::json!("synthetic.txt")),
+        ] {
+            let mut bad = v.clone();
+            bad["params"]["attachments"][0][key] = value;
+            assert!(ToolRequest::validate(&bad).is_err());
+        }
+        for hex in ["6", "GG", "FF"] {
+            let mut bad = v.clone();
+            bad["params"]["attachments"][0]["content_hex"] = serde_json::json!(hex);
+            assert!(ToolRequest::validate(&bad).is_err());
+        }
+        let mut bad = v.clone();
+        bad["params"]["attachments"][0]["filename"] = serde_json::json!("../escape.txt");
+        assert!(ToolRequest::validate(&bad).is_err());
+        let mut legacy = v;
+        legacy["params"]
+            .as_object_mut()
+            .unwrap()
+            .remove("attachments");
+        let ToolRequest::DraftCreate { request, .. } = ToolRequest::validate(&legacy).unwrap()
+        else {
+            panic!("wrong request")
+        };
+        assert!(request.attachments().is_empty());
     }
 }

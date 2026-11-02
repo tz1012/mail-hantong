@@ -7,6 +7,7 @@ pub const GOOGLE_SCOPES: [&str; 3] = ["openid", "email", GOOGLE_READ_SCOPE];
 
 #[derive(Clone, Eq, PartialEq)]
 pub struct GoogleAccountBinding {
+    pub access_mode: crate::google_write::GoogleAccessMode,
     pub account_id: String,
     pub subject: String,
     pub client_id: String,
@@ -14,6 +15,7 @@ pub struct GoogleAccountBinding {
 }
 #[derive(Clone, Eq, PartialEq)]
 pub struct GoogleIdentity {
+    pub access_mode: crate::google_write::GoogleAccessMode,
     pub account_id: String,
     pub subject: String,
     pub email: String,
@@ -27,6 +29,7 @@ pub struct GoogleLabel {
 }
 #[derive(Clone, Eq, PartialEq)]
 pub struct GoogleMessage {
+    pub attachment_checks: Option<Vec<GoogleAttachmentCheck>>,
     pub id: String,
     pub thread_id: String,
     pub internal_date_ms: i64,
@@ -50,6 +53,8 @@ pub struct GooglePage {
 }
 #[derive(Clone, Eq, PartialEq)]
 pub struct GoogleSyncRequest {
+    pub message_id: Option<String>,
+    pub verify_attachments: bool,
     pub account_id: String,
     pub label_id: Option<String>,
     pub page_token: Option<String>,
@@ -160,9 +165,10 @@ impl GoogleIdentity {
         )?;
         ensure(
             self.granted_scopes.len() <= 32
-                && GOOGLE_SCOPES
-                    .iter()
-                    .all(|s| self.granted_scopes.iter().any(|g| g == s))
+                && self
+                    .access_mode
+                    .validate_granted(&self.granted_scopes)
+                    .is_ok()
                 && self.granted_scopes.iter().all(|s| {
                     !s.is_empty() && s.len() <= 256 && s.bytes().all(|b| b.is_ascii_graphic())
                 }),
@@ -179,6 +185,17 @@ impl GoogleLabel {
 }
 impl GoogleMessage {
     pub fn validate(&self) -> Result<(), ErrorCode> {
+        if let Some(checks) = &self.attachment_checks {
+            ensure(checks.len() <= crate::google_write::MAX_ATTACHMENT_COUNT)?;
+            let mut total = 0usize;
+            for check in checks {
+                check.validate()?;
+                total = total
+                    .checked_add(check.size)
+                    .ok_or(ErrorCode::QuotaExceeded)?;
+            }
+            ensure(total <= crate::google_write::MAX_ATTACHMENT_BYTES)?;
+        }
         id(&self.id)?;
         id(&self.thread_id)?;
         ensure(self.label_ids.len() <= 1024 && self.size <= i64::MAX as u64)?;
@@ -231,9 +248,19 @@ impl GoogleSyncRequest {
             id(l)?;
         }
         token(&self.page_token)?;
+        if let Some(message) = &self.message_id {
+            id(message)?;
+            ensure(
+                message.len() <= 128
+                    && self.limit == 1
+                    && self.label_id.is_none()
+                    && self.page_token.is_none(),
+            )?;
+        }
         id(&self.operation_id)?;
         id(&self.idempotency_key)?;
         ensure(self.operation_id.len() <= 128 && self.idempotency_key.len() <= 128)?;
+        ensure(!self.verify_attachments || self.limit == 1)?;
         ensure((1..=32).contains(&self.limit) && self.expected_version < i64::MAX as u64)
     }
     pub fn account_ids(&self) -> &[String] {
@@ -262,6 +289,8 @@ mod tests {
     #[test]
     fn acc01_google_contracts_bound_scope_page_and_redact() {
         let mut r = GoogleSyncRequest {
+            message_id: None,
+            verify_attachments: false,
             account_id: format!("google_{}", "a".repeat(64)),
             label_id: Some("Label_1".into()),
             page_token: Some("opaque&labelIds=other".into()),
@@ -279,3 +308,52 @@ mod tests {
         assert!(validate_google_client_id("evil/?x.apps.googleusercontent.com").is_err());
     }
 }
+
+/// Digest of downloaded, length-checked attachment bytes, never raw content.
+#[derive(Clone, Eq, PartialEq)]
+pub struct GoogleAttachmentCheck {
+    pub filename: String,
+    pub media_type: String,
+    pub size: usize,
+    pub sha256: [u8; 32],
+}
+impl GoogleAttachmentCheck {
+    pub fn to_json(&self) -> serde_json::Value {
+        serde_json::json!({"filename":self.filename,"media_type":self.media_type,"size":self.size,"sha256":crate::wire_hex::encode(&self.sha256)})
+    }
+    pub fn from_json(v: &serde_json::Value) -> Result<Self, ErrorCode> {
+        let o = v.as_object().ok_or(ErrorCode::InvalidInput)?;
+        if o.len() != 4
+            || !["filename", "media_type", "size", "sha256"]
+                .iter()
+                .all(|k| o.contains_key(*k))
+        {
+            return Err(ErrorCode::InvalidInput);
+        }
+        let text = |k| {
+            o.get(k)
+                .and_then(serde_json::Value::as_str)
+                .ok_or(ErrorCode::InvalidInput)
+        };
+        let value = Self {
+            filename: text("filename")?.into(),
+            media_type: text("media_type")?.into(),
+            size: o["size"]
+                .as_u64()
+                .and_then(|v| usize::try_from(v).ok())
+                .ok_or(ErrorCode::InvalidInput)?,
+            sha256: crate::wire_hex::decode_fixed(text("sha256")?)?,
+        };
+        value.validate()?;
+        Ok(value)
+    }
+    pub fn validate(&self) -> Result<(), ErrorCode> {
+        crate::google_write::AttachmentSnapshot::new(
+            self.filename.clone(),
+            self.media_type.clone(),
+            vec![],
+        )?;
+        ensure(self.size <= crate::google_write::MAX_ATTACHMENT_BYTES)
+    }
+}
+redacted!(GoogleAttachmentCheck);

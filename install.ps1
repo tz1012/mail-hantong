@@ -86,7 +86,7 @@ function Install-MailHantong {
         if ([string]::IsNullOrWhiteSpace($Destination)) { $Destination = Join-Path $env:LOCALAPPDATA 'Programs\mail-hantong-cli' }
         & ([ScriptBlock]::Create([IO.File]::ReadAllText($installer))) -PackageRoot $destinationRoot -Source $destinationRoot -InstallRoot $Destination -AddToPath:(-not $SessionOnly)
         $env:Path = (Join-Path ([IO.Path]::GetFullPath($Destination)) 'bin') + ';' + $env:Path
-        Write-Output "mail-hantong $($selected.Label) is ready in this terminal. Run: hantong --help"
+        Write-Output "mail-hantong $($selected.Label) is ready in this terminal. Run: hantong init"
     } finally {
         # Only the unique directory created above is removed; never the program
         # directory, existing profiles, mail data, or a caller-supplied path.

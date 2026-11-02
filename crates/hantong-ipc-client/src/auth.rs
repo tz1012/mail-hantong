@@ -5,6 +5,7 @@
 //! and allowed scope from a trusted profile store. A pending exchange is
 //! single-use and only returns one signature.
 
+use crate::auth_diagnostic::{Stage, require, step};
 use hantong_contracts::{
     ErrorCode,
     auth::{AuthTranscript, PeerContext, RequestedScope, SignerRole},
@@ -128,44 +129,69 @@ impl PendingClientAuthentication {
         server_signature: &[u8],
         now_utc_ms: i64,
     ) -> Result<[u8; 64], ErrorCode> {
-        if now_utc_ms < 0 || self.started.elapsed() >= Duration::from_millis(AUTH_WINDOW_MS as u64)
-        {
-            return Err(ErrorCode::AuthRequired);
-        }
-        if challenge.registration_id != self.registration_id
-            || challenge.profile_epoch != self.profile_epoch
-            || challenge.client_nonce != self.client_nonce
-            || challenge.scope != self.requested_scope
-            || challenge.client != self.client_context
-            || challenge.server != self.client_context
-            || challenge.client_key_hash != self.client_key_hash
-            || challenge.server_key_hash != self.pinned_server_key_hash
-            || challenge.issued_at_utc_ms < self.started_at_utc_ms
-            || challenge.issued_at_utc_ms > now_utc_ms
-            || challenge.expires_at_utc_ms <= now_utc_ms
-            || challenge.expires_at_utc_ms < challenge.issued_at_utc_ms
-            || challenge.expires_at_utc_ms
-                > challenge
+        require(
+            now_utc_ms >= 0
+                && self.started.elapsed() < Duration::from_millis(AUTH_WINDOW_MS as u64),
+            Stage::Lifetime,
+        )?;
+        require(
+            challenge.registration_id == self.registration_id,
+            Stage::Registration,
+        )?;
+        require(challenge.profile_epoch == self.profile_epoch, Stage::Epoch)?;
+        require(challenge.client_nonce == self.client_nonce, Stage::Nonce)?;
+        require(challenge.scope == self.requested_scope, Stage::Scope)?;
+        require(
+            challenge.client == self.client_context,
+            Stage::ClientContext,
+        )?;
+        require(
+            challenge.server == self.client_context,
+            Stage::ServerContext,
+        )?;
+        require(
+            challenge.client_key_hash == self.client_key_hash,
+            Stage::ClientKey,
+        )?;
+        require(
+            challenge.server_key_hash == self.pinned_server_key_hash,
+            Stage::ServerKey,
+        )?;
+        require(
+            challenge.issued_at_utc_ms >= self.started_at_utc_ms
+                && challenge.issued_at_utc_ms <= now_utc_ms
+                && challenge.expires_at_utc_ms > now_utc_ms
+                && challenge.expires_at_utc_ms >= challenge.issued_at_utc_ms
+                && challenge
                     .issued_at_utc_ms
                     .checked_add(AUTH_WINDOW_MS)
-                    .ok_or(ErrorCode::AuthRequired)?
-        {
-            return Err(ErrorCode::AuthRequired);
-        }
-        let server_bytes = challenge
-            .encode(SignerRole::Server)
-            .map_err(|_| ErrorCode::AuthRequired)?;
-        if !verify_signature(&self.pinned_server_key, &server_bytes, server_signature)
-            .map_err(|_| ErrorCode::AuthRequired)?
-        {
-            return Err(ErrorCode::AuthRequired);
-        }
-        let client_bytes = challenge
-            .encode(SignerRole::Client)
-            .map_err(|_| ErrorCode::AuthRequired)?;
-        self.key
-            .sign(&client_bytes)
-            .map_err(|_| ErrorCode::AuthRequired)
+                    .is_some_and(|max| challenge.expires_at_utc_ms <= max),
+            Stage::TimeBinding,
+        )?;
+        let server_bytes = step(
+            Stage::ServerEncode,
+            challenge
+                .encode(SignerRole::Server)
+                .map_err(|_| ErrorCode::AuthRequired),
+        )?;
+        let verified = step(
+            Stage::ServerSignature,
+            verify_signature(&self.pinned_server_key, &server_bytes, server_signature)
+                .map_err(|_| ErrorCode::AuthRequired),
+        )?;
+        require(verified, Stage::ServerSignature)?;
+        let client_bytes = step(
+            Stage::ClientEncode,
+            challenge
+                .encode(SignerRole::Client)
+                .map_err(|_| ErrorCode::AuthRequired),
+        )?;
+        step(
+            Stage::ClientSignature,
+            self.key
+                .sign(&client_bytes)
+                .map_err(|_| ErrorCode::AuthRequired),
+        )
     }
 }
 

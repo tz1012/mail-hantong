@@ -1,5 +1,8 @@
 # 기본 CLI 등록 요청과 진행 조회 v1
 
+
+> 2026-11-02: [Google personal CLI extension](google-personal-cli.md) supersedes native-only account/CLI setup clauses only for the bounded guided personal flow. Live verified OAuth authorizes its fixed feature configuration; feature selection alone does not. Per-send/mutation approval and advanced native setup remain. Human security review required.
+
 상태: 2026-10-30 연속 개발 범위의 구현 계약. 사람 보안 검토 필요. 관련 요건: CLI-15, MCP-03, SEC-03, INST-04. 등록 요청은 권한이나 발송 승인이 아니다.
 
 GUI는 [고유 GUI 등록 계약](gui-client-registration.md)의 별도 request/status 메서드·kind·프로필을 사용한다. 아래 CLI/default 경로와 이전 bytes는 유지한다.

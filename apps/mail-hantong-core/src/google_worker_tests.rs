@@ -37,6 +37,7 @@ fn fixture(count: usize) -> (PolicyStoreFixture, Keys, Vec<GoogleIdentity>) {
         .map(|n| {
             let subject = format!("synthetic-google-worker-{n}");
             GoogleIdentity {
+                access_mode: hantong_contracts::google_write::GoogleAccessMode::ReadOnly,
                 account_id: format!(
                     "google_{}",
                     hantong_contracts::wire_hex::encode(
@@ -54,6 +55,8 @@ fn fixture(count: usize) -> (PolicyStoreFixture, Keys, Vec<GoogleIdentity>) {
 }
 fn request(account: &str, id: u8) -> GoogleSyncRequest {
     GoogleSyncRequest {
+        message_id: None,
+        verify_attachments: false,
         account_id: account.into(),
         label_id: Some("INBOX".into()),
         page_token: None,
@@ -86,6 +89,7 @@ fn page(binding: GoogleAccountBinding) -> GooglePage {
             kind: "system".into(),
         }],
         messages: vec![GoogleMessage {
+            attachment_checks: None,
             id: "same_message_id".into(),
             thread_id: "thread1".into(),
             internal_date_ms: 1,

@@ -66,9 +66,67 @@ pub(crate) async fn run_job(
         }
     };
     let submit = async {
+        if let hantong_contracts::google_write::MailSendTarget::Gmail { binding, sender } =
+            &p.endpoint
+        {
+            #[cfg(windows)]
+            {
+                use std::sync::{
+                    Arc,
+                    atomic::{AtomicBool, Ordering},
+                };
+                struct CancelOnDrop(Arc<AtomicBool>);
+                impl Drop for CancelOnDrop {
+                    fn drop(&mut self) {
+                        self.0.store(true, Ordering::Relaxed);
+                    }
+                }
+                let cancel = Arc::new(AtomicBool::new(false));
+                let _cancel = CancelOnDrop(cancel.clone());
+                let root = secrets_root.to_path_buf();
+                let binding = binding.clone();
+                let sender = sender.clone();
+                let compose = p.draft.clone();
+                let review_id = p.review_id;
+                let utc_seconds = (p.created_at_utc_ms / 1000) as u64;
+                return match tokio::task::spawn_blocking(move || {
+                    let secrets = hantong_secrets::SecretStore::open(&root)
+                        .map_err(|_| ErrorCode::InternalError)?;
+                    secrets.send_google_message(
+                        &binding,
+                        &sender,
+                        &compose,
+                        &review_id,
+                        utc_seconds,
+                        &cancel,
+                    )
+                })
+                .await
+                {
+                    Ok(Ok(hantong_secrets::google::write::GmailWriteOutcome::Accepted)) => {
+                        SendOutcome::Sent
+                    }
+                    Ok(Ok(hantong_secrets::google::write::GmailWriteOutcome::Rejected))
+                    | Ok(Err(_)) => SendOutcome::Failed,
+                    _ => SendOutcome::Unknown,
+                };
+            }
+            #[cfg(not(windows))]
+            {
+                let _ = (binding, sender);
+                return SendOutcome::Failed;
+            }
+        }
         match hantong_secrets::SecretStore::open(secrets_root) {
             Err(_) => SendOutcome::Unknown,
             Ok(secrets) => {
+                let hantong_contracts::google_write::MailSendTarget::Smtp(endpoint) = &p.endpoint
+                else {
+                    return SendOutcome::Failed;
+                };
+                if !p.draft.attachments().is_empty() {
+                    return SendOutcome::Failed;
+                }
                 let envelope = hantong_secrets::SmtpSendEnvelope {
                     recipients: p.draft.recipients().to_vec(),
                     subject: p.draft.subject().into(),
@@ -76,7 +134,7 @@ pub(crate) async fn run_job(
                 };
                 classify(
                     secrets
-                        .send_smtp(p.request.account_id(), &p.endpoint, &envelope)
+                        .send_smtp(p.request.account_id(), endpoint, &envelope)
                         .await,
                 )
             }

@@ -21,6 +21,7 @@ pub struct ImapPasswordCapturePlan {
     account_id: String,
     endpoint: ImapEndpointConfig,
     smtp_only: bool,
+    google_client_id: Option<String>,
     request_id: [u8; 32],
     payload_hash: [u8; 32],
     nonce: [u8; 32],
@@ -55,6 +56,7 @@ impl ImapPasswordCapturePlan {
             account_id,
             endpoint: endpoint.clone(),
             smtp_only: false,
+            google_client_id: None,
             request_id,
             payload_hash,
             nonce,
@@ -64,6 +66,23 @@ impl ImapPasswordCapturePlan {
         })
     }
     /// Native UI must not display an SMTP capture through the IMAP review path.
+    pub fn is_google_client_capture(&self) -> bool {
+        self.google_client_id.is_some()
+    }
+    pub fn for_google_client(
+        client_id: &str,
+        request: [u8; 32],
+        hash: [u8; 32],
+    ) -> Result<Self, SecretError> {
+        hantong_contracts::google::validate_google_client_id(client_id)
+            .map_err(|_| SecretError::InvalidCredential)?;
+        let bytes = serde_json::to_vec(&serde_json::json!({"schema_version":1,"account_id":"google-client","imap":{"settings_version":1,"host":"oauth2.googleapis.com","port":443,"tls":"implicit_tls","login_name":client_id,"authentication":"app_password"}})).map_err(|_| SecretError::InvalidCredential)?;
+        let config =
+            MailConnectionConfig::from_json(&bytes).map_err(|_| SecretError::InvalidCredential)?;
+        let mut plan = Self::new("google-client", config.imap(), request, hash)?;
+        plan.google_client_id = Some(client_id.into());
+        Ok(plan)
+    }
     pub fn is_smtp_capture_binding(&self) -> bool {
         self.smtp_only
     }
@@ -175,6 +194,29 @@ impl fmt::Debug for PendingImapCredential {
     }
 }
 impl PendingImapCredential {
+    pub fn is_google_client_capture(&self) -> bool {
+        self.plan.is_google_client_capture()
+    }
+    pub fn into_google_client_secret(
+        self,
+        client_id: &str,
+    ) -> Result<crate::google::GoogleClientSecret, hantong_contracts::ErrorCode> {
+        if self.captured_at.elapsed() >= INPUT_TTL {
+            return Err(hantong_contracts::ErrorCode::ApprovalExpired);
+        }
+        if self.plan.google_client_id.as_deref() != Some(client_id) || self.plan.smtp_only {
+            return Err(hantong_contracts::ErrorCode::ScopeDenied);
+        }
+        #[cfg(any(windows, test))]
+        {
+            crate::google::GoogleClientSecret::from_capture(client_id, self.secret)
+        }
+        #[cfg(not(any(windows, test)))]
+        {
+            Err(hantong_contracts::ErrorCode::CapabilityUnsupported)
+        }
+    }
+
     pub fn account_id(&self) -> &str {
         self.plan.account_id()
     }
@@ -314,7 +356,8 @@ impl SecretStore {
         if pending.captured_at.elapsed() >= INPUT_TTL {
             return Err(SecretError::InputExpired);
         }
-        if !pending.plan.smtp_only
+        if pending.plan.is_google_client_capture()
+            || !pending.plan.smtp_only
             || pending.plan.account_id != account
             || pending.plan.endpoint != smtp_capture_mirror(account, endpoint)?
         {
@@ -329,7 +372,7 @@ impl SecretStore {
         expected_account: &str,
         expected_endpoint: &ImapEndpointConfig,
     ) -> Result<SecretHandle, SecretError> {
-        if pending.plan.smtp_only {
+        if pending.plan.smtp_only || pending.plan.is_google_client_capture() {
             return Err(SecretError::CredentialMismatch);
         }
         if pending.captured_at.elapsed() >= INPUT_TTL {
@@ -500,5 +543,50 @@ mod tests {
         fn assert_send<T: Send>() {}
         assert_send::<ImapPasswordCapturePlan>();
         assert_send::<PendingImapCredential>();
+    }
+}
+
+#[cfg(all(test, windows))]
+mod google_capture_tests {
+    use super::*;
+    const CLIENT: &str = "fixture.apps.googleusercontent.com";
+    fn pending(client: &str) -> PendingImapCredential {
+        PendingImapCredential {
+            plan: ImapPasswordCapturePlan::for_google_client(client, [1; 32], [2; 32]).unwrap(),
+            secret: SensitiveBuffer(b"synthetic-client-secret".to_vec()),
+            captured_at: Instant::now(),
+            _not_sync: PhantomData,
+        }
+    }
+    #[test]
+    fn sec01_acc02_google_capture_rejects_other_client_protocol_and_expired_input() {
+        assert!(pending(CLIENT).into_google_client_secret(CLIENT).is_ok());
+        assert!(matches!(
+            pending(CLIENT).into_google_client_secret("other.apps.googleusercontent.com"),
+            Err(hantong_contracts::ErrorCode::ScopeDenied)
+        ));
+        let mut expired = pending(CLIENT);
+        expired.captured_at = Instant::now() - INPUT_TTL;
+        assert!(matches!(
+            expired.into_google_client_secret(CLIENT),
+            Err(hantong_contracts::ErrorCode::ApprovalExpired)
+        ));
+        let root =
+            std::env::temp_dir().join(format!("hantong-google-capture-{}", std::process::id()));
+        let store = SecretStore::open(&root).unwrap();
+        let value = pending(CLIENT);
+        let endpoint = value.endpoint().clone();
+        assert!(matches!(
+            store.store_pending_imap_credential(value, "google-client", &endpoint),
+            Err(SecretError::CredentialMismatch)
+        ));
+        let mut wrong = pending(CLIENT);
+        wrong.plan.google_client_id = None;
+        assert!(matches!(
+            wrong.into_google_client_secret(CLIENT),
+            Err(hantong_contracts::ErrorCode::ScopeDenied)
+        ));
+        drop(store);
+        std::fs::remove_dir_all(root).unwrap();
     }
 }

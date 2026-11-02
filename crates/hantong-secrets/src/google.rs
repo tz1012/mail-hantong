@@ -2,7 +2,7 @@
 use crate::SecretStore;
 #[cfg(any(windows, test))]
 use crate::{SensitiveBuffer, wipe};
-use hantong_contracts::{ErrorCode, google::*};
+use hantong_contracts::{ErrorCode, google::*, google_write::GoogleAccessMode};
 #[cfg(any(windows, test))]
 use serde_json::Value;
 use std::sync::atomic::AtomicBool;
@@ -13,14 +13,26 @@ use std::time::Duration;
 #[cfg(any(windows, test))]
 use std::time::Instant;
 
+mod client_secret;
+#[cfg(any(windows, test))]
+pub mod compose;
 #[cfg(any(windows, test))]
 mod crypto;
+#[cfg(any(windows, test))]
+mod diagnostics;
 #[cfg(any(windows, test))]
 mod gmail;
 #[cfg(any(windows, test))]
 mod http;
 mod oauth;
-pub use oauth::{GoogleAuthorization, begin_google_authorization};
+mod publisher_config;
+#[cfg(any(windows, test))]
+pub mod write;
+pub use client_secret::GoogleClientSecret;
+pub use oauth::{
+    GoogleAuthorization, begin_google_authorization, begin_google_authorization_for_mode,
+};
+pub use publisher_config::{InstalledGooglePublisher, load_installed_publisher_configuration};
 
 #[cfg(any(windows, test))]
 struct SecretText(SensitiveBuffer);
@@ -86,6 +98,8 @@ pub struct PendingGoogleCredential {
     client_id: String,
     #[cfg(any(windows, test))]
     refresh: SecretText,
+    #[cfg(any(windows, test))]
+    client_secret: Option<GoogleClientSecret>,
 }
 impl std::fmt::Debug for PendingGoogleCredential {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -98,6 +112,7 @@ impl PendingGoogleCredential {
     }
     pub fn binding(&self, credential_version: u64) -> Result<GoogleAccountBinding, ErrorCode> {
         let binding = GoogleAccountBinding {
+            access_mode: self.identity.access_mode,
             account_id: self.identity.account_id.clone(),
             subject: self.identity.subject.clone(),
             client_id: self.client_id.clone(),
@@ -121,7 +136,12 @@ impl PendingGoogleCredential {
             if self.binding(binding.credential_version)? != *binding {
                 return Err(ErrorCode::AuthRequired);
             }
-            store.write_google_bundle(binding, &self.refresh, &self.identity.granted_scopes)
+            store.write_google_bundle(
+                binding,
+                &self.refresh,
+                &self.identity.granted_scopes,
+                self.client_secret.as_ref(),
+            )
         }
     }
 }
@@ -142,7 +162,14 @@ fn normalize_scopes(scope: &str) -> Result<Vec<String>, ErrorCode> {
             scopes.push(part.to_string());
         }
     }
-    if !GOOGLE_SCOPES.iter().all(|s| scopes.iter().any(|g| g == s)) || scopes.len() > 32 {
+    if ![
+        GoogleAccessMode::ReadOnly,
+        GoogleAccessMode::ReadSend,
+        GoogleAccessMode::Modify,
+    ]
+    .into_iter()
+    .any(|mode| mode.validate_granted(&scopes).is_ok())
+    {
         return Err(ErrorCode::ScopeDenied);
     }
     Ok(scopes)
@@ -152,6 +179,7 @@ struct TokenResponse {
     access: SecretText,
     refresh: Option<SecretText>,
     scopes: Vec<String>,
+    verified_email: Option<String>,
 }
 #[cfg(any(windows, test))]
 fn parse_tokens(
@@ -184,6 +212,7 @@ fn parse_tokens(
         access,
         refresh,
         scopes,
+        verified_email: None,
     })
 }
 #[cfg(any(windows, test))]
@@ -191,6 +220,7 @@ fn identity(
     transport: &impl http::Transport,
     access: &SecretText,
     scopes: Vec<String>,
+    access_mode: GoogleAccessMode,
     deadline: Instant,
     cancel: &AtomicBool,
 ) -> Result<GoogleIdentity, ErrorCode> {
@@ -214,6 +244,7 @@ fn identity(
         return Err(ErrorCode::AuthRequired);
     }
     let identity = GoogleIdentity {
+        access_mode,
         account_id: account_id(subject)?,
         subject: subject.into(),
         email: json
@@ -241,15 +272,20 @@ fn refresh_verified(
     binding: &GoogleAccountBinding,
     refresh: &SecretText,
     scopes: &[String],
+    client_secret: Option<&GoogleClientSecret>,
     deadline: Instant,
     cancel: &AtomicBool,
 ) -> Result<TokenResponse, ErrorCode> {
-    let form = oauth::form(&[
-        ("client_id", &binding.client_id),
+    let mut fields = vec![
+        ("client_id", binding.client_id.as_str()),
         ("refresh_token", refresh.text()),
         ("grant_type", "refresh_token"),
-    ]);
-    let tokens = parse_tokens(
+    ];
+    if let Some(secret) = client_secret {
+        fields.push(("client_secret", secret.value_for(&binding.client_id)?));
+    }
+    let form = oauth::form(&fields);
+    let mut tokens = parse_tokens(
         transport.request(http::Request {
             host: http::Host::Token,
             path: "/token",
@@ -261,34 +297,108 @@ fn refresh_verified(
         })?,
         Some(scopes),
     )?;
+    binding.access_mode.validate_granted(&tokens.scopes)?;
+    tokens.scopes = binding
+        .access_mode
+        .required_scopes()
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
     let verified = identity(
         transport,
         &tokens.access,
         tokens.scopes.clone(),
+        binding.access_mode,
         deadline,
         cancel,
     )?;
     if verified.subject != binding.subject || verified.account_id != binding.account_id {
         return Err(ErrorCode::AuthRequired);
     }
+    tokens.verified_email = Some(verified.email);
     Ok(tokens)
 }
 
 impl SecretStore {
+    /// Reuse only an app credential bound to the same verified Desktop client.
+    /// Account tokens never leave Secrets and are neither used nor modified here.
+    pub fn google_client_credential(
+        &self,
+        binding: &GoogleAccountBinding,
+        client_id: &str,
+    ) -> Result<Option<GoogleClientSecret>, ErrorCode> {
+        binding.validate()?;
+        validate_google_client_id(client_id)?;
+        if binding.client_id != client_id {
+            return Err(ErrorCode::ScopeDenied);
+        }
+        #[cfg(windows)]
+        {
+            let mut bundle = self.read_bound_google_bundle(binding)?;
+            let scopes = bundle
+                .0
+                .get("scopes")
+                .and_then(Value::as_array)
+                .ok_or(ErrorCode::ScopeDenied)?
+                .iter()
+                .map(|s| s.as_str().ok_or(ErrorCode::ScopeDenied))
+                .collect::<Result<Vec<_>, _>>()?
+                .join(" ");
+            normalize_scopes(&scopes)?;
+            client_secret::from_bundle(&mut bundle, client_id)
+        }
+        #[cfg(not(windows))]
+        {
+            Err(ErrorCode::CapabilityUnsupported)
+        }
+    }
+    #[cfg(windows)]
+    fn read_bound_google_bundle(
+        &self,
+        binding: &GoogleAccountBinding,
+    ) -> Result<SecretJson, ErrorCode> {
+        binding.validate()?;
+        if account_id(&binding.subject)? != binding.account_id {
+            return Err(ErrorCode::AuthRequired);
+        }
+        crate::validate_path(&self.root).map_err(|_| ErrorCode::AuthRequired)?;
+        let handle = self.handle(
+            &binding.account_id,
+            crate::SecretKind::GoogleOAuth(binding.credential_version),
+        );
+        let bytes = crate::windows_impl::read_google_credential(
+            &handle.path,
+            &binding.account_id,
+            binding.credential_version,
+        )
+        .map_err(|_| ErrorCode::AuthRequired)?;
+        let bundle = SecretJson::parse(bytes.as_slice())?;
+        if !matches!(bundle.0.get("format").and_then(Value::as_u64), Some(3..=5))
+            || client_secret::bundle_mode(&bundle)? != binding.access_mode
+            || bundle.0.get("account_id").and_then(Value::as_str) != Some(&binding.account_id)
+            || bundle.0.get("subject").and_then(Value::as_str) != Some(&binding.subject)
+            || bundle.0.get("client_id").and_then(Value::as_str) != Some(&binding.client_id)
+            || bundle.0.get("credential_version").and_then(Value::as_u64)
+                != Some(binding.credential_version)
+        {
+            return Err(ErrorCode::AuthRequired);
+        }
+        Ok(bundle)
+    }
     #[cfg(windows)]
     fn write_google_bundle(
         &self,
         binding: &GoogleAccountBinding,
         refresh: &SecretText,
         scopes: &[String],
+        client_secret: Option<&GoogleClientSecret>,
     ) -> Result<(), ErrorCode> {
         binding.validate()?;
         if account_id(&binding.subject)? != binding.account_id {
             return Err(ErrorCode::AuthRequired);
         }
-        let json = SecretJson(
-            serde_json::json!({"format":3,"account_id":binding.account_id,"subject":binding.subject,"client_id":binding.client_id,"credential_version":binding.credential_version,"refresh_token":refresh.text(),"scopes":scopes}),
-        );
+        binding.access_mode.validate_granted(scopes)?;
+        let json = client_secret::bundle(binding, refresh, scopes, client_secret)?;
         let mut bytes = SensitiveBuffer(Vec::with_capacity(crate::MAX_SECRET));
         serde_json::to_writer(&mut bytes.0, &json.0).map_err(|_| ErrorCode::InternalError)?;
         if bytes.0.len() > crate::MAX_SECRET {
@@ -332,6 +442,25 @@ impl SecretStore {
         request: &GoogleSyncRequest,
         cancel: &AtomicBool,
     ) -> Result<GooglePage, ErrorCode> {
+        self.with_google_access(
+            binding,
+            cancel,
+            hantong_contracts::google_write::GoogleOperation::Read,
+            |transport, access, _, deadline| {
+                gmail::fetch(transport, binding, request, access, deadline, cancel)
+            },
+        )
+    }
+    #[cfg(windows)]
+    fn with_google_access<T>(
+        &self,
+        binding: &GoogleAccountBinding,
+        cancel: &AtomicBool,
+        operation: hantong_contracts::google_write::GoogleOperation,
+        action: impl FnOnce(&http::NativeTransport, &SecretText, &str, Instant) -> Result<T, ErrorCode>,
+    ) -> Result<T, ErrorCode> {
+        binding.validate()?;
+        binding.access_mode.check_operation(operation)?;
         use std::collections::BTreeMap;
         use std::sync::{Arc, Mutex, OnceLock};
         static LOCKS: OnceLock<Mutex<BTreeMap<String, std::sync::Weak<Mutex<()>>>>> =
@@ -364,27 +493,7 @@ impl SecretStore {
                 Err(_) => return Err(ErrorCode::InternalError),
             }
         };
-        crate::validate_path(&self.root).map_err(|_| ErrorCode::AuthRequired)?;
-        let handle = self.handle(
-            &binding.account_id,
-            crate::SecretKind::GoogleOAuth(binding.credential_version),
-        );
-        let bytes = crate::windows_impl::read_google_credential(
-            &handle.path,
-            &binding.account_id,
-            binding.credential_version,
-        )
-        .map_err(|_| ErrorCode::AuthRequired)?;
-        let mut bundle = SecretJson::parse(bytes.as_slice())?;
-        if bundle.0.get("format").and_then(Value::as_u64) != Some(3)
-            || bundle.0.get("account_id").and_then(Value::as_str) != Some(&binding.account_id)
-            || bundle.0.get("subject").and_then(Value::as_str) != Some(&binding.subject)
-            || bundle.0.get("client_id").and_then(Value::as_str) != Some(&binding.client_id)
-            || bundle.0.get("credential_version").and_then(Value::as_u64)
-                != Some(binding.credential_version)
-        {
-            return Err(ErrorCode::AuthRequired);
-        }
+        let mut bundle = self.read_bound_google_bundle(binding)?;
         let scopes = bundle
             .0
             .get("scopes")
@@ -396,21 +505,33 @@ impl SecretStore {
             .join(" ");
         let scopes = normalize_scopes(&scopes)?;
         let refresh = SecretText::from_string(bundle.take_text("refresh_token")?)?;
+        let client_secret = client_secret::from_bundle(&mut bundle, &binding.client_id)?;
         let transport = http::NativeTransport;
-        let tokens = refresh_verified(&transport, binding, &refresh, &scopes, deadline, cancel)?;
-        if let Some(rotated) = &tokens.refresh {
-            self.write_google_bundle(binding, rotated, &tokens.scopes)?;
-        }
-        gmail::fetch(
+        let tokens = refresh_verified(
             &transport,
             binding,
-            request,
-            &tokens.access,
+            &refresh,
+            &scopes,
+            client_secret.as_ref(),
             deadline,
             cancel,
+        )?;
+        if let Some(rotated) = &tokens.refresh {
+            self.write_google_bundle(binding, rotated, &tokens.scopes, client_secret.as_ref())?;
+        }
+        action(
+            &transport,
+            &tokens.access,
+            tokens
+                .verified_email
+                .as_deref()
+                .ok_or(ErrorCode::AuthRequired)?,
+            deadline,
         )
     }
 }
 
+#[cfg(test)]
+mod client_secret_tests;
 #[cfg(test)]
 mod tests;

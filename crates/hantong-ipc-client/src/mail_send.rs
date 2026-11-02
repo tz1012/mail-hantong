@@ -193,7 +193,11 @@ pub fn prepare_default_draft(
     }
 }
 #[cfg(windows)]
-fn exchange(account: &str, tool: &str, params: serde_json::Value) -> Result<Vec<u8>, ErrorCode> {
+pub(crate) fn exchange(
+    account: &str,
+    tool: &str,
+    params: serde_json::Value,
+) -> Result<Vec<u8>, ErrorCode> {
     tokio::runtime::Builder::new_current_thread().enable_io().enable_time().build().map_err(|_|ErrorCode::CoreUnavailable)?.block_on(async {
   let profile=crate::authenticate_default().await?;
   if !profile.scope().permits_account(account,tool){return Err(ErrorCode::ScopeDenied)}
@@ -201,9 +205,50 @@ fn exchange(account: &str, tool: &str, params: serde_json::Value) -> Result<Vec<
  })
 }
 pub fn create_default(request: &DraftCreateRequest) -> Result<DraftResponse, ErrorCode> {
+    create_compose_default(&request.clone().into())
+}
+pub fn compose_params(
+    request: &hantong_contracts::google_write::ComposeSnapshot,
+) -> serde_json::Value {
+    let mut params = serde_json::json!({"account_id":request.account_id(),"to":request.recipients(),"subject":request.subject(),"body":request.body(),"operation_id":request.operation_id(),"idempotency_key":request.idempotency_key(),"expected_version":0,"payload_hash":wire_hex::encode(request.payload_hash())});
+    if !request.attachments().is_empty() {
+        params["attachments"] = serde_json::json!(request.attachments().iter().map(|a|serde_json::json!({"filename":a.name(),"media_type":a.media_type(),"content_hex":wire_hex::encode(a.bytes())})).collect::<Vec<_>>());
+    }
+    params
+}
+pub fn prepare_compose(
+    draft: DraftCreateRequest,
+    attachments: Vec<hantong_contracts::google_write::AttachmentSnapshot>,
+) -> Result<hantong_contracts::google_write::ComposeSnapshot, ErrorCode> {
+    use hantong_contracts::google_write::ComposeSnapshot;
+    let raw = ComposeSnapshot::new(draft, attachments)?;
     #[cfg(windows)]
     {
-        let params = serde_json::json!({"account_id":request.account_id(),"to":request.recipients(),"subject":request.subject(),"body":request.body(),"operation_id":request.operation_id(),"idempotency_key":request.idempotency_key(),"expected_version":0,"payload_hash":wire_hex::encode(request.payload_hash())});
+        let hash = hantong_platform::sha256_storage_payload(&raw.canonical_payload())?;
+        let draft = DraftCreateRequest::new(
+            raw.account_id(),
+            raw.recipients().to_vec(),
+            raw.subject().into(),
+            raw.body().into(),
+            raw.operation_id(),
+            raw.idempotency_key(),
+            0,
+            hash,
+        )?;
+        ComposeSnapshot::new(draft, raw.attachments().to_vec())
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = raw;
+        Err(ErrorCode::CapabilityUnsupported)
+    }
+}
+pub fn create_compose_default(
+    request: &hantong_contracts::google_write::ComposeSnapshot,
+) -> Result<DraftResponse, ErrorCode> {
+    #[cfg(windows)]
+    {
+        let params = compose_params(request);
         let bytes = exchange(request.account_id(), "mail.drafts.create", params)?;
         parse_draft(&bytes, "mail-write-1", request)
     }

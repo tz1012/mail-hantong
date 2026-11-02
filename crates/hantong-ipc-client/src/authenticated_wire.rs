@@ -2,7 +2,11 @@
 
 //! Connection-owned client authentication over bounded JSON-RPC frames.
 
-use crate::{auth::PendingClientAuthentication, auth_wire};
+use crate::{
+    auth::PendingClientAuthentication,
+    auth_diagnostic::{Stage, step},
+    auth_wire,
+};
 use hantong_contracts::{ErrorCode, auth::AuthTranscript};
 use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
@@ -18,9 +22,12 @@ pub async fn authenticate(
     pending: PendingClientAuthentication,
     id: &str,
 ) -> Result<AuthenticatedClient<impl AsyncRead + AsyncWrite + Unpin>, ErrorCode> {
-    let transport = hantong_platform::connect()
-        .await
-        .map_err(|_| ErrorCode::AuthRequired)?;
+    let transport = step(
+        Stage::Connect,
+        hantong_platform::connect()
+            .await
+            .map_err(|_| ErrorCode::AuthRequired),
+    )?;
     authenticate_connected(transport, pending, id).await
 }
 
@@ -135,18 +142,24 @@ where
         pending.requested_scope(),
     )
     .map_err(|_| ErrorCode::AuthRequired)?;
-    let (transport, pending, challenge, server_signature) = tokio::time::timeout(
-        Duration::from_secs(5),
-        begin_challenge(transport, pending, id, begin),
-    )
-    .await
-    .map_err(|_| ErrorCode::AuthRequired)??;
-    let transport = tokio::time::timeout(
-        Duration::from_secs(30),
-        finish_ready(transport, pending, challenge, server_signature, id),
-    )
-    .await
-    .map_err(|_| ErrorCode::AuthRequired)??;
+    let (transport, pending, challenge, server_signature) = step(
+        Stage::BeginTimeout,
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            begin_challenge(transport, pending, id, begin),
+        )
+        .await
+        .map_err(|_| ErrorCode::AuthRequired),
+    )??;
+    let transport = step(
+        Stage::FinishTimeout,
+        tokio::time::timeout(
+            Duration::from_secs(30),
+            finish_ready(transport, pending, challenge, server_signature, id),
+        )
+        .await
+        .map_err(|_| ErrorCode::AuthRequired),
+    )??;
     Ok(AuthenticatedClient { transport })
 }
 
@@ -159,9 +172,10 @@ async fn begin_challenge<S>(
 where
     S: AsyncRead + AsyncWrite + Unpin,
 {
-    write_frame(&mut transport, &begin).await?;
-    let body = read_frame(&mut transport).await?;
-    let (challenge, signature) = auth_wire::parse_challenge(&body, id)?;
+    step(Stage::BeginWrite, write_frame(&mut transport, &begin).await)?;
+    let body = step(Stage::ChallengeRead, read_frame(&mut transport).await)?;
+    let (challenge, signature) =
+        step(Stage::ChallengeParse, auth_wire::parse_challenge(&body, id))?;
     Ok((transport, pending, challenge, signature))
 }
 
@@ -183,9 +197,12 @@ where
         .map_err(|_| ErrorCode::AuthRequired)?;
     let signature = pending.respond(challenge, &server_signature, now_utc_ms)?;
     let finish = auth_wire::finish_request(id, &signature).map_err(|_| ErrorCode::AuthRequired)?;
-    write_frame(&mut transport, &finish).await?;
-    let ready = read_frame(&mut transport).await?;
-    auth_wire::parse_ready(&ready, id)?;
+    step(
+        Stage::FinishWrite,
+        write_frame(&mut transport, &finish).await,
+    )?;
+    let ready = step(Stage::ReadyRead, read_frame(&mut transport).await)?;
+    step(Stage::ReadyParse, auth_wire::parse_ready(&ready, id))?;
     Ok(transport)
 }
 

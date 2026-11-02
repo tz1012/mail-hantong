@@ -1,7 +1,13 @@
 //! Immutable drafts and native-review-bound, single-attempt SMTP ledger.
 use hantong_contracts::{
     ErrorCode,
-    mail_send::{DraftCreateRequest, SendReviewRequest},
+    google_write::{ComposeSnapshot, MailSendTarget},
+    mail_send::SendReviewRequest,
+};
+#[cfg(windows)]
+use hantong_contracts::{
+    google_write::{AttachmentSnapshot, GoogleOperation},
+    mail_send::DraftCreateRequest,
 };
 use hantong_domain::mail_connection::SmtpEndpointConfig;
 
@@ -11,8 +17,8 @@ pub struct PendingSend {
     pub owner_registration_id: [u8; 16],
     pub profile_epoch: u64,
     pub account_version: u64,
-    pub endpoint: SmtpEndpointConfig,
-    pub draft: DraftCreateRequest,
+    pub endpoint: MailSendTarget<SmtpEndpointConfig>,
+    pub draft: ComposeSnapshot,
     pub request: SendReviewRequest,
     pub created_at_utc_ms: i64,
     pub expires_at_utc_ms: i64,
@@ -86,7 +92,7 @@ mod windows {
         if !r.scope.permits_account(account, tool) {
             return Err(ErrorCode::ScopeDenied);
         }
-        crate::mail_connection::check_account(tx, account)?;
+        check_send_account(tx, account)?;
         let status: String = db(tx.query_row(
             "SELECT status FROM accounts WHERE account_id=?1",
             [account],
@@ -100,8 +106,8 @@ mod windows {
     fn endpoint(
         tx: &Transaction<'_>,
         account: &str,
-    ) -> Result<(u64, SmtpEndpointConfig), ErrorCode> {
-        crate::mail_connection::check_account(tx, account)?;
+    ) -> Result<(u64, MailSendTarget<SmtpEndpointConfig>), ErrorCode> {
+        check_send_account(tx, account)?;
         let version: i64 = db(tx.query_row(
             "SELECT settings_version FROM accounts WHERE account_id=?1",
             [account],
@@ -109,6 +115,21 @@ mod windows {
         ))?;
         if version <= 0 {
             return Err(ErrorCode::InternalError);
+        }
+        let provider: String = db(tx.query_row(
+            "SELECT provider FROM accounts WHERE account_id=?1",
+            [account],
+            |r| r.get(0),
+        ))?;
+        if provider == "gmail" {
+            let binding = crate::google::google_binding_in_transaction(tx, account)?;
+            binding.access_mode.check_operation(GoogleOperation::Send)?;
+            let sender: String = db(tx.query_row(
+                "SELECT primary_address FROM accounts WHERE account_id=?1",
+                [account],
+                |r| r.get(0),
+            ))?;
+            return Ok((version as u64, MailSendTarget::Gmail { binding, sender }));
         }
         let imap = crate::mail_connection::read_endpoint(
             tx,
@@ -126,13 +147,36 @@ mod windows {
         let c = MailConnectionConfig::from_json(&bytes).map_err(|_| ErrorCode::InternalError)?;
         Ok((
             version as u64,
-            c.smtp().cloned().ok_or(ErrorCode::InternalError)?,
+            MailSendTarget::Smtp(c.smtp().cloned().ok_or(ErrorCode::InternalError)?),
         ))
     }
-    fn draft(
+    fn target_version(target: &MailSendTarget<SmtpEndpointConfig>) -> u64 {
+        match target {
+            MailSendTarget::Smtp(smtp) => smtp.settings_version(),
+            MailSendTarget::Gmail { binding, .. } => binding.credential_version,
+        }
+    }
+    // SMTP setup remains IMAP-only. Only this reviewed send path accepts Gmail,
+    // after validating its stable subject/client/version and explicit mode.
+    fn check_send_account(tx: &Transaction<'_>, account: &str) -> Result<(), ErrorCode> {
+        let provider: Option<String> = db(tx
+            .query_row(
+                "SELECT provider FROM accounts WHERE account_id=?1",
+                [account],
+                |r| r.get(0),
+            )
+            .optional())?;
+        match provider.as_deref() {
+            Some("gmail") => crate::google::google_binding_in_transaction(tx, account)?
+                .access_mode
+                .check_operation(GoogleOperation::Send),
+            _ => crate::mail_connection::check_account(tx, account),
+        }
+    }
+    pub(crate) fn draft(
         tx: &Transaction<'_>,
         id: [u8; 32],
-    ) -> Result<(DraftCreateRequest, [u8; 16], u64), ErrorCode> {
+    ) -> Result<(ComposeSnapshot, [u8; 16], u64), ErrorCode> {
         let row=db(tx.query_row("SELECT account_id,owner_registration_id,version,operation_id,idempotency_key,recipients_json,subject_text,body_text,payload_hash FROM mail_drafts WHERE draft_id=?1",[id.as_slice()],|r|Ok((text_column(r,0)?,blob_column::<16>(r,1)?,r.get::<_,i64>(2)?,text_column(r,3)?,text_column(r,4)?,r.get::<_,String>(5)?,r.get::<_,String>(6)?,r.get::<_,String>(7)?,blob_column::<32>(r,8)?))).optional())?.ok_or(ErrorCode::NotFound)?;
         if row.2 != 1 || row.5.len() > 65536 || row.6.len() > 998 || row.7.len() > 1048576 {
             return Err(ErrorCode::InternalError);
@@ -141,6 +185,28 @@ mod windows {
         let value =
             DraftCreateRequest::new(&row.0, recipients, row.6, row.7, &row.3, &row.4, 0, row.8)
                 .map_err(|_| ErrorCode::InternalError)?;
+        let mut attachments = Vec::new();
+        let mut statement = db(tx.prepare("SELECT ordinal,filename,media_type,content FROM mail_draft_attachments WHERE draft_id=?1 ORDER BY ordinal"))?;
+        let rows = db(statement.query_map([id.as_slice()], |r| {
+            Ok((
+                r.get::<_, u32>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+                r.get::<_, Vec<u8>>(3)?,
+            ))
+        }))?;
+        for row in rows {
+            let (ordinal, name, media, bytes) = db(row)?;
+            if ordinal as usize != attachments.len() {
+                return Err(ErrorCode::InternalError);
+            }
+            attachments.push(
+                AttachmentSnapshot::new(name, media, bytes)
+                    .map_err(|_| ErrorCode::InternalError)?,
+            );
+        }
+        let value =
+            ComposeSnapshot::new(value, attachments).map_err(|_| ErrorCode::InternalError)?;
         if hantong_platform::sha256_storage_payload(&value.canonical_payload())?
             != *value.payload_hash()
         {
@@ -180,7 +246,7 @@ mod windows {
             .transpose()?;
         let (current_version, e) = endpoint(tx, d.account_id())?;
         // The current endpoint is never substituted into an old approval.
-        if current_version != r.4 as u64 || e.settings_version() != r.5 as u64 {
+        if current_version != r.4 as u64 || target_version(&e) != r.5 as u64 {
             return Err(ErrorCode::Conflict);
         }
         Ok((
@@ -264,6 +330,14 @@ mod windows {
             epoch: u64,
             r: &DraftCreateRequest,
         ) -> Result<[u8; 32], ErrorCode> {
+            self.create_mail_compose(owner, epoch, &r.clone().into())
+        }
+        pub fn create_mail_compose(
+            &self,
+            owner: [u8; 16],
+            epoch: u64,
+            r: &ComposeSnapshot,
+        ) -> Result<[u8; 32], ErrorCode> {
             transaction(self, |tx| {
                 grant(tx, owner, epoch, r.account_id(), "mail.drafts.create")?;
                 if hantong_platform::sha256_storage_payload(&r.canonical_payload())?
@@ -291,6 +365,9 @@ mod windows {
                 let id = hantong_platform::random_nonce()?;
                 let now = crate::utc_millis().map_err(|_| ErrorCode::InternalError)?;
                 db(tx.execute("INSERT INTO mail_drafts(draft_id,account_id,owner_registration_id,version,operation_id,idempotency_key,recipients_json,subject_text,body_text,payload_hash,created_at_utc_ms) VALUES(?1,?2,?3,1,?4,?5,?6,?7,?8,?9,?10)",params![id.as_slice(),r.account_id(),owner.as_slice(),r.operation_id(),r.idempotency_key(),serde_json::to_string(r.recipients()).map_err(|_|ErrorCode::InternalError)?,r.subject(),r.body(),r.payload_hash().as_slice(),now]))?;
+                for (ordinal, attachment) in r.attachments().iter().enumerate() {
+                    db(tx.execute("INSERT INTO mail_draft_attachments(draft_id,ordinal,filename,media_type,content) VALUES(?1,?2,?3,?4,?5)",params![id.as_slice(),ordinal as i64,attachment.name(),attachment.media_type(),attachment.bytes()]))?;
+                }
                 Ok(id)
             })
         }
@@ -339,6 +416,9 @@ mod windows {
                     return Err(ErrorCode::Conflict);
                 }
                 let (account_version, endpoint) = endpoint(tx, r.account_id())?;
+                if matches!(endpoint, MailSendTarget::Smtp(_)) && !d.attachments().is_empty() {
+                    return Err(ErrorCode::CapabilityUnsupported);
+                }
                 let count: i64 =
                     db(tx.query_row("SELECT count(*) FROM mail_send_reviews", [], |r| r.get(0)))?;
                 if count >= 10000 {
@@ -347,7 +427,7 @@ mod windows {
                 let id = hantong_platform::random_nonce()?;
                 let now = crate::utc_millis().map_err(|_| ErrorCode::InternalError)?;
                 let expires = now.checked_add(300000).ok_or(ErrorCode::InternalError)?;
-                db(tx.execute("INSERT INTO mail_send_reviews(review_id,draft_id,owner_registration_id,draft_version,owner_profile_epoch,account_version,smtp_endpoint_version,payload_hash,operation_id,idempotency_key,created_at_utc_ms,expires_at_utc_ms,state,error_code) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,'pending',NULL)",params![id.as_slice(),r.draft_id().as_slice(),owner.as_slice(),v as i64,epoch as i64,account_version as i64,endpoint.settings_version() as i64,r.payload_hash().as_slice(),r.operation_id(),r.idempotency_key(),now,expires]))?;
+                db(tx.execute("INSERT INTO mail_send_reviews(review_id,draft_id,owner_registration_id,draft_version,owner_profile_epoch,account_version,smtp_endpoint_version,payload_hash,operation_id,idempotency_key,created_at_utc_ms,expires_at_utc_ms,state,error_code) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,'pending',NULL)",params![id.as_slice(),r.draft_id().as_slice(),owner.as_slice(),v as i64,epoch as i64,account_version as i64,target_version(&endpoint) as i64,r.payload_hash().as_slice(),r.operation_id(),r.idempotency_key(),now,expires]))?;
                 Ok(SendReceipt {
                     account_id: r.account_id().into(),
                     review_id: id,
@@ -584,3 +664,6 @@ mod windows {
         Ok(())
     }
 }
+
+#[cfg(windows)]
+pub(crate) use windows::draft as draft_in_transaction;

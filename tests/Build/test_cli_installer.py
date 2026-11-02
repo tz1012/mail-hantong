@@ -10,22 +10,32 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 INSTALL = ROOT / "packaging" / "windows" / "install.ps1"
 UNINSTALL = ROOT / "packaging" / "windows" / "uninstall.ps1"
+POWERSHELL = shutil.which("pwsh") or (shutil.which("powershell.exe") if os.name == "nt" else None)
 def ps(script, *args):
-    return subprocess.run(["pwsh", "-NoProfile", "-NonInteractive", "-File", str(script), *map(str, args)], text=True, encoding="utf-8", capture_output=True, timeout=20)
+    return subprocess.run([POWERSHELL, "-NoProfile", "-NonInteractive", "-File", str(script), *map(str, args)], text=True, encoding="utf-8", errors="backslashreplace", capture_output=True, timeout=20)
 
 @contextmanager
 def held_file(path, share="None"):
     env = dict(os.environ, HANTONG_TEST_LOCK_PATH=str(path))
     command = "$f=[IO.File]::Open($env:HANTONG_TEST_LOCK_PATH,[IO.FileMode]::OpenOrCreate,[IO.FileAccess]::ReadWrite,[IO.FileShare]::" + share + "); [Console]::WriteLine('ready'); [Console]::Out.Flush(); try { [Console]::ReadLine() | Out-Null } finally { $f.Dispose() }"
-    with subprocess.Popen(["pwsh", "-NoProfile", "-Command", command], env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8") as holder:
+    with subprocess.Popen([POWERSHELL, "-NoProfile", "-Command", command], env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="backslashreplace") as holder:
         try:
             if holder.stdout.readline().strip() != "ready":
                 raise AssertionError("file lock was not acquired: " + holder.stderr.read())
             yield
         finally:
             holder.communicate("release\n", timeout=10)
-@unittest.skipUnless(os.name == "nt" and shutil.which("pwsh"), "Windows PowerShell is required")
+@unittest.skipUnless(os.name == "nt" and POWERSHELL, "Windows PowerShell is required")
 class CliInstallerTests(unittest.TestCase):
+    def test_inst01_non_utf8_child_error_is_preserved_and_returncode_is_not_hidden(self):
+        with tempfile.TemporaryDirectory() as directory:
+            script = Path(directory) / "non-utf8-error.ps1"
+            script.write_text("$s=[Console]::OpenStandardError(); $b=[byte[]](255,254,10); $s.Write($b,0,$b.Length); $s.Flush(); exit 7", encoding="utf-8")
+            result = ps(script)
+            self.assertEqual(result.returncode, 7)
+            self.assertIn(r"\xff\xfe", result.stderr)
+            self.assertIsNotNone(result.stdout)
+
     def test_inst01_update_adds_only_owned_optional_launchers_and_uninstall_removes_them(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -167,7 +177,7 @@ class CliInstallerTests(unittest.TestCase):
             external = root / "external"
             original.rename(external)
             env = dict(os.environ, HANTONG_TEST_LINK=str(original), HANTONG_TEST_DEST=str(external))
-            made = subprocess.run(["pwsh", "-NoProfile", "-Command", "New-Item -ItemType Junction -Path $env:HANTONG_TEST_LINK -Target $env:HANTONG_TEST_DEST | Out-Null"], env=env, capture_output=True, timeout=20)
+            made = subprocess.run([POWERSHELL, "-NoProfile", "-Command", "New-Item -ItemType Junction -Path $env:HANTONG_TEST_LINK -Target $env:HANTONG_TEST_DEST | Out-Null"], env=env, capture_output=True, timeout=20)
             self.assertEqual(made.returncode, 0, made.stderr)
             try:
                 self.assertNotEqual(ps(UNINSTALL, "-InstallRoot", installed).returncode, 0)

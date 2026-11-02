@@ -1,6 +1,23 @@
 use super::*;
 use hantong_contracts::message_body::{render_message_text, sanitize_terminal_text};
 const BASE: &str = "/gmail/v1/users/me/";
+const MAX_BODY_TEXT_BYTES: usize = 65536;
+// The shared MIME renderer includes this synthetic, bounded header in its 1MiB budget.
+const MAX_TEXT_PART_BYTES: usize = hantong_contracts::message_body::MAX_BODY_BYTES - 2048;
+
+struct RenderedBody {
+    text: String,
+    truncated: bool,
+}
+fn bounded_body(mut text: String, inherited_truncation: bool) -> RenderedBody {
+    let mut end = text.len().min(MAX_BODY_TEXT_BYTES);
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    let truncated = inherited_truncation || end < text.len();
+    text.truncate(end);
+    RenderedBody { text, truncated }
+}
 fn get(
     transport: &impl http::Transport,
     path: &str,
@@ -30,6 +47,10 @@ pub(super) fn fetch(
     deadline: Instant,
     cancel: &AtomicBool,
 ) -> Result<GooglePage, ErrorCode> {
+    request.validate()?;
+    if request.account_id != binding.account_id {
+        return Err(ErrorCode::ScopeDenied);
+    }
     let labels = get(
         transport,
         &format!("{BASE}labels"),
@@ -64,7 +85,11 @@ pub(super) fn fetch(
         path.push_str("&pageToken=");
         path.push_str(&oauth::encode(token));
     }
-    let list = get(transport, &path, access, 65536, deadline, cancel)?;
+    let list = if let Some(id) = &request.message_id {
+        serde_json::json!({"messages":[{"id":id}],"resultSizeEstimate":1})
+    } else {
+        get(transport, &path, access, 65536, deadline, cancel)?
+    };
     let empty = Vec::new();
     let rows = match list.get("messages") {
         None => &empty,
@@ -77,7 +102,11 @@ pub(super) fn fetch(
     let mut messages = Vec::with_capacity(rows.len());
     for row in rows {
         let id = required(row, "id")?;
-        let thread_id = required(row, "threadId")?;
+        let thread_id = if request.message_id.is_some() {
+            None
+        } else {
+            Some(required(row, "threadId")?)
+        };
         // Validate opaque IDs before constructing a path component.
         if id.is_empty()
             || id.len() > 256
@@ -110,8 +139,16 @@ pub(super) fn fetch(
             Err(e) => return Err(e),
         };
         let mut message = parse_message(&detail, too_large)?;
-        if message.id != id || message.thread_id != thread_id {
+        if message.id != id || thread_id.is_some_and(|thread| message.thread_id != thread) {
             return Err(ErrorCode::AuthRequired);
+        }
+        if request.verify_attachments {
+            if too_large {
+                return Err(ErrorCode::QuotaExceeded);
+            }
+            message.attachment_checks = Some(verify_attachments(
+                transport, &detail, id, access, deadline, cancel,
+            )?);
         }
         if too_large {
             message.body_error = Some(ErrorCode::QuotaExceeded.as_str().into());
@@ -187,10 +224,11 @@ pub(super) fn parse_message(v: &Value, metadata_only: bool) -> Result<GoogleMess
         body(payload, 0, &mut parts).and_then(|body| body.ok_or(ErrorCode::CapabilityUnsupported))
     };
     let (body_text, body_error, body_truncated) = match rendered {
-        Ok(v) => (Some(v), None, false),
+        Ok(v) => (Some(v.text), None, v.truncated),
         Err(e) => (None, Some(e.as_str().into()), e == ErrorCode::QuotaExceeded),
     };
     Ok(GoogleMessage {
+        attachment_checks: None,
         id: required(v, "id")?.into(),
         thread_id: required(v, "threadId")?.into(),
         internal_date_ms: required(v, "internalDate")?
@@ -206,7 +244,11 @@ pub(super) fn parse_message(v: &Value, metadata_only: bool) -> Result<GoogleMess
         size: v.get("sizeEstimate").and_then(Value::as_u64).unwrap_or(0),
     })
 }
-fn body(part: &Value, depth: usize, visited: &mut usize) -> Result<Option<String>, ErrorCode> {
+fn body(
+    part: &Value,
+    depth: usize,
+    visited: &mut usize,
+) -> Result<Option<RenderedBody>, ErrorCode> {
     *visited += 1;
     if depth > 8 || *visited > 128 {
         return Err(ErrorCode::QuotaExceeded);
@@ -246,18 +288,22 @@ fn body(part: &Value, depth: usize, visited: &mut usize) -> Result<Option<String
             }
         }
         let mut out = String::new();
+        let mut truncated = false;
         for p in parts {
-            if let Some(text) = body(p, depth + 1, visited)? {
-                if out.len() + text.len() + 1 > 65536 {
-                    return Err(ErrorCode::QuotaExceeded);
-                }
+            if let Some(rendered) = body(p, depth + 1, visited)? {
                 if !out.is_empty() {
                     out.push('\n')
                 }
-                out.push_str(&text)
+                out.push_str(&rendered.text);
+                let bounded = bounded_body(out, truncated || rendered.truncated);
+                out = bounded.text;
+                truncated = bounded.truncated;
             }
         }
-        return Ok((!out.is_empty()).then_some(out));
+        return Ok((!out.is_empty()).then_some(RenderedBody {
+            text: out,
+            truncated,
+        }));
     }
     if !matches!(mime, "text/plain" | "text/html") {
         return Ok(None);
@@ -269,12 +315,12 @@ fn body(part: &Value, depth: usize, visited: &mut usize) -> Result<Option<String
     if body
         .get("size")
         .and_then(Value::as_u64)
-        .is_some_and(|s| s > 65536)
+        .is_some_and(|s| s > MAX_TEXT_PART_BYTES as u64)
     {
         return Err(ErrorCode::QuotaExceeded);
     }
     let data = body.get("data").and_then(Value::as_str).unwrap_or("");
-    let data = crypto::decode64(data, 65536)?;
+    let data = crypto::decode64(data, MAX_TEXT_PART_BYTES)?;
     let content_type = header(part, "Content-Type").unwrap_or(mime);
     if content_type.len() > 1024 || content_type.chars().any(char::is_control) {
         return Err(ErrorCode::CapabilityUnsupported);
@@ -282,8 +328,162 @@ fn body(part: &Value, depth: usize, visited: &mut usize) -> Result<Option<String
     let mut raw = format!("Content-Type: {content_type}\r\n\r\n").into_bytes();
     raw.extend_from_slice(&data);
     let rendered = render_message_text(&raw)?;
-    if rendered.len() > 65536 {
+    Ok(Some(bounded_body(rendered, false)))
+}
+
+fn verify_attachments(
+    transport: &impl http::Transport,
+    detail: &Value,
+    message: &str,
+    access: &SecretText,
+    deadline: Instant,
+    cancel: &AtomicBool,
+) -> Result<Vec<hantong_contracts::google::GoogleAttachmentCheck>, ErrorCode> {
+    use hantong_contracts::{
+        google::GoogleAttachmentCheck,
+        google_write::{MAX_ATTACHMENT_BYTES, MAX_ATTACHMENT_COUNT},
+    };
+    fn collect<'a>(
+        part: &'a Value,
+        depth: usize,
+        visited: &mut usize,
+        out: &mut Vec<&'a Value>,
+    ) -> Result<(), ErrorCode> {
+        *visited += 1;
+        if depth > 8 || *visited > 128 {
+            return Err(ErrorCode::QuotaExceeded);
+        }
+        if part
+            .get("filename")
+            .and_then(Value::as_str)
+            .is_some_and(|s| !s.is_empty())
+        {
+            out.push(part);
+        }
+        if let Some(children) = part.get("parts") {
+            for child in children.as_array().ok_or(ErrorCode::InvalidInput)? {
+                collect(child, depth + 1, visited, out)?;
+            }
+        }
+        Ok(())
+    }
+    let mut parts = vec![];
+    collect(
+        detail.get("payload").ok_or(ErrorCode::InvalidInput)?,
+        0,
+        &mut 0,
+        &mut parts,
+    )?;
+    if parts.len() > MAX_ATTACHMENT_COUNT {
         return Err(ErrorCode::QuotaExceeded);
     }
-    Ok(Some(rendered))
+    let mut total = 0usize;
+    let mut checks = vec![];
+    for part in parts {
+        let body = part.get("body").ok_or(ErrorCode::InvalidInput)?;
+        let size = body
+            .get("size")
+            .and_then(Value::as_u64)
+            .and_then(|v| usize::try_from(v).ok())
+            .ok_or(ErrorCode::InvalidInput)?;
+        total = total.checked_add(size).ok_or(ErrorCode::QuotaExceeded)?;
+        if total > MAX_ATTACHMENT_BYTES {
+            return Err(ErrorCode::QuotaExceeded);
+        }
+        let mut check = GoogleAttachmentCheck {
+            filename: required(part, "filename")?.into(),
+            media_type: required(part, "mimeType")?.into(),
+            size,
+            sha256: [0; 32],
+        };
+        diagnostics::Trace::new()
+            .step(diagnostics::Stage::AttachmentMetadata, || check.validate())?;
+        let bytes = if let Some(id) = body.get("attachmentId") {
+            let id = id.as_str().ok_or(ErrorCode::InvalidInput)?;
+            write::attachment(transport, message, id, size, access, deadline, cancel)?.into_bytes()
+        } else {
+            SensitiveBuffer(crypto::decode64(required(body, "data")?, size)?)
+        };
+        if bytes.as_slice().len() != size {
+            return Err(ErrorCode::Conflict);
+        }
+        check.sha256 = crypto::sha256(bytes.as_slice())?;
+        checks.push(check);
+    }
+    Ok(checks)
+}
+
+#[cfg(test)]
+mod attachment_checks_tests {
+    use super::super::tests::Fake;
+    use super::*;
+    fn detail(size: u64, id: Option<&str>) -> Value {
+        let mut body = serde_json::json!({"size":size,"data":crypto::base64url(b"synthetic")});
+        if let Some(id) = id {
+            body.as_object_mut().unwrap().remove("data");
+            body["attachmentId"] = id.into();
+        }
+        serde_json::json!({"payload":{"parts":[{"filename":"fixture.txt","mimeType":"text/plain","body":body}]}})
+    }
+    #[test]
+    fn gmail_write_receive_verifies_inline_and_downloaded_bytes_and_rejects_size_or_path_substitution()
+     {
+        let access = SecretText::from_string("synthetic-access".into()).unwrap();
+        let stop = AtomicBool::new(false);
+        let deadline = Instant::now() + Duration::from_secs(20);
+        let fake = Fake::new(vec![]);
+        let inline = verify_attachments(
+            &fake,
+            &detail(9, None),
+            "message1",
+            &access,
+            deadline,
+            &stop,
+        )
+        .unwrap();
+        assert_eq!(inline.len(), 1);
+        assert_eq!(inline[0].sha256, crypto::sha256(b"synthetic").unwrap());
+        assert!(fake.calls.lock().unwrap().is_empty());
+        let fake = Fake::new(vec![
+            serde_json::json!({"size":9,"data":crypto::base64url(b"synthetic")}),
+        ]);
+        let downloaded = verify_attachments(
+            &fake,
+            &detail(9, Some("attachment1")),
+            "message1",
+            &access,
+            deadline,
+            &stop,
+        )
+        .unwrap();
+        assert_eq!(inline, downloaded);
+        assert_eq!(
+            fake.calls.lock().unwrap()[0].1,
+            "/gmail/v1/users/me/messages/message1/attachments/attachment1"
+        );
+        assert!(
+            verify_attachments(
+                &Fake::new(vec![]),
+                &detail(8, None),
+                "message1",
+                &access,
+                deadline,
+                &stop
+            )
+            .is_err()
+        );
+        let fake = Fake::new(vec![]);
+        assert!(
+            verify_attachments(
+                &fake,
+                &detail(9, Some("../other")),
+                "message1",
+                &access,
+                deadline,
+                &stop
+            )
+            .is_err()
+        );
+        assert!(fake.calls.lock().unwrap().is_empty());
+    }
 }

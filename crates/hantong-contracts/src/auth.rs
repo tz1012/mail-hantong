@@ -136,6 +136,14 @@ impl RequestedScope {
         if accounts.windows(2).any(|w| w[0] == w[1]) || tools.windows(2).any(|w| w[0] == w[1]) {
             return Err(ErrorCode::InvalidInput);
         }
+        for tool in &tools {
+            if tool.starts_with("mail.google.change.")
+                && crate::google_mutation::grant_account(tool)
+                    .is_none_or(|account| accounts.binary_search(&account).is_err())
+            {
+                return Err(ErrorCode::InvalidInput);
+            }
+        }
         Ok(Self { accounts, tools })
     }
     pub fn accounts(&self) -> &[String] {
@@ -145,6 +153,14 @@ impl RequestedScope {
         &self.tools
     }
     pub fn permits_account(&self, account: &str, tool: &str) -> bool {
+        if matches!(
+            tool,
+            crate::google_mutation::REQUEST_TOOL | crate::google_mutation::EXECUTE_TOOL
+        ) {
+            return self.accounts.iter().any(|v| v == account)
+                && crate::google_mutation::account_grant(account)
+                    .is_ok_and(|grant| self.tools.binary_search(&grant).is_ok());
+        }
         self.accounts.iter().any(|v| v == account) && self.tools.iter().any(|v| v == tool)
     }
     pub fn intersection(&self, other: &Self) -> Self {
@@ -159,6 +175,12 @@ impl RequestedScope {
                 .tools
                 .iter()
                 .filter(|v| other.tools.binary_search(v).is_ok())
+                .filter(|v| {
+                    crate::google_mutation::grant_account(v).is_none_or(|account| {
+                        self.accounts.binary_search(&account).is_ok()
+                            && other.accounts.binary_search(&account).is_ok()
+                    })
+                })
                 .cloned()
                 .collect(),
         }
@@ -644,6 +666,8 @@ fn default_cli_toolset_rank(tools: &[String]) -> Option<u8> {
         Some(5)
     } else if tools == default_cli_send_tools() {
         Some(6)
+    } else if is_google_change_toolset(tools) {
+        Some(7)
     } else {
         None
     }
@@ -656,6 +680,11 @@ pub fn is_supported_default_cli_toolset(tools: &[String]) -> bool {
 
 /// Equal tool sets may accompany an account change; callers reject a full no-op.
 pub fn is_supported_default_cli_toolset_transition(old: &[String], target: &[String]) -> bool {
+    if is_google_change_toolset(old) || is_google_change_toolset(target) {
+        return is_supported_default_cli_toolset(old)
+            && is_supported_default_cli_toolset(target)
+            && old.iter().all(|tool| target.binary_search(tool).is_ok());
+    }
     match (
         default_cli_toolset_rank(old),
         default_cli_toolset_rank(target),
@@ -849,4 +878,63 @@ pub fn mcp_mail_tools() -> Vec<String> {
 }
 pub fn is_supported_mcp_toolset(tools: &[String]) -> bool {
     tools == mcp_read_tools() || tools == mcp_mail_tools()
+}
+
+/// Canonical C11 plus 1..4 exact account-qualified change grants.
+pub fn is_google_change_toolset(tools: &[String]) -> bool {
+    if !(12..=15).contains(&tools.len()) || tools.windows(2).any(|p| p[0] >= p[1]) {
+        return false;
+    }
+    let base = default_cli_send_tools();
+    tools
+        .iter()
+        .filter(|v| crate::google_mutation::grant_account(v).is_none())
+        .cloned()
+        .collect::<Vec<_>>()
+        == base
+}
+#[cfg(test)]
+mod mutation_scope_tests {
+    use super::*;
+    use crate::google_mutation::{EXECUTE_TOOL, REQUEST_TOOL, account_grant};
+    #[test]
+    fn sec03_google_change_grant_is_exact_account_and_not_generic_tool_name() {
+        let a = format!("google_{}", "a".repeat(64));
+        let b = format!("google_{}", "b".repeat(64));
+        let mut tools = default_cli_send_tools();
+        tools.push(account_grant(&a).unwrap());
+        tools.sort();
+        let scope = RequestedScope::new(vec![a.clone(), b.clone()], tools.clone()).unwrap();
+        assert!(scope.permits_account(&a, REQUEST_TOOL));
+        assert!(scope.permits_account(&a, EXECUTE_TOOL));
+        assert!(!scope.permits_account(&b, REQUEST_TOOL));
+        assert!(!scope.permits_account(&b, EXECUTE_TOOL));
+        assert!(RequestedScope::new(vec![b.clone()], tools).is_err());
+        let generic = RequestedScope::new(
+            vec![a.clone()],
+            vec![REQUEST_TOOL.into(), EXECUTE_TOOL.into()],
+        )
+        .unwrap();
+        assert!(!generic.permits_account(&a, REQUEST_TOOL));
+        let other = RequestedScope::new(vec![b], vec![]).unwrap();
+        assert!(!scope.intersection(&other).permits_account(&a, REQUEST_TOOL));
+    }
+    #[test]
+    fn sec03_google_change_toolset_cannot_downgrade_or_swap_account_grants() {
+        let mut a = default_cli_send_tools();
+        a.push(account_grant(&format!("google_{}", "a".repeat(64))).unwrap());
+        a.sort();
+        let mut b = default_cli_send_tools();
+        b.push(account_grant(&format!("google_{}", "b".repeat(64))).unwrap());
+        b.sort();
+        assert!(is_supported_default_cli_toolset_transition(
+            &default_cli_send_tools(),
+            &a
+        ));
+        assert!(!is_supported_default_cli_toolset_transition(&a, &b));
+        assert!(!is_supported_default_cli_toolset_transition(
+            &a,
+            &default_cli_send_tools()
+        ));
+    }
 }

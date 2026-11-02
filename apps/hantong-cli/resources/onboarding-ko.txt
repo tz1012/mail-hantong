@@ -1,0 +1,9 @@
+title=한통 시작하기
+no_accounts=연결된 Gmail 계정이 없습니다.
+connect_or_exit=1) Google 계정 연결  2) 종료
+feature_menu=기능 선택: 1) 메일 읽기  2) 메일 읽기·작성·보내기  0) 취소
+account=계정
+add_or_exit=계정 번호를 입력하거나, 다른 계정을 연결하려면 add, 종료하려면 0을 입력하세요.
+work_menu=1) 받은편지함 보기  2) 다른 계정 연결  3) 종료  4) 메일 작성 및 보내기 활성화  5) 메일 작성
+connected=Google 계정이 연결되었습니다.
+invalid_choice=표시된 선택지 중 하나를 입력하세요.

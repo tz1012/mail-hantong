@@ -37,6 +37,30 @@ pub(super) struct Publication {
     backup: Option<File>,
 }
 
+/// Holds the fixed product and profile directory handles for core startup.
+/// Directory preparation is separate from profile publication and never grants
+/// approval or writes a profile.
+pub(super) struct DirectoryGuard {
+    _directories: Vec<File>,
+}
+
+impl std::fmt::Debug for DirectoryGuard {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("DirectoryGuard { <redacted> }")
+    }
+}
+
+pub(super) fn prepare_directories(profiles: &Path) -> Result<DirectoryGuard, ErrorCode> {
+    validate_path(profiles)?;
+    let identity = hantong_platform::current_peer_context()?;
+    let user = identity.user_sid();
+    let security = creation_security(user)?;
+    let directories = open_profile_directories(profiles, user, &security)?;
+    Ok(DirectoryGuard {
+        _directories: directories,
+    })
+}
+
 impl std::fmt::Debug for Publication {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("Publication { <redacted> }")
@@ -833,6 +857,52 @@ mod tests {
             bytes
         );
         assert_eq!(fs::read_dir(&fixture.profiles).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn inst01_startup_prepares_missing_profile_roots_with_protected_acl() {
+        let fixture = Fixture::new();
+        let guard = prepare_directories(&fixture.profiles).unwrap();
+        assert!(fixture.product.is_dir());
+        assert!(fixture.profiles.is_dir());
+        let user = hantong_platform::current_peer_context().unwrap();
+        let product = OpenOptions::new()
+            .access_mode(READ_CONTROL | FILE_READ_ATTRIBUTES | FILE_TRAVERSE)
+            .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
+            .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
+            .open(&fixture.product)
+            .unwrap();
+        let profiles = OpenOptions::new()
+            .access_mode(READ_CONTROL | FILE_READ_ATTRIBUTES | FILE_TRAVERSE)
+            .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
+            .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
+            .open(&fixture.profiles)
+            .unwrap();
+        check_security(&product, user.user_sid(), true).unwrap();
+        check_security(&profiles, user.user_sid(), true).unwrap();
+        drop(profiles);
+        drop(product);
+        drop(guard);
+    }
+
+    #[test]
+    fn inst01_startup_rejects_existing_unsafe_product_without_repair() {
+        let fixture = Fixture::new();
+        fs::create_dir(&fixture.product).unwrap();
+        secure(&fixture.product, true, false);
+        let product = OpenOptions::new()
+            .access_mode(READ_CONTROL | FILE_READ_ATTRIBUTES | FILE_TRAVERSE)
+            .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
+            .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
+            .open(&fixture.product)
+            .unwrap();
+        let before = security_snapshot(&product);
+        assert_eq!(
+            prepare_directories(&fixture.profiles).unwrap_err(),
+            ErrorCode::ScopeDenied
+        );
+        assert_eq!(security_snapshot(&product), before);
+        assert!(!fixture.profiles.exists());
     }
 
     #[test]

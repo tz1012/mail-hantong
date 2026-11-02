@@ -10,6 +10,63 @@ use serde_json::{Value, json};
 pub fn parse(request: &RpcRequest) -> Result<ScopeRefreshCommand, ErrorCode> {
     if matches!(
         request.method.as_str(),
+        "registration.scope.google_send.request" | "registration.scope.google_changes.request"
+    ) {
+        let p = request.params.as_object().ok_or(ErrorCode::InvalidInput)?;
+        if p.len() != 2 {
+            return Err(ErrorCode::InvalidInput);
+        }
+        if p.get("protocol_version").and_then(Value::as_u64) != Some(1) {
+            return Err(ErrorCode::VersionMismatch);
+        }
+        let values = p
+            .get("account_ids")
+            .and_then(Value::as_array)
+            .ok_or(ErrorCode::InvalidInput)?;
+        if values.len() > 4 {
+            return Err(ErrorCode::InvalidInput);
+        }
+        let values = values
+            .iter()
+            .map(|v| v.as_str().map(str::to_owned).ok_or(ErrorCode::InvalidInput))
+            .collect::<Result<Vec<_>, _>>()?;
+        let selected = hantong_contracts::scope_refresh::GoogleSendAccounts::parse(&values)?;
+        return Ok(
+            if request.method == "registration.scope.google_changes.request" {
+                ScopeRefreshCommand::RequestGoogleChanges(selected)
+            } else {
+                ScopeRefreshCommand::RequestGoogleSend(selected)
+            },
+        );
+    }
+    if matches!(
+        request.method.as_str(),
+        "registration.scope.google_readonly.request" | "registration.scope.google_readonly.add"
+    ) {
+        let p = request.params.as_object().ok_or(ErrorCode::InvalidInput)?;
+        if p.len() != 2 {
+            return Err(ErrorCode::InvalidInput);
+        }
+        let version = p
+            .get("protocol_version")
+            .and_then(Value::as_u64)
+            .ok_or(ErrorCode::InvalidInput)?;
+        if version != 1 {
+            return Err(ErrorCode::VersionMismatch);
+        }
+        let account = hantong_contracts::registration::GoogleReadAccount::parse(
+            p.get("account_id")
+                .and_then(Value::as_str)
+                .ok_or(ErrorCode::InvalidInput)?,
+        )?;
+        return Ok(if request.method.ends_with(".add") {
+            ScopeRefreshCommand::AddGoogleReadOnly(account)
+        } else {
+            ScopeRefreshCommand::RequestGoogleReadOnly(account)
+        });
+    }
+    if matches!(
+        request.method.as_str(),
         "registration.scope.approve" | "registration.scope.complete" | "registration.scope.execute"
     ) {
         return Err(ErrorCode::HumanStepRequired);
@@ -58,11 +115,115 @@ pub fn result(receipt: &ScopeRefreshReceipt) -> Value {
 mod tests {
     use super::*;
     use hantong_contracts::scope_refresh::ScopeRefreshProgress;
+    #[test]
+    fn sec03_google_changes_wire_is_distinct_from_send_and_rejects_authority() {
+        let id = format!("google_{}", "1a".repeat(32));
+        let selected =
+            hantong_contracts::scope_refresh::GoogleSendAccounts::parse(std::slice::from_ref(&id))
+                .unwrap();
+        for (method, expected) in [
+            (
+                "registration.scope.google_send.request",
+                ScopeRefreshCommand::RequestGoogleSend(selected),
+            ),
+            (
+                "registration.scope.google_changes.request",
+                ScopeRefreshCommand::RequestGoogleChanges(selected),
+            ),
+        ] {
+            assert_eq!(
+                parse(&request(
+                    method,
+                    json!({"protocol_version":1,"account_ids":[id]})
+                )),
+                Ok(expected)
+            );
+            for params in [
+                json!({"protocol_version":1,"account_ids":[]}),
+                json!({"protocol_version":1,"account_ids":[id,id]}),
+                json!({"protocol_version":1,"account_ids":[id],"approved":true}),
+                json!({"protocol_version":1,"account_ids":[id],"tools":["mail.google.changes.execute"]}),
+            ] {
+                assert_eq!(
+                    parse(&request(method, params)),
+                    Err(ErrorCode::InvalidInput)
+                );
+            }
+        }
+    }
     fn request(method: &str, params: Value) -> RpcRequest {
         RpcRequest {
             id: "1".into(),
             method: method.into(),
             params,
+        }
+    }
+    #[test]
+    fn sec03_google_readonly_wire_rejects_authority_other_accounts_and_duplicate_fields() {
+        let id = format!("google_{}", "1a".repeat(32));
+        let account = hantong_contracts::registration::GoogleReadAccount::parse(&id).unwrap();
+        assert_eq!(
+            parse(&request(
+                "registration.scope.google_readonly.request",
+                json!({"protocol_version":1,"account_id":id})
+            )),
+            Ok(ScopeRefreshCommand::RequestGoogleReadOnly(account))
+        );
+        assert!(
+            !format!("{:?}", ScopeRefreshCommand::RequestGoogleReadOnly(account)).contains(&id)
+        );
+        for params in [
+            json!({"protocol_version":1}),
+            json!({"protocol_version":1.0,"account_id":id}),
+            json!({"protocol_version":1,"account_id":[id]}),
+            json!({"protocol_version":1,"account_id":"../default"}),
+            json!({"protocol_version":1,"account_id":id,"tools":["mail.send.execute"]}),
+            json!({"protocol_version":1,"account_id":id,"approved":true}),
+        ] {
+            assert_eq!(
+                parse(&request(
+                    "registration.scope.google_readonly.request",
+                    params
+                )),
+                Err(ErrorCode::InvalidInput)
+            );
+        }
+        assert_eq!(
+            parse(&request(
+                "registration.scope.google_readonly.request",
+                json!({"protocol_version":2,"account_id":id})
+            )),
+            Err(ErrorCode::VersionMismatch)
+        );
+        let clean=serde_json::to_string(&json!({"jsonrpc":"2.0","id":"r","method":"registration.scope.google_readonly.request","params":{"protocol_version":1,"account_id":id}})).unwrap();
+        let duplicated = clean.replace(
+            "\"protocol_version\":1",
+            "\"protocol_version\":1,\"protocol_version\":1",
+        );
+        let mut frame = (duplicated.len() as u32).to_le_bytes().to_vec();
+        frame.extend(duplicated.as_bytes());
+        assert_eq!(crate::decode_request(&frame), Err(ErrorCode::InvalidInput));
+    }
+    #[test]
+    fn sec03_readonly_add_wire_is_single_selected_account_without_approval_fields() {
+        let id = format!("google_{}", "1a".repeat(32));
+        let account = hantong_contracts::registration::GoogleReadAccount::parse(&id).unwrap();
+        assert_eq!(
+            parse(&request(
+                "registration.scope.google_readonly.add",
+                json!({"protocol_version":1,"account_id":id})
+            )),
+            Ok(ScopeRefreshCommand::AddGoogleReadOnly(account))
+        );
+        for params in [
+            json!({"protocol_version":1,"account_id":id,"approved":true}),
+            json!({"protocol_version":1,"account_ids":[id]}),
+            json!({"protocol_version":1,"account_id":id,"tools":["mail.send.execute"]}),
+        ] {
+            assert_eq!(
+                parse(&request("registration.scope.google_readonly.add", params)),
+                Err(ErrorCode::InvalidInput)
+            );
         }
     }
     #[test]

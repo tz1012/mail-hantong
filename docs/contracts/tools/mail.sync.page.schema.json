@@ -693,8 +693,36 @@
             "idempotency_key": {
               "type": "string",
               "pattern": "^[A-Za-z0-9_-]{1,128}$"
+            },
+            "verify_attachments": {
+              "type": "boolean",
+              "default": false
             }
-          }
+          },
+          "allOf": [
+            {
+              "if": {
+                "properties": {
+                  "verify_attachments": {
+                    "const": true
+                  }
+                },
+                "required": [
+                  "verify_attachments"
+                ]
+              },
+              "then": {
+                "properties": {
+                  "limit": {
+                    "const": 1
+                  }
+                },
+                "required": [
+                  "limit"
+                ]
+              }
+            }
+          ]
         },
         {
           "type": "object",

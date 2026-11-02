@@ -29,6 +29,7 @@ enum Job {
     Google([u8; 32]),
     ScopeRefresh([u8; 32]),
     SendReview([u8; 32]),
+    GoogleMutation([u8; 32]),
 }
 
 pub(crate) struct RegistrationHandle<'a> {
@@ -127,12 +128,71 @@ impl RegistrationHandle<'_> {
         Ok(receipt)
     }
 
+    pub(crate) fn request_google_mutation(
+        &self,
+        owner: [u8; 16],
+        epoch: u64,
+        request: &hantong_contracts::google_mutation::MutationPayload,
+    ) -> Result<hantong_store::google_mutation::MutationReceipt, ErrorCode> {
+        if self.sender.is_closed() {
+            return Err(ErrorCode::CoreUnavailable);
+        }
+        if self
+            .state
+            .scheduled
+            .get()
+            .is_some_and(|job| !matches!(job, Job::GoogleMutation(_)))
+        {
+            return Err(ErrorCode::RateLimited);
+        }
+        let receipt = self
+            .state
+            .store
+            .request_google_mutation(owner, epoch, request)?;
+        if receipt.state == "pending" {
+            match self.state.scheduled.get() {
+                Some(Job::GoogleMutation(id)) if id == receipt.review_id => {}
+                Some(_) => return Err(ErrorCode::RateLimited),
+                None => enqueue(
+                    &self.state.scheduled,
+                    &self.sender,
+                    Job::GoogleMutation(receipt.review_id),
+                )?,
+            }
+        }
+        Ok(receipt)
+    }
+
+    #[allow(dead_code)]
     pub(crate) fn setup_command(&self, command: SetupCommand) -> Result<SetupReceipt, ErrorCode> {
+        self.setup_command_inner(None, command)
+    }
+
+    pub(crate) fn setup_command_with_context(
+        &self,
+        context: &hantong_ipc_server::setup_dispatch::SetupRequestContext,
+        command: SetupCommand,
+    ) -> Result<SetupReceipt, ErrorCode> {
+        self.setup_command_inner(Some(context.peer()), command)
+    }
+
+    fn setup_command_inner(
+        &self,
+        peer: Option<&hantong_contracts::auth::PeerContext>,
+        command: SetupCommand,
+    ) -> Result<SetupReceipt, ErrorCode> {
         match command {
             SetupCommand::Google(command) => {
                 use hantong_contracts::google_setup::GoogleSetupCommand;
                 match command {
                     GoogleSetupCommand::Status(id) => {
+                        if let Some(peer) = peer {
+                            crate::setup_google::peer_matches(
+                                &self.state.google_sessions,
+                                id,
+                                peer,
+                            )?;
+                        }
                         crate::setup_google::status(&self.state.google_sessions, id)
                             .map(SetupReceipt::Google)
                     }
@@ -145,6 +205,13 @@ impl RegistrationHandle<'_> {
                                     &input,
                                 )
                             {
+                                if let Some(peer) = peer {
+                                    crate::setup_google::peer_matches(
+                                        &self.state.google_sessions,
+                                        id,
+                                        peer,
+                                    )?;
+                                }
                                 return crate::setup_google::status(
                                     &self.state.google_sessions,
                                     id,
@@ -156,11 +223,19 @@ impl RegistrationHandle<'_> {
                         if self.sender.is_closed() {
                             return Err(ErrorCode::CoreUnavailable);
                         }
-                        let receipt = crate::setup_google::request(
-                            self.state.store,
-                            &self.state.google_sessions,
-                            input,
-                        )?;
+                        let receipt = match peer {
+                            Some(peer) => crate::setup_google::request_with_peer(
+                                self.state.store,
+                                &self.state.google_sessions,
+                                input,
+                                Some(peer.clone()),
+                            )?,
+                            None => crate::setup_google::request(
+                                self.state.store,
+                                &self.state.google_sessions,
+                                input,
+                            )?,
+                        };
                         enqueue(
                             &self.state.scheduled,
                             &self.sender,
@@ -227,18 +302,94 @@ impl RegistrationHandle<'_> {
                 )
                 .map(SetupReceipt::ScopeRefresh)
             }
-            SetupCommand::ScopeRefresh(ScopeRefreshCommand::Request) => {
+            SetupCommand::ScopeRefresh(
+                command @ (ScopeRefreshCommand::Request
+                | ScopeRefreshCommand::RequestGoogleReadOnly(_)
+                | ScopeRefreshCommand::AddGoogleReadOnly(_)
+                | ScopeRefreshCommand::RequestGoogleSend(_)
+                | ScopeRefreshCommand::RequestGoogleChanges(_)),
+            ) => {
                 if let Some(job) = self.state.scheduled.get() {
                     let Job::ScopeRefresh(id) = job else {
                         return Err(ErrorCode::RateLimited);
                     };
+                    if let ScopeRefreshCommand::RequestGoogleSend(accounts) = command {
+                        let pending = self
+                            .state
+                            .store
+                            .load_cli_scope_refresh(id)?
+                            .ok_or(ErrorCode::NotFound)?;
+                        if !crate::scope_refresh::matches_google_send(&pending, accounts) {
+                            return Err(ErrorCode::Conflict);
+                        }
+                    }
+                    if let ScopeRefreshCommand::RequestGoogleChanges(accounts) = command {
+                        let pending = self
+                            .state
+                            .store
+                            .load_cli_scope_refresh(id)?
+                            .ok_or(ErrorCode::NotFound)?;
+                        if !crate::scope_refresh::matches_google_changes(&pending, accounts) {
+                            return Err(ErrorCode::Conflict);
+                        }
+                    }
+                    if let ScopeRefreshCommand::RequestGoogleReadOnly(account) = command {
+                        let pending = self
+                            .state
+                            .store
+                            .load_cli_scope_refresh(id)?
+                            .ok_or(ErrorCode::NotFound)?;
+                        if !crate::scope_refresh::matches_google_readonly(&pending, account) {
+                            return Err(ErrorCode::Conflict);
+                        }
+                    }
+                    if let ScopeRefreshCommand::AddGoogleReadOnly(account) = command {
+                        let pending = self
+                            .state
+                            .store
+                            .load_cli_scope_refresh(id)?
+                            .ok_or(ErrorCode::NotFound)?;
+                        if !crate::scope_refresh::matches_google_readonly_add(&pending, account) {
+                            return Err(ErrorCode::Conflict);
+                        }
+                    }
                     return crate::scope_refresh::status(self.state.store, id, true)
                         .map(SetupReceipt::ScopeRefresh);
                 }
                 if self.sender.is_closed() {
                     return Err(ErrorCode::InternalError);
                 }
-                let request = crate::scope_refresh::prepare(self.state.store, self.state.server)?;
+                let request = match command {
+                    ScopeRefreshCommand::RequestGoogleSend(accounts) => {
+                        crate::scope_refresh::prepare_google_send(
+                            self.state.store,
+                            self.state.server,
+                            accounts,
+                        )?
+                    }
+                    ScopeRefreshCommand::RequestGoogleChanges(accounts) => {
+                        crate::scope_refresh::prepare_google_changes(
+                            self.state.store,
+                            self.state.server,
+                            accounts,
+                        )?
+                    }
+                    ScopeRefreshCommand::RequestGoogleReadOnly(account) => {
+                        crate::scope_refresh::prepare_google_readonly(
+                            self.state.store,
+                            self.state.server,
+                            account,
+                        )?
+                    }
+                    ScopeRefreshCommand::AddGoogleReadOnly(account) => {
+                        crate::scope_refresh::prepare_google_readonly_add(
+                            self.state.store,
+                            self.state.server,
+                            account,
+                        )?
+                    }
+                    _ => crate::scope_refresh::prepare(self.state.store, self.state.server)?,
+                };
                 let id = *request.refresh_id();
                 enqueue(&self.state.scheduled, &self.sender, Job::ScopeRefresh(id))?;
                 crate::scope_refresh::status(self.state.store, id, true)
@@ -250,6 +401,7 @@ impl RegistrationHandle<'_> {
                     Some(
                         Job::Registration(_)
                             | Job::ScopeRefresh(_)
+                            | Job::GoogleMutation(_)
                             | Job::SendReview(_)
                             | Job::Smtp(_)
                             | Job::Google(_)
@@ -337,11 +489,20 @@ impl RegistrationHandle<'_> {
         } else {
             ClientKind::Cli
         };
+        let selected = match command {
+            RegistrationCommand::RequestGoogleReadOnly(account) => Some(account),
+            _ => None,
+        };
+        if let Some(account) = selected {
+            // Reject nonexistent selections before orphan cleanup or request creation.
+            selected_registration_scope(self.state.store, account)?;
+        }
         match command {
             RegistrationCommand::Status(id)
             | RegistrationCommand::GuiStatus(id)
             | RegistrationCommand::McpStatus(id) => self.state.receipt(id, kind),
             RegistrationCommand::Request
+            | RegistrationCommand::RequestGoogleReadOnly(_)
             | RegistrationCommand::GuiRequest
             | RegistrationCommand::McpRequest => {
                 let registered = if mcp {
@@ -369,12 +530,19 @@ impl RegistrationHandle<'_> {
                             if active.client_kind != kind {
                                 return Err(ErrorCode::RateLimited);
                             }
+                            if let Some(account) = selected
+                                && active.scope
+                                    != selected_registration_scope(self.state.store, account)?
+                            {
+                                return Err(ErrorCode::Conflict);
+                            }
                             self.state.receipt(id, kind)
                         }
                         Job::Imap(_)
                         | Job::Smtp(_)
                         | Job::Google(_)
                         | Job::ScopeRefresh(_)
+                        | Job::GoogleMutation(_)
                         | Job::SendReview(_) => Err(ErrorCode::RateLimited),
                     };
                 }
@@ -398,16 +566,20 @@ impl RegistrationHandle<'_> {
                 let request = match pending {
                     Some(request) => request,
                     None => {
-                        let scope = RequestedScope::new(
-                            self.state.store.list_registrable_account_ids()?,
-                            if mcp {
-                                hantong_contracts::auth::mcp_mail_tools()
-                            } else if gui {
-                                hantong_contracts::auth::gui_read_tools()
-                            } else {
-                                vec!["mail.accounts.list".into()]
-                            },
-                        )?;
+                        let scope = if let Some(account) = selected {
+                            selected_registration_scope(self.state.store, account)?
+                        } else {
+                            RequestedScope::new(
+                                self.state.store.list_registrable_account_ids()?,
+                                if mcp {
+                                    hantong_contracts::auth::mcp_mail_tools()
+                                } else if gui {
+                                    hantong_contracts::auth::gui_read_tools()
+                                } else {
+                                    vec!["mail.accounts.list".into()]
+                                },
+                            )?
+                        };
                         self.state.store.create_registration_request(
                             hantong_platform::random_nonce()?,
                             kind,
@@ -422,6 +594,12 @@ impl RegistrationHandle<'_> {
                         )?
                     }
                 };
+                if let Some(account) = selected
+                    && (request.scope != selected_registration_scope(self.state.store, account)?
+                        || request.client_kind != ClientKind::Cli)
+                {
+                    return Err(ErrorCode::Conflict);
+                }
                 enqueue(
                     &self.state.scheduled,
                     &self.sender,
@@ -431,6 +609,85 @@ impl RegistrationHandle<'_> {
             }
         }
     }
+}
+
+pub(crate) fn complete_google_oauth_registration(
+    store: &Store,
+    server: &ServerSigningKey,
+    permit: crate::setup_google::GoogleBootstrapPermit,
+) -> Result<(), ErrorCode> {
+    let (account_id, profile) = permit.into_registration_parts(store)?;
+    let target_tools = match profile {
+        hantong_contracts::google_setup::GoogleLocalProfile::PersonalRead => {
+            hantong_contracts::auth::default_cli_body_tools()
+        }
+        hantong_contracts::google_setup::GoogleLocalProfile::PersonalReadSend => {
+            hantong_contracts::auth::default_cli_send_tools()
+        }
+        hantong_contracts::google_setup::GoogleLocalProfile::None => {
+            return Err(ErrorCode::InvalidInput);
+        }
+    };
+    let existing = store.load_default_cli_registration()?;
+    if let Some(record) = existing {
+        if !existing_personal_registration_supported(&record, &account_id, profile) {
+            return Err(ErrorCode::Conflict);
+        }
+    } else {
+        let scope = hantong_contracts::auth::RequestedScope::new(
+            vec![account_id.clone()],
+            hantong_contracts::auth::default_cli_legacy_tools(),
+        )?;
+        let request = store.create_registration_request(
+            hantong_platform::random_nonce()?,
+            ClientKind::Cli,
+            DEFAULT_CLI_LABEL,
+            &scope,
+        )?;
+        let effects = NativeEffects { store, server };
+        commit_google_oauth_registration(&effects, &request)?;
+    }
+    let target = hantong_contracts::auth::RequestedScope::new(vec![account_id], target_tools)?;
+    let refresh_id = hantong_platform::random_nonce()?;
+    let pin = hantong_platform::sha256(&server.public_key()?)?;
+    let refresh = if permit_profile_is_send_upgrade(&target, store)? {
+        store.create_google_oauth_cli_send_upgrade(refresh_id, target, pin)?
+    } else {
+        store.create_google_oauth_cli_scope_refresh(refresh_id, target, pin)?
+    };
+    crate::scope_refresh::run_google_oauth_job(store, server, *refresh.refresh_id())
+}
+
+fn existing_personal_registration_supported(
+    record: &RegistrationRecord,
+    account: &str,
+    profile: hantong_contracts::google_setup::GoogleLocalProfile,
+) -> bool {
+    use hantong_contracts::{auth::*, google_setup::GoogleLocalProfile};
+    record.client_kind == ClientKind::Cli
+        && record.display_label == DEFAULT_CLI_LABEL
+        && record.state == RegistrationState::Active
+        && record.approved_channel == "google_oauth"
+        && record.scope.accounts() == [account]
+        && ((record.scope.tools() == default_cli_legacy_tools() && record.profile_epoch == 1)
+            || (profile == GoogleLocalProfile::PersonalReadSend
+                && record.scope.tools() == default_cli_body_tools()
+                && record.profile_epoch == 2))
+}
+
+fn permit_profile_is_send_upgrade(
+    target: &hantong_contracts::auth::RequestedScope,
+    store: &Store,
+) -> Result<bool, ErrorCode> {
+    if target.tools() != hantong_contracts::auth::default_cli_send_tools().as_slice() {
+        return Ok(false);
+    }
+    let Some(base) = store.load_default_cli_registration()? else {
+        return Ok(false);
+    };
+    Ok(base.scope.accounts() == target.accounts()
+        && base.scope.tools() == hantong_contracts::auth::default_cli_body_tools().as_slice()
+        && base.approved_channel == "google_oauth")
 }
 impl RegistrationWorker<'_> {
     pub(crate) async fn run(mut self) -> Result<(), ErrorCode> {
@@ -443,6 +700,7 @@ impl RegistrationWorker<'_> {
         crate::scope_refresh::recover_startup(self.state.store, self.state.server)?;
         recover_startup(&effects)?;
         self.state.store.recover_mail_sends()?;
+        self.state.store.recover_google_mutations()?;
         while let Some(job) = self.receiver.recv().await {
             let _window = ScheduledWindow(&self.state.scheduled);
             let result = match job {
@@ -452,6 +710,7 @@ impl RegistrationWorker<'_> {
                         self.state.secrets_root,
                         &self.state.google_sessions,
                         id,
+                        self.state.server,
                     )
                     .await
                 }
@@ -466,6 +725,15 @@ impl RegistrationWorker<'_> {
                 }
                 Job::SendReview(id) => {
                     crate::send_mail::run_job(
+                        self.state.store,
+                        self.state.secrets_root,
+                        &self.state.policy,
+                        id,
+                    )
+                    .await
+                }
+                Job::GoogleMutation(id) => {
+                    crate::google_mutation::run_job(
                         self.state.store,
                         self.state.secrets_root,
                         &self.state.policy,
@@ -645,9 +913,28 @@ fn review_snapshot(
     )
 }
 
+fn selected_registration_scope(
+    store: &Store,
+    account: hantong_contracts::registration::GoogleReadAccount,
+) -> Result<RequestedScope, ErrorCode> {
+    let id = account.account_id();
+    if !store.list_registrable_account_ids()?.contains(&id) {
+        return Err(ErrorCode::NotFound);
+    }
+    RequestedScope::new(
+        vec![id],
+        hantong_contracts::auth::default_cli_legacy_tools(),
+    )
+}
+
 fn supported_identity(kind: ClientKind, label: &str, tools: &[String]) -> bool {
     match kind {
-        ClientKind::Cli => label == DEFAULT_CLI_LABEL && tools == ["mail.accounts.list"],
+        ClientKind::Cli => {
+            label == DEFAULT_CLI_LABEL
+                && (tools == ["mail.accounts.list"]
+                    || tools == hantong_contracts::auth::default_cli_body_tools().as_slice()
+                    || tools == hantong_contracts::auth::default_cli_send_tools().as_slice())
+        }
         ClientKind::Gui => {
             label == DEFAULT_GUI_LABEL && tools == hantong_contracts::auth::gui_read_tools()
         }
@@ -781,6 +1068,59 @@ fn commit_consumed_review<E: Effects>(
     effects.activate(&record, hash)?;
     effects.cleanup_publication(&mut publication)
 }
+
+/// Completes the ordinary personal CLI registration after Secrets has
+/// verified live Google PKCE, identity and scopes. The OAuth provenance is
+/// carried by the Store stage; this path never manufactures a native review.
+fn commit_google_oauth_registration(
+    effects: &NativeEffects<'_>,
+    expected: &RegistrationRequest,
+) -> Result<(), ErrorCode> {
+    let current = effects.request(expected.request_id)?;
+    if &current != expected || current.state != RegistrationRequestState::Pending {
+        return Err(ErrorCode::Conflict);
+    }
+    let public = effects.server_public()?;
+    let hash = hantong_platform::sha256(&public)?;
+    let now = effects.now()?;
+    if now < current.created_at_utc_ms || now >= current.expires_at_utc_ms {
+        return Err(ErrorCode::ApprovalExpired);
+    }
+    cleanup_orphan(effects, &current)?;
+    let id = hantong_platform::registration_id_for_request(current.request_id)?;
+    let key = effects.create_key(id)?;
+    let client_public = effects.key_public(&key)?;
+    let stage =
+        effects
+            .store
+            .stage_google_oauth_cli_registration(&CliRegistrationStage::new_google_oauth(
+                current.clone(),
+                id,
+                client_public,
+                hash,
+            )?);
+    let record = match stage {
+        Ok(record) => record,
+        Err(error) => {
+            if let Err(cleanup) = delete_unlinked(effects, expected.request_id, key, client_public)
+            {
+                effects.report(error);
+                effects.report(cleanup);
+            }
+            return Err(error);
+        }
+    };
+    let bytes = profile_bytes(&record, public)?;
+    let mut publication = match effects.publish(&bytes) {
+        Ok(value) => value,
+        Err(error) => {
+            effects.report(error);
+            return Err(error);
+        }
+    };
+    effects.activate(&record, hash)?;
+    effects.cleanup_publication(&mut publication)
+}
 fn recover_record<E: Effects>(effects: &E, record: &RegistrationRecord) -> Result<(), ErrorCode> {
     validate_initial_record(record)?;
     let request = effects.request(record.request_id)?;
@@ -813,7 +1153,10 @@ fn validate_initial_record(record: &RegistrationRecord) -> Result<(), ErrorCode>
         )
         || record.read_only != (record.scope.tools() != hantong_contracts::auth::mcp_mail_tools())
         || record.requests_per_minute != 60
-        || record.approved_channel != "approval_helper"
+        || !matches!(
+            record.approved_channel.as_str(),
+            "approval_helper" | "google_oauth"
+        )
     {
         return Err(ErrorCode::Conflict);
     }

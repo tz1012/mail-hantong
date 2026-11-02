@@ -14,6 +14,10 @@ pub struct GoogleAuthorization {
     #[cfg(windows)]
     client_id: String,
     #[cfg(windows)]
+    access_mode: GoogleAccessMode,
+    #[cfg(windows)]
+    client_secret: Option<GoogleClientSecret>,
+    #[cfg(windows)]
     redirect: String,
     #[cfg(windows)]
     deadline: Instant,
@@ -27,10 +31,17 @@ pub async fn begin_google_authorization(
     client_id: &str,
     force_consent: bool,
 ) -> Result<GoogleAuthorization, ErrorCode> {
+    begin_google_authorization_for_mode(client_id, force_consent, GoogleAccessMode::ReadOnly).await
+}
+pub async fn begin_google_authorization_for_mode(
+    client_id: &str,
+    force_consent: bool,
+    access_mode: GoogleAccessMode,
+) -> Result<GoogleAuthorization, ErrorCode> {
     validate_google_client_id(client_id)?;
     #[cfg(not(windows))]
     {
-        let _ = force_consent;
+        let _ = (force_consent, access_mode);
         Err(ErrorCode::CapabilityUnsupported)
     }
     #[cfg(windows)]
@@ -57,7 +68,7 @@ pub async fn begin_google_authorization(
                     ("client_id", client_id),
                     ("redirect_uri", &redirect),
                     ("response_type", "code"),
-                    ("scope", &GOOGLE_SCOPES.join(" ")),
+                    ("scope", &access_mode.required_scopes().join(" ")),
                     ("access_type", "offline"),
                     (
                         "prompt",
@@ -81,12 +92,31 @@ pub async fn begin_google_authorization(
             state,
             verifier,
             client_id: client_id.into(),
+            access_mode,
+            client_secret: None,
             redirect,
             deadline: Instant::now() + Duration::from_secs(300),
         })
     }
 }
 impl GoogleAuthorization {
+    /// Only an opaque, client-bound native capture can supply this credential.
+    pub fn with_client_secret(mut self, secret: GoogleClientSecret) -> Result<Self, ErrorCode> {
+        #[cfg(windows)]
+        {
+            if !secret.matches(&self.client_id) {
+                return Err(ErrorCode::ScopeDenied);
+            }
+            self.client_secret = Some(secret);
+            Ok(self)
+        }
+        #[cfg(not(windows))]
+        {
+            let _ = (&mut self, secret);
+            Err(ErrorCode::CapabilityUnsupported)
+        }
+    }
+
     pub fn authorization_url(&self) -> &str {
         std::str::from_utf8(self.url.as_slice()).unwrap_or("")
     }
@@ -97,41 +127,85 @@ impl GoogleAuthorization {
         }
         #[cfg(windows)]
         {
+            let trace = diagnostics::Trace::new();
+            trace.start(diagnostics::Stage::CallbackWait);
             let remaining = self.deadline.saturating_duration_since(Instant::now());
             if remaining.is_zero() {
+                trace.result::<()>(
+                    diagnostics::Stage::CallbackTimeout,
+                    &Err(ErrorCode::AuthRequired),
+                );
+                trace.result::<()>(
+                    diagnostics::Stage::CallbackWait,
+                    &Err(ErrorCode::AuthRequired),
+                );
                 return Err(ErrorCode::AuthRequired);
             }
             let code = tokio::time::timeout(remaining, async {
-                let (mut stream, peer) = self.listener.accept().await.map_err(|_| ErrorCode::AuthRequired)?;
-                if !peer.ip().is_loopback() { return Err(ErrorCode::AuthRequired); }
-                let mut request = SensitiveBuffer(vec![0;8193]);
+                let (mut stream, peer) = self
+                    .listener
+                    .accept()
+                    .await
+                    .map_err(|_| ErrorCode::AuthRequired)?;
+                if !peer.ip().is_loopback() {
+                    return Err(ErrorCode::AuthRequired);
+                }
+                let mut request = SensitiveBuffer(vec![0; 8193]);
                 let mut used = 0;
                 loop {
-                    let n = stream.read(&mut request.0[used..]).await.map_err(|_| ErrorCode::AuthRequired)?;
-                    if n == 0 { return Err(ErrorCode::AuthRequired); }
+                    let n = stream
+                        .read(&mut request.0[used..])
+                        .await
+                        .map_err(|_| ErrorCode::AuthRequired)?;
+                    if n == 0 {
+                        return Err(ErrorCode::AuthRequired);
+                    }
                     used += n;
-                    if used > 8192 { return Err(ErrorCode::AuthRequired); }
-                    if request.0[..used].windows(4).any(|w| w == b"\r\n\r\n") { break; }
+                    if used > 8192 {
+                        return Err(ErrorCode::AuthRequired);
+                    }
+                    if request.0[..used].windows(4).any(|w| w == b"\r\n\r\n") {
+                        break;
+                    }
                 }
-                let host = format!("127.0.0.1:{}", self.listener.local_addr().map_err(|_| ErrorCode::AuthRequired)?.port());
+                let host = format!(
+                    "127.0.0.1:{}",
+                    self.listener
+                        .local_addr()
+                        .map_err(|_| ErrorCode::AuthRequired)?
+                        .port()
+                );
                 let result = callback(&request.0[..used], &host, self.state.text());
-                let status = if result.is_ok() { "200 OK" } else { "400 Bad Request" };
-                let reply = format!("HTTP/1.1 {status}\r\nContent-Length: 0\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n");
-                let _ = stream.write_all(reply.as_bytes()).await;
+                trace.result(diagnostics::Stage::CallbackValidation, &result);
+                let reply = callback_reply(result.is_ok());
+                let _ = stream.write_all(&reply).await;
                 let _ = stream.shutdown().await;
                 result
-            }).await.map_err(|_| ErrorCode::AuthRequired)??;
+            })
+            .await
+            .map_err(|_| {
+                trace.result::<()>(
+                    diagnostics::Stage::CallbackTimeout,
+                    &Err(ErrorCode::AuthRequired),
+                );
+                ErrorCode::AuthRequired
+            })
+            .and_then(|result| result);
+            trace.result(diagnostics::Stage::CallbackWait, &code);
+            let code = code?;
             // Closing the only listener before exchange makes replay impossible.
             drop(self.listener);
             let deadline = self.deadline;
             tokio::task::spawn_blocking(move || {
-                complete_code(
+                complete_code_traced_for_mode(
                     &http::NativeTransport,
-                    &self.client_id,
+                    (&self.client_id, self.client_secret),
                     &self.redirect,
                     &self.verifier,
                     code,
                     deadline,
+                    &trace,
+                    self.access_mode,
                 )
             })
             .await
@@ -139,6 +213,49 @@ impl GoogleAuthorization {
         }
     }
 }
+#[cfg(any(windows, test))]
+fn callback_reply(valid: bool) -> Vec<u8> {
+    let (status, body) = if valid {
+        (
+            "200 OK",
+            include_str!("../../resources/google-callback-ok.html"),
+        )
+    } else {
+        (
+            "400 Bad Request",
+            include_str!("../../resources/google-callback-error.html"),
+        )
+    };
+    format!("HTTP/1.1 {status}\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nCache-Control: no-store\r\nReferrer-Policy: no-referrer\r\nContent-Security-Policy: default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'\r\nX-Content-Type-Options: nosniff\r\nConnection: close\r\n\r\n{body}",body.len()).into_bytes()
+}
+
+#[cfg(test)]
+#[test]
+fn sec08_google_callback_page_is_static_bilingual_no_reflection_or_external_content() {
+    for valid in [true, false] {
+        let response = String::from_utf8(callback_reply(valid)).unwrap();
+        let (headers, body) = response.split_once("\r\n\r\n").unwrap();
+        assert!(headers.contains(&format!("Content-Length: {}", body.len())));
+        assert!(headers.contains("no-store") && headers.contains("no-referrer"));
+        assert!(headers.contains("default-src 'none'"));
+        assert!(body.contains("한통") && body.contains("HanTong"));
+        for forbidden in [
+            "<script",
+            "http://",
+            "https://",
+            "state=",
+            "code=",
+            "access_token",
+            "refresh_token",
+        ] {
+            assert!(!body.contains(forbidden));
+        }
+        if valid {
+            assert!(body.contains("not complete yet"));
+        }
+    }
+}
+
 #[cfg(any(windows, test))]
 pub(super) fn form(values: &[(&str, &str)]) -> SensitiveBuffer {
     const HEX: &[u8] = b"0123456789ABCDEF";
@@ -268,7 +385,7 @@ pub(super) fn callback(request: &[u8], host: &str, state: &str) -> Result<Secret
     }
     SecretText::from_string(query_json.take_text("code")?)
 }
-#[cfg(any(windows, test))]
+#[cfg(test)]
 pub(super) fn complete_code(
     transport: &impl http::Transport,
     client_id: &str,
@@ -277,31 +394,103 @@ pub(super) fn complete_code(
     code: SecretText,
     deadline: Instant,
 ) -> Result<PendingGoogleCredential, ErrorCode> {
+    complete_code_traced(
+        transport,
+        (client_id, None),
+        redirect,
+        verifier,
+        code,
+        deadline,
+        &diagnostics::Trace::new(),
+    )
+}
+
+#[cfg(test)]
+pub(super) fn complete_code_traced(
+    transport: &impl http::Transport,
+    client: (&str, Option<GoogleClientSecret>),
+    redirect: &str,
+    verifier: &SecretText,
+    code: SecretText,
+    deadline: Instant,
+    trace: &diagnostics::Trace,
+) -> Result<PendingGoogleCredential, ErrorCode> {
+    complete_code_traced_for_mode(
+        transport,
+        client,
+        redirect,
+        verifier,
+        code,
+        deadline,
+        trace,
+        GoogleAccessMode::ReadOnly,
+    )
+}
+#[cfg(any(windows, test))]
+#[allow(clippy::too_many_arguments)]
+pub(super) fn complete_code_traced_for_mode(
+    transport: &impl http::Transport,
+    client: (&str, Option<GoogleClientSecret>),
+    redirect: &str,
+    verifier: &SecretText,
+    code: SecretText,
+    deadline: Instant,
+    trace: &diagnostics::Trace,
+    access_mode: GoogleAccessMode,
+) -> Result<PendingGoogleCredential, ErrorCode> {
+    let (client_id, client_secret) = client;
     let cancel = AtomicBool::new(false);
-    let body = form(&[
+    let mut fields = vec![
         ("client_id", client_id),
         ("code", code.text()),
         ("code_verifier", verifier.text()),
         ("grant_type", "authorization_code"),
         ("redirect_uri", redirect),
-    ]);
-    let tokens = parse_tokens(
-        transport.request(http::Request {
-            host: http::Host::Token,
-            path: "/token",
-            post: Some(body.as_slice()),
-            bearer: None,
-            limit: 65536,
-            deadline,
-            cancel: &cancel,
-        })?,
-        None,
-    )?;
-    let refresh = tokens.refresh.ok_or(ErrorCode::AuthRequired)?;
-    let identity = identity(transport, &tokens.access, tokens.scopes, deadline, &cancel)?;
+    ];
+    if let Some(secret) = &client_secret {
+        fields.push(("client_secret", secret.value_for(client_id)?));
+    }
+    let body = form(&fields);
+    trace.start(diagnostics::Stage::TokenExchange);
+    let response = transport.request(http::Request {
+        host: http::Host::Token,
+        path: "/token",
+        post: Some(body.as_slice()),
+        bearer: None,
+        limit: 65536,
+        deadline,
+        cancel: &cancel,
+    });
+    trace.result(diagnostics::Stage::TokenExchange, &response);
+    let response = response?;
+    trace.response(&response);
+    let tokens = parse_tokens(response, None);
+    trace.result(diagnostics::Stage::TokenResponse, &tokens);
+    let mut tokens = tokens?;
+    access_mode.validate_granted(&tokens.scopes)?;
+    tokens.scopes = access_mode
+        .required_scopes()
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+    let refresh = tokens.refresh.ok_or(ErrorCode::AuthRequired);
+    trace.result(diagnostics::Stage::RefreshCredential, &refresh);
+    let refresh = refresh?;
+    trace.start(diagnostics::Stage::Identity);
+    let identity = identity(
+        transport,
+        &tokens.access,
+        tokens.scopes,
+        access_mode,
+        deadline,
+        &cancel,
+    );
+    trace.result(diagnostics::Stage::Identity, &identity);
+    let identity = identity?;
     Ok(PendingGoogleCredential {
         identity,
         client_id: client_id.into(),
         refresh,
+        client_secret,
     })
 }

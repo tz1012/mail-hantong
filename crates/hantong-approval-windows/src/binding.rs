@@ -122,6 +122,9 @@ impl CapturedReview<AccountSetupReview> {
         self,
         pending: hantong_secrets::PendingImapCredential,
     ) -> Result<VerifiedImapSetup, ErrorCode> {
+        if pending.is_google_client_capture() {
+            return Err(ErrorCode::ScopeDenied);
+        }
         crate::setup_binding::validate_pending(&self.review, &pending)?;
         let verified_at_utc_ms = self.verification_time()?;
         Ok(VerifiedImapSetup {
@@ -167,6 +170,9 @@ impl CapturedReview<SmtpSetupReview> {
         self,
         pending: hantong_secrets::PendingImapCredential,
     ) -> Result<VerifiedSmtpSetup, ErrorCode> {
+        if pending.is_google_client_capture() {
+            return Err(ErrorCode::ScopeDenied);
+        }
         crate::setup_binding::validate_pending(self.review.capture_review(), &pending)?;
         let verified_at_utc_ms = self.verification_time()?;
         Ok(VerifiedSmtpSetup {
@@ -177,12 +183,41 @@ impl CapturedReview<SmtpSetupReview> {
     }
 }
 
+impl CapturedReview<GoogleClientReview> {
+    pub(super) fn into_verified_google_client(
+        self,
+        pending: hantong_secrets::PendingImapCredential,
+    ) -> Result<VerifiedGoogleClient, ErrorCode> {
+        if !pending.is_google_client_capture() {
+            return Err(ErrorCode::ScopeDenied);
+        }
+        crate::setup_binding::validate_pending(self.review.capture_review(), &pending)?;
+        let verified_at_utc_ms = self.verification_time()?;
+        Ok(VerifiedGoogleClient {
+            binding: self,
+            verified_at_utc_ms,
+            pending,
+        })
+    }
+}
+
+impl CapturedReview<GoogleMutationReview> {
+    pub(super) fn into_verified(self) -> Result<VerifiedGoogleMutation, ErrorCode> {
+        let verified_at_utc_ms = self.verification_time()?;
+        Ok(VerifiedGoogleMutation {
+            binding: self,
+            verified_at_utc_ms,
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     #[test]
     fn acc02_google_review_binds_identity_client_scope_generation_user_and_time() {
         let identity = hantong_contracts::google::GoogleIdentity {
+            access_mode: hantong_contracts::google_write::GoogleAccessMode::ReadOnly,
             account_id: format!("google_{}", "a".repeat(64)),
             subject: "synthetic-subject".into(),
             email: "fixture@example.test".into(),
@@ -194,6 +229,7 @@ mod tests {
         let review = GoogleSetupReview {
             request_id: [7; 32],
             binding: hantong_contracts::google::GoogleAccountBinding {
+                access_mode: hantong_contracts::google_write::GoogleAccessMode::ReadOnly,
                 account_id: identity.account_id.clone(),
                 subject: identity.subject.clone(),
                 client_id: "fixture.apps.googleusercontent.com".into(),
@@ -215,6 +251,18 @@ mod tests {
             nonce: [5; 32],
         };
         let mut changed = Vec::new();
+        let mut value = review.clone();
+        value.identity.access_mode = hantong_contracts::google_write::GoogleAccessMode::Modify;
+        value.binding.access_mode = value.identity.access_mode;
+        value.identity.granted_scopes = value
+            .identity
+            .access_mode
+            .required_scopes()
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        value.validate().unwrap();
+        changed.push(value);
         let mut value = review.clone();
         value.identity.email = "another@example.test".into();
         changed.push(value);
@@ -340,7 +388,7 @@ mod tests {
             owner_registration_id: [2; 16],
             profile_epoch: 3,
             account_version: 4,
-            endpoint,
+            endpoint: endpoint.into(),
             draft: hantong_contracts::mail_send::DraftCreateRequest::new(
                 "acct",
                 vec!["to@example.com".into()],
@@ -351,7 +399,8 @@ mod tests {
                 0,
                 [5; 32],
             )
-            .unwrap(),
+            .unwrap()
+            .into(),
             request: hantong_contracts::mail_send::SendReviewRequest::new(
                 "acct", [6; 32], 1, "send", "send", [5; 32],
             )
@@ -386,6 +435,20 @@ mod tests {
         push(|r| r.account_version += 1);
         push(|r| r.expires_at_utc_ms -= 1);
         push(|r| {
+            r.draft = hantong_contracts::google_write::ComposeSnapshot::new(
+                r.draft.draft().clone(),
+                vec![
+                    hantong_contracts::google_write::AttachmentSnapshot::new(
+                        "fixture.txt".into(),
+                        "text/plain".into(),
+                        b"changed synthetic attachment".to_vec(),
+                    )
+                    .unwrap(),
+                ],
+            )
+            .unwrap();
+        });
+        push(|r| {
             r.request = hantong_contracts::mail_send::SendReviewRequest::new(
                 "acct", [7; 32], 2, "other", "other", [5; 32],
             )
@@ -403,9 +466,10 @@ mod tests {
                 [5; 32],
             )
             .unwrap()
+            .into()
         });
         push(|r| {
-            r.endpoint=hantong_domain::mail_connection::MailConnectionConfig::from_json(br#"{"schema_version":1,"account_id":"acct","imap":{"settings_version":1,"host":"imap.example","port":993,"tls":"implicit_tls","login_name":"sender@example.com","authentication":"app_password"},"smtp":{"settings_version":2,"host":"other.example","port":465,"tls":"implicit_tls","login_name":"other@example.com","authentication":"app_password"}}"#).unwrap().smtp().unwrap().clone()
+            r.endpoint=hantong_domain::mail_connection::MailConnectionConfig::from_json(br#"{"schema_version":1,"account_id":"acct","imap":{"settings_version":1,"host":"imap.example","port":993,"tls":"implicit_tls","login_name":"sender@example.com","authentication":"app_password"},"smtp":{"settings_version":2,"host":"other.example","port":465,"tls":"implicit_tls","login_name":"other@example.com","authentication":"app_password"}}"#).unwrap().smtp().unwrap().clone().into()
         });
         let captured = captured_value(review.clone());
         for changed in substitutions {
@@ -429,7 +493,11 @@ mod tests {
     }
     #[test]
     fn setup01_smtp_binding_rejects_account_version_or_cross_protocol_snapshot_substitution() {
-        let endpoint = outgoing_review().endpoint;
+        let hantong_contracts::google_write::MailSendTarget::Smtp(endpoint) =
+            outgoing_review().endpoint
+        else {
+            panic!("SMTP fixture")
+        };
         let setup = setup_review(None);
         let mirror=hantong_domain::mail_connection::MailConnectionConfig::from_json(br#"{"schema_version":1,"account_id":"acct","imap":{"settings_version":1,"host":"smtp.example","port":587,"tls":"starttls_required","login_name":"sender@example.com","authentication":"app_password"}}"#).unwrap().imap().clone();
         let capture = AccountSetupReview::new(
@@ -806,6 +874,108 @@ mod tests {
                 &context(8)
             ),
             Ok(review(1))
+        );
+    }
+    #[test]
+    fn apr01_google_mutation_native_binding_checks_account_action_version_content_and_ttl() {
+        use hantong_contracts::{
+            google::GoogleAccountBinding,
+            google_mutation::MutationPayload,
+            google_write::{GoogleAccessMode, MessageLabelChange},
+        };
+        let account = format!(
+            "google_{}",
+            hantong_contracts::wire_hex::encode(
+                &hantong_platform::sha256(b"synthetic-subject").unwrap()
+            )
+        );
+        let change = MessageLabelChange::new(
+            account.clone(),
+            "message1".into(),
+            vec!["STARRED".into()],
+            vec!["UNREAD".into()],
+        )
+        .unwrap();
+        let hash = hantong_platform::sha256_storage_payload(&change.canonical_payload()).unwrap();
+        let review = GoogleMutationReview {
+            review_id: [1; 32],
+            owner_registration_id: [2; 16],
+            profile_epoch: 1,
+            account_version: 1,
+            binding: GoogleAccountBinding {
+                access_mode: GoogleAccessMode::Modify,
+                account_id: account,
+                subject: "synthetic-subject".into(),
+                client_id: "fixture.apps.googleusercontent.com".into(),
+                credential_version: 1,
+            },
+            sender: "synthetic@example.test".into(),
+            request: MutationPayload::Labels {
+                change,
+                expected_version: 1,
+                operation_id: "synthetic-op".into(),
+                idempotency_key: "synthetic-key".into(),
+                payload_hash: hash,
+            },
+            compose: None,
+            before_labels: vec!["INBOX".into()],
+            created_at_utc_ms: 1000,
+            expires_at_utc_ms: 301000,
+        };
+        review.validate().unwrap();
+        let captured = captured_value(review.clone());
+        let mut changes = vec![];
+        for change in [
+            (|r: &mut GoogleMutationReview| r.review_id = [8; 32]) as fn(&mut GoogleMutationReview),
+            |r| r.owner_registration_id = [8; 16],
+            |r| r.profile_epoch += 1,
+            |r| r.account_version += 1,
+            |r| r.binding.credential_version += 1,
+            |r| r.binding.subject = "another-subject".into(),
+            |r| r.binding.access_mode = GoogleAccessMode::ReadSend,
+            |r| r.sender = "other@example.test".into(),
+            |r| r.before_labels.push("STARRED".into()),
+            |r| r.expires_at_utc_ms += 1,
+            |r| {
+                if let MutationPayload::Labels {
+                    expected_version, ..
+                } = &mut r.request
+                {
+                    *expected_version += 1
+                }
+            },
+            |r| {
+                if let MutationPayload::Labels { operation_id, .. } = &mut r.request {
+                    *operation_id = "other-op".into()
+                }
+            },
+            |r| {
+                if let MutationPayload::Labels { payload_hash, .. } = &mut r.request {
+                    *payload_hash = [9; 32]
+                }
+            },
+        ] {
+            let mut next = review.clone();
+            change(&mut next);
+            changes.push(next);
+        }
+        for next in changes {
+            assert_eq!(
+                captured.validate_at(&next, 2000, Duration::ZERO, &context(8)),
+                Err(ErrorCode::ScopeDenied)
+            );
+        }
+        assert_eq!(
+            captured.validate_at(&review, 301000, Duration::ZERO, &context(8)),
+            Err(ErrorCode::ApprovalExpired)
+        );
+        assert_eq!(
+            captured.validate_at(&review, 2000, Duration::ZERO, &context(9)),
+            Err(ErrorCode::ScopeDenied)
+        );
+        assert_eq!(
+            captured.consume_at(&review, 2000, 2001, Duration::from_secs(1), &context(8)),
+            Ok(review)
         );
     }
 }

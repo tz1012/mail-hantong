@@ -1,5 +1,75 @@
 # mail-hantong 개발 진행 기록
 
+## 2026-10-31 추가 생성 사전 점검: 두 개 제한으로 중단
+
+사용자는 새 비밀값 1개 생성과 지정된 안전 저장·Google 인증 전송을 다시 승인했지만 비활성화된 값 삭제는 승인하지 않았다. 실제 생성 전에 읽기 전용으로 기존 client 목록의 Creation date·Status와 Add client secret 버튼 활성 여부만 확인했다. 비밀값이나 비밀값을 포함한 접근성 라벨은 읽거나 출력하지 않았다.
+
+- 원본 (2026-10-30 20:18:52 GMT+9): Enabled.
+- 노출 후 비활성화한 두 번째 값 (2026-10-31 10:10:51 GMT+9): Disabled.
+- 항목 수: 2개. Add client secret 버튼: 비활성화.
+
+Google의 최대 두 개 제한 때문에 Disabled 항목도 남아 있는 현재 상태에서는 추가할 수 없다. 새 생성을 진행하려면 Disabled 두 번째 항목을 먼저 삭제하는 별도 사용자 결정이 필요하다. 기존 원본 값은 유지해야 한다. 삭제 버튼은 누르지 않았고 새 값 생성·rotation/reset·OAuth·한통 보호 입력·저장 시험도 실행하지 않았다. 기존 코어는 변경하지 않았다.
+
+안전한 공식 UI copy/paste 경로의 합성값 검증은 용량 제한을 먼저 확인해 아직 실행하지 않았다. 경로가 검증됐거나 불가능하다고 주장하지 않는다. 생성이 허용되는 상태가 된 후에도 실제 생성 전에 합성값 검증이 필요하다. 이는 도구 승인 거부나 불확실한 실행이 아니라 제품 제한과 미승인 삭제 범위 때문에 중단한 결과다. 근거는 secret-capacity-preflight.json이다. 코드·전체 검사 1,621개 통과 기록은 유지한다. **[사람 검토 필요]**.
+
+## 2026-10-31 노출된 두 번째 비밀값 비활성화 완료
+
+사용자가 01:18:43 UTC에 원본 유지·이번에 추가한 두 번째 값만 비활성화하는 것에 명시적으로 동의했다. 생성 직후 값 표시 패널을 먼저 닫고 페이지를 새로고침한 뒤, Creation date와 Status만 읽어 대상을 구분했다. 비밀값이나 비밀값을 포함한 복사 버튼 접근성 라벨은 읽거나 출력하지 않았다.
+
+- 원본 생성 시각: 2026-10-30 20:18:52 GMT+9 (11:18:52 UTC). 최종 **Enabled**.
+- 이번에 추가한 두 번째 값 생성 시각: 2026-10-31 10:10:51 GMT+9 (01:10:51 UTC). 최종 **Disabled**.
+
+새 생성 시각에 해당하는 고유 행의 Disable client secret 버튼만 선택하고 확인 대화상자의 Disable을 확정했다. Disabling 중간 상태에서는 추가 클릭하지 않았으며 이후 Disabled로 바뀐 것을 확인했다. 원본은 Enabled로 유지됐다. 이번 조치는 성공이 확정됐으며 거부·대기·불확실 상태가 아니다. 삭제·새 생성·rotation/reset·OAuth·보호 저장 시험은 하지 않았다. 상태 근거는 secret-disable-result.json이다.
+
+앞선 도구 출력 노출 사건은 기록으로 보존한다. 그 값을 도구 출력에서 제거했다고 주장하지 않는다. 노출된 자격 증명은 이제 비활성화됐다. Gmail 연결·읽기는 여전히 미완료이며, 추가 자격 증명 작업은 이번 승인에 포함하지 않는다. 코드 구현과 1,621개 전체 검사 통과 결과는 변경되지 않았다. **[사람 검토 필요]**.
+
+## 2026-10-31 승인된 새 비밀값 추가와 도구 출력 노출
+
+사용자는 기존 Desktop 클라이언트에 새 비밀값 1개를 추가하고 기존 값은 유지하며, 지정된 보호 저장·Google 인증/갱신 전송에 사용하는 것을 승인했다. 생성 전에 검증된 수정 코어의 보호 입력창을 열었고 공식 CUA로 창 읽기·입력란 마우스 및 키보드 접근을 확인했다. 현재 세션의 WinHome 브라우저 연결 번호가 달라진 것은 공식 목록의 기존 탭 ID와 창 제목으로 구분했다. 잘못된 연결의 ERR_FAILED 탭은 닫았고 WinHome 기존 설정 탭으로 접근했다.
+
+기존 클라이언트에서 Add client secret을 한 번 눌렀다. 생성 전 Enabled 항목 1개에서 생성 후 2개로 바뀌었고 Add 버튼이 비활성화돼 새 값 1개 추가를 확인했다. 기존 값은 유지했다. 생성 중복, 새 client 생성, scope 확대, 기존 값 비활성화·삭제는 없었다.
+
+그러나 이어 복사 컨트롤의 DOM 메타데이터를 확인하면서 버튼 aria-label을 출력했고, Google이 그 라벨에 전체 비밀값을 포함하고 있어 새 값이 이 대화의 도구 실행 출력에 노출됐다. 이는 사용자의 무노출 요구를 지키지 못한 에이전트의 실수다. 보고서에는 값을 다시 쓰지 않는다. 공개 웹에 게시됐다는 증거는 없지만 도구 출력 노출 자체로 비밀 취급 조건을 위반했으므로 이 값은 사용하지 않기로 했다.
+
+실제 복사·한통 입력·보호 저장·Google 토큰 교환은 실행하지 않았다. 로컬 입력창은 Escape로 닫았다. 공식 요청 결과는 interrupted / APPROVAL_REQUIRED, login_started=false, account_created=false였다. 이 코드는 사용자의 승인 부족 판정이 아니라 이번에 요청을 취소한 결과다. 수정 코어를 종료하고 기존 preview.4를 복구했으며 공식 상태는 transport_ready=true, authenticated=false, mail_ready=false다.
+
+현재 새 값과 기존 값은 모두 Enabled다. 비활성화·삭제·rotation/reset은 명시적으로 금지된 범위여서 임의 실행하지 않았다. 남은 조치는 이번에 추가된 두 번째 값만 비활성화·폐기하는 것에 대한 사용자 결정이다. 기존 값은 유지해야 한다. 이 사건은 도구 승인 거부가 아니라 실제 생성 이후 출력 처리 실패다. 실제 Gmail 목록·읽기는 미실행이며, 이 턴에 새 OAuth 요청을 시작하지 않았다.
+
+비밀값 원문을 일반 파일·로그·CLI 인자·스크린샷·보고서·패치에 추가하지 않았다. 도구 출력에 이미 나타난 값은 제거했다고 주장하지 않는다. 코드 구현은 변경하지 않았고 직전 최종 전체 검사 1,621개 통과 기록은 유지한다. Secrets/승인 경계는 **[사람 검토 필요]**다.
+
+## 2026-10-31 최종 전체 재검사 완료 및 비밀값 복구 선택지 확인
+
+중단됐던 회귀 검사를 최종 코드로 다시 실행해 check_all exit 0을 확인했다. 문서 29 + 빌드 도구 89 + Rust 1,503 = 1,621개 통과, Rust 30개 suite 실패·무시 0건이다. 로그는 target/client-secret-complete-check-all.log다. 기존 코어만 경로 검증 후 잠시 종료하고 전체 검사 뒤 원본 preview.4를 복구했다. 공식 상태는 transport_ready=true, authenticated=false, mail_ready=false다.
+
+사용자가 기존 client_secret을 보관하지 않았다고 확인했다. 기존 Desktop client UI에는 Enabled 비밀값 1개와 활성 Add client secret 버튼이 있으며, 연결된 Google 공식 문서는 기존 값이 수동 비활성화 전까지 유효한 추가 방식을 설명한다. 최대 2개 제한이다. 새 값 생성·기존 값 비활성화·삭제는 실행하지 않았다. 새 credential 생성의 별도 사용자 결정이 남아 있으며, 실제 수정 후 OAuth·Gmail 읽기와 secret 입력·저장·전송은 미실행이다. 만료된 입력 요청을 반복 생성하지 않았다. 최신 변경 기록과 검증 요약은 상위 oauth-deliverables에 있으며 Secrets/승인 경계는 **[사람 검토 필요]**다.
+
+## 2026-10-31 client_secret_missing 원인 수정 — 보호 입력창 표시 확인, 기존 비밀값 확보 필요 / 사람 검토 필요
+
+실제 Google HTTP 400 invalid_request/client_secret_missing을 근거로 사용자가 승인한 최소 지원을 구현했다. 이전 진단 전용 patch는 상위 oauth-deliverables/diagnostic-only에 보존했다. 실제 시크릿 설정·보관·Google 전송의 별도 사용자 승인도 받았으나, 이 기록 시점에는 합성값 검사만 실행했다.
+
+기존 native 보호 입력·paint 검증·Windows 본인 확인·단일 창/cancel gate를 재사용하는 GoogleClientReview를 추가했다. 정확한 Desktop client ID와 고정 토큰 목적지를 표시한다. 입력값은 Secrets 소유의 opaque GoogleClientSecret으로만 이동하고 CLI 인자·일반 IPC·설정·로그에는 노출하지 않는다. Google/IMAP/SMTP 입력 혼용과 다른 client ID 사용을 거부한다. 브라우저 시작 전 입력 확인과 기존 최종 계정 확인을 모두 유지한다.
+
+Secrets가 code 교환 및 refresh 요청에만 client_secret을 인코딩하고, 최종 계정 확인 후 account/subject/client/version에 결속된 DPAPI bundle format 4에 함께 저장한다. refresh token 회전 시 시크릿을 보존한다. 기존 시크릿 없는 format 3은 계속 읽고 저장한다. format 4 계정은 구 preview.4에서 갱신할 수 없으므로, 새 연결 이후 바이너리 롤백 시 이 제한을 안내한다. DB 마이그레이션이나 scope 확대는 없다.
+
+변경 영역: Secrets google/client_secret·oauth·refresh/storage·typed protected capture 및 합성 테스트, Approval GoogleClientReview와 양언어 리소스, Approval-Windows binding/dialog/window, Core setup_google, Google 계약/ADR/사용 안내. 전체 컴파일 통과. 보안 관련 테스트는 Approval 19, Approval-Windows 59, Secrets 209개 통과(새 6개 포함). 최초 새 교환 테스트는 기존 fake의 no-client-secret 가정과 충돌했으며, 기존 검사는 보존하고 새 합성 transport에서 필드 인코딩을 별도로 검증하도록 수정했다. 기능 수정의 전체 check_all exit0: 문서29+빌드도구89+Rust1503=1621개 통과. 최초 Clippy 항목 배치 오류 2건은 정리 후 전체 재검증했다.
+
+실제 보호 입력창 시험은 처음 INVALID_INPUT으로 실패했다. 숨김 코어 시작 옵션이 첫 ShowWindow를 숨김 처리하는 것을 임시 단계 로그로 확인했고, 첫 호출 뒤 숨겨져 있을 때만 다시 표시하도록 수정했다. 보호 입력의 소유·focus 검증은 유지한다. 수정 후 공식 CUA 창 목록에 “mail-hantong — Google 클라이언트 자격 증명”이 나타났다. 창 읽기 도구가 승인 대기 시간초과됐고 그 사이 5분 입력 제한으로 공식 상태가 APPROVAL_EXPIRED가 됐다. 실제 secret 입력·저장·전송과 외부 OAuth는 실행되지 않았다. 현재 유효한 입력 요청은 없다. 임시 native 로그는 제거했다. 최종 창 표시 수정까지 포함한 재검사 결과는 상위 oauth-deliverables/verification-summary.json과 target/client-secret-final-check-all.log를 따른다.
+
+Google Cloud의 ERR_FAILED는 기존 공식 Chrome 탭으로 접근해 복구했다. 기존 프로젝트의 Desktop 클라이언트 → Information and summary → Client secrets 페이지는 조회에 성공했다. 실제 남은 blocker는 Google Cloud가 기존 비밀값의 보기·다운로드를 더 이상 제공하지 않는다는 제품 제한이다. 새 생성·rotation은 승인 범위 밖이므로 실행하지 않았다. 사용자는 지정된 기존 비밀값 저장·Google 전송을 이미 승인했다. 기존 값을 안전하게 보관 중인지 확인하고, 보관 중이면 새 보호 입력창에 직접 입력한 뒤 Windows 본인 확인이 필요하다. 비밀값을 채팅·일반 파일·CLI 인자로 받지 않는다. 수정 후 OAuth/Gmail 읽기는 미실행이다. **[사람 검토 필요]**.
+
+
+## 2026-10-31 OAuth 실패 단계 진단 작업 사본 — 자동 검증 통과, client_secret 누락 원인 확인
+
+사용자 승인에 따라 원본 릴리스와 데이터·백업을 보존한 사본에서 Secrets 내부 진단을 추가했다. 변경 파일은 `google/diagnostics.rs`(신규), `google.rs`, `google/oauth.rs`, `google/tests.rs`, 이 진행 기록과 자동 생성 `docs/traceability.md`다. 콜백 대기·시간초과·검증, 토큰 전송·응답 해석, refresh credential 존재, identity 확인을 구분한다. 시간·단계·고정 오류 분류만 기록하며 URL/code/state/verifier/token/secret/주소/본문/공급자 원문을 로그에 넣지 않는다. 기존 권한·CLI 계약·PKCE·5분 제한·Windows 본인 확인·저장 경로는 유지한다.
+
+Windows 네이티브 빌드·fmt·Clippy·요건·아키텍처·추적표 검사가 통과했다. 문서 29개, 빌드 도구 89개, Rust 전체 1,497개가 통과했다(합계 1,615; Secrets 205개와 신규 3개는 Rust 수량에 포함). 첫 check_all은 실행 중인 원본 코어의 제품 named pipe 점유로 IPC 테스트가 Conflict/exit101이었다. 정확한 코어를 잠시 종료하고 동일 소스의 전체 Rust 테스트를 다시 실행해 0 failed/0 ignored를 확인했다. 전체 check_all 자체의 최종 exit0으로 표시하지 않는다. 로그는 target/oauth-check-all.log, oauth-workspace-tests.log, oauth-secrets-tests.log다.
+
+첫 진단 요청의 계정 선택은 도구 검토에서 거부됐다. 사용자가 정확한 계정 선택을 다시 명시적으로 승인한 후 새 PKCE 요청을 한 번 생성했다. 이번에는 callback_validation과 callback_wait가 성공했다. 2026-10-30 23:04:59 UTC, token_exchange HTTP 400 / invalid_request / client_secret_missing, token_response AUTH_REQUIRED를 확인했다. 약 72.86초 후 실패했으며 Windows 본인 확인·Gmail 목록/본문에는 도달하지 않았다. 코드·기존 계약은 client_secret을 전송하지 않으므로 실제 요구와 불일치한다. 과거 요청의 원인을 소급 확정하지 않는다.
+
+새 비밀 설정·보관·Google 전송은 현재 승인 범위의 중지 조건이므로 실행하지 않고 최소 지원 제안을 상위 oauth-deliverables/client-secret-support-proposal.md에 작성했다. 기존 계약·ADR 변경과 보호 입력·Secrets 보관·교환/갱신 경로의 검토가 필요하다. 진단 코드를 추가 변경하거나 로그인 반복을 하지 않았다. 진단 코어 PID 77632 종료 후 원본 preview.4를 복구했으며 최신 PID/상태는 runtime-restoration-after-retry.json 및 restored-after-retry-core-status.json에 기록한다. 원본·데이터·백업은 보존했다.
+
+변경 기록·검토 patch·해시 manifest·민감정보 없는 실제 단계 근거는 상위 oauth-deliverables 폴더에 있다. 다음은 새 비밀 지원 범위 승인 후 최소 원인 수정과 실제 Gmail 읽기 시험이다. Secrets 경계 변경은 **[사람 검토 필요]**다. 커밋·푸시·배포·메일 변경은 하지 않았다.
+
 최종 갱신: 2026-10-30 (KST)
 
 작업 방식 변경: 사용자 요청에 따라 기능별 병렬 구현을 먼저 완료하고 통합 점검·수정을 수행한다. 반복 중간 리뷰와 RED/GREEN·전체 검사·상세 보고를 줄인다. GUI 진행 파일을 보존하고 CLI 전용 패키지·설치·실행 흐름을 우선 검증한다.
@@ -10,21 +80,21 @@
 
 ## 현재 상태
 
-Google 다중 계정 로그인·Gmail 읽기 구현(2026-10-30): 브라우저 OAuth/PKCE, 계정별 DPAPI 갱신, v19 캐시·동기화, native 확인과 CLI·터미널·공통 도구 연결을 구현했다. 최종 전체 검사 **1,612개**, preview.3→4 설치·업데이트·반복·제거, 공개 다운로드 재설치 검증을 통과했고 [preview.4](https://github.com/tz1012/mail-hantong/releases/tag/v0.1.0-preview.4)를 게시했다. 실제 Google 프로젝트 등록·로그인·메일 호출은 수행하지 않았다. 보안·계약 변경은 **[사람 검토 필요]**다.
+Google 다중 계정 로그인·Gmail 읽기 구현(2026-10-30): 브라우저 OAuth/PKCE, 계정별 DPAPI 갱신, v19 캐시·동기화, native 확인과 CLI·터미널·공통 도구 연결을 구현했다. 최종 전체 검사 **1,612개 통과** 후 preview.4 패키지의 설치·업데이트·제거 검증을 진행 중이다. 실제 Google 프로젝트 등록·로그인·메일 호출은 수행하지 않았다. 보안·계약 변경은 **[사람 검토 필요]**다.
 
 2026-10-30 CLI preview.3 기능 묶음: 본문 읽기·암호화 캐시, 초안 작성, 개별 native 승인 발송 원장·SMTP, 최초 SMTP 보호 설정, 독립 MCP 등록·도구 조회/호출, Codex/Claude Console AI 대화, 공급자/모델/추론/fast/agent 세션 제어와 한 줄 설치를 연결했다. `/provider`와 `/provide`를 같은 명령으로 받고, 값 없는 공급자·모델·모드 명령은 상하키 선택을 제공한다. 최종 전체 검사 **1,565개 통과** 후 소스 `065366b`와 [개발 미리보기 v0.1.0-preview.3](https://github.com/tz1012/mail-hantong/releases/tag/v0.1.0-preview.3)을 공개했다. 공개 주소의 최종 ZIP으로 실제 임시 설치·실행·제거·데이터 보존을 재검증했다. 아래 preview.2의 1,450개는 직전 기준선으로 보존한다. 보안·계약 변경은 **[사람 검토 필요]**다.
 
 **우선순위 변경(사용자 지시, 2026-10-30): GUI보다 CLI 출시를 먼저 진행한다.** GUI 진행 파일은 보존하고 추가 디자인 작업을 중단했다. 상단 폴더 드롭다운 제거·왼쪽 실제 폴더 통합·스크롤 끝 자동 추가 로딩은 후속에 남긴다. 코어는 별도 프로세스이고 계정 비밀번호 입력·등록/권한 승인은 보호된 Windows 창을 유지한다.
 
-직전 검증 산출물은 `artifacts/cli/0.1.0-preview.3/`에 보존한다. 최신 label은 `0.1.0-preview.4`이다. 미리보기는 완성된 정식 제품을 뜻하지 않는다. 첨부·예약·주소록·규칙 자동화·실제 제공자 상호 운용성과 사람 보안 검토가 남아 있다.
+직전 검증 산출물은 `artifacts/cli/0.1.0-preview.2/`에 보존한다. 새 label은 `0.1.0-preview.3`이다. 미리보기는 완성된 정식 제품을 뜻하지 않는다. 첨부·예약·주소록·규칙 자동화·실제 제공자 상호 운용성과 사람 보안 검토가 남아 있다.
 
 | 항목 | 상태와 근거 |
 | --- | --- |
 | 기준 자료 | 사용자 승인으로 채택한 [Markdown 기준 요건](../requirements/README.md): 요건 170개·1단계 P0 144개·문장별 AC ID 341개. 작업 카드 정의 151개는 보존한다. |
-| 현재 카드 | 사용자 요청의 **다중 Google 계정 로그인·Gmail 읽기와 CLI preview.4 배포**를 구현·검증했다. 상태는 **사람 검토 필요**이며 실제 Google 로그인·공개 앱 인증·새 OS·정식 출시 게이트 완료는 아니다. M8 GUI와 나머지 P0는 후속이다. |
-| 최신 검증 | **1,612개 통과**(문서 29·빌드 도구 89·Rust 1,494). Windows check-all의 fmt/Clippy/build/test·문서/의존/추적 검사, Linux 전체 target cross-Clippy 통과. 5계정 병렬·격리·서명 IPC·v19 이전/롤백, PowerShell5.1 preview.3→4 설치/업데이트/반복/제거와 최종 공개 ZIP 재설치·데이터 보존을 확인했다. 실제 Google·새 OS·Mac 검증은 남아 있다. |
+| 현재 카드 | 사용자 우선 지시에 따른 **CLI 개발 미리보기의 로컬 패키지·설치 검증**을 마쳤다. M9-10/11/15/16의 전체 설치·새 OS·서명·출시 게이트 완료가 아니다. M8 GUI 진행 파일은 보존했다. 보안·계약은 **사람 검토 필요**다. |
+| 최신 검증 | **1,612개 통과**(문서 29·빌드 도구 89·Rust 1,494). Windows check-all의 fmt/Clippy/build/test·문서/의존/추적 검사 통과. Linux 전체 target cross-Clippy 통과. 5계정 병렬·토큰/계정 격리·실제 서명 IPC·v19 이전/롤백을 검증했다. preview.4 설치·업데이트·제거 검증은 진행 중이며 실제 Google·새 OS·Mac 검증은 남아 있다. |
 | 제품 구현 | Rust workspace·영/한 CLI·Windows 코어/인증 IPC·DPAPI·SQLCipher·정책/감사·보호 설정/등록, 폴더·UID 수집/대조/복구·검색·본문·초안·native 개별 승인 발송, managed AI·MCP·한 줄 설치를 연결했다. 첨부·예약·주소록·규칙·전체 GUI·실제 제공자 검증은 후속이다. |
-| GitHub | 공개 저장소 [tz1012/mail-hantong](https://github.com/tz1012/mail-hantong), 소스 `afd8ac5c567e70ff9f7b840d83f3c81f4f1d874a`, [개발 미리보기 v0.1.0-preview.4](https://github.com/tz1012/mail-hantong/releases/tag/v0.1.0-preview.4)와 ZIP/SHA256SUMS/BUILD-METADATA 게시 완료. 원격 CI는 별도 실행 중이며 로컬 통과와 구분한다. 실행 데이터·에이전트 상태는 소스에 포함하지 않는다. WinGet/MSI·서명은 후속이다. |
+| GitHub | 공개 저장소 [tz1012/mail-hantong](https://github.com/tz1012/mail-hantong), main remote 연결, 개발 미리보기 v0.1.0-preview.3과 ZIP/SHA256SUMS/BUILD-METADATA 게시. 실행 데이터·에이전트 상태는 소스에 포함하지 않는다. WinGet/MSI 등록과 서명은 아직 없다. |
 | 새 사용자 요청 | 진행 상황을 이 문서에 누적하고, GitHub에서 명령어로 설치 및 개발을 시작할 수 있는 경로를 마련한다. 상세 범위는 [공개와 설치 계획](DISTRIBUTION.md)에 기록한다. |
 | 문서 관리 방식 | Markdown을 개발 기준으로 갱신하고 기존 Word는 보관한다. 최신 사용자 지시 “제작 완료까지 일단 묻지말고 진행해”에 따라 일반 구현 판단은 기록하며 연속 진행한다. |
 | 실행 성능 기준 | 빠른 실행을 추구하면서 상주 메모리 사용도 함께 고려한다. 사용자가 이 절충을 근거로 Rust를 선택했다. 웜 캐시 상태의 기본 메일 목록 사용 가능 목표 **1초 이내**는 유지한다. 현재 기준은 [FEATURES.md](FEATURES.md)의 성능 보완이다. |
@@ -41,7 +111,7 @@ Google 다중 계정 로그인·Gmail 읽기 구현(2026-10-30): 브라우저 OA
 - **저장·정책**: v19에 Google 연결/라벨/메일/동기화 상태/실행 원장을 추가했다. 계정·현재 등록/epoch·권한·MCP AI 동의·operation/idempotency/version·페이지 토큰/라벨을 결속하고 감사와 결과를 원자적으로 확정한다. 재시작은 중단을 기록하고 네트워크 요청을 자동 재실행하지 않는다. 인증 만료 계정의 로컬 메일은 보존한다.
 - **사용 경로**: `hantong login google`, `setup google request/status`, `gmail labels/sync/status/list/read`. 첫 로그인 뒤 별도 등록/범위 확인과 INBOX 32개 가져오기를 연결했다. 공통 메일 도구에는 명시적 `gmail_*` 모드를 추가했다. 기존 터미널 화면도 같은 CLI를 사용하며 로그인·명시적 새로고침을 연결했다. 본문은 텍스트 64KiB 한도이며 첨부·외부 콘텐츠를 열거나 Gmail을 수정/발송하지 않는다.
 - **검증**: Windows Secrets/Contracts 261개, Store 451개 집중 검사 통과. 5계정 병렬/인증 실패 격리·잘못된 subject/epoch·중복 요청·v19 이전/롤백·실제 서명 IPC 통합 시험을 추가했다. 최종 `check-all` **1,612개 통과**(29+89+1,494), 로그 `target/google-preview4-check-all.log`, SHA256 `bdda4a0dd7d4be2139367b4ff41281af4994267b935fa6ed23031a4380a00372`. 소스 해시 `8d9f712e43c2a356b7c789f3c379e5319ff5767d6d00935058322ecbfb1b40de`; staged 소스 576개와 작업 파일 바이트 일치를 확인했다. 최신 Windows 전체 Clippy와 Linux 전체 target cross-Clippy도 통과했다.
-- **패키지**: `artifacts/cli/0.1.0-preview.4/` 생성. ZIP 21,657,672바이트, SHA256 `fac65f8bb44232846f60ffbd971cf67f33e860197cb33ba433a1a9b659d648ad`. 실제 빌드 소스 해시·모든 manifest 파일·체크섬·4개 실행 파일의 Windows 시스템 DLL 의존과 외부 VC++ 런타임 불필요를 확인했다. Google 사용 안내를 패키지에 포함했다. Windows PowerShell5.1에서 preview.3→4 설치/업데이트/반복, 공백·한글 경로, 모든 launcher 도움말/버전, JSON 오류/종료 코드, 제거와 임의 데이터 보존을 통과했다. 로그 `target/google-preview4-install-smoke.log`, SHA256 `7fff3f02c8f273d4390781b43393a9441017730d3507b64f21e0f6f8bdd45a9a`. [공개 릴리스](https://github.com/tz1012/mail-hantong/releases/tag/v0.1.0-preview.4) 실제 다운로드·체크섬·설치·실행·제거도 통과했다. 로그 `target/google-preview4-public-download-smoke.log`, SHA256 `db7919c97e7e9033a78c5211b67111d55f19c056fcfa0a256ddf2ee9464bf54d`. 이 시험은 실제 코어 시작·Google 계정·메일을 사용하지 않고 사용자 PATH를 영구 변경하지 않았다.
+- **패키지**: `artifacts/cli/0.1.0-preview.4/` 생성. ZIP 21,657,672바이트, SHA256 `fac65f8bb44232846f60ffbd971cf67f33e860197cb33ba433a1a9b659d648ad`. 실제 빌드 소스 해시·모든 manifest 파일·체크섬·4개 실행 파일의 Windows 시스템 DLL 의존과 외부 VC++ 런타임 불필요를 확인했다. Google 사용 안내를 패키지에 포함했다. 설치·업데이트·제거 검증 결과는 완료 후 갱신한다.
 - **배포·한계**: 배포자 Google Desktop OAuth client ID는 아직 등록되어 있지 않다. 최초 실행은 사용자가 준비한 공개 client ID·Gmail API·동의/테스트 사용자 설정이 필요하다. 실제 Google 검증과 제한 범위 공개 앱 인증은 외부 출시 게이트다. 기존 full9 MCP 등록에 새 계정을 추가하는 별도 갱신 흐름은 아직 없다. 이 변경으로 기존 계정 권한이나 외부 AI 동의를 자동 확대하지 않는다. macOS/Linux 제품 메일은 여전히 미지원이다.
 - **문서/변경**: [Google 설정·명령 안내](GOOGLE-MAIL.md), [계약](../contracts/google-mail.md), [ADR-018](../adr/ADR-018-google-desktop-oauth.md). Contracts·Secrets·Store·Application·Approval/Windows·IPC·Core·CLI·터미널·패키징 및 해당 테스트를 변경했다. 보안·계약은 **[사람 검토 필요]**이며 요건 AC나 정식 출시 게이트를 통과로 올리지 않는다.
 
@@ -1084,3 +1154,395 @@ Store 전체361개(단위358·통합3)가 통과했다(`target/metadata-store-fu
 같은 소스의 Linux x86_64/macOS arm64 workspace all-target Clippy 종료 코드0이다(`target/metadata-linux-check-green.log`, `target/metadata-macos-check-green.log`). 실제 Mac 실행 검증은 아니다. Windows CNG 제품 키1개/names hash `3B692D49F1D08F7D3442806CF17694CDC02AF36B44839930FC18EB9C83CE9D4D`를 유지했다.
 
 이번 변경은 `hantong search`의 영/한·JSON·안전한 원시 헤더 표시, M 권한의 명시 갱신, 현재 UID namespace의 로컬 목록/미읽음/즐겨찾기 필터, 엄격한 페이지 cursor, v15 identity mapping과 이전·rollback 검증이다. 실제 사용자 DB·Core·Hello·계정·메일이나 외부 공개는 실행하지 않았다. 새 의존성은 없다. **[사람 검토 필요]**이며, M2-05 전체 최초 동기화·성능·본문 지연 다운로드와 제품 전체 AC 완료0개 상태는 유지한다. 위 다음 병렬 묶음 표는 후속 계획이다.
+
+## 최신 결과: 승인된 두 번째 값 삭제 완료, 합성 전달 검증 중단
+
+2026-10-31 10:10:51 GMT+9에 생성된 Disabled 두 번째 값만 명시적 승인 후 영구 삭제했다. 삭제 후 해당 행이 0개이고, 원본(2026-10-30 20:18:52 GMT+9)은 Enabled이며 Add client secret 버튼이 활성화된 것을 확인했다. 새 비밀값은 생성하지 않았다.
+
+실제 저장소와 네트워크 인증을 사용하지 않는 별도 복사본 safe-transfer-fixture에 합성 UI 전달 테스트를 만들고 빌드했다. 브라우저의 합성 복사 버튼은 값이 포함될 수 있는 접근성 라벨을 읽지 않고 CSS 접두사 선택자로 찾을 수 있었다. 하지만 네이티브 창 `HanTong SYNTHETIC TRANSFER TEST - no credentials`를 공식 `cua.getApp`으로 선택하는 단계에서 컴퓨터 제어 승인이 300초 대기 후 만료됐다. 그 사이 테스트는 240.12초 입력 대기 후 실패했다. 복사·붙여넣기 성공이나 안전 전달 경로 확보를 주장하지 않는다. 이는 제품 전체 회귀 실패가 아니라 격리된 수동 UI 사전검증의 입력 시간 초과이다.
+
+새 값 생성·실제 보호 저장·OAuth·메일 목록/읽기는 미실행이다. 다음에는 공식 도구의 합성 테스트 창 접근 승인을 완료한 상태에서 합성 전달 검증을 재개해야 한다. Windows Hello가 실제 설정 중 나타나면 사용자가 직접 확인해야 한다. 새 값 생성 전 사전검증 조건은 유지한다. 제품 코드와 기존 전체 검사 1,621개 통과 결과는 변경하지 않았다. **[사람 검토 필요]**.
+
+증거: safe-transfer-preflight-result.json, synthetic-transfer-build.log, synthetic-transfer.stdout.log, synthetic-transfer.stderr.log. 합성 테스트 소스는 제품 패치와 분리된 safe-transfer-fixture에 있으며 실제 자격증명을 포함하지 않는다.
+
+
+## 최신 결과: 합성 전달 검증 통과 — 실제 자격증명 설정 전
+
+공식 브라우저의 합성 복사 버튼 → 사용자 직접 Windows 보호 입력에 붙여넣기·F12 → 네이티브 캡처의 경로에서 exact_match=true를 확인했다. 저장·네트워크 전송은 모두 false이며 대화나 로그에 입력값을 출력하지 않았다. 자동 네이티브 붙여넣기는 도구가 사용자 입력을 감지해 실행되지 않았으므로 자동 입력 경로까지 검증됐다고 주장하지 않는다. 최종 실행 PID는 91308, 입력 시작은 2026-10-31 21:44:09 KST, 유효 만료는 21:49:09 KST이다. 최종 대화형 시험은 1개 통과, 별도 캡처 테스트 6개와 만료 테스트 2개도 통과했다.
+
+앞선 시험 오류는 두 가지였다. 첫째, fixture 대기를 900초로 늘리면서 보호 입력의 300초 TTL을 놓쳐 잘못된 만료 시간을 안내했다. 실제 보호 TTL은 변경하지 않고 fixture 종료·표시·receipt를 같은 시각으로 맞췄다. 앞선 InputExpired 실행은 F12 완료 분기까지 도달했으므로 사용자 조작 실패로 설명하지 않는다. 둘째, 추가 진단에서 완료 시 입력 길이 0, empty=true, 오류 InvalidCredential이 확인됐다. 소유권·클래스·스타일·포커스는 모두 유효했고 만료가 아니었다. 빈 입력이 된 정확한 사용자 동작은 추정하지 않는다.
+
+수정은 별도 safe-transfer-fixture에만 적용했다. 최상위 STATIC 창을 정상 등록한 Win32 창으로 바꾸고, 준비 단계에서는 보호 입력을 만들지 않도록 분리했다. 입력칸 표시를 보완했고 빈 완료 입력은 같은 원래 만료 안에서 대기하게 했다. 제품의 빈 자격증명 거부·소유권·스타일·TTL 검증은 그대로 유지했다. 오류 enum·길이·empty·검증 boolean만 기록하며 값은 기록하지 않는다. 정상 합성값, 빈 값, style 변경, 제어문자, 만료, 빈 제출 후 정상 입력을 자동 검증했다.
+
+기존 원본 Google secret은 Enabled이고 노출됐던 두 번째 값의 승인된 삭제는 완료된 상태다. 삭제 후 새 secret 생성·실제 보호 저장·OAuth·메일 목록/읽기는 아직 미실행이다. 다음 실제 설정은 검증된 사용자 직접 붙여넣기 경로와 Windows Hello 직접 확인으로 진행한다. 제품 전체 검사 1,621개 통과 결과는 유지되며 제품 실행 코드는 이번 fixture 수정으로 바뀌지 않았다. **[사람 검토 필요]**.
+
+증거: synthetic-safe-transfer-success.json, synthetic-final-reviewed-run의 receipt/result/metadata 및 stdout, synthetic-reviewed-capture-check.log, synthetic-reviewed-deadline-check.log. fixture 전용 diff는 synthetic-fixture.patch이고 제품 diff와 분리했다. 롤백은 별도 fixture를 사용하지 않으면 되며 제품 보호 코드·사용자 저장소에는 이번 시험의 변경이 없다.
+
+
+## 최신 실제 결과: Google OAuth·보호 저장 성공, 메일 읽기는 로컬 CLI 권한에서 중단
+
+기존 Desktop client에 승인된 대체 secret 1개를 2026-10-31 21:54:33 KST에 추가했고 원본 Enabled 값은 유지했다. 값은 DOM·접근성 라벨·스크린샷·로그·CLI 인자·일반 파일로 읽거나 출력하지 않았다. 이미 검증한 복사 버튼과 사용자 직접 보호 입력 경로를 사용했다.
+
+첫 실제 요청에서는 보호 입력과 Windows Hello가 성공했지만 Google 미검증 안내의 Continue 클릭이 자동 승인 심사에서 거부됐다. 재시도·우회하지 않았다. 해당 화면은 Aside 창이었으며 사용자에게 전달되기 전에 300초 콜백 대기가 끝났다. 이 요청은 callback_timeout / AUTH_REQUIRED로 종료됐고 저장되지 않았다. 같은 새 값의 기존 복사 버튼을 재사용했으며 새 secret은 추가하지 않았다. 오래된 콜백 주소·code·state는 재사용하지 않았다.
+
+두 번째 실제 요청은 22:10:06 KST에 시작했다. 사용자 직접 입력·확인 뒤 callback_validation, token_exchange HTTP 200, token_response, refresh_credential, identity가 모두 성공했고 공식 요청 상태가 ready가 됐다(22:12:24 KST 확인). 소스 흐름상 ready는 최종 사용자 계정 확인, 보호 저장, 계정 활성화 이후에만 설정된다. 따라서 OAuth·보호 저장은 성공으로 기록한다. refresh_credential 단계는 갱신 자격증명 유효성 확인이며 별도의 실제 토큰 갱신 요청까지 시험했다고 주장하지 않는다.
+
+최소 메일 읽기를 준비하며 공식 accounts list를 호출했으나 exit 11 / SCOPE_DENIED였고 clients verify도 SCOPE_DENIED였다. Gmail 목록·본문 읽기는 아직 미실행이다. DB나 토큰 저장소를 직접 읽어 우회하지 않았다. 소스상 기본 clients register는 mail.accounts.list 권한을, 현재 clients refresh는 default_cli_send_tools()를 요청한다. 후자는 초안·발송까지 포함하므로 현재 읽기 전용 범위로 실행하지 않았다. 필요한 후속 경로는 해당 계정에 대한 로컬 CLI의 accounts.list/messages.search/messages.get 읽기 권한만 명시적으로 요청·확인하는 것이다. 기존 refresh를 실행하거나 새로운 로컬 권한을 부여하지 않았다.
+
+제품 전체 검사 1,621개와 합성 캡처·만료 8개, 합성 전달 1개 통과 결과는 유지된다. 이번 실제 검증 중 제품 코드는 바꾸지 않았다. 검증된 수정 코어 PID 3708을 실행 중이며 원본 바이너리와 기존 백업은 보존했다. 이제 새 보호 자격증명이 저장됐으므로 원본 코어 전환이나 백업 복원은 연결 상태·형식 호환성을 검토한 뒤 별도로 해야 한다. 자동 롤백·백업 복원·commit·push·메일 쓰기는 수행하지 않았다. **[사람 검토 필요]**.
+
+증거: actual-oauth-ready-evidence.json, actual-manual-setup/request-retry1.json(로컬 요청 metadata), ready-account.json(로컬 계정 metadata), 값 없는 단계 로그. 사용자 보고에는 비밀값·메일 내용·계정 내부 식별자를 포함하지 않는다.
+
+
+
+## 최신 정정: 메일 grant가 아니라 보호 프로필 상위 폴더 ACL에서 차단
+
+공식 `clients verify`에 값 없는 단계 진단을 추가한 결과, security_principal_allowlist → product_directory_security → profile_load 순으로 실패했다. 프로필 내용 읽기·인증 handshake·메일 권한 검사 전이다. 따라서 앞서 제안한 읽기 grant 추가가 현재 실패를 해결한다고 단정한 설명을 정정한다. 현재 실제 grant 부족 여부는 미확정이다.
+
+읽기 전용 ACL metadata 확인: LocalAppData/mail-hantong의 소유자는 허용 주체이고, inheritance_protected=false, ACE 7개 중 허용 목록 밖 주체의 상속된 Allow ACE가 4개다. 제품은 현재 Windows 사용자·SYSTEM·로컬 Administrators 외 주체를 허용하지 않아 정상적으로 차단한다. 실제 SID/프로필 내용/토큰은 출력하지 않았다. ACL·grant·보호 정책은 변경하지 않았다.
+
+변경 파일은 trusted_profile.rs(4단계 고정 진단, 기존 결과 보존 테스트 1개), profile_file.rs(고정 실패 분류만 추가), 자동 추적표다. 검사·오류 반환·short-circuit·허용 주체·보호 경계는 유지했다. 관련 IPC 테스트 142개 통과. 프로필 테스트는 sandbox junction fixture 생성 제한으로 2개 실패 후 네이티브 실행에서 18개 모두 통과했다. 최종 전체 검사 결과: exit 0, passed=True, Rust 1504개 / 30 suites. Build 검사의 한국어 출력 디코딩 경고 여부는 True이며 종료 결과와 구분한다.
+
+기존 코어 PID 3708의 SHA-256을 확인해 보존하고 전체 검사 동안만 중지했다. finally에서 동일 바이너리를 PID 97804로 복구했다. 경로는 auth-stage-verification/mail-hantong-core-preserved.exe다. 원본 preview.4·백업·OAuth 자격증명은 보존했다. 새 OAuth/secret/권한 요청·메일 쓰기는 없다.
+
+다음 실제 변경 전에 필요한 승인은 해당 한통 폴더의 ACL을 현재 사용자·SYSTEM·Administrators만 허용하도록 복구하는 범위다. 이것은 보호 기준을 맞추는 보안 설정 변경이므로 아직 실행하지 않았다. 다른 주체의 폴더 접근이 제한되는 영향을 설명하고, 복구용 ACL metadata를 보존하며 적용 범위를 검토해야 한다. ACL 해결 뒤 공식 verify와 현재 읽기 scope를 다시 확인하고, 실제로 필요할 때만 별도 최소 읽기 grant를 요청한다.
+
+정확히 mail.accounts.list / mail.messages.search / mail.messages.get 세 도구만 요청하는 공식 CLI 경로는 현재 없다. 기존 fresh refresh는 쓰기 포함 C 묶음, B 읽기 묶음도 8도구다. 세 도구의 제한 경로는 새 strict DTO·account 결속·native proof·역사적 hash 보존·DB migration까지 필요한 별도 설계로 readonly-local-scope-proposal.md에 기록했다. 실제 기능 구현/연결/저장 형식 변경은 하지 않았다. **[사람 검토 필요]**.
+
+진단 패치 롤백은 trusted_profile.rs·profile_file.rs의 고정 로그와 해당 테스트만 제거하고 추적표를 재생성하면 된다. 실제 grant/ACL/OAuth 저장을 되돌리는 작업은 포함하지 않는다.
+
+
+
+## 최신 결과: 승인된 ACL 복구 성공, 다음 차단은 CLI 미등록
+
+사용자가 한통 폴더 및 상속받는 하위 폴더 2개·파일 23개의 접근을 현재 Windows 사용자/SYSTEM/Administrators로 제한하는 변경을 승인했다. 대상·소유자·재분석 지점·상속을 재확인하고 ACL metadata를 별도 보호된 로컬 폴더에 저장·재읽기·hash 검증한 뒤 루트 DACL에 한 번 적용했다. 상위 LocalAppData, 소유자, 앱 내부 grant는 바꾸지 않았다. 루트의 기존 세 허용 주체의 FullControl와 상속 flags는 보존했다. 승인된 범위 밖 주체의 상속 접근만 제거됐다. 루트는 상속 보호/명시 Allow 3개가 되었고 총 26개 대상에서 허용 목록 밖 주체·Deny 0개, Allow 3개를 확인했다.
+
+첫 사전 검사는 파일의 directory-only ACE 제외 차이(폴더 7개/외부 4개, 파일 6개/외부 3개)를 처리하지 못해 적용 전에 멈췄다. 두 번째 준비 검사는 .NET에서 아직 inherited인 ACE를 개별 제거할 수 없는 동작 때문에 적용 전에 멈췄다. 모두 실제 대상 ACL 쓰기 0회였다. 최종 준비는 상속 ACE를 메모리에서 제거하고 기존 허용 규칙 세 개의 권한·상속 flags를 그대로 명시 규칙으로 복사하여 검증했다. 최종 실제 ACL 적용 1회와 사후 검증이 성공했고 rollback은 필요하지 않았다. 이 실행 스크립트는 반복 실행용 제품 기능이 아니라 특정 승인 범위의 유지보수 기록이다.
+
+코어는 동일 해시의 보존 바이너리로 PID 41156에 복구했고 공식 core status에서 ok=true/transport_ready=true를 확인했다. 공식 clients verify는 이제 CLIENT_NOT_REGISTERED / native exit 22다. profiles 폴더가 없어 profile_load/ancestor_open 단계에서 멈춘다. 이전 ACL SCOPE_DENIED는 해결됐지만 CLI 등록이 필요한 상태다. Google OAuth/보호 저장은 다시 실행하거나 변경하지 않았다. 프로필·token·DB 내용은 열람하지 않았다.
+
+정식 기본 CLI 등록은 별도의 native 승인 경로다. 최초 등록은 registrable 계정 snapshot과 mail.accounts.list만 제시하며, mail.messages.search/get을 포함하지 않는다. 실제 대상 계정은 승인 화면에서 확인해야 하며 임의로 전체 계정 동의를 가정하지 않는다. 이번 승인은 ACL 복구뿐이므로 등록 요청과 지속 grant 변경은 하지 않았다. 메일 목록·본문 시험은 미실행이며, 정확히 세 읽기 도구의 제한 경로 설계안은 별도로 보존한다.
+
+ACL 복구 자료는 oauth-deliverables/acl-repair-20261031T134652Z/acl-metadata-backup.json에 로컬 보관했다. 이 파일은 SID와 상대 경로를 포함하는 ACL metadata이며 자격증명/메일/DB 내용은 포함하지 않는다. 외부 업로드하지 않았다. SHA-256: AC7DF9BA4C93D016DFA71546142CE9F44C8E15AC94B7E833D96BE608C2874369. 실제 hash의 단일 기준은 같은 폴더 result.json이다.
+
+제품 코드는 이번 적용 중 바꾸지 않았으므로 최신 전체 1,622개 통과 결과는 그대로다. 관리 스크립트 apply-approved-hantong-acl.ps1의 구문 검사와 실제 26개 ACL 검증·공식 인증 검사를 별도로 수행했다. **[사람 검토 필요]**.
+
+
+
+## 최신 결과: 단일 Gmail 계정의 읽기 전용 등록 경로 준비
+
+Google OAuth·보호 저장과 승인된 ACL 수정은 성공 상태로 보존했다. 실제 등록·권한 부여는 이번 단계에서 실행하지 않았다. 기본 프로필이 없고 공식 clients verify는 CLIENT_NOT_REGISTERED다. DB 등록 행의 존재는 미확정이다. 직접 DB를 열거나 등록 요청을 탐침으로 쓰지 않았다.
+
+Gmail 목록·본문 기능은 암호화 로컬 캐시를 읽으므로 실서버 읽기에는 mail.sync.page와 토큰 갱신이 필요하다. 이전 3개 권한 전용 R 제안은 이번 완료 경로가 될 수 없어 대체했다. R 집합·DB 마이그레이션은 구현하지 않았다. 기존 B의 8개 읽기 도구를 선택한 Gmail 계정 하나에 결속하는 선택 기능을 추가했다. 기본 clients refresh는 모든 계정·발송 도구를 요청하므로 사용하지 않는다.
+
+변경: Contracts의 bounded GoogleReadAccount, CLI register-readonly/refresh-readonly, IPC client/server의 엄격한 요청 필드 검증, Core의 단일 계정 L 등록/B 갱신을 추가했다. 다른 계정·쓰기 target의 pending/staged/running 요청 재사용은 CONFLICT로 중단한다. 기존 등록을 교체하지 않는다. grant 활성화, CNG 키·profile 결속, native proof, Windows Hello, 300초 TTL 및 정책 검사는 유지한다. 양 언어 도움말 및 native 안내에 Gmail 토큰 갱신과 본문 캐시 저장을 명시했다. 실제 등록 전이므로 source patch 역적용과 기존 검증 빌드로 되돌릴 수 있고 운영 ACL/OAuth를 되돌릴 필요는 없다.
+
+검증: 새 보안 시험 11개(계정·scope 충돌 5, CLI 1, IPC 4, 안내 1)를 추가했다. 첫 sandbox 합성 Store 시험 3개는 보호 저장소 생성 InternalError로 중단했고, 동일 시험을 Windows 사용자 환경에서 다시 실행해 통과했다. 보호 검사를 완화하지 않았다. 최종 scripts/check_all.py exit 0: Docs 29 + Build 89 + Rust 1515 = 총 1633개 통과, 실패·무시 0개. fmt/Clippy(-D warnings)/전체 빌드/요건·아키텍처·추적표 검사 통과. Build 도구의 한국어 subprocess 출력 디코딩 경고 6건은 남았으나 89개 assertion과 전체 명령은 성공했다. 로그 SHA-256: ab786156fc93f44cca317a8cbdefdc9831587cbf25cba41b8ee90f48792f781a.
+
+검사 중 named-pipe 충돌을 막기 위해 기존 코어를 잠시 중지하고 동일 보존 바이너리/해시로 PID 64136에 복구했다. 공식 core status 성공, verify CLIENT_NOT_REGISTERED, profiles 부재를 확인했다. 새 선택 빌드는 target/debug에 준비됐지만 사용자 코어에 적용하지 않았다. 실제 토큰 refresh·메일 동기화·목록·본문 시험은 미실행이다.
+
+한 번에 요청할 다음 개별 승인 범위는 readonly-local-scope-proposal.md에 있다. 기존 Gmail 계정 하나의 CLI 등록, B 8개 도구의 지속 권한, CNG 보호 키·공개 profile 생성, 기존 Google credential 갱신과 받은편지함 최대 1건 캐시/읽기가 대상이다. 권한은 자동 만료되지 않는다. 사용자 Windows Hello 두 번이 필요하다. 실제 요청을 만들지 않아 현재 승인 카드나 타이머는 없다. **[사람 검토 필요]**.
+
+
+
+## 최종 실제 시험 성공 — 2026-11-01 08:06:00 KST
+
+사용자가 2026-10-31 22:59:28 UTC에 기존 Gmail 계정 하나의 CLI 등록·Windows 보호 키 생성, 읽기 8개 도구의 지속 권한, 기존 Google 인증 갱신과 받은편지함 최대 1건의 암호화 캐시/목록/본문 시험을 명확히 승인했다. 메일 발송·수정·삭제 권한은 요청하지 않았다. 실제 적용 전 PC 연결, 코어 부재, 프로필 부재와 검증된 코어/CLI 해시를 재확인했다. 기존 데이터·백업·Google secret은 유지하고 검증 빌드 코어 PID 37720을 실행했다.
+
+첫 등록 요청은 기존 계정 하나와 mail.accounts.list만 포함했다. 사용자의 첫 Windows Hello 확인 뒤 공식 상태 ready 및 clients verify 성공을 확인했다. 그 뒤 같은 계정의 기존 B 읽기 도구 8개 요청을 하나 생성했다. 사용자가 두 번째 Windows Hello를 완료한 뒤 공식 refresh-status ready 및 인증 성공을 확인했다. 두 요청은 순차 생성했고 각 300초 만료 시각을 즉시 전달했다. 등록 충돌이나 추가 권한 변경은 없었다. 이 로컬 grant는 자동 만료되지 않는 지속 권한이며, 사용자는 이 점을 포함해 승인했다.
+
+실제 시험 결과: 계정 목록 1개 확인 성공, 받은편지함 limit=1 동기화 요청 1회, 공식 completed 및 downloaded_count=1, 암호화 캐시 저장 성공, 받은편지함 목록 1건 조회 성공, 같은 캐시 메시지 본문 1건 조회 성공. 본문 요청 상한 1,024바이트를 지켰고 truncated=true였다. 이는 제한된 본문 조회 시험의 성공이며 전체 본문을 무제한 조회한 것으로 표현하지 않는다. 메일 제목·주소·ID·본문 및 토큰/secret 값은 도구 응답·일반 파일·변경 기록에 출력하거나 저장하지 않았다. CLI 응답은 메모리에서 처리하고 성공·건수·제한 boolean만 보존했다.
+
+토큰 갱신은 실제 동기화 경로가 보호 저장소 내부의 refresh_verified를 통과한 후 Gmail을 fetch하도록 구현되어 있고 해당 동기화가 완료됐다는 근거로 성공을 확인했다. 별도의 HTTP 응답 원문/토큰은 읽거나 저장하지 않았다. 새로운 Google 로그인·secret 생성·서버 메일 변경은 없었다.
+
+시험용 실행 스크립트는 처음에 제품 완료 상태를 succeeded로 가정하여, 실제 계약의 completed를 unknown으로 표시하고 목록/본문 전에 멈췄다. 제품 오류가 아니라 실행 스크립트의 상태 해석 오류였다. 계약과 Store terminal 코드를 확인해 스크립트만 수정하고 기존 execution ID의 공식 status를 조회했다. 새 동기화나 추가 메일 fetch 없이 이미 저장된 1건의 목록·본문 시험을 완료했다. 원인/수정은 run-approved-minimal-read.py 및 resume-approved-minimal-read.py에 남겼다. 일반 파일에는 operation/idempotency/execution 식별자와 결과 metadata만 저장했고 provider page token은 저장하지 않았다.
+
+제품 구현은 앞서 통과한 1,633개 검사 이후 바뀌지 않았다. 이번 단계는 승인된 실제 적용과 조회 검증이며, source 변경은 진행 기록·자동 추적표 갱신뿐이다. 누적 source patch와 파일별 해시를 로컬에서 재생성한다. 신규 등록·권한을 되돌릴 때는 profile 삭제나 DB 직접 수정으로 우회하지 않고 공식 폐기/복구 경로를 별도 확인해야 한다. 기존 ACL 복구 자료와 보존 바이너리는 유지했다.
+
+현재 기능 시험의 남은 차단은 없다. 보안 관련 코드의 **[사람 검토 필요]** 표시는 유지한다. 사용자의 최신 지시에 따라 이번 단계에서 외부 파일 공유·업로드를 전혀 수행하지 않았다. 최신 결과는 PC 로컬 산출물에만 반영되며 기존 Library 버전은 최신 완료 결과가 아니다.
+
+
+
+## 2026-11-01 새 작업: Google 다계정 온보딩 UX
+
+사용자의 다계정 사용성 개선 요청으로 기존 실제 읽기 성공 이후 별도 소스 작업을 진행했다. 같은 Desktop 앱의 보호 자격증명 재사용, 계정별 토큰 격리, 선택 계정만 기존 읽기 권한에 추가하는 안내, 인증 실패와 권한 부족 구분, 계정 상태 목록 및 Google/로컬 승인 재개 명령, 단계별 300초와 정적 콜백 안내를 구현했다. 자동 동기화·전체 계정/쓰기 권한 요청은 온보딩에서 제거했다.
+
+기존 성공 계정·캐시·백업은 보존한다. 실제 새 계정 연결·실권한 변경·OAuth/토큰 갱신·credential 발급·ACL 변경·외부 업로드·커밋·배포는 이 작업에서 실행하지 않는다. 전체 검사를 위해 기존 코어/CLI 바이너리를 해시로 보존하고 동일 버전을 복원한다. **보안 코드 사람 검토 필요**. 세부 계약은 `docs/contracts/google-onboarding.md`, 사용자 안내는 `docs/latest/GOOGLE-MAIL.md`, 최종 검사 결과와 패치는 작업 폴더 `oauth-deliverables/ux-onboarding-*`에 기록한다. 최초 연결 저장 전 취소와 코어 재시작 전 미완료 요청은 그대로 복구할 수 없다는 한계가 남는다.
+
+
+## 사전 점검 갱신 — 2026-11-01 Google 쓰기 요청
+
+이 절은 앞선 테스트 사용자 미등록 차단을 대체한다. 사용자 개별 승인 후 같은 프로젝트의 테스트 사용자에 지정 계정을 추가했고, Audience에서 기존 계정과 함께 2명을 확인했다. 운영 모드 전환은 Google의 Publish app disabled 및 Branding 구성 완료 요구로 미실행이며 여전히 Testing이다. 홈페이지·개인정보처리방침·약관 URL은 비어 있고 개별 필드의 정확한 차단 기여는 미확정이다. URL을 임의로 입력하거나 검증 심사를 제출하지 않았다.
+
+이후 사용자가 yopunfun2 계정의 초안/발송/읽음·라벨 변경과 두 계정 사이 각 1통의 합성 첨부 시험을 요청했다. 새 실제 OAuth/권한/메일 단계는 권한 범위 확정을 위해 보류했다. 현재 Gmail 구현은 readonly이며 SMTP 발송 원장만 존재한다. Gmail POST·첨부 승인 결속·첨부 수신 검증·변경 도구와 계정별 선택 grant는 추가 구현 대상이다. 기존 검사 1,645개 통과는 쓰기 기능/실제 송수신 검증이 아니다.
+
+정확한 최소 OAuth 제안은 yopunfun2: openid/email/gmail.modify, enlearn: openid/email/gmail.readonly/gmail.send이다. modify는 Google 자체에서 휴지통 이동/초안 영구 삭제도 허용하므로 앱의 삭제 차단과 구분해 설명해야 한다. Google 전체 mail scope는 요청하지 않는다. 실제 grant 확대는 새 구체 승인 전 수행하지 않았다. 개발 소스와 합성 시험은 다음 단계이며 현재 제품 코드 변경은 없다.
+
+기존 코어 PID44160/정확 경로 존재를 Windows 사용자 관측으로 확인했고 실행 파일 SHA-256은 기존 25CDD6E2F1D29FF9C68925678AE3071A7C0E937E1E97F06D4EF6E9B221E68253와 같다. sandbox에서 PID가 보이지 않는 관측을 코어 부재로 해석하지 않았다. 새 UX 실행·OAuth·credential·grant·메일 작업 및 외부 업로드는 이번 단계에서 모두 미실행이다. 상세 구현 공백·권한·23바이트 합성 첨부 시험·남은 차단은 로컬 oauth-deliverables/gmail-write-preflight.md에 기록했다. 보안 코드 **[사람 검토 필요]** 유지.
+
+
+## Gmail 쓰기 구현 중간 기록 — 2026-11-01T05:40:29.169923+00:00
+
+이전 preflight의 “제품 코드 변경 없음” 이후 쓰기 모드/보호 번들/제한된 전송/첨부 스냅샷/schema 20/발송 승인 연결을 구현 중이다. 전체 대상 컴파일 및 집중 테스트 28개가 통과했다. 기존 imap 전용 계정 검증 연결, CLI/IPC 첨부·권한·수신 첨부·전용 마이그레이션 테스트와 전체 회귀가 남아 있으며 실제 Gmail 쓰기는 미실행이다. 실제 코어/계정/DB는 변경하지 않았다. 자세한 변경·시험·제한·승인 범위는 oauth-deliverables/gmail-write-checkpoint.md에 기록했다. **[사람 검토 필요] / WIP / 실제 시험 미실행**.
+
+
+## Gmail 발송·첨부 구현 검증 — 2026-11-01T06:01:15.830493+00:00
+
+전체 check_all exit 0, 1674개 통과(Rust 1556/Python 118). 명시 모드 OAuth, 승인·계정·첨부 결속 Gmail 발송, CLI/IPC/MCP 첨부, 선택 계정 C11 요청, opt-in 수신 첨부 digest, schema 20 합성 마이그레이션/복구를 검증했다. 원본 core/CLI 복구, 실제 OAuth/grant/DB/메일 쓰기 미실행. 라벨 계정별 승인 및 원격 Gmail 초안 공개 흐름은 미완료이며 전체 사용자 목표 완료가 아니다. 자세한 기록은 oauth-deliverables/gmail-write-implementation-report.md, 남은 경계는 gmail-write-remaining-design.md. **[사람 검토 필요]**.
+
+
+## 2026-11-01 Gmail 서버 초안·라벨 변경 후속 작업
+
+[사람 검토 필요] 계정 한정 변경 권한, 네이티브 단일 실행 승인, 불확실 재실행 차단 원장 및 schema 21 마이그레이션을 추가했다. 초기 합성 원장/마이그레이션 13개와 문서 29개, 전체 Clippy 통과. 전체 회귀 진행 중이며 실제 OAuth 확장·사용자 DB 마이그레이션·메일 변경은 미실행이다. 기존 schema 19 코어를 보존한다.
+
+
+## Gmail 서버 초안·읽음·라벨 승인 구현 — 2026-11-01T06:33:36.649802+00:00
+
+전체 check_all exit 0, 1693개 통과(Rust 1575, Python 118). 계정별 변경 grant/proof v7, native review/Hello 결속, 단회 원장·감사·unknown 차단, CLI/IPC, schema21 합성 마이그레이션/복구 검증. 실OAuth/grant/DB/메일 변경은 0건, 원본 runtime 복구. Production은 Branding 설정 완료 안내로 비활성이며 구체 필드 미확정. 상세 기록: oauth-deliverables/gmail-write-implementation-report.md. **[사람 검토 필요]**.
+
+## 2026-11-02 Gmail 첨부 수신 실검증 보완 (진행 중 / 사람 검토 필요)
+양방향 각 1통 발송 및 수신·제목·본문(끝 줄바꿈 제외) 확인. 첨부 검증을 켠 동기화만 INVALID_INPUT 발생. 무비밀 단계별 진단과 합성 재현으로 원인을 좁히고 기존 두 메일만 재조회한다. 실제 재발송·메일 변경·권한 변경·외부 업로드 없음. 기존 schema21 코어/CLI와 수정 전 소스는 oauth-deliverables/attachment-fix-20261102에 보존. 전체 회귀 및 첨부 실검증은 아직 미완료.
+
+
+## 원본 프로젝트 기존 공개 릴리스 기록 보존 (2026-10-30)
+
+아래는 통합 전 원본 HEAD 2852a31의 추가 기록이다. 이번 로컬 개발/실제 계정 시험과 시점을 구분하며 기존 공개·설치 검증 이력을 보존한다.
+
+Google 다중 계정 로그인·Gmail 읽기 구현(2026-10-30): 브라우저 OAuth/PKCE, 계정별 DPAPI 갱신, v19 캐시·동기화, native 확인과 CLI·터미널·공통 도구 연결을 구현했다. 최종 전체 검사 **1,612개**, preview.3→4 설치·업데이트·반복·제거, 공개 다운로드 재설치 검증을 통과했고 [preview.4](https://github.com/tz1012/mail-hantong/releases/tag/v0.1.0-preview.4)를 게시했다. 실제 Google 프로젝트 등록·로그인·메일 호출은 수행하지 않았다. 보안·계약 변경은 **[사람 검토 필요]**다.
+
+직전 검증 산출물은 `artifacts/cli/0.1.0-preview.3/`에 보존한다. 최신 label은 `0.1.0-preview.4`이다. 미리보기는 완성된 정식 제품을 뜻하지 않는다. 첨부·예약·주소록·규칙 자동화·실제 제공자 상호 운용성과 사람 보안 검토가 남아 있다.
+
+| 현재 카드 | 사용자 요청의 **다중 Google 계정 로그인·Gmail 읽기와 CLI preview.4 배포**를 구현·검증했다. 상태는 **사람 검토 필요**이며 실제 Google 로그인·공개 앱 인증·새 OS·정식 출시 게이트 완료는 아니다. M8 GUI와 나머지 P0는 후속이다. |
+
+| 최신 검증 | **1,612개 통과**(문서 29·빌드 도구 89·Rust 1,494). Windows check-all의 fmt/Clippy/build/test·문서/의존/추적 검사, Linux 전체 target cross-Clippy 통과. 5계정 병렬·격리·서명 IPC·v19 이전/롤백, PowerShell5.1 preview.3→4 설치/업데이트/반복/제거와 최종 공개 ZIP 재설치·데이터 보존을 확인했다. 실제 Google·새 OS·Mac 검증은 남아 있다. |
+
+| GitHub | 공개 저장소 [tz1012/mail-hantong](https://github.com/tz1012/mail-hantong), 소스 `afd8ac5c567e70ff9f7b840d83f3c81f4f1d874a`, [개발 미리보기 v0.1.0-preview.4](https://github.com/tz1012/mail-hantong/releases/tag/v0.1.0-preview.4)와 ZIP/SHA256SUMS/BUILD-METADATA 게시 완료. 원격 CI는 별도 실행 중이며 로컬 통과와 구분한다. 실행 데이터·에이전트 상태는 소스에 포함하지 않는다. WinGet/MSI·서명은 후속이다. |
+
+- **패키지**: `artifacts/cli/0.1.0-preview.4/` 생성. ZIP 21,657,672바이트, SHA256 `fac65f8bb44232846f60ffbd971cf67f33e860197cb33ba433a1a9b659d648ad`. 실제 빌드 소스 해시·모든 manifest 파일·체크섬·4개 실행 파일의 Windows 시스템 DLL 의존과 외부 VC++ 런타임 불필요를 확인했다. Google 사용 안내를 패키지에 포함했다. Windows PowerShell5.1에서 preview.3→4 설치/업데이트/반복, 공백·한글 경로, 모든 launcher 도움말/버전, JSON 오류/종료 코드, 제거와 임의 데이터 보존을 통과했다. 로그 `target/google-preview4-install-smoke.log`, SHA256 `7fff3f02c8f273d4390781b43393a9441017730d3507b64f21e0f6f8bdd45a9a`. [공개 릴리스](https://github.com/tz1012/mail-hantong/releases/tag/v0.1.0-preview.4) 실제 다운로드·체크섬·설치·실행·제거도 통과했다. 로그 `target/google-preview4-public-download-smoke.log`, SHA256 `db7919c97e7e9033a78c5211b67111d55f19c056fcfa0a256ddf2ee9464bf54d`. 이 시험은 실제 코어 시작·Google 계정·메일을 사용하지 않고 사용자 PATH를 영구 변경하지 않았다.
+
+
+## 2026-11-02 원본 통합 및 양방향 첨부 실검증 완료 — 사람 검토 필요
+
+기존 두 시험 메일 모두 수신·발신자·제목·본문(끝 줄바꿈 제외)과 합성 txt 파일명/23바이트/SHA-256 일치를 확인했다. 총 발송 2통, 재발송 0. 첨부 ID의 잘못된 256자 제한을 별도 4,096바이트 검증으로 수정하고 쿼리 주입을 차단했다. 정확한 메시지 1건을 지정하는 읽기 동기화로 새 메일 도착 경쟁을 피한다. 추가 schema 변경이나 인증/권한 경계 완화는 없다.
+
+원본 작업파일 82개의 바이트·해시 보호 백업 후 코드/문서 116개를 통합했다. 원본 공개 릴리스 기록을 보존했다. 작업 사본 및 원본에서 각각 전체 검사 1,699개 통과. 원본 재개 문서 `docs/latest/RESUME-20261102.md`, 변경 기록·검증 요약 `docs/local-verification/2026-11-02/`를 작성했다. 기존 전체 대화가 프로젝트로 이동된 것은 아니다. 보안 코드 사람 검토·Production 게시·Ask Aside 확인·Hello 일괄 승인 개선 및 실제 초안/라벨 시험은 별도다. 커밋/푸시/업로드/재발송 없음.
+
+
+## 2026-11-02 로컬 개발 재개 — 교차 빌드 복구·Gmail 변경 통합 검증 (사람 검토 필요)
+
+최신 재개 문서·진행 기록·실제 git 상태를 확인하고 기존 미커밋 변경과 새 파일을 보존했다. CLI 우선 방침을 유지하며 현재 hantong은 명령형 CLI다. 전체 화면 TUI는 미구현이며 GUI 디자인 추가는 하지 않았다. 이번 작업은 M5-09/M6-10 등의 후속 공통 코어 검증과 ACC-02 온보딩 플랫폼 경계 보완이다. 전체 카드나 제품 완료를 선언하지 않는다.
+
+Linux 교차 검사에서 verify_default_readonly의 Windows 인증/tokio 참조와 플랫폼 cfg 누락을 재현하고 수정했다. apps/mail-hantong-core/src/main.rs의 Windows 모듈 경계, crates/hantong-ipc-client/src/google_mail.rs의 비Windows probe 거부, hantong-secrets/src/google/{client_secret,diagnostics,write}.rs 및 hantong-store/src/mail_send.rs의 플랫폼 경계를 정정했다. 보호 자격증명 타입의 비공개 필드는 비Windows에서도 보존한다. 계약·schema·승인 발급·권한은 바꾸지 않았다.
+
+google_mutation.rs에 전용 시험을 연결하고 새 google_mutation_tests.rs의 APR-01/SYNC-07 시험 4개를 추가했다. claim 전 공급자 미호출, accepted/rejected/unknown 결과, 호출 한도·스냅샷 변경 admission 거부, 실행 중 credential 변경의 future 취소/SEND_UNKNOWN/새 키 재실행 차단을 검증했다. google_integration_tests.rs에는 서명된 읽기 프로필의 변경 요청/상태 조회 거부를 추가했다. 집중 검사 5개 통과(기존 scope 시험 1개 포함). fixture의 계정 사전 삽입과 Store 동시 열기 오류는 공개 activate→Store 닫기→합성 SQL fixture→재열기 순서로 수정했다. 제품 보호 검사는 완화하지 않았다. 새 시험의 Clippy 경고도 수정했다.
+
+최종 python -X utf8 scripts/check_all.py exit 0. Rust 1,585개/30 suites, 문서 29개, Build 도구 78개 통과: 실제 통과 합계 **1,692개**, 실패 0개. Build suite는 89개 중 pwsh 미설치로 기존 설치 시험 11개가 건너뛰어졌다. 이를 통과로 세지 않는다. Rust ignored 0. fmt/전체 Clippy(-D warnings)/전체 build/요건·아키텍처·추적 검사 통과. Linux x86_64 및 macOS arm64 workspace/all-target 교차 Clippy exit 0. 실제 해당 OS 실행 시험은 아니다.
+
+전체 검사 동안 기존 코어를 실행 파일 hash로 보존하고 잠시 중지한 뒤 같은 바이너리·기동 인수로 복구했다. 최종 PID 48600, 원본 SHA-256 6FE42CF1D958594ABAD72009936C900E3EF65A27791C9420FAB101F6FB72F209. 공식 core status exit 0 / ok=true / transport_ready=true. 실제 계정 데이터/DB/프로필/비밀값을 직접 열지 않았다. 로그인·토큰 갱신·권한 확대·메일 조회/발송/변경·공개·커밋은 실행하지 않았다.
+
+검증 로그 target/resume-full-check.log, 구조화 증거 docs/local-verification/2026-11-02/local-development-verification.json. 전체 로그 SHA-256 6378898790c366d60af91075dc256dda3634ad6a5fe616a3b87ece8231b91e39. 교차 로그 target/resume-linux-verified.log / target/resume-macos-final.log. 자동 추적표를 갱신했다. 남은 일은 pwsh 설치 시험, 사람 보안 검토, 별도 승인 범위의 서버 초안/라벨 실제 검증과 기존 재개 문서의 후속 항목이다. 실제 작업 승인 경계와 기존 중단 상태를 유지한다. **[사람 검토 필요]**.
+
+기록 정정: 위 작업 기록을 PowerShell의 기본 파이프 인코딩으로 전달하면서 두 개의 새 항목에 한글이 '?'로 기록되었다. 손상된 원문은 target/resume-progress-corrupt-backup.txt에 보존하고, 해당 두 항목만 이 내용으로 복구했다. 이전 진행 기록은 보존했다.
+
+## 2026-11-02 사용자 이용 흐름 우선순위 정정
+
+사용자가 설치→실행→계정 연결→권한 승인→이용의 간단한 흐름을 요구하고 Nylas CLI를 참조로 제시했다. 실제 installer/CLI/Core/Google 온보딩 계약을 확인했다. 설치는 실행 파일·shim·PATH만 준비하고, 코어는 foreground run만 제공하며, 빈 CLI 실행은 안내형 첫 실행 마법사로 연결되지 않는다. login google 내부의 계정 연결·로컬 등록/읽기 권한 안내는 있으나 코어 수동 실행, BYO 앱 설정, 명시적 동기화/목록 명령이 사용자에게 남는다. 따라서 개별 기능 시험 통과를 간단한 제품 이용 흐름의 완성으로 표현하지 않는다.
+
+공식 Nylas 시작 안내(https://cli.nylas.com/guides/getting-started, 2026-11-02 확인)는 init에서 Nylas 가입/로그인·앱/API key·첫 메일 연결을 묶는다. 단일 진입점과 안내 흐름을 참고하며 외부 메일 중계 서비스 도입은 결정하지 않았다. docs/latest/DESIGN.md에 CLI 첫 실행 UX와 완료 기준, 코어 수명·설치 실행 파일 신뢰 경로·제품 OAuth 준비의 미해결 경계를 기록했다. 새 런타임/승인 계약, 제품용 Google 앱 설정, 첫 실행 기능은 이번 문서 변경만으로 구현 완료가 아니다.
+
+이 항목에서는 코드·실행 코어·사용자 설정·계정·권한·비밀값·외부 서비스에 변경하지 않았다. 이전 작업에서 인코딩이 손상된 새 진행 기록 두 항목만 원문 백업 후 복구했다. 과거 진행 기록과 미커밋 작업은 보존한다. 다음 구현 우선순위는 단일 시작 경로의 코어 준비→계정 연결→명시적 권한 승인→이용 안내다. 기존 로컬/실계정 승인 경계와 보안 코드 사람 검토 상태는 유지한다.
+
+문서 변경 검증: tests/Docs 29개 통과, traceability --check valid=true. 코드 변경이 없어 Rust 전체 검사는 반복하지 않았다. 구현을 추가한 뒤에는 해당 통합 검증이 필요하다.
+
+
+
+## 2026-11-02 Google 운영 모드 게시 완료
+
+승인된 웹 파일 5개를 gh-pages에 게시하고 세 안내 페이지·CSS HTTP 200/원문 일치를 확인했다. 동일 Google 앱 Branding URL/도메인 저장과 In production 전환 완료. main/개발 코드·credential·scope 변경 없음. 게시 후 core status 종료 0, gmail accounts 종료 10으로 두 계정 ready 재확인 미완료. Google 검증은 미제출, 100명 제한 및 미검증 안내 별도. 소유 확인은 요구되지 않았다. 상세와 화면/JSON 증거는 docs/local-verification/2026-11-02/google-publishing/. 기존 앱 검사 1,699개 결과 재사용(이번에는 앱 소스 수정 없음). 보안 코드 사람 검토 필요 유지.
+
+
+## 게시 후 로컬 인증 진단 — 2026-11-02
+
+공식 clients verify에서 로컬 IPC handshake 실패를 확인했다. 프로필 읽기/파싱/기존 클라이언트 키 준비 통과, 동일 CLI·코어 해시 및 Windows 사용자/로그온 문맥 일치. Google 동의나 계정별 메일 요청 전 단계다. handshake 하위 원인은 현재 진단으로 미확정이며 보안검사를 유지한 무비밀 단계 진단 보완이 다음 최소 조치다. 재동의·키·권한·ACL·코어 변경 없음. 상세는 docs/local-verification/2026-11-02/google-publishing/LOCAL-AUTH-DIAGNOSIS.ko.md.
+
+## 2026-11-02 Aside 브라우저 MCP 연결 및 Google 게시 상태 읽기 전용 재확인
+
+사용자가 Aside MCP 연결 방법의 인터넷 확인을 요청했다. 공식 https://docs.aside.com/help/developers.md 의 Windows CLI 설치·stdio MCP 안내를 확인했다. Aside 브라우저와 데몬은 이미 실행 중이었지만 CLI는 없었다. 공식 설치 스크립트의 Authenticode Valid, AT YOUR SIDE INC 발행자, 타임스탬프를 확인하고 CLI 1.26.1028.2335를 사용자 로컬 디렉터리에 설치했다. SkipPathUpdate로 PATH는 변경하지 않았다. codex mcp add aside로 기존 서버들을 보존하면서 절대 실행 경로와 mcp 인수만 추가했다. 비밀값 파일은 열지 않았다.
+
+실제 stdio initialize 및 tools/list 성공: browser_profiles, repl, memory_search, exec. 현재 세션의 동적 도구 목록에는 새 서버가 즉시 나타나지 않으므로 같은 공식 CLI의 repl로 기존 Aside 탭 목록과 브라우저 접근을 검증했다. CLI 도움말의 getTabs는 설치 버전에서 미정의였고 listBrowserTabs는 정상 작동했다. openTab은 명령 종료 시 닫히는 자동화 탭이므로 지속 표시되는 사용자 탭을 열었다고 주장하지 않는다. Aside.exe 직접 창 실행은 도구의 자동 정책 검토에서 차단됐고 구체적인 이유는 제공되지 않았다. 기존 작업 탭은 변경하지 않았다.
+
+Aside의 기존 로그인 세션에서 지정 프로젝트 mail-hantong-test-20261030의 Audience를 읽었다. Publishing status는 In production, User type External, OAuth user cap은 2 users / 100 user cap이다. Verification Center에는 branding이 사용자에게 표시되지 않는다는 안내와 data access가 검증되지 않았다는 안내가 있다. 운영 모드 게시와 검증 심사 완료를 구분한다. 로그인·비밀번호 입력·설정 저장·검증 제출·메일 작업은 수행하지 않았다. 이전 게시 완료 기록과 일치하며 기존 IPC handshake 진단 미해결 상태는 별개로 유지한다. CLI 첫 실행 구현의 통합 검사·수정은 계속 진행한다.
+
+## 2026-11-02 CLI 첫 실행 마법사 구현 및 통합 검사
+
+사용자 지정 기능: 설치→실행→계정 연결→사람 권한 승인→이용. 상태: 로컬 구현·자동 검사 완료 / **[사람 검토 필요]**. 전체 제품 출시 완료가 아니다. 요건 CLI-01/04, ACC-02/03, SETUP-01, INST-03/04, APR-01, SYNC-02.
+
+변경: apps/hantong-cli/src/core_start.rs, onboarding.rs, google.rs, main.rs와 한·영 리소스/build.rs/bootstrap 시험. hantong init 및 인터랙티브 빈 실행으로 번호형 안내를 시작한다. 기존 Core를 재사용하거나 동일 설치 패키지의 해시·경로·중복 JSON 키를 검사한 sibling Core를 한 번만 백그라운드 실행한다. PATH의 실행 파일을 찾거나 시작 프로그램을 등록하지 않는다. JSON/no-input/리다이렉트는 부작용 전에 거부한다. Google 연결과 로컬 권한 승인은 기존 보호된 경로를 사용하고 일반 메뉴에는 내부 식별자를 표시하지 않는다. 연결만으로 메일을 읽지 않으며 받은편지함 메뉴를 고른 뒤에만 INBOX 최대 20건의 단일 페이지 동기화·상태·목록을 호출한다. 번호를 고르면 본문을 읽는다. 전체 화면 TUI는 아니다.
+
+packaging/windows/install.ps1은 release-manifest.json의 정확한 바이트를 별도 소유 파일로 설치·제거하여 최초 실행 검증에 제공한다. 활성화 실패 전에 사용자 PATH를 변경하던 순서를 수정했다. tests/Build/test_cli_onboarding_install.py는 가짜 실행 파일과 임시 설치 루트만으로 실제 Windows PowerShell 5.1 설치→동일 버전 재설치→설치된 제거 스크립트 실행→사용자 데이터 보존을 검증한다. docs/contracts/cli-onboarding.md와 CLI-ONBOARDING-PLAN.md를 추가하고 CLI-LAUNCH.md에서 새 작업 트리와 기존 공개 preview.4의 사용법을 구분했다. 리뷰의 00 계정 선택 오류를 수정하고 회귀 시험을 추가했다. 실제 계정·외부 메일 시험은 추가하지 않았다.
+
+최종 python -X utf8 scripts/check_all.py exit 0: Rust 1,602개/30 suites/ignored 0, 문서 29개, Build 도구 91개 중 실제 79개 통과·12개 건너뜀. 실제 통과 합계 **1,710개**, 실패 0개. fmt, 전체 workspace Clippy(-D warnings), 전체 build, 요건/아키텍처/추적 검사 통과. 초기 stale traceability 실패 후 재생성했고, 다음 실행의 IPC bind Conflict는 검사 도중 재등장한 운영 Core와의 충돌이었다. 실패 로그는 각각 target/onboarding-first-check-stale-trace.log 및 onboarding-pipe-conflict.log에 보존했다. 최종 로그 target/onboarding-full-check.log SHA-256 d5dd193cb7aab4ac72afd41c9a51e08a21af0e0bae19fb4076aacec71d1e0eac. 최종 실행에서는 관찰한 원본 Core의 hash/인수를 보존하고 잠시 정지한 뒤 같은 바이너리로 복구했다. 복구 PID 8472, 원본 SHA-256 6FE42CF1D958594ABAD72009936C900E3EF65A27791C9420FAB101F6FB72F209. 공식 core status ok=true, transport_ready=true. 계정 인증 성공을 의미하지 않는다.
+
+비 Windows 분기의 needless return을 수정한 뒤 CLI Linux x86_64·macOS arm64 교차 all-target Clippy 및 Windows CLI all-target Clippy를 각각 exit 0으로 확인했다. fmt와 최종 traceability --check도 통과했다. 최종 source_hash 50134e2bbead474679b9ff39198e22f75e496d017fc3fc8e6365085fb8c0941f. 교차 검사는 해당 OS에서의 실제 실행 시험이 아니다. Build 건너뜀 12개는 pwsh를 요구하는 기존 시험이며 새 Windows PowerShell 설치 시험은 실제로 통과했다.
+
+남은 일·제약: 보호 저장된 Google 앱 설정이 없는 깨끗한 PC는 여전히 제품용 앱 설정 제공 단계가 필요하다. 실제 client ID/secret을 추출·내장하거나 기존 사용자에게 새 비밀값을 요구하지 않았다. 기존 운영 환경의 IPC handshake 진단 문제와 계정 ready 재확인 미완료는 유지한다. 실제 첫 실행·권한 창·메일 이용의 실계정 종단 검증, 사람 보안 검토, 제품 앱 설정 배포, 새 패키지 게시를 자동 검사 통과로 대체하지 않는다. 커밋·푸시·배포·Google 설정 변경·메일 발송은 하지 않았다. 기존 미커밋 파일과 사용자 변경을 보존했다. 다음 작업은 무비밀 IPC handshake 단계 진단과 깨끗한 설치의 제품 앱 설정 경로 보완이다.
+
+
+## 2026-11-02 로컬 handshake 재시작 복구 확인
+
+원래 동일 해시 코어 재시작 후 기존 두 계정 ready/transport 정상을 확인했다. 최초 실패는 challenge 수신 전 종료였으며 서버 내부 근본 원인은 재시작 후 미재현이다. 보안검사를 유지한 고정 단계 진단과 시험 하네스 출력 보존을 원본에 추가했다. 최종 전체 검사 1720개 통과, 디코딩 오류 0. 키/권한/ACL/Google 재동의/메일 변경 없음. 현재 코어는 원래 바이너리, 진단 코드는 원본에 준비된 상태다. 상세: docs/local-verification/2026-11-02/handshake-recovery/HANDSHAKE-RECOVERY.ko.md. 보안 코드 사람 검토 필요.
+
+
+## 후속 동시 변경 뒤 재발 관측 — 2026-11-02
+
+02:44 UTC 최종 복구 PID 55868에서는 기존 두 계정 ready/transport를 확인했다. 이후 마지막 패치 검증 중 코어가 0개였다가 PID 8472로 바뀌었다. 새 PID는 같은 원래 경로·해시이나 계정 조회 exit 10 및 공식 clients verify AUTH_REQUIRED가 재발했다. 고정 단계: hantong_handshake stage=challenge_read outcome=failed, hantong_auth stage=handshake outcome=failed. 이번 기록 단계에서는 그 코어를 중지·재시작하거나 권한/키를 변경하지 않았다.
+
+동시에 원본 core_start.rs와 docs/traceability.md가 02:47 UTC에 저장 당시 해시와 달라졌다. 진단 소스 여섯 파일은 기록 해시 그대로다. 패치의 Windows 줄바꿈은 LF로 정규화했으며, 후속 변경된 두 파일을 제외한 진단 패치 역적용 check는 exit 0이다. 전체 패치는 02:44 저장 시점의 검토 산출물이며 현재 후속 변경 전체에 무조건 적용 가능한 것으로 간주하지 않는다. 후속 코드를 덮어쓰지 않았다.
+
+1,720개 통과는 최종 검사 당시 소스에 대한 사실이다. 현재 후속 소스 변경 및 PID 8472의 ready까지 검증한 결과가 아니다. **현재 계정 조회는 다시 차단돼 있으며 근본 원인 미확정**이다. 실행 코어의 후속 소유 작업과 조율해 재시작을 멈춘 뒤 실패 중인 인스턴스의 무비밀 증거 수집을 이어가야 한다. 사용자에게 Google 재동의/등록/권한 확대를 요구할 근거는 없다. Google In production 게시 성공은 변함없다.
+
+## 2026-11-02 사용자 이용 흐름 마무리: 저장소 분리 원인 확인 및 수정 진행
+
+사용자가 사용자 관점의 설치→실행→계정 연결→승인→이용을 모두 해결하라고 재지시했다. 최신 기록·실제 미커밋 소스를 기준으로 재조사했다. 현재 일반 실행의 clients verify는 과거 challenge_read보다 앞선 profile product_directory_security의 SCOPE_DENIED다. 일반 LocalAppData의 mail-hantong에는 data/secrets만 있고 profiles가 없지만, OpenAI.Codex 패키지 LocalCache/Local/mail-hantong에는 profiles/data가 존재한다는 디렉터리 메타데이터를 확인했다. 실제 프로필·키·DB 내용은 직접 열지 않았다.
+
+원인은 SHGetKnownFolderPath flags=0으로 인해 패키지 호스트와 일반 프로세스가 다른 AppData를 선택하지만 IPC는 같은 사용자 SID 주소를 공유한 것이다. 이전 코어 재시작 복구/재발 기록은 실행 경로·해시만 같고 저장소 선택 문맥은 달랐다는 점으로 정정한다. PID 8472의 transport_ready는 기존 두 계정 ready 증거가 아니다. 현재 코어와 실제 저장소/ACL은 이번 조사에서 변경하지 않았다.
+
+로컬 수정: 플랫폼에 KF_FLAG_NO_PACKAGE_REDIRECTION 적용 및 패키지/일반 resolver 회귀 시험. Core는 Store 초기화 전에 기존 native profile-publication 로직으로 제품/profiles 디렉터리를 보호 ACL로 생성하고 수명 동안 handle을 유지한다. 기존 unsafe ACL은 수정하지 않고 거부한다. 신규 설치의 부모 디렉터리가 Secrets 초기화에서 먼저 일반 상속 ACL로 생성되는 문제를 막는다. 기존 패키지 데이터의 자동 이동/합치기/삭제는 하지 않는다. ADR-026 제안에 사람 검토와 명시적 복구 경계를 기록했다.
+
+사용자에게 개발자 설정을 입력시키지 않도록 선택적 배포 자산 publisher/google-desktop.json을 Secrets에서만 해석하는 경로와 manifest/해시/크기/중복키/고정 Google endpoint 검증을 추가했다. implicit 첫 연결은 게시자 자산을 사용하며 기존 보호 계정 자격증명 재사용과 explicit 고급 capture를 보존한다. package_cli는 소스 트리 밖의 불투명 자산만 선택적으로 포함하고 실제 포함 여부만 metadata에 기록한다. 값/원본 경로는 metadata에 넣지 않는다. 실제 자격증명은 제공·추출·내장·게시하지 않았다. ADR-018의 "No publisher secret is shipped"는 아직 유효하므로 실제 자산 배포는 별도 명시적 결정이 필요하다. 새 계약은 그 결정을 대신하지 않는다.
+
+검증 진행: 기존 설치 시험은 PowerShell 7 전용 호출을 Windows PowerShell 5.1 fallback으로 보완하여 12개 전부 실제 통과했다. 게시자 packager 9개 및 bootstrap 5개 통과. 신규 보호 디렉터리 시험 2개, 경로 플랫폼 시험, publisher parser 시험을 실행했다. 통합 전체 검사와 실제 release 정적 CRT 패키지 생성은 이어서 수행하며, 최종 결과는 아래 후속 항목에 기록한다. **[사람 검토 필요]**. 기존 실제 계정·비밀값 작업 중단 상태와 모든 미커밋 변경을 보존한다.
+
+## 2026-11-02 설치 흐름 최종 로컬 검증 및 실제 적용 경계
+
+최종 source_hash ebb97e1562d5bbb17c4d017dc0acc0d6c154d16841bc51ae0df194d8ab032cf6에서 check_all exit 0. Rust 1,611개/30 suites/ignored 0, Docs 29개, Build 93개 실제 통과, skip 0. 총 **1,733개 통과**, 실패 없음. fmt, 전체 workspace Clippy(-D warnings), 전체 build, 요건/아키텍처/추적 검사 통과. Linux x86_64 및 macOS arm64의 Secrets/CLI/Core all-target 교차 Clippy도 exit 0. 실제 해당 OS에서 제품 실행 시험은 아니다.
+
+리뷰 후 Core 기동 실패 시 자신이 방금 생성한 자식만 kill/wait하는 guard와 정상 준비 시 유지 시험을 추가했다. 기존 실행 코어는 guard 대상이 아니다. implicit Google 연결에 matching 게시자/재사용 credential이 없으면 HUMAN_STEP_REQUIRED로 종료하고 개발자용 secret capture를 열지 않는다. explicit 고급 client-ID 설정만 capture를 유지한다. publisher JSON의 멤버 순서, 중복 키, 잘못된 endpoint/web client, manifest 크기 불일치, hash 변조를 거부·검증했고 raw secret 입력은 SensitiveBuffer/SecretJson으로만 해석·정리한다.
+
+실제 정적 CRT release build로 artifacts/cli-onboarding/0.1.0-preview.5 패키지를 생성했다. 초기 build 중 소스 변경은 packager가 감지해 산출물 게시를 거부했고, 안정된 최종 소스로 재실행하여 built_from_current_workspace와 위 source_hash를 확인했다. ZIP 22,812,859 bytes, SHA-256 77ce88adaf3ca1f578967e84f30a8500d904a8aaf0ad4f2f7fe289faba87a2a1. 실제 Google 게시자 자산 포함 여부는 false다. 이 파일은 검토용 개발 패키지이며 새 PC에서 Google 연결까지 완료하는 제품 배포본이 아니다.
+
+해당 실제 ZIP을 별도 임시 폴더에 풀어 Windows PowerShell로 설치하고 모든 설치 파일의 manifest/hash/size를 확인했다. 설치된 CLI version/help exit 0, headless init은 HUMAN_STEP_REQUIRED exit 24로 부작용 전에 거부했다. 설치된 제거 스크립트 exit 0 및 사용자 데이터 sentinel 보존을 확인했다. 이전 manifest 미포함 설치 버전을 모사한 업데이트에서도 이전 실행 파일 보존과 새 버전 활성화·제거를 검증했다. dumpbin /DEPENDENTS에서 release Core의 추가 Visual C++ runtime DLL 의존성이 없음을 확인했다. 이 확인이 깨끗한 Windows VM이나 실제 OAuth 종단 시험을 대신하지 않는다.
+
+최종 전체 로그 target/clean-install-full-check.log SHA-256 e25dd01aa821d66410bec0578339a83a7e9ef45902462042354cabc0f9aae137. 최초 trace 갱신 전 실패와 중간 검증 로그도 별도 이름으로 보존했다. 검사를 위해 관찰한 기존 Core만 원본 hash/인수를 보존하고 중지·복구했다. 최종 PID 47944, 원본 SHA-256 6FE42CF1D958594ABAD72009936C900E3EF65A27791C9420FAB101F6FB72F209. 공식 core status ok=true / transport_ready=true이며, 기존 계정 ready 복구 증거로 표현하지 않는다. 실제 데이터 경로 복구는 아직 실행하지 않았다.
+
+증거: docs/local-verification/2026-11-02/clean-install-verification.json 및 clean-install-package-verification.json. 남은 실제 작업과 승인 근거는 docs/review/CLEAN-INSTALL-DECISIONS-20261102.md에 정리했다. (1) ADR-018의 게시자 secret 배포 금지를 변경하여 소스·로그 제외 데이터 자산으로 실제 설치 패키지에 제공할지, (2) 기존 Codex 패키지 내부 상태와 일반 루트를 각각 보존한 뒤 정상 설치 경로로 복구할지 결정이 필요하다. 현재는 실제 자격증명 제공/추출/포함/게시·실계정 새 로그인·재동의·grant 확대·메일 발송·실데이터 이동·ACL 변경을 하지 않았다. Git 커밋/푸시/공개 배포도 하지 않았다. **[사람 검토 필요]**와 기존 중단 상태를 유지한다. 사용자에게 프로그램 이용까지 완료됐다고 보고하지 않는다.
+
+## 2026-11-02 두 결정 승인 및 기존 계정 저장소 복구
+
+사용자가 “오케이 승인할게. 둘다. 유출되어 문제될 위험은 없지?”라고 명시적으로 승인했다. 승인 범위는 게시자 Google Desktop 앱 설정의 설치 데이터 자산 배포와 기존 두 저장소를 보존하는 명시적 복구다. ADR-018, publisher-google-configuration 계약, CLEAN-INSTALL-DECISIONS 문서에 이를 기록했다. 사용자 토큰·비밀번호·서버용 자격증명의 배포나 실제 보안 코드 검토 완료로 해석하지 않는다. Desktop 앱 자격증명은 추출 가능하며 앱 사칭·한도 남용 위험이 있으므로 위험 0을 보장하지 않는다고 설명했다. 근거: https://developers.google.com/identity/protocols/oauth2/native-app 및 https://datatracker.ietf.org/doc/html/rfc8252#section-8.6.
+
+승인된 복구를 ignored target/recover-account-store.ps1로 수행했다. 암호화 파일은 불투명 바이트로 복사·SHA-256 대조했으며 실제 토큰·키·DB·프로필 내용을 직접 읽지 않았다. 초기 두 시도의 PowerShell Set-Acl audit 권한 오류는 동일한 보호 부모의 합성 재현에서 확인한 Directory.SetAccessControl로 해결했다. 긴 파일명 해시 오류는 extended path 스트리밍 해시로 해결했다. 검증용 자식 lock 핸들이 상위 폴더 rename을 막는 현상은 합성 재현으로 확인했고, 모든 복사·해시 검사 후 자체 핸들만 닫고 제품 프로세스 부재를 재확인해 해결했다. 실패 시 원본 코어를 복구했으며 원본 루트를 덮어쓰지 않았다.
+
+최종 복구 성공: Codex 패키지 LocalCache/Local/mail-hantong 원본을 유지하고 복사본을 canonical LocalAppData/mail-hantong으로 배치했다. 기존 canonical 루트도 별도로 보존했다. 보호된 백업 루트는 C:/Users/cyary/AppData/Local/mail-hantong-recovery-20261102-c0310aa880c7402e84ce0e55c4c1a9b9 이며 private 원본 해시 목록·검증 응답은 그 안에만 보관한다. 새 preview.5를 사용자 Programs/mail-hantong-cli에 설치했고 PATH는 변경하지 않았다. 설치된 Core PID 15560, 공식 core status·clients verify·accounts list 모두 exit 0 / ok=true, 기존 Gmail 두 계정 ready를 확인했다. core status만으로 인증 완료를 판단하지 않았으며 clients verify와 계정 목록을 별도로 검증했다. 재로그인·재동의·grant 확대·메일 읽기/발송/변경은 하지 않았다. 기존 원본·실패 시도별 백업·미커밋 변경은 보존했다. 복구 스크립트 종료 후 별도 실행에서도 동일한 세 검사와 두 계정 ready를 재확인했다. 문서 수정 후 Docs unittest 29개 통과(exit 0). 제품 소스 변경이 없어 전체 Rust 검사는 재실행하지 않았으며 앞선 전체 검증과 구분한다.
+
+Aside 공식 CLI를 통해 Google Cloud의 기존 mail-hantong 테스트 Desktop 클라이언트를 읽기 전용 확인했다. 기존 secret 두 항목의 비활성화·추가 버튼은 있었으나 재다운로드 기능은 확인되지 않았다. Downloads의 client_secret*.json 파일은 0개였다. Google 공식 관리 문서도 전체 secret의 생성 시 1회 조회/다운로드를 명시한다: https://support.google.com/cloud/answer/15549257?hl=en. 설정을 변경하거나 기존 계정 보호 번들에서 값을 추출하지 않았다. 원래 저장한 Desktop JSON의 로컬 경로를 사용자에게 요청했으며 값 자체는 채팅에 요청하지 않았다. 현재 preview.5는 여전히 publisher asset 미포함이므로 깨끗한 PC의 Google 연결과 공개 배포 완료를 주장하지 않는다. 다음 작업은 원본 Desktop 자산을 보호된 경로에서 확인한 뒤 승인된 패키징·검증을 수행하는 것이다. **[사람 검토 필요]** 유지.
+
+## 2026-11-02 발견한 과거 OAuth JSON의 적용 제외
+
+사용자가 D:/Downloads에 5월 생성 OAuth JSON이 있으나 현재 한통 클라이언트와 ID가 다르며, 현재 인증정보는 보호 입력으로만 저장했다고 밝혔다. 이 최신 사용자 증거에 따라 과거 JSON은 배포 후보에서 제외했다. 에이전트는 해당 파일을 열거나 복사·검사·패키징하지 않았다. 앞선 Downloads 검색은 C:/Users/cyary/Downloads만 대상으로 했으므로 모든 다운로드 위치에서 파일이 없다는 의미가 아니었다. 현재 한통의 원본 Desktop JSON 확보 여부는 여전히 미확인이다.
+
+기존 보호 번들에서 게시자 설정을 추출하지 않고 기존 Google 클라이언트·secret·계정 연결을 유지한다. 대안은 기존 클라이언트와 분리된 배포 전용 Desktop OAuth 클라이언트 생성이지만, 직전 확인 질문에 대한 생성 승인은 아직 받지 않았다. 기존 설정 배포와 저장소 복구의 승인은 유지되며 이를 신규 외부 등록 승인으로 확대 해석하지 않는다. 이번에는 진행 기록만 추가했다. 제품 코드·계약 변경이 없어 빌드·전체 검사를 재실행하지 않았고 기능 완료를 새로 주장하지 않는다. **[사람 검토 필요]** 유지.
+
+## 2026-11-02 배포 전용 Desktop 클라이언트 생성 및 설정 포함 preview.6 설치
+
+사용자가 신규 Desktop OAuth 클라이언트 생성 확인 질문에 “허용할게”라고 명시했다. Aside 공식 CLI의 실제 로그인된 Google Cloud 콘솔에서 프로젝트 mail-hantong-test-20261030 아래 배포 전용 Desktop 클라이언트를 생성했다. 기존 mail-hantong 테스트 Desktop 및 기존 두 계정 연결·자격증명·grant는 변경하지 않았다. 5월의 다른 클라이언트 JSON은 열거나 사용하지 않았다. Audience·검증 심사·API 범위 설정을 변경하지 않았다.
+
+생성 과정의 보안 사고와 조치: 첫 생성 완료 화면에서 복사 버튼의 aria-label 목록을 출력했는데 Google이 해당 라벨에 secret 전체를 넣어 둬 새 client secret이 도구 출력에 노출됐다. 에이전트의 확인 방식 실수이며 사용자에게 즉시 알렸다. 이 첫 클라이언트는 실제 계정 연결·토큰 교환·배포에 사용하지 않고 삭제했다. DELETE 확인을 거친 뒤 실제 클라이언트 목록에서 사라진 것을 확인했다. 해당 값은 문서·소스·테스트·커밋에 복사하지 않았으며 과거 도구 출력 자체를 지웠다고 주장하지 않는다. 삭제된 첫 클라이언트는 복원하지 않는다.
+
+대체 클라이언트 mail-hantong Windows CLI distribution 20261102 v2를 Desktop app 유형으로 별도 생성했다. 이번에는 생성 완료 화면의 snapshot/aria-label/입력값을 출력하지 않고 Download JSON 버튼의 브라우저 다운로드를 직접 받았다. 415바이트 원본을 보호 DACL의 Aside artifacts 폴더에 저장하고 C:/Users/cyary/AppData/Local/mail-hantong-publisher-20261102/google-desktop.json으로 불투명 복사·보존했다. 실제 JSON 내용을 에이전트가 파싱하거나 출력하지 않았고 기존 계정 보호 번들에서 값을 추출하지 않았다. 기존 클라이언트와 새 v2만 활성 목록에 있는 것을 확인했다. Desktop 앱 설정은 소유자가 이미 승인한 배포 자산이며, 사용자 토큰·비밀번호는 포함하지 않는다.
+
+제품 변경은 apps/mail-hantong-core/src/main.rs의 시작 단계다. 기존 Secrets loader로 선택적 설치 publisher asset을 검사하고 즉시 drop한 뒤 Store를 연다. 설정 없음은 기존 동작이며, 존재하지만 잘못된 설정은 기존 안정 오류로 중단한다. 실제 값은 Secrets 밖에서 파싱하지 않는다. 합성 lifecycle 시험·fmt·Core Clippy 통과. 에이전트의 중간 Core 단독 전체 시험은 실행 중 실제 코어와 mock pipe가 충돌해 97 통과/10 실패였고, 시험을 삭제하거나 건너뛰지 않았다. 이후 관찰한 preview.5 코어만 hash/인수를 보존해 잠시 중지한 최종 전체 검사에서 전부 통과했다. 검사 후 동일 설치 코어를 복구했다.
+
+최종 python -X utf8 scripts/check_all.py exit 0: Rust 1,611개/30 suites/ignored 0, Docs 29개, Build 93개/skip 0, 실제 합계 1,733개 통과. workspace fmt·Clippy(-D warnings)·전체 build·요건·아키텍처·추적 검사도 통과. 로그 target/publisher-release-full-check.log SHA-256 ed72ff67334a6317cda340c5149a39b16f687f221e87a9d9e0f453cff76d056d. source_hash 3096e5378147f4693162ae7e7f79cce225693f6f4853d58581bd422a245db438. 추적표를 갱신했고 설치 후 --check도 exit 0이다.
+
+실제 설정을 --publisher-config로 제공해 소스·로그·테스트에 값을 넣지 않고 preview.6을 새 빌드했다. artifacts/cli-onboarding/0.1.0-preview.6/mail-hantong-cli-0.1.0-preview.6-windows-x86_64.zip SHA-256 1549f8b22a0596aac33183591fd79e0d57bfb3d8f078a373e4efd72487c51ae0. BUILD-METADATA는 built_from_current_workspace, google_publisher_config_included=true다. artifacts는 git ignored이며 실제 설정 자산은 소스 커밋에 포함하지 않는다. 별도 임시 설치에서 manifest/hash/size·CLI help/version·headless init HUMAN_STEP_REQUIRED exit 24·제거·사용자 데이터 sentinel 보존을 확인했다. 설정 파일에 불투명 공백을 추가한 변조 패키지는 실제 Core가 Store를 열기 전에 CORE_UNAVAILABLE exit 25로 거부했고 credential 값은 출력하지 않았다.
+
+사용자 Programs/mail-hantong-cli의 실제 설치를 preview.6으로 갱신하고 소유 launcher를 사용자 PATH에 추가했다. preview.5와 원래 데이터·백업을 보존했다. 실제 새 Core 시작은 Secrets의 실제 Desktop 형식·manifest 크기·SHA-256·고정 endpoint 검사를 통과했다. PID 55532, 설치 스크립트 종료 후 별도 실행에서도 core status / clients verify / accounts list 모두 exit 0, 기존 Gmail 두 계정 ready다. 새 Google 로그인·재동의·메일 읽기/변경/발송은 실행하지 않았다. 검증 자료는 docs/local-verification/2026-11-02/publisher-package-verification.json, publisher-tamper-verification.json, publisher-release-verification.json이다.
+
+사용자 실행: 새 터미널에서 hantong --lang ko init. 현재 PC의 기존 계정은 유지되며 새 계정 연결에는 사용자가 Google 로그인/동의와 Windows 보호 승인을 직접 수행해야 한다. 실제 새 클라이언트의 OAuth 종단 시험, 깨끗한 Windows 설치 시험, Google 검증 심사와 보안 코드 사람 검토는 남아 있다. Git 커밋/푸시/GitHub release 게시는 이번 작업에서 하지 않았으며 기존 공개 preview.4와 로컬 preview.6을 구분한다. **[사람 검토 필요]** 유지.
+
+## 2026-11-02 실제 연결 시험·클린 재설치 및 추가 보호창의 잔존 확인
+
+사용자가 실제 연결 시험을 요청하고 이어 “기존 버전을 아에 클린 삭제 후 다시 시도”라고 지시했다. 실제 비밀번호·PIN 입력과 로컬 승인 발급은 대신하지 않고, 먼저 기존 설치와 활성 데이터 루트를 보호 백업으로 보존한 후 공식 제거·재설치하도록 진행했다. 미커밋 소스·새 파일·이전 백업과 과거 클라이언트는 보존한다. 이를 깨끗한 Windows VM 시험이나 Windows 사용자 CNG 키 전체 삭제로 표현하지 않는다.
+
+실제 시험 준비에서 새 연결의 client ID 선택이 legacy 저장값을 publisher 자산보다 먼저 사용함을 발견했다. setup_google.rs를 새 연결의 명시 ID → 설치 publisher ID → legacy ID 순서로 수정했다. 명시적 기존 계정 재인증은 원래 bound client ID를 유지하고 다른 ID는 Conflict로 거부한다. 회귀 시험 4개와 최종 전체 검사 1,737개(Rust 1,615/30 suites, Docs 29, Build 93, ignored/skip 0)가 통과했다. 해당 로그 target/clean-reconnect-full-check.log SHA-256 4aa757571b17eaef30ee0e6a5964de9a9e1df617f75bb91c03cbbb0322c4773e, source_hash 675be31c5dbf6ab4663ab8d191cf14403f312fa7ea9907f95bfe7cd3a6f0922d. 설정 포함 preview.7을 빌드했다.
+
+클린 제거는 ignored target/clean-reinstall-publisher.ps1 및 opaque-state-snapshot.py로 수행했다. 기존 Core의 정확한 경로·인수·hash를 확인해 중지하고 사용자 데이터 전체와 프로그램 전체를 보호된 고유 백업으로 보존했다. 프로그램 복사본의 snapshot을 검증한 뒤 공식 uninstall을 적용했다. 실패 시 프로그램·데이터·소유 PATH 항목·원래 Core 인수를 되돌리는 절차를 별도 읽기 검토했다. 첫 시도는 백업 뒤 긴 Windows 파일명 검사에서 실패했고 원상 복구됐다. extended path 처리 후 재시도에서 데이터 28개와 프로그램 530개 파일의 보존 전후 hash 목록이 일치했다. 성공한 백업은 C:/Users/cyary/AppData/Local/mail-hantong-clean-test-20261102-93e812bb31f743579929da0b8b277d52 이다. 기존 소유 프로그램을 제거하고 preview.7을 설치했으며 설치 직후 canonical 사용자 데이터 루트가 없음을 확인했다. 실패 시도도 삭제하지 않았다.
+
+실제 첫 init은 INVALID_INPUT으로 실패했다. 원인은 core_start.rs가 실제 manifest 파일을 32KiB 제한의 IPC용 sha256 함수로 검사하는 것이었다. 실제 Core는 약 16.7MB이고 THIRD-PARTY.json도 32KiB를 넘는다. 기존 Core가 실행 중인 경우에는 해당 검증 경로를 지나지 않아 기존 검사에서 드러나지 않았다. IPC 제한을 높이는 대신 Windows CNG 기반 sha256_release_file을 별도로 추가했다. 64KiB 청크·512MiB 상한·처음/읽은/마지막 파일 크기 일치를 검사하며 전체 파일을 메모리에 올리지 않는다. CNG 해시/객체 버퍼/알고리즘의 RAII 해제 순서 문제는 부모 검토에서 발견해 hash → object → algorithm 순서로 수정했다. 독립 코드 검토에서 추가 CRITICAL/HIGH 차단은 없었으며 기존 검증-실행 사이 파일 교체 가능성은 별도 주의점으로 남았다. IPC 32KiB·저장 payload 제한과 기존 계정 정책은 유지한다. 합성 큰 파일 회귀·CLI manifest/변조 시험·fmt·Clippy는 통과했고 최종 통합 검사와 실제 cold start 재검증을 이어간다. preview.8은 해제 순서 수정 이전 산출물이므로 설치·게시하지 않는다. 수정 이후 preview.9를 새 빌드했다.
+
+Google 통신 시험은 설치된 Core7을 먼저 정상 시작하고 새 init의 계정 없음 → 연결 선택으로 진행했다. 이 우회 준비를 자동 Core 시작 성공으로 주장하지 않는다. 활성 저장소에는 기존 계정/legacy 앱 설정이 없고 설치된 새 v2 publisher 설정만 있었다. 기본 Chrome 제어 연결은 unavailable이어서 같은 공개 pending 요청을 Aside 공식 CLI에서 이어갔다. OAuth URL은 보호된 Aside 세션 파일에서만 취급하고 client secret·계정 token·callback code를 출력하지 않았다. 초기 wizard와 이어보기 CLI가 동시에 진행하지 않도록 해당 wizard 프로세스만 중지했다. 사용자는 “대신 동의 진행”이라고 명시했다. Aside의 기본 로그인 계정을 선택하고, 요청 범위가 정확히 openid/email/gmail.readonly임을 확인한 뒤 Google Continue를 실행했다. 새 v2 client ID가 Google 페이지에 사용되는 것을 확인했다. Core의 고정 단계 로그에서 callback_wait 성공, token_exchange HTTP 200, token_response/refresh_credential/identity 성공을 확인했다. 메일 본문 조회·발송·변경은 하지 않았다.
+
+Google 이후 한통의 계정 확인/Windows 보호 승인창이 별도로 열렸다. 사용자는 “한통보호창이 왜 열려 그런 거 없앤 거 아냐?”라고 지적했다. 없앤 것은 수동 앱 비밀값 입력창이며 계정·로컬 권한 승인창은 실제로 남아 있다고 설명했다. Google 동의만으로 연결이 끝나는 흐름처럼 안내한 부분은 부정확했다고 정정했다. Google 동의를 대신하라는 지시를 한통 로컬 승인/Windows Hello 대행으로 확대하지 않았고, 추가창을 자동 승인하거나 정책을 우회하지 않았다. 사용자가 로컬 승인을 진행하지 않은 상태로 요청은 APPROVAL_EXPIRED가 됐다. 따라서 현재 결과는 새 배포용 Google OAuth 통신 성공이며, 계정 저장·CLI 등록·로컬 읽기 grant·프로그램 이용까지 완료된 종단 성공이 아니다. 창 제거 또는 승인 통합은 구현 완료되지 않았다. **[사람 검토 필요]** 유지.
+
+## 2026-11-02 cold start 수정본의 최종 검사와 preview.9 클린 설치 확인
+
+최종 source_hash c63cf270e892a9d314e1c26ce05560d89cd09940b28627b8a9560e53077691d4에서 python -X utf8 scripts/check_all.py exit 0. Rust 1,616개/30 suites/ignored 0, Docs 29개, Build 93개/skip 0, 합계 1,738개 통과. workspace fmt·Clippy(-D warnings)·전체 build·요건·아키텍처·추적 검사도 통과했다. 로그 target/cold-start-fixed-full-check.log SHA-256 437a3a660b2497975bb6abf1de85c382eccfa4d4876c1afaeac82fb7e8f30467. 검사를 위해 관찰한 Core7만 hash·인수를 보존해 중지했고 동일 경로로 복구했다. 미승인 실제 OAuth 요청은 검사 전에 이미 만료됐으며 진행 중 동의를 강제 중단하지 않았다.
+
+수정 후 새 빌드 preview.9 ZIP SHA-256 d824928f2a1a14ed15f3a564baeafdc73d88cd1200dcfed9614e73f4e1c1c517. 경로 artifacts/cli-onboarding/0.1.0-preview.9/mail-hantong-cli-0.1.0-preview.9-windows-x86_64.zip, BUILD-METADATA source_relation=built_from_current_workspace, google_publisher_config_included=true. preview.8은 설치·게시하지 않았다. 기존 preview.7의 프로그램 전체와 초기화 데이터도 별도 보호 백업으로 보존한 뒤 공식 제거하고 preview.9를 클린 설치했다. 이때 데이터 4개·프로그램 270개 파일의 보존 전후 snapshot hash가 일치했다. 백업은 C:/Users/cyary/AppData/Local/mail-hantong-clean-test-20261102-9a921c8ac78144cfbfa3fa669b7bb590. 초기 버전 문자열 치환으로 checksum 선택 정규식이 맞지 않았던 시도는 어떤 프로세스·데이터도 건드리기 전에 실패했고 수정 후 재실행했다.
+
+실제 cold start를 위해 Core 프로세스가 0개이고 canonical 사용자 데이터 루트가 없는 것을 선행 확인했다. 설치된 preview.9의 hantong --lang ko init만 실행했고, 수동 Core 시작 없이 자동 기동한 뒤 “연결된 Gmail 계정이 없습니다 / Google 계정 연결·종료” 메뉴에 도달했다. 종료 2를 선택한 CLI는 exit 0이었다. 이후 공식 core status exit 0 / transport_ready=true, 실제 실행 경로는 preview.9, PID 7940이다. default 클라이언트 profile은 없으며 이전 preview.7 실행 파일도 활성 설치 경로에 없다. 최초 빈 profile 조회의 고정 진단 두 줄은 아직 첫 메뉴 전에 표시되며 이는 남은 안내 품질 문제다. 이 검사에서 Google 로그인이나 새 권한 승인을 다시 시작하지 않았다.
+
+최신 결과는 설치·자동 Core 시작 정상, 새 배포 클라이언트의 실제 Google OAuth token 교환/계정 확인 성공, 한통 추가 보호창 미승인으로 계정 등록·이용 종단은 미완료다. 기존 계정과 키는 이전 보호 백업에 있고 현재 활성 설치는 새 상태로 남겼다. 추가 계정 확인/로컬 권한 보호창은 구버전 잔재가 아니라 새 버전의 현재 구현이며, 이를 없앴다고 주장하지 않는다. 변경 파일은 apps/mail-hantong-core/src/setup_google.rs, apps/hantong-cli/src/core_start.rs, crates/hantong-platform/src/windows_identity.rs 및 lib.rs, 추적표와 검증/진행 문서다. 실제 계정 본문 조회·발송·변경, 비밀값의 소스/로그 출력, Git 커밋/푸시/GitHub release 게시는 하지 않았다. **[사람 검토 필요]**와 추가 보호창 UX 미해결을 유지한다.
+
+## 2026-11-02 Google 동의·개인 CLI 기능 선택 전환 — 통합 구현 중
+
+사용자가 “실제 승인은 구글 동의만 하고 한통 승인이 아닌 기능 선택”이라고 결정했다. 일반 개인 CLI의 추가 한통 계정 확인/Hello를 제거하고 읽기 또는 읽기·작성·발송 기능을 Google 전에 선택해 최소 OAuth 범위를 요청하도록 구현한다. 실제 발송·대량 변경의 사람 승인, MCP·외부 AI의 별도 활성화 및 고급 네이티브 설정은 유지한다. 사용자 UX 결정은 보안 코드의 사람 검토 증거가 아니다. 기준은 docs/contracts/google-personal-cli.md, docs/adr/proposed/ADR-027-google-consent-personal-cli.md, docs/latest/GOOGLE-FEATURE-SELECTION-PLAN.md에 기록했다.
+
+기능 선택 enum/엄격한 wire 검증, 실제 OS pipe peer context 전달, CLI 선택/취소/기존 접근 확인, Google OAuth 전용 등록 출처와 scope hash v8/DB v22를 구현 중이다. 기존 미커밋·새 파일과 보호 백업은 보존한다. 구현 통합 검토에서 새 provenance를 기존 parser가 거부하는 문제, native hash v7 유지, v8 고정 L→B/C 제한, 기존 FK 참조/DDL 제약을 보존하는 migration 문제를 확인해 수정하고 있다. 기존 테스트를 삭제하거나 skip하지 않는다.
+
+중간 검증: Docs 29개 통과. IPC/contracts 검사에서 새 enum·wire 테스트는 통과했으나 OS 고정 pipe 시험은 실행 중 preview.9 Core와 충돌했다. Store 최초 Windows 통합 검사 442 통과/25 실패였으며 migration 및 source/hash 회귀를 수정 중이다. 수정 후 새 Google Store 등록/출처/고정 scope/변조 거부 테스트 2개는 통과했다. 이 중간 결과를 최종 통합 통과로 표현하지 않는다. 다음은 보완된 migration·Core authority/profile 통합 검사, 전체 check_all 및 새 설치본 검증이다. 현재 설치된 preview.9와 실제 계정 상태는 아직 변경하지 않았다. **[사람 검토 필요]**.
+
+## 2026-11-02 개인 CLI 기능 선택·Google 단일 동의 구현 및 preview.10 실제 연결 확인
+
+일반 개인 CLI는 이제 `hantong --lang ko init` → Google 연결 → 읽기 또는 읽기·작성·보내기 선택 → Google 동의 → 작업 메뉴로 이어진다. 개인 경로에서는 추가 한통 계정 확인·Windows Hello를 호출하지 않는다. 기능 선택을 Google 전에 받아 필요한 제공자 범위만 요청한다. 선택 취소/EOF에는 OAuth 효과가 없고, 준비 완료만으로 받은편지함을 조회하거나 발송하지 않는다. 실제 발송·대량 변경의 네이티브 사람 승인, 고급 네이티브 등록, MCP·외부 AI 별도 활성화는 유지한다. 전체 화면 TUI 구현으로 표현하지 않는다.
+
+주요 변경: apps/hantong-cli/src/onboarding.rs·google.rs와 한국어/영어 리소스, crates/hantong-contracts/src/google_setup.rs, IPC client의 setup/정확한 개인 기능 검증과 IPC server의 strict wire·SetupRequestContext·OS pipe context 전달, apps/mail-hantong-core/src/main.rs·setup_google.rs·registration.rs·scope_refresh.rs, Store 등록 reader/stage·scope lifecycle·v22 migration/시험을 연결했다. GoogleBootstrapAuthority와 외부에서 생성할 수 없는 move-only permit은 request·관찰된 user/logon peer·계정·subject·client·credential version·mode/profile·expiry에 결속하고 소비 시 현재 Store binding과 OS peer를 재검증한다. Store는 google_oauth 출처의 단일 Google 계정 L 등록 후 고정 B/C로만 전환하며, v8 hash에 출처를 포함한다. 다른/혼합 기존 범위를 자동 대체·확대하지 않고 Conflict로 거부한다. 중단된 source-bound pending/staged scope는 기록에 따라 재개하며, 계정 존재만으로 새 권한을 만들지 않는다. L 직후 중단된 경우 동일 계정의 새 OAuth 권한으로만 이어간다.
+
+DB v21→v22는 48개 테이블·16개 인덱스를 명시적으로 재생성하고 이전 행·FK·scope hash v1~v7·audit sequence 부재/최댓값을 보존한다. 중간 구현의 registration FK rename, v8 도구 길이 제약, 네이티브 hash v7/source, 현재 등록 범위와 v8 단일 전이의 검증 혼동을 수정했다. 이전 버전 재현 시험은 새 v22 등록 DDL을 섞지 않도록 정확한 v8 DDL로 되돌리고, quota fixture는 명시 컬럼 INSERT로 갱신했다. 테스트 삭제/skip은 하지 않았다. 새 Store 테스트는 L→B/C stage·activate·재열기·source 변조 거부를, Core 테스트는 exact profile 직렬화·publish 전 실패 시 기존 범위 보존·재개를 검증한다. 비어 있는 permit을 다른 모듈에서 생성할 수 있던 초기 구현과 pending 복구 누락은 독립 검토 지적 후 수정했다. 재검토에서는 추가 CRITICAL/HIGH 권한 우회를 발견하지 못했으나 사람 보안 검토를 대체하지 않는다.
+
+최종 source_hash 94e13d9e17ae08fe6c8af27d8d5891c5a21eceb71bf48383317ef345c69ac0a3에서 `python -X utf8 scripts/check_all.py` exit 0. Rust 1,633개/30 suites/ignored 0, Docs 29개, Build 93개/skip 0, 합계 **1,755개 통과**. fmt·workspace Clippy(-D warnings)·전체 build·요건·아키텍처·추적 검사도 통과했다. 로그 target/google-feature-full-check.log SHA-256 404fef1082de00401339be6f0b6f8130bd054012fedfa9eba61878028271f945. 첫 전체 시도의 기존 scope 회귀 12개는 보존한 target/google-feature-full-check-attempt1.log와 구분한다. 검사는 관찰한 preview.9 Core의 경로·hash·인수를 보존해 잠시 중지한 뒤 동일 바이너리로 복구했다.
+
+같은 소스의 publisher 설정 포함 preview.10을 실제 release/static CRT로 빌드했다. ZIP artifacts/cli-onboarding/0.1.0-preview.10/mail-hantong-cli-0.1.0-preview.10-windows-x86_64.zip SHA-256 d650112d7916c963a0f85007d29031ed319f57064641a1de4c2ffcb7af145a3f. BUILD-METADATA의 built_from_current_workspace/source_hash/설정 포함을 확인했다. 기존 활성 데이터 4개를 보호된 C:/Users/cyary/AppData/Local/mail-hantong-feature-test-20261102-2f38f7f60961419482a3e7b734afb4db에 불투명 복사하고 전후 snapshot SHA-256 f0dc6f4e996793e09ef26e74646a3446730b6801a5d3610451f92924fcbe4f94 일치를 확인했다. 공식 installer로 preview.10을 활성화했으며 preview.9와 이전 계정 백업은 보존했다. 설치 뒤 Core 0개에서 init만으로 자동 기동하고 기능 메뉴·취소·exit 0을 확인했다. 실제 v21→v22 backup 파일도 생성됐다. 새 Windows VM/사용자에서의 클린 시험은 아니다.
+
+사용자가 앞서 허용한 실제 연결 시험과 Google 동의 대행 범위에서 **읽기 전용**으로 시험했다. Aside MCP 연결이 이번 실행에서 사용 가능해 공식 browser_profiles/repl을 사용했다. Aside로 URL을 옮기기 위해 개인 읽기 공개 setup 요청을 먼저 시작하고 init이 동일 OS peer의 같은 요청을 이어받게 했다. 요청 범위 openid/email/gmail.readonly를 정확히 확인한 뒤 이전 시험 계정을 선택해 Google Continue를 진행했다. OAuth URL은 보호된 파일에서만 전달했고 token·client secret·callback code를 읽거나 출력하지 않았다. 추가 한통 계정 승인/Hello 조작 없이 CLI가 “계정 연결이 완료되어 선택한 기능을 이용할 수 있습니다”와 작업 메뉴에 도달했다. 종료 3을 선택했으며 받은편지함·본문 조회, 초안 작성, 발송·변경은 실행하지 않았다. 개인 setup status ready/error 없음, 공식 core status·clients verify·accounts list 모두 exit 0/ok=true 및 Gmail 계정 1개 ready를 확인했다.
+
+이어서 관찰한 Core10만 hash를 확인해 중지하고 init의 자동 시작으로 재기동했다. 동일 계정 선택 → 재동의/추가 승인 없이 작업 메뉴 → 종료까지 성공했다. 재시작 후에도 공식 transport/authentication/accounts 검사 전부 exit 0/ok=true, Gmail 1개 ready다. 최종 Core 경로는 Programs/mail-hantong-cli/versions/0.1.0-preview.10/bin/mail-hantong-core.exe, 관찰 PID 28136. 실제 활성 계정과 비밀은 제품 보호 저장소에만 유지하며 원문을 별도로 읽지 않았다. 근거: docs/local-verification/2026-11-02/google-feature-selection-verification.json; 상세 private 응답은 보호 백업 디렉터리에만 있다.
+
+상태: 기능 구현·통합 검사·이 PC의 실제 읽기 전용 연결 및 재시작 확인 완료, **[사람 검토 필요]**. 실제 ReadSend 제공자 동의/작성/발송 시험과 Google 검증 심사, 정식 공개 배포는 이번 결과에 포함하지 않는다. Git 커밋/푸시/GitHub release 게시는 하지 않았다. 최초 빈 프로필의 고정 진단 두 줄은 아직 메뉴 전에 표시되는 안내 품질 제약이다. 기존 미커밋 변경·새 파일·보호 백업과 실제 발송 승인 경계는 유지했다. 다음 검토 대상은 보안 코드 사람 검토와 별도 승인 범위의 쓰기/발송 제공자 시험이다.
+
+## 2026-11-02 실제 조회·발송 및 조건부 베타 — 통합 검증 중
+
+사용자가 실제 메일 조회·발송을 검토하고 정상 작동 시 베타를 배포하도록 지시했다. 기존 읽기 계정에서 공식 인증 CLI로 폴더 90개, 제한된 받은편지함 동기화·목록을 확인했다. 첫 96,724바이트 메시지는 본문 처리에서 QUOTA_EXCEEDED로 실패했다. 이후 55,250바이트 메시지는 본문 1,603바이트를 정상 반환했다. 원문·주소·토큰은 검사 출력에 남기지 않았으며 실제 제공자 확인은 자동 테스트와 분리했다.
+
+원인은 디코딩 전 텍스트 파트의 64KiB 제한으로 정상적인 큰 메일까지 전체 거부하는 구현이었다. 제공자 응답 2MiB·MIME 원문 1MiB·깊이/파트 제한을 유지하면서 안전한 HTML/문자셋 렌더링 후 표시 텍스트를 UTF-8 경계에서 64KiB로 제한하고 truncated를 반환하도록 수정했다. Secrets 대상 sync02 시험 13개 통과. 큰 일반 텍스트·한글·HTML·multipart의 표시 예산 및 활성 콘텐츠 제거를 검증했다. 수정된 설치본의 실제 큰 메일 재검증은 아직 남아 있다.
+
+기존 개인 읽기 B에서 작성·발송 C를 활성화하는 메뉴 4를 추가하고 3=종료는 유지했다. 동일 계정의 새 Google ReadSend 동의와 기존 OS peer/credential 결속 permit만으로 B epoch2→C epoch3를 허용하며 추가 계정/기능 Hello는 호출하지 않는다. Store v23·전용 hash v9를 도입하고 v1~v8 의미를 고정했다. 통합 검토에서 남아 있던 L 전용 Core gate와 개인 재동의 금지를 수정했다. 실제 발송은 기존 메시지 결속 네이티브 사람 승인 경계를 유지한다. 구현 근거는 BETA-MAIL-VERIFICATION-PLAN.md 및 google-personal-cli/google-mail 계약에 기록했다.
+
+CLI 대상 85개, Store 대상 472개 통과 보고를 받았으나 최종 통합 통과로 간주하지 않는다. 실행 중인 Core와 겹친 Core 단독 전체 검사 실패는 별도이며, 관찰된 런타임을 보존·일시 중지한 전체 검사로 다시 판정한다. v22 활성 v8 이력의 v23 마이그레이션/롤백, 기능 승격, 새 설치본의 실제 조회·발송·수신을 검증한 후에만 베타 공개 조건을 충족한 것으로 기록한다. 현재 preview.10 실제 계정·프로그램과 기존 변경/백업은 보존했다. **[사람 검토 필요]**. 베타는 아직 게시하지 않았다.
+
+첫 통합 검사는 Docs 29개·Build 94개를 통과한 뒤 새 소스에 맞춰 추적표가 갱신되지 않아 Rust 검사 전에 중단됐다. 기존 Core10은 동일 바이너리로 복구했으며 이 결과를 전체 성공으로 표현하지 않는다.
+
+추적표 갱신 후 전체 검사에서 fmt·Clippy·build·Store 474개는 통과했고 Core 119개 중 새 복구 시험 하나가 실패했다. publish 실패 후 등록은 기존 B 범위·키를 보존하지만 epoch3/Provisioning으로 접근을 차단하는 계약인데 테스트가 기존 Active record 전체 일치를 기대한 것이 원인이었다. 제품 코드는 바꾸지 않고 시험을 실제 fail-closed 계약에 맞게 수정했다. 실패 로그와 원래 런타임 복구 결과는 target/beta-mail-full-check.log에 보존한다. 공개 소스는 별도 release/beta-20261102 worktree에 준비했으며 실제 자격증명 형태 검사 0건, 비공개 산출물 40개 제외를 확인했다. 원래 index·미커밋 파일은 유지한다. Git 저장 시 LF로 바뀌는 42개 파일은 별도 배포 복사본에서만 index bytes와 일치시켰고, 그 최종 소스로 전체 검증·패키징한다.
+
+브라우저 확인 실수: Aside의 탭 목록 전체를 출력하면서 이전 OAuth 콜백 주소가 도구 출력에 포함됐다. 사용자에게 알렸으며 값을 문서·소스·파일에 복사하거나 재사용하지 않는다. 이후 탭 목록은 OAuth 주소를 가리고 확인한다. 과거 도구 출력이 삭제됐다고 주장하지 않는다.
+
+별도 배포 worktree의 소스 해시 2fbb6982fe26cced7a1cc62126eead9259f004fe3667a345c40193467d801ea4에서 전체 검사 exit 0: Rust 1,643개/30 suites/ignored 0, Docs 29개·Build 94개/skip 0, 합계 1,766개 통과. fmt·Clippy·build·요건·아키텍처·추적 검사 통과. 로그는 별도 worktree의 target/beta-release-mail-core-check.log, SHA-256 3e8aae75c8638033723f5a32a108ff7bb67fb9fd497017dfa206c3252e15f302. 기존 Core10 동일 바이너리 복구를 확인했다. 이 결과는 이후 추가한 일반 작성 메뉴까지 포함한 최종 판정은 아니다.
+
+사용자 이용 흐름 재검토에서 읽기는 메뉴에서 메일 번호로 가능하지만 작성·발송에는 아직 내부 ID/해시 명령이 필요함을 확인했다. 기존 3=종료·4=발송 기능 활성화에 5=메일 작성을 추가 중이다. 정확한 개인 C 권한을 먼저 확인하고 기존 immutable draft/네이티브 발송 요청 API만 사용한다. 취소·EOF·권한 거부·발송 요청 1회·결과 대기/unknown 무재시도 시험을 추가하고 최종 통합 검사한다. 실제 계정과 설치된 preview.10 상태는 아직 변경하지 않았다.
+
+일반 작성 메뉴 구현: guided_compose.rs와 compose EN/KO 리소스, onboarding 메뉴5/Effects, 기존 attachment snapshot loader를 연결했다. 본문 입력은 기존 메뉴의 256바이트 trim 입력과 분리해 전체 compose 예산 안에서 긴 문단·앞뒤 공백을 보존한다. 빈 첨부 경로와 빈 MIME 기본값을 수정했다. 초안 완성 뒤 발송 확인창 열기 선택에서만 요청을 한 번 만들고 최대 300회 상태만 조회한다. unknown·대기 종료 시 재요청하지 않는다. fake Effects의 권한 거부·취소·본문 중 EOF·초안 뒤 취소·pending→sent·unknown/timeout 무재시도, 긴 한글/공백/UTF-8 입력 경계를 검증한다. 부모의 보완 전 CLI 90개, 공백 입력 보완 후 91개 대상 시험 통과는 최종 추가 시험까지의 전체 검사와 구분한다. 독립 정적 검토에서 추가 승인 발급 경로·자동 재발송·원문 출력 또는 정상 입력 차단은 발견하지 못했으며 사람 보안 검토를 대체하지 않는다.
+
+최종 일반 작성 메뉴 포함 통합 검사 exit 0: 배포 worktree source_hash 79601a1731b8da04c0527bb29647d51d8fcbfbf6a0e1736423ab1f779b24ea93, Rust 1,651개/30 suites/ignored 0(그중 CLI 93개), Docs 29개·Build 94개/skip 0, 합계 **1,774개 통과**. fmt·Clippy(-D warnings)·전체 build·요건·아키텍처·추적 검사 통과. target/beta-release-full-check.log SHA-256 9d8c73dfc563aa492b9436b70420fc194b5bbe3ac4920f1f10a6a1705dfdb297(별도 배포 worktree). 검사 후 Core10 동일 바이너리 복구, PID 18784. 원본 작업 트리의 같은 내용(CRLF 포함) source_hash는 e9d57981f7389e393ec2472032aeee8fadf0c8356dbc316de8613a52274d2bfc이고, 배포 복사본의 42개 입력 파일만 Git에 실제 저장되는 LF bytes와 일치시켰다. 원본 index/변경은 유지한다. 새 설치 패키지 빌드를 시작했으며 실제 읽기·ReadSend 동의·발송·수신 및 베타 게시는 아직 완료로 기록하지 않는다.
+
+## 2026-11-02 새 설치본 실제 본문·Google ReadSend 확인, 메시지별 발송 확인 대기
+
+검증된 배포 소스로 설정 포함 preview.11을 빌드했다. ZIP SHA-256 40f066ccf464fcf99a02df76cc9c3acca4631532b0d7e010382bfcaa56c3fc94, source_hash 79601a1731b8da04c0527bb29647d51d8fcbfbf6a0e1736423ab1f779b24ea93, built_from_current_workspace/설정 포함을 확인했다. 기존 Core10만 관찰 경로·hash를 재확인하고 중지한 뒤 실제 계정 데이터 7개 파일을 보호 백업했다. 전후 snapshot SHA-256 04d7ce5d6dd65181bdf71a7b67b26e7aa0921d30772dd65d5b979dd9014c5132 일치. 보호 백업 C:/Users/cyary/AppData/Local/mail-hantong-beta-test-20261102-c87b4ebb9f4c4f3cbd29201ab9f1b536. 공식 installer로 업데이트했고 이전 버전/백업을 유지했다.
+
+Core 0개에서 설치된 init만으로 자동 기동해 기존 계정 선택→추가 동의/한통 계정 확인창 없이 작업 메뉴에 도달했다. 실제 schema22→23 시작과 기존 인증/계정 유지 경로를 확인했다. 공식 core status·clients verify·accounts list 모두 exit 0/ok=true, Gmail 1개 ready. 같은 계정의 폴더 90개·명시 단일 메시지 재동기화 후, 앞서 실패했던 96,724바이트 메일의 안전한 본문 텍스트 5,856바이트를 정상 반환했다. truncated=false이며 원문·제목·주소는 검사 출력에 남기지 않았다. 자동 테스트에 실제 계정/네트워크를 연결하지 않았다.
+
+기존 계정 작업 메뉴 4로 읽기→작성·보내기 전환을 진행했다. Aside로 같은 공개 setup 요청을 옮겨 계정 선택은 공식 계정 목록과 정확히 대조하고 URL/주소를 가렸다. 요청 scope는 openid/email/gmail.readonly/gmail.send만 확인했다. Google의 미검증 앱 안내는 계속 표시되며 검증 심사 완료로 표현하지 않는다. Google 동의 후 setup ready/error 없음, 추가 한통 계정 확인/Hello 없이 작업 메뉴 복귀와 정상 인증을 확인했다. 메뉴 5의 수신자 입력 화면에 진입해 0 취소→메일 미발송→메뉴→3 종료도 실제 확인했다. 수동 pipe probe의 짧은 endpoint 생성 간격은 bounded 재연결로 처리했다. 일반 CLI에 노출하지 않는 local-profile 옵션을 이용한 별도 probe는 INVALID_INPUT으로 거부됐으며 제품 경로를 바꾸지 않았다.
+
+사용자가 요청한 실제 발송 시험을 위해 본인 계정으로 보내는 synthetic 초안 한 통과 23바이트 텍스트 첨부를 기존 정책/감사/immutable draft API로 만들었다. 실제 생성 성공, native review request 1회 및 pending을 확인했다. Windows에 “mail-hantong — 보낼 메일 확인” 창이 존재함을 읽기 전용으로 확인하고 사용자에게 내용 확인·Windows Hello를 직접 완료하도록 요청했다. 이는 계정/기능의 추가 승인이 아니라 AGENTS §5.4~5의 메시지별 사람 확인이다. CLI·에이전트가 승인 증거를 만들거나 Hello를 대행하지 않는다. 현재 실제 sent·수신/본문/첨부 일치와 베타 공개 조건은 아직 확인되지 않았다. pending/unknown에서 자동 재발송하지 않는다.
+
+0.1.0-beta.1 패키지도 로컬 준비했다. channel=beta, source_hash 동일, CLI/Core/MCP 모든 실행 파일 SHA-256이 실제 시험 중인 preview.11과 같음을 확인했다. ZIP artifacts/cli-onboarding/0.1.0-beta.1/mail-hantong-cli-0.1.0-beta.1-windows-x86_64.zip SHA-256 3b0128bedc866631ed422a5bd255d68176f450dfcea9fc1510b4ce2a51c48ae5. BUILD-METADATA SHA-256 7b2af5852e031ab28a784e3023a27275722ff2bc3fbbb61c6e73387540c1b2dc. **아직 GitHub 베타 게시하지 않았다.** 현재 Core11 PID 38860과 실제 계정/키/백업, 원본 미커밋/새 파일을 보존한다. 상태 **[사람 검토 필요]**, 실제 발송 확인 대기.

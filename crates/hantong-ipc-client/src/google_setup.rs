@@ -28,10 +28,11 @@ pub fn request(id: &str, c: &GoogleSetupCommand) -> Result<Vec<u8>, ErrorCode> {
     let (method, params) = match c {
         GoogleSetupCommand::Request(i) => {
             i.validate()?;
-            (
-                "setup.google.request",
-                serde_json::json!({"protocol_version":1,"client_id":i.client_id,"display_name":i.display_name,"reauthorize_account":i.reauthorize_account,"force_consent":i.force_consent}),
-            )
+            let mut params = serde_json::json!({"protocol_version":1,"client_id":i.client_id,"display_name":i.display_name,"reauthorize_account":i.reauthorize_account,"force_consent":i.force_consent,"access_mode":i.access_mode.as_str()});
+            if i.local_profile != hantong_contracts::google_setup::GoogleLocalProfile::None {
+                params["local_profile"] = i.local_profile.as_str().into();
+            }
+            ("setup.google.request", params)
         }
         GoogleSetupCommand::Status(r) => {
             if *r == [0; 32] {
@@ -135,6 +136,35 @@ pub fn exchange(command: GoogleSetupCommand) -> Result<GoogleSetupReceipt, Error
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn acc02_personal_request_carries_only_finite_features_and_legacy_omits_them() {
+        use hantong_contracts::{
+            google_setup::{GoogleLocalProfile, GoogleSetupInput},
+            google_write::GoogleAccessMode,
+        };
+        let mut input = GoogleSetupInput {
+            local_profile: GoogleLocalProfile::None,
+            access_mode: GoogleAccessMode::ReadOnly,
+            client_id: None,
+            display_name: None,
+            reauthorize_account: None,
+            force_consent: false,
+        };
+        let bytes = request("r", &GoogleSetupCommand::Request(input.clone())).unwrap();
+        let value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert!(value["params"].get("local_profile").is_none());
+        for profile in [
+            GoogleLocalProfile::PersonalRead,
+            GoogleLocalProfile::PersonalReadSend,
+        ] {
+            input.local_profile = profile;
+            input.access_mode = profile.access_mode().unwrap();
+            let bytes = request("r", &GoogleSetupCommand::Request(input.clone())).unwrap();
+            let value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(value["params"]["local_profile"], profile.as_str());
+            assert_eq!(value["params"].as_object().unwrap().len(), 7);
+        }
+    }
     #[test]
     fn acc02_google_status_binds_id_and_rejects_tokens() {
         let c = GoogleSetupCommand::Status([1; 32]);

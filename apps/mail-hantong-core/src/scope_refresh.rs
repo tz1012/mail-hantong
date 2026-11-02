@@ -20,7 +20,124 @@ pub(super) fn prepare(
 }
 
 fn prepare_for_pin(store: &Store, pin: [u8; 32]) -> Result<CliScopeRefresh, ErrorCode> {
+    prepare_selected_for_pin(store, pin, None)
+}
+
+pub(super) fn matches_google_readonly(
+    r: &CliScopeRefresh,
+    account: hantong_contracts::registration::GoogleReadAccount,
+) -> bool {
+    r.target_accounts() == [account.account_id()]
+        && r.target_tools() == hantong_contracts::auth::default_cli_body_tools()
+}
+
+pub(super) fn prepare_google_readonly(
+    store: &Store,
+    server: &ServerSigningKey,
+    account: hantong_contracts::registration::GoogleReadAccount,
+) -> Result<CliScopeRefresh, ErrorCode> {
+    let effects = Native { store, server };
+    let pin = hantong_platform::sha256(&effects.server_public()?)?;
+    prepare_selected_for_pin(store, pin, Some(account))
+}
+
+fn readonly_add_scope(
+    base: &RequestedScope,
+    account: hantong_contracts::registration::GoogleReadAccount,
+) -> Result<RequestedScope, ErrorCode> {
+    let id = account.account_id();
+    if base.tools() != hantong_contracts::auth::default_cli_body_tools()
+        && !(base.tools() == hantong_contracts::auth::default_cli_legacy_tools()
+            && base.accounts() == [id.clone()])
+    {
+        return Err(ErrorCode::Conflict);
+    }
+    let mut accounts = base.accounts().to_vec();
+    if !accounts.contains(&id) {
+        accounts.push(id);
+    }
+    accounts.sort();
+    RequestedScope::new(accounts, hantong_contracts::auth::default_cli_body_tools())
+}
+pub(super) fn matches_google_readonly_add(
+    r: &CliScopeRefresh,
+    account: hantong_contracts::registration::GoogleReadAccount,
+) -> bool {
+    readonly_add_scope(&r.base_registration().scope, account).is_ok_and(|scope| {
+        scope.accounts() == r.target_accounts() && scope.tools() == r.target_tools()
+    })
+}
+pub(super) fn prepare_google_readonly_add(
+    store: &Store,
+    server: &ServerSigningKey,
+    account: hantong_contracts::registration::GoogleReadAccount,
+) -> Result<CliScopeRefresh, ErrorCode> {
+    prepare_add_for_pin(
+        store,
+        hantong_platform::sha256(&server.public_key()?)?,
+        account,
+    )
+}
+fn prepare_add_for_pin(
+    store: &Store,
+    pin: [u8; 32],
+    account: hantong_contracts::registration::GoogleReadAccount,
+) -> Result<CliScopeRefresh, ErrorCode> {
+    if !store
+        .list_registrable_account_ids()?
+        .contains(&account.account_id())
+    {
+        return Err(ErrorCode::NotFound);
+    }
+    let base = store
+        .load_default_cli_registration()?
+        .ok_or(ErrorCode::ClientNotRegistered)?;
+    let target = readonly_add_scope(&base.scope, account)?;
     if let Some(staged) = store.list_staged_cli_scope_refreshes()?.into_iter().next() {
+        if !matches_google_readonly_add(&staged, account) || staged.server_public_key_hash() != &pin
+        {
+            return Err(ErrorCode::Conflict);
+        }
+        return Ok(staged);
+    }
+    if let Some(pending) = store.load_pending_cli_scope_refresh()? {
+        if !matches_google_readonly_add(&pending, account)
+            || pending.base_registration() != &base
+            || pending.server_public_key_hash() != &pin
+        {
+            return Err(ErrorCode::Conflict);
+        }
+        if !store.expire_cli_scope_refresh(&pending)? {
+            return Ok(pending);
+        }
+    }
+    store.create_cli_scope_refresh_with_scope(hantong_platform::random_nonce()?, target, pin)
+}
+
+fn prepare_selected_for_pin(
+    store: &Store,
+    pin: [u8; 32],
+    selected: Option<hantong_contracts::registration::GoogleReadAccount>,
+) -> Result<CliScopeRefresh, ErrorCode> {
+    if let Some(account) = selected {
+        let id = account.account_id();
+        if !store.list_registrable_account_ids()?.contains(&id) {
+            return Err(ErrorCode::NotFound);
+        }
+        let base = store
+            .load_default_cli_registration()?
+            .ok_or(ErrorCode::ClientNotRegistered)?;
+        if base.scope.accounts() != [id]
+            || !(base.scope.tools() == hantong_contracts::auth::default_cli_legacy_tools()
+                || base.scope.tools() == hantong_contracts::auth::default_cli_body_tools())
+        {
+            return Err(ErrorCode::Conflict);
+        }
+    }
+    if let Some(staged) = store.list_staged_cli_scope_refreshes()?.into_iter().next() {
+        if selected.is_some_and(|account| !matches_google_readonly(&staged, account)) {
+            return Err(ErrorCode::Conflict);
+        }
         return Ok(staged);
     }
     if let Some(pending) = store.load_pending_cli_scope_refresh()?
@@ -30,7 +147,10 @@ fn prepare_for_pin(store: &Store, pin: [u8; 32]) -> Result<CliScopeRefresh, Erro
             .load_default_cli_registration()?
             .ok_or(ErrorCode::NotFound)?;
         if &current != pending.base_registration()
-            || store.list_registrable_account_ids()? != pending.target_accounts()
+            || match selected {
+                Some(account) => !matches_google_readonly(&pending, account),
+                None => store.list_registrable_account_ids()? != pending.target_accounts(),
+            }
             || !hantong_contracts::auth::is_supported_default_cli_toolset(pending.target_tools())
             || &pin != pending.server_public_key_hash()
         {
@@ -41,8 +161,15 @@ fn prepare_for_pin(store: &Store, pin: [u8; 32]) -> Result<CliScopeRefresh, Erro
     store.create_cli_scope_refresh_with_scope(
         hantong_platform::random_nonce()?,
         RequestedScope::new(
-            store.list_registrable_account_ids()?,
-            hantong_contracts::auth::default_cli_send_tools(),
+            match selected {
+                Some(account) => vec![account.account_id()],
+                None => store.list_registrable_account_ids()?,
+            },
+            if selected.is_some() {
+                hantong_contracts::auth::default_cli_body_tools()
+            } else {
+                hantong_contracts::auth::default_cli_send_tools()
+            },
         )?,
         pin,
     )
@@ -105,8 +232,45 @@ pub(super) async fn run_job(
         _ => Err(ErrorCode::Conflict),
     }
 }
+
+/// Completes the first personal CLI L->B/C transition after Google consent.
+/// The Store source channel is checked before staging; no native review token
+/// is accepted or manufactured on this path.
+pub(super) fn run_google_oauth_job(
+    store: &Store,
+    server: &ServerSigningKey,
+    id: [u8; 32],
+) -> Result<(), ErrorCode> {
+    let effects = Native { store, server };
+    complete_google_oauth_scope(&effects, id)
+}
+
+fn complete_google_oauth_scope(effects: &impl Effects, id: [u8; 32]) -> Result<(), ErrorCode> {
+    let expected = effects.load(id)?;
+    if expected.phase() != ScopeRefreshPhase::Pending
+        || expected.base_registration().approved_channel != "google_oauth"
+        || expected.decision_channel() != "google_oauth"
+    {
+        return Err(ErrorCode::Conflict);
+    }
+    let staged = effects.stage(&expected)?;
+    recover_staged(effects, &staged)
+}
 pub(super) fn recover_startup(store: &Store, server: &ServerSigningKey) -> Result<(), ErrorCode> {
     let effects = Native { store, server };
+    // A Google-consent refresh is already durably authorized by its exact
+    // source-bound Store row. Resume only that recorded channel after a crash;
+    // never mint a new OAuth authority during recovery.
+    if let Some(pending) = store.load_pending_cli_scope_refresh()?
+        && pending.decision_channel() == "google_oauth"
+    {
+        let result = effects
+            .stage(&pending)
+            .and_then(|staged| recover_staged(&effects, &staged));
+        if let Err(error) = result {
+            effects.report(error);
+        }
+    }
     for staged in store.list_staged_cli_scope_refreshes()? {
         if let Err(error) = recover_staged(&effects, &staged) {
             effects.report(error);
@@ -274,3 +438,153 @@ impl Effects for Native<'_> {
 
 #[cfg(test)]
 mod tests;
+
+pub(super) fn matches_google_send(
+    r: &CliScopeRefresh,
+    selected: hantong_contracts::scope_refresh::GoogleSendAccounts,
+) -> bool {
+    r.target_accounts() == selected.accounts()
+        && r.target_tools() == hantong_contracts::auth::default_cli_send_tools()
+}
+fn google_changes_scope(
+    base: &RequestedScope,
+    selected: hantong_contracts::scope_refresh::GoogleSendAccounts,
+) -> Result<RequestedScope, ErrorCode> {
+    if base.tools() != hantong_contracts::auth::default_cli_send_tools()
+        && !hantong_contracts::auth::is_google_change_toolset(base.tools())
+    {
+        return Err(ErrorCode::Conflict);
+    }
+    let mut tools = base.tools().to_vec();
+    for account in selected.accounts() {
+        if !base.accounts().contains(&account) {
+            return Err(ErrorCode::Conflict);
+        }
+        let grant = hantong_contracts::google_mutation::account_grant(&account)?;
+        if !tools.contains(&grant) {
+            tools.push(grant);
+        }
+    }
+    tools.sort();
+    if !hantong_contracts::auth::is_google_change_toolset(&tools) {
+        return Err(ErrorCode::QuotaExceeded);
+    }
+    RequestedScope::new(base.accounts().to_vec(), tools)
+}
+pub(super) fn matches_google_changes(
+    r: &CliScopeRefresh,
+    selected: hantong_contracts::scope_refresh::GoogleSendAccounts,
+) -> bool {
+    google_changes_scope(&r.base_registration().scope, selected).is_ok_and(|scope| {
+        scope.accounts() == r.target_accounts() && scope.tools() == r.target_tools()
+    })
+}
+pub(super) fn prepare_google_changes(
+    store: &Store,
+    server: &ServerSigningKey,
+    selected: hantong_contracts::scope_refresh::GoogleSendAccounts,
+) -> Result<CliScopeRefresh, ErrorCode> {
+    prepare_google_changes_for_pin(
+        store,
+        hantong_platform::sha256(&server.public_key()?)?,
+        selected,
+    )
+}
+fn prepare_google_changes_for_pin(
+    store: &Store,
+    pin: [u8; 32],
+    selected: hantong_contracts::scope_refresh::GoogleSendAccounts,
+) -> Result<CliScopeRefresh, ErrorCode> {
+    let available = store.list_registrable_account_ids()?;
+    for account in selected.accounts() {
+        if !available.contains(&account) {
+            return Err(ErrorCode::NotFound);
+        }
+        store
+            .google_account_binding(&account)?
+            .access_mode
+            .check_operation(hantong_contracts::google_write::GoogleOperation::ChangeLabels)?;
+    }
+    let base = store
+        .load_default_cli_registration()?
+        .ok_or(ErrorCode::ClientNotRegistered)?;
+    let target = google_changes_scope(&base.scope, selected)?;
+    if let Some(staged) = store.list_staged_cli_scope_refreshes()?.into_iter().next() {
+        if !matches_google_changes(&staged, selected) || staged.server_public_key_hash() != &pin {
+            return Err(ErrorCode::Conflict);
+        }
+        return Ok(staged);
+    }
+    if let Some(pending) = store.load_pending_cli_scope_refresh()? {
+        if !matches_google_changes(&pending, selected)
+            || pending.base_registration() != &base
+            || pending.server_public_key_hash() != &pin
+        {
+            return Err(ErrorCode::Conflict);
+        }
+        if !store.expire_cli_scope_refresh(&pending)? {
+            return Ok(pending);
+        }
+    }
+    store.create_cli_scope_refresh_with_scope(hantong_platform::random_nonce()?, target, pin)
+}
+pub(super) fn prepare_google_send(
+    store: &Store,
+    server: &ServerSigningKey,
+    selected: hantong_contracts::scope_refresh::GoogleSendAccounts,
+) -> Result<CliScopeRefresh, ErrorCode> {
+    prepare_google_send_for_pin(
+        store,
+        hantong_platform::sha256(&server.public_key()?)?,
+        selected,
+    )
+}
+fn prepare_google_send_for_pin(
+    store: &Store,
+    pin: [u8; 32],
+    selected: hantong_contracts::scope_refresh::GoogleSendAccounts,
+) -> Result<CliScopeRefresh, ErrorCode> {
+    let accounts = selected.accounts();
+    let available = store.list_registrable_account_ids()?;
+    for account in &accounts {
+        if !available.contains(account) {
+            return Err(ErrorCode::NotFound);
+        }
+        store
+            .google_account_binding(account)?
+            .access_mode
+            .check_operation(hantong_contracts::google_write::GoogleOperation::Send)?;
+    }
+    let base = store
+        .load_default_cli_registration()?
+        .ok_or(ErrorCode::ClientNotRegistered)?;
+    // Do not silently remove existing account grants or expand other accounts.
+    if base
+        .scope
+        .accounts()
+        .iter()
+        .any(|id| !accounts.contains(id))
+        || !hantong_contracts::auth::is_supported_default_cli_toolset(base.scope.tools())
+    {
+        return Err(ErrorCode::Conflict);
+    }
+    let target = RequestedScope::new(accounts, hantong_contracts::auth::default_cli_send_tools())?;
+    if let Some(staged) = store.list_staged_cli_scope_refreshes()?.into_iter().next() {
+        if !matches_google_send(&staged, selected) || staged.server_public_key_hash() != &pin {
+            return Err(ErrorCode::Conflict);
+        }
+        return Ok(staged);
+    }
+    if let Some(pending) = store.load_pending_cli_scope_refresh()? {
+        if !matches_google_send(&pending, selected)
+            || pending.base_registration() != &base
+            || pending.server_public_key_hash() != &pin
+        {
+            return Err(ErrorCode::Conflict);
+        }
+        if !store.expire_cli_scope_refresh(&pending)? {
+            return Ok(pending);
+        }
+    }
+    store.create_cli_scope_refresh_with_scope(hantong_platform::random_nonce()?, target, pin)
+}

@@ -119,8 +119,10 @@ mod windows {
         profiles: &Path,
         selected: ProfileFile,
     ) -> Result<LoadedClientProfile, ErrorCode> {
-        validate_path(profiles)?;
-        let user = crate::current_peer_context()?;
+        validate_path(profiles)
+            .inspect_err(|_| eprintln!("hantong_profile stage=path_validation outcome=failed"))?;
+        let user = crate::current_peer_context()
+            .inspect_err(|_| eprintln!("hantong_profile stage=peer_context outcome=failed"))?;
         let product = profiles.parent().ok_or(ErrorCode::ScopeDenied)?;
         let mut directories = Vec::new();
         let mut current = PathBuf::new();
@@ -139,10 +141,21 @@ mod windows {
                 .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
                 .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
                 .open(&current)
-                .map_err(open_error)?;
-            check_type(&directory, true)?;
+                .map_err(open_error)
+                .inspect_err(|_| eprintln!("hantong_profile stage=ancestor_open outcome=failed"))?;
+            check_type(&directory, true)
+                .inspect_err(|_| eprintln!("hantong_profile stage=ancestor_type outcome=failed"))?;
             if protected {
-                check_security(&directory, user.user_sid(), false)?;
+                check_security(&directory, user.user_sid(), false).inspect_err(|_| {
+                    eprintln!(
+                        "{}",
+                        if current == product {
+                            "hantong_profile stage=product_directory_security outcome=failed"
+                        } else {
+                            "hantong_profile stage=profiles_directory_security outcome=failed"
+                        }
+                    )
+                })?;
             }
             directories.push(directory);
         }
@@ -153,9 +166,12 @@ mod windows {
             .share_mode(FILE_SHARE_READ)
             .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
             .open(profiles.join(selected.name()))
-            .map_err(open_error)?;
-        check_type(&file, false)?;
-        check_security(&file, user.user_sid(), true)?;
+            .map_err(open_error)
+            .inspect_err(|_| eprintln!("hantong_profile stage=file_open outcome=failed"))?;
+        check_type(&file, false)
+            .inspect_err(|_| eprintln!("hantong_profile stage=file_type outcome=failed"))?;
+        check_security(&file, user.user_sid(), true)
+            .inspect_err(|_| eprintln!("hantong_profile stage=file_security outcome=failed"))?;
         if file.metadata().map_err(|_| ErrorCode::ScopeDenied)?.len() > MAX_PROFILE_BYTES as u64 {
             return Err(ErrorCode::InvalidInput);
         }
@@ -163,7 +179,8 @@ mod windows {
         (&file)
             .take((MAX_PROFILE_BYTES + 1) as u64)
             .read_to_end(&mut bytes)
-            .map_err(|_| ErrorCode::ScopeDenied)?;
+            .map_err(|_| ErrorCode::ScopeDenied)
+            .inspect_err(|_| eprintln!("hantong_profile stage=file_read outcome=failed"))?;
         if bytes.len() > MAX_PROFILE_BYTES {
             return Err(ErrorCode::InvalidInput);
         }
@@ -341,7 +358,11 @@ mod windows {
             }
             let value = String::from_utf16(std::slice::from_raw_parts(text, length))
                 .map_err(|_| ErrorCode::ScopeDenied)?;
-            Ok(value == user || value == "S-1-5-18" || value == "S-1-5-32-544")
+            let allowed = value == user || value == "S-1-5-18" || value == "S-1-5-32-544";
+            if !allowed {
+                eprintln!("hantong_profile stage=security_principal_allowlist outcome=failed");
+            }
+            Ok(allowed)
         }
     }
 

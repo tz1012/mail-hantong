@@ -1,0 +1,10 @@
+recipients_prompt=Recipients (comma-separated, or 0 to cancel):
+subject_prompt=Subject (or 0 to cancel):
+body_prompt=Body: enter one line at a time; enter a single . on its own line to finish, or 0 first to cancel.
+attachment_prompt=Attachment path (empty or 0 for none):
+attachment_type_prompt=Attachment MIME type (empty for application/octet-stream):
+draft_ready=Draft created locally. A native review is required before sending.
+review_prompt=Open the native sending confirmation? 1) Yes  0) Cancel
+review_state=Sending review state
+review_waiting=Review the message in the Windows sending window and complete identity verification. Waiting up to 5 minutes for the result.
+cancelled=Cancelled. No message was sent.

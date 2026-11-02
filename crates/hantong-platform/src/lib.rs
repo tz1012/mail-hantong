@@ -26,9 +26,9 @@ pub use profile_file::{
 pub use windows_autostart::WindowsAutoStart;
 #[cfg(windows)]
 pub use windows_identity::{
-    ClientSigningKey, ServerSigningKey, client_key_id_for_registration, random_nonce,
-    registration_id_for_request, sha256, sha256_storage_payload, validate_public_key,
-    verify_signature,
+    ClientSigningKey, MAX_RELEASE_FILE, ServerSigningKey, client_key_id_for_registration,
+    random_nonce, registration_id_for_request, sha256, sha256_release_file, sha256_storage_payload,
+    validate_public_key, verify_signature,
 };
 #[cfg(windows)]
 pub use windows_pipe::{LocalPipeConnection, LocalPipeServer, connect, current_peer_context};

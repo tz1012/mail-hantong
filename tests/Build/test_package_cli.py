@@ -108,6 +108,40 @@ class PackageCliTests(unittest.TestCase):
         return package.package(self.root, output_dir=self.output, runner=self.runner,
                                host_system="nt", **kwargs)
 
+    def test_inst03_external_publisher_asset_is_opt_in_manifest_owned_and_path_redacted(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config = Path(directory) / "private-input.json"
+            config.write_bytes(b'{"installed":{"client_id":"fixture.apps.googleusercontent.com","client_secret":"synthetic-only"}}')
+            result = self.build(skip_build=True, publisher_config=config)
+            archive = next(result.glob("*.zip"))
+            with zipfile.ZipFile(archive) as zipped:
+                name = "publisher/google-desktop.json"
+                self.assertEqual(zipped.read(name), config.read_bytes())
+                manifest = json.loads(zipped.read("release-manifest.json"))
+                record = next(row for row in manifest["files"] if row["path"] == name)
+                self.assertEqual(record["sha256"], package.sha(config.read_bytes()))
+                metadata = zipped.read("BUILD-METADATA.json")
+                self.assertTrue(json.loads(metadata)["google_publisher_config_included"])
+                self.assertNotIn(str(config).encode(), metadata)
+                self.assertNotIn(b"synthetic-only", metadata)
+
+    def test_inst03_publisher_asset_in_source_or_oversized_is_rejected(self):
+        config = self.root / "credential.json"
+        config.write_bytes(b"synthetic")
+        with self.assertRaisesRegex(package.PackageError, "outside the source tree"):
+            self.build(skip_build=True, publisher_config=config)
+        with tempfile.TemporaryDirectory() as directory:
+            config = Path(directory) / "credential.json"
+            config.write_bytes(b"x" * 16385)
+            with self.assertRaisesRegex(package.PackageError, "bounded nonempty"):
+                self.build(skip_build=True, publisher_config=config)
+
+    def test_INST01_beta_package_records_beta_channel(self):
+        result = self.build(version="0.1.0-beta.1", skip_build=True)
+        metadata = json.loads((result / "BUILD-METADATA.json").read_bytes())
+        self.assertEqual(metadata["channel"], "beta")
+        self.assertEqual(metadata["release_label"], "0.1.0-beta.1")
+
     def test_INST01_cli_archive_is_reproducible_contains_real_notices_and_excludes_gui_profiles(self):
         (self.binary_dir / "mail-hantong-gui.exe").write_bytes(pe())
         (self.root / ".env").write_text("DO_NOT_PACKAGE", encoding="utf-8")

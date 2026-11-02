@@ -66,6 +66,68 @@ fn gui_request() -> RegistrationRequest {
         RequestedScope::new(vec!["a".into()], hantong_contracts::auth::gui_read_tools()).unwrap();
     value
 }
+
+#[test]
+fn acc02_existing_personal_read_upgrades_only_same_account_from_exact_oauth_profile() {
+    use hantong_contracts::google_setup::GoogleLocalProfile::*;
+    let account = format!("google_{}", "a".repeat(64));
+    let mut current = record();
+    current.state = RegistrationState::Active;
+    current.approved_channel = "google_oauth".into();
+    current.scope = RequestedScope::new(
+        vec![account.clone()],
+        hantong_contracts::auth::default_cli_legacy_tools(),
+    )
+    .unwrap();
+    assert!(existing_personal_registration_supported(
+        &current,
+        &account,
+        PersonalRead
+    ));
+    current.profile_epoch = 2;
+    current.scope = RequestedScope::new(
+        vec![account.clone()],
+        hantong_contracts::auth::default_cli_body_tools(),
+    )
+    .unwrap();
+    assert!(existing_personal_registration_supported(
+        &current,
+        &account,
+        PersonalReadSend
+    ));
+    assert!(!existing_personal_registration_supported(
+        &current,
+        &account,
+        PersonalRead
+    ));
+    assert!(!existing_personal_registration_supported(
+        &current,
+        "different",
+        PersonalReadSend
+    ));
+    for source in ["approval_helper", "gui"] {
+        current.approved_channel = source.into();
+        assert!(!existing_personal_registration_supported(
+            &current,
+            &account,
+            PersonalReadSend
+        ));
+    }
+    current.approved_channel = "google_oauth".into();
+    current.profile_epoch = 3;
+    assert!(!existing_personal_registration_supported(
+        &current,
+        &account,
+        PersonalReadSend
+    ));
+    current.profile_epoch = 2;
+    current.client_kind = ClientKind::Mcp;
+    assert!(!existing_personal_registration_supported(
+        &current,
+        &account,
+        PersonalReadSend
+    ));
+}
 fn gui_record() -> RegistrationRecord {
     let mut value = record();
     value.client_kind = ClientKind::Gui;

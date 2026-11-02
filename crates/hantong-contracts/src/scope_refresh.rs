@@ -4,13 +4,25 @@ use crate::ErrorCode;
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum ScopeRefreshCommand {
     Request,
+    RequestGoogleSend(GoogleSendAccounts),
+    RequestGoogleChanges(GoogleSendAccounts),
+    RequestGoogleReadOnly(crate::registration::GoogleReadAccount),
+    AddGoogleReadOnly(crate::registration::GoogleReadAccount),
     Status([u8; 32]),
 }
 
 impl std::fmt::Debug for ScopeRefreshCommand {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(match self {
+            Self::RequestGoogleChanges(_) => {
+                "ScopeRefreshCommand::RequestGoogleChanges(<redacted>)"
+            }
+            Self::RequestGoogleSend(_) => "ScopeRefreshCommand::RequestGoogleSend(<redacted>)",
             Self::Request => "ScopeRefreshCommand::Request",
+            Self::RequestGoogleReadOnly(_) => {
+                "ScopeRefreshCommand::RequestGoogleReadOnly(<redacted>)"
+            }
+            Self::AddGoogleReadOnly(_) => "ScopeRefreshCommand::AddGoogleReadOnly(<redacted>)",
             Self::Status(_) => "ScopeRefreshCommand::Status(<redacted>)",
         })
     }
@@ -89,5 +101,62 @@ impl ScopeRefreshReceipt {
     }
     pub fn state(&self) -> ScopeRefreshProgress {
         self.state
+    }
+}
+
+/// Explicit, canonical bounded selection. Never interprets empty as all accounts.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub struct GoogleSendAccounts {
+    ids: [[u8; 32]; 4],
+    count: u8,
+}
+impl std::fmt::Debug for GoogleSendAccounts {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("GoogleSendAccounts(<redacted>)")
+    }
+}
+impl GoogleSendAccounts {
+    pub fn parse(values: &[String]) -> Result<Self, ErrorCode> {
+        if values.is_empty() || values.len() > 4 {
+            return Err(ErrorCode::InvalidInput);
+        }
+        let mut values = values.to_vec();
+        values.sort();
+        if values.windows(2).any(|v| v[0] == v[1]) {
+            return Err(ErrorCode::InvalidInput);
+        }
+        let mut ids = [[0; 32]; 4];
+        for (n, value) in values.iter().enumerate() {
+            crate::google::validate_google_account_id(value)?;
+            ids[n] = crate::wire_hex::decode_fixed(&value[7..])?;
+        }
+        Ok(Self {
+            ids,
+            count: values.len() as u8,
+        })
+    }
+    pub fn accounts(self) -> Vec<String> {
+        self.ids[..self.count as usize]
+            .iter()
+            .map(|v| format!("google_{}", crate::wire_hex::encode(v)))
+            .collect()
+    }
+}
+#[cfg(test)]
+mod google_send_selection_tests {
+    use super::*;
+    #[test]
+    fn gmail_write_selected_scope_rejects_empty_duplicate_foreign_and_preserves_exact_set() {
+        let a = format!("google_{}", "1".repeat(64));
+        let b = format!("google_{}", "2".repeat(64));
+        assert_eq!(
+            GoogleSendAccounts::parse(&[b.clone(), a.clone()])
+                .unwrap()
+                .accounts(),
+            vec![a.clone(), b]
+        );
+        for values in [vec![], vec![a.clone(), a], vec!["imap-account".into()]] {
+            assert!(GoogleSendAccounts::parse(&values).is_err());
+        }
     }
 }

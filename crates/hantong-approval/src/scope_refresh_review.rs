@@ -269,6 +269,16 @@ impl ScopeRefreshReview {
             summary.push_str("\r\n");
             summary.push_str(t(TextKey::ScopeRefreshSendPermission));
         }
+        for account in self
+            .target_tool_ids
+            .iter()
+            .filter_map(|tool| hantong_contracts::google_mutation::grant_account(tool))
+        {
+            summary.push_str("\r\n");
+            summary.push_str(crate::google_mutation_review::text(language, "grant"));
+            summary.push_str(": ");
+            summary.push_str(&account);
+        }
         summary
     }
 }
@@ -289,6 +299,46 @@ fn valid_account_ids(values: &[String]) -> bool {
 mod tests {
     use super::*;
 
+    #[test]
+    fn sec03_google_readonly_review_discloses_refresh_body_cache_and_excludes_send_permission() {
+        let account = format!("google_{}", "1a".repeat(32));
+        let review = ScopeRefreshReview::new_with_tools(
+            [1; 32],
+            1,
+            [2; 16],
+            [3; 32],
+            4,
+            5,
+            [6; 32],
+            [7; 32],
+            vec![account.clone()],
+            vec![account],
+            default_cli_legacy_tools(),
+            hantong_contracts::auth::default_cli_body_tools(),
+            1,
+            300001,
+        )
+        .unwrap();
+        for (lang, terms, writable) in [
+            (
+                Language::En,
+                ["Gmail", "refreshes", "bodies", "encrypted local cache"],
+                "This is writable access",
+            ),
+            (
+                Language::Ko,
+                ["Gmail", "토큰을 갱신", "본문", "암호화 로컬 캐시"],
+                "쓰기 권한입니다",
+            ),
+        ] {
+            let summary = review.summary(lang);
+            for term in terms {
+                assert!(summary.contains(term));
+            }
+            assert!(!summary.contains(writable));
+            assert!(!summary.contains("mail.send.execute"));
+        }
+    }
     #[test]
     fn cli15_metadata_scope_review_discloses_cached_headers_without_widening_uid_text() {
         let uid = hantong_contracts::auth::default_cli_uid_tools();

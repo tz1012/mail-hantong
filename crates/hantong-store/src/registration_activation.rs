@@ -59,6 +59,7 @@ pub struct CliRegistrationStage {
     client_public_key: [u8; 72],
     expected_server_public_key_hash: [u8; 32],
     expected_mcp_replacement: Option<RegistrationRecord>,
+    decision_channel: &'static str,
 }
 impl fmt::Debug for CliRegistrationStage {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -110,9 +111,39 @@ impl CliRegistrationStage {
             client_public_key,
             expected_server_public_key_hash,
             expected_mcp_replacement: None,
+            decision_channel: "approval_helper",
         })
     }
+
+    pub fn new_google_oauth(
+        expected_request: RegistrationRequest,
+        registration_id: [u8; 16],
+        client_public_key: [u8; 72],
+        expected_server_public_key_hash: [u8; 32],
+    ) -> Result<Self, ErrorCode> {
+        if expected_request.client_kind != ClientKind::Cli
+            || expected_request.display_label != DEFAULT_CLI_LABEL
+            || expected_request.scope.accounts().len() != 1
+            || expected_request.scope.tools() != ["mail.accounts.list"]
+            || hantong_contracts::google::validate_google_account_id(
+                &expected_request.scope.accounts()[0],
+            )
+            .is_err()
+        {
+            return Err(ErrorCode::InvalidInput);
+        }
+        let mut stage = Self::new_for(
+            RegistrationFlavor::Cli,
+            expected_request,
+            registration_id,
+            client_public_key,
+            expected_server_public_key_hash,
+        )?;
+        stage.decision_channel = "google_oauth";
+        Ok(stage)
+    }
 }
+
 pub struct GuiRegistrationStage {
     inner: CliRegistrationStage,
 }
@@ -375,6 +406,18 @@ impl Store {
         &self,
         stage: &CliRegistrationStage,
     ) -> Result<RegistrationRecord, ErrorCode> {
+        if stage.decision_channel != "approval_helper" {
+            return Err(ErrorCode::InvalidInput);
+        }
+        self.stage_registration(stage, RegistrationFlavor::Cli)
+    }
+    pub fn stage_google_oauth_cli_registration(
+        &self,
+        stage: &CliRegistrationStage,
+    ) -> Result<RegistrationRecord, ErrorCode> {
+        if stage.decision_channel != "google_oauth" {
+            return Err(ErrorCode::InvalidInput);
+        }
         self.stage_registration(stage, RegistrationFlavor::Cli)
     }
     pub fn stage_gui_registration(
@@ -453,6 +496,10 @@ impl Store {
                 for account in request.scope.accounts() {
                     let exists: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM accounts WHERE account_id=?1)", [account], |r| r.get(0)).map_err(internal)?;
                     if !exists { return Err(ErrorCode::NotFound); }
+                    if stage.decision_channel == "google_oauth" {
+                        let ready: bool = tx.query_row("SELECT provider='gmail' AND status='ready' FROM accounts WHERE account_id=?1", [account], |r| r.get(0)).map_err(internal)?;
+                        if !ready { return Err(ErrorCode::Conflict); }
+                    }
                 }
                 if let Some(old)=&stage.expected_mcp_replacement {
                     if flavor!=RegistrationFlavor::Mcp || request.scope.tools()!=hantong_contracts::auth::mcp_mail_tools(){return Err(ErrorCode::InvalidInput)}
@@ -466,13 +513,13 @@ impl Store {
                 ).map_err(internal)?;
                 if duplicate { return Err(ErrorCode::Conflict); }
                 let changed = tx.execute(
-                    "UPDATE client_registration_requests SET state='approved',decision_channel='approval_helper',decided_at_utc_ms=?1,version=version+1 WHERE request_id=?2 AND state='pending' AND version=?3",
-                    params![now,request.request_id.as_slice(),request.version as i64]
+                    "UPDATE client_registration_requests SET state='approved',decision_channel=?1,decided_at_utc_ms=?2,version=version+1 WHERE request_id=?3 AND state='pending' AND version=?4",
+                    params![stage.decision_channel,now,request.request_id.as_slice(),request.version as i64]
                 ).map_err(internal)?;
                 if changed != 1 { return Err(ErrorCode::Conflict); }
                 tx.execute(
-                    "INSERT INTO client_registrations(registration_id,request_id,client_kind,display_label,public_key,profile_epoch,state,read_only,requests_per_minute,approved_channel,approved_at_utc_ms,updated_at_utc_ms,revoked_at_utc_ms,version) VALUES(?1,?2,?3,?4,?5,1,'provisioning',?7,60,'approval_helper',?6,?6,NULL,1)",
-                    params![stage.registration_id.as_slice(),request.request_id.as_slice(),flavor.kind().as_str(),flavor.label(),stage.client_public_key.as_slice(),now,i64::from(request.scope.tools()!=hantong_contracts::auth::mcp_mail_tools())]
+                    "INSERT INTO client_registrations(registration_id,request_id,client_kind,display_label,public_key,profile_epoch,state,read_only,requests_per_minute,approved_channel,approved_at_utc_ms,updated_at_utc_ms,revoked_at_utc_ms,version) VALUES(?1,?2,?3,?4,?5,1,'provisioning',?7,60,?8,?6,?6,NULL,1)",
+                    params![stage.registration_id.as_slice(),request.request_id.as_slice(),flavor.kind().as_str(),flavor.label(),stage.client_public_key.as_slice(),now,i64::from(request.scope.tools()!=hantong_contracts::auth::mcp_mail_tools()),stage.decision_channel]
                 ).map_err(internal)?;
                 for account in request.scope.accounts() {
                     tx.execute("INSERT INTO client_registration_accounts(registration_id,account_id) VALUES(?1,?2)", params![stage.registration_id.as_slice(),account]).map_err(internal)?;
@@ -563,7 +610,9 @@ impl Store {
                     || registration.display_label != flavor.label()
                     || registration.read_only != (registration.scope.tools()!=hantong_contracts::auth::mcp_mail_tools())
                     || registration.requests_per_minute != 60
-                    || registration.approved_channel != "approval_helper"
+                    || !(registration.approved_channel == "approval_helper"
+                        || (flavor == RegistrationFlavor::Cli
+                            && registration.approved_channel == "google_oauth"))
                     || registration.scope != request.scope
                 { return Err(ErrorCode::InternalError); }
                 same_server(tx, &server)?;

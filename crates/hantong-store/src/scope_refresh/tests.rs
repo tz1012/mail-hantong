@@ -892,7 +892,7 @@ fn insert_snapshot(
     row: &CliScopeRefresh,
 ) -> rusqlite::Result<()> {
     connection.execute(
-        "INSERT INTO client_scope_refreshes VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20)",
+        "INSERT INTO client_scope_refreshes(refresh_id,registration_id,base_registration_version,base_profile_epoch,target_profile_epoch,base_accounts_json,target_accounts_json,client_public_key_hash,server_public_key_hash,payload_hash,phase,version,created_at_utc_ms,expires_at_utc_ms,updated_at_utc_ms,decided_at_utc_ms,activated_at_utc_ms,hash_version,base_tools_json,target_tools_json) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20)",
         params![row.refresh_id.as_slice(),row.base_registration.registration_id.as_slice(),row.base_registration.version as i64,row.base_registration.profile_epoch as i64,row.target_profile_epoch() as i64,serde_json::to_string(row.base_registration.scope.accounts()).unwrap(),serde_json::to_string(&row.target_accounts).unwrap(),row.client_public_key_hash.as_slice(),row.server_public_key_hash.as_slice(),row.payload_hash.as_slice(),match row.phase {ScopeRefreshPhase::Pending=>"pending",ScopeRefreshPhase::Staged=>"staged",ScopeRefreshPhase::Active=>"active",ScopeRefreshPhase::Denied=>"denied",ScopeRefreshPhase::Expired=>"expired"},row.version as i64,row.created_at_utc_ms,row.expires_at_utc_ms,row.updated_at_utc_ms,row.decided_at_utc_ms,row.activated_at_utc_ms,i64::from(row.hash_version),serde_json::to_string(row.base_registration.scope.tools()).unwrap(),serde_json::to_string(&row.target_tools).unwrap()],
     )?;
     Ok(())
@@ -1169,7 +1169,7 @@ fn restore_v8_scope_schema(f: &Fixture) {
     f.store().with_connection(|c| {
             let tx=rusqlite::Transaction::new_unchecked(c,rusqlite::TransactionBehavior::Immediate)?;
             assert_eq!(tx.query_row("SELECT (SELECT count(*) FROM mcp_registration_replacements)+(SELECT count(*) FROM mail_outbox)+(SELECT count(*) FROM mail_send_reviews)+(SELECT count(*) FROM mail_drafts)+(SELECT count(*) FROM mcp_ai_consents)+(SELECT count(*) FROM imap_body_cache)",[],|r|r.get::<_,i64>(0))?,0);
-            tx.execute_batch("DROP TABLE mcp_registration_replacements;DROP TABLE mail_outbox;DROP TABLE mail_send_reviews;DROP TABLE mail_drafts;DROP TABLE mcp_ai_consents;DROP TABLE imap_body_cache;")?;
+            tx.execute_batch("DROP TABLE google_mutation_requests;DROP TABLE mcp_registration_replacements;DROP TABLE mail_outbox;DROP TABLE mail_send_reviews;DROP TABLE mail_draft_attachments;DROP TABLE mail_drafts;DROP TABLE mcp_ai_consents;DROP TABLE imap_body_cache;")?;
             for table in ["google_sync_requests","google_sync_state","google_messages","google_labels","google_connections"] {
                 assert_eq!(tx.query_row(&format!("SELECT count(*) FROM {table}"),[],|r|r.get::<_,i64>(0))?,0);
                 tx.execute_batch(&format!("DROP TABLE {table};"))?;
@@ -1186,6 +1186,21 @@ fn restore_v8_scope_schema(f: &Fixture) {
             tx.execute_batch("DROP TABLE imap_initial_preview_messages; DROP TABLE imap_initial_preview_pages; DROP TABLE imap_initial_preview_plans; DROP TABLE imap_initial_preview_requests;")?;
             tx.execute_batch("DROP TABLE imap_message_identities; DROP TABLE imap_uid_reconcile_messages; DROP TABLE imap_uid_reconcile_heads; DROP TABLE imap_uid_reconcile_requests; DROP TABLE imap_uid_epochs; DROP TABLE imap_uid_recovery_requests; DROP TABLE imap_uid_page_requests; DROP TABLE imap_uid_messages; DROP TABLE imap_uid_cursors; DROP TABLE imap_uid_page_operations;")?;
             tx.execute_batch("DROP TABLE folder_refresh_requests; DROP TABLE audit_terminals; DROP TABLE audit_start_accounts; DROP TABLE audit_starts;")?;
+            // v22 expanded registration source CHECKs. Restore the exact old
+            // registration DDL as well as its unchanged rows for this v8 fixture.
+            let registration_tables = ["client_registration_requests", "client_registrations", "client_registration_accounts", "client_registration_tools"];
+            for table in registration_tables {
+                tx.execute_batch(&format!("CREATE TEMP TABLE saved_{table} AS SELECT * FROM {table};"))?;
+            }
+            for table in registration_tables.into_iter().rev() {
+                tx.execute_batch(&format!("DROP TABLE {table};"))?;
+            }
+            for table in registration_tables {
+                let start = schema.find(&format!("CREATE TABLE {table} (")).unwrap();
+                let end = start + schema[start..].find(';').unwrap() + 1;
+                tx.execute_batch(&schema[start..end])?;
+                tx.execute_batch(&format!("INSERT INTO {table} SELECT * FROM saved_{table}; DROP TABLE saved_{table};"))?;
+            }
             let audit_start=schema.find("CREATE TABLE audit_starts (").unwrap();
             let audit_end=schema.find("-- Provider-neutral IMAP/SMTP").unwrap();
             tx.execute_batch(&schema[audit_start..audit_end])?;

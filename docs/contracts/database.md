@@ -90,3 +90,13 @@ schema12~14는 frozen max3 scope validator, schema15는 max4 validator를 사용
 ## v17 최근 UID 미리보기 원장
 
 [초기 동기화 미리보기 계약](imap-initial-sync-preview.md)에 따라 v16 DDL을 `schema-v16.sql`로 동결하고 `016-to-017.sql`로 계획·요청·페이지·메시지 표 네 개를 추가한다. 전체35개 표이며 기존31개 표·행·scope·audit sequence·base UID cursor/epoch/identity는 변경하지 않는다. 기존 보호 백업·단일 트랜잭션·schema/FK 검증과 실패 rollback 규칙을 유지한다. 이전 과정은 외부 접속, 자동 계획 생성 또는 미완료 작업 재개를 하지 않는다. preview 메시지는 base와 같은 locator ID namespace를 사용하지만 별도 자식 표에 저장한다. 양방향 ID/locator 충돌은 저장과 선택 조회 및 시작 무결성 검사에서 실패 처리한다. **사람 검토 필요**.
+
+
+## v20 첨부 스냅샷 확장 — 사람 검토 필요
+
+019-to-020.sql은 mail_draft_attachments 1개 테이블만 추가한다. 기존 46개 테이블의
+행과 계정·권한·Google 연결은 보존한다. ordinal/파일명/형식/내용은 로컬 암호화 DB에
+저장하고 정규화된 초안 해시에 포함한다. 열기 전 backup-before-v19.db 충돌 검사를
+통과해야 하며 마이그레이션/스키마 검증 실패는 트랜잭션을 롤백한다. 기존 이름
+mail_send_reviews.smtp_endpoint_version은 Gmail에서는 Google credential_version을
+고정하며 provider/account/settings_version과 함께 검증한다. 기존 SMTP 의미는 유지한다.

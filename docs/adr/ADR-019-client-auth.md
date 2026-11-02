@@ -1,5 +1,7 @@
 # ADR-019 등록 키와 연결 세션
 
+2026-11-02 개인 CLI 확장: [ADR-027](proposed/ADR-027-google-consent-personal-cli.md)과 [개인 CLI 계약](../contracts/google-personal-cli.md)은 일반 개인 연결의 등록 출처로 검증된 Google OAuth를 추가한다. 아래 네이티브 전용 설정 문장은 이 한정된 경로에서 대체한다. CNG 상호 인증·서버 pin·프로필 epoch·정책 및 실제 발송 승인은 유지한다. **사람 보안 검토 필요**.
+
 상태: 연속 개발 위임에 따른 설계 기준. **사람 보안 검토 필요**. 초기 제품 경로는 미등록 거부 상태를 유지한다.
 
 표시 이름·PID·TTY·환경 변수·요청 client_id는 인증 증거가 아니다. CurrentUser DPAPI shared secret만 사용하는 방식도 같은 사용자의 다른 프로세스가 복호화할 수 있으므로 채택하지 않는다.

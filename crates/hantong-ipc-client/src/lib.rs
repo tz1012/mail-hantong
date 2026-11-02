@@ -5,6 +5,8 @@
 #[cfg(windows)]
 mod auth;
 #[cfg(windows)]
+mod auth_diagnostic;
+#[cfg(windows)]
 pub use auth::PendingClientAuthentication;
 #[cfg(windows)]
 pub mod authenticated_wire;
@@ -21,6 +23,7 @@ pub mod auth_wire;
 pub mod diagnostic_snapshot;
 pub mod display_settings;
 pub mod folders;
+pub mod google_mutation;
 pub mod imap_setup;
 pub mod initial_sync;
 pub mod mail_send;

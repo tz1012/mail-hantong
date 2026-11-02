@@ -1,12 +1,12 @@
 use super::*;
 use http::Transport;
 use std::sync::Mutex;
-struct Fake {
-    responses: Mutex<std::collections::VecDeque<http::Response>>,
-    calls: Mutex<Vec<(http::Host, String)>>,
+pub(super) struct Fake {
+    pub(super) responses: Mutex<std::collections::VecDeque<http::Response>>,
+    pub(super) calls: Mutex<Vec<(http::Host, String)>>,
 }
 impl Fake {
-    fn new(values: Vec<Value>) -> Self {
+    pub(super) fn new(values: Vec<Value>) -> Self {
         Self {
             responses: Mutex::new(
                 values
@@ -42,8 +42,186 @@ impl Transport for Fake {
         Ok(response)
     }
 }
-fn tokens() -> Value {
+pub(super) fn tokens() -> Value {
     serde_json::json!({"token_type":"Bearer","access_token":"fixture-access","refresh_token":"fixture-refresh","scope":format!("openid https://www.googleapis.com/auth/userinfo.email {}",GOOGLE_READ_SCOPE)})
+}
+
+#[test]
+fn sec08_oauth_diagnostics_distinguish_failures_without_secret_or_provider_text() {
+    let identity = serde_json::json!({"sub":"fixture-subject","email":"fixture@example.test","email_verified":true});
+    for (case, expected_stage, expected_error) in [
+        (
+            "http_error",
+            "token_response",
+            Some(ErrorCode::AuthRequired),
+        ),
+        (
+            "untrusted_error",
+            "token_response",
+            Some(ErrorCode::AuthRequired),
+        ),
+        (
+            "missing_refresh",
+            "refresh_credential",
+            Some(ErrorCode::AuthRequired),
+        ),
+        ("identity", "identity", Some(ErrorCode::AuthRequired)),
+        ("success", "identity", None),
+    ] {
+        let mut token = tokens();
+        let mut user = identity.clone();
+        if case == "missing_refresh" {
+            token.as_object_mut().unwrap().remove("refresh_token");
+        }
+        if case == "identity" {
+            user["email_verified"] = false.into();
+        }
+        let fake = Fake::new(vec![token, user]);
+        if matches!(case, "http_error" | "untrusted_error") {
+            let mut responses = fake.responses.lock().unwrap();
+            responses[0] = http::Response {
+                status: 400,
+                body: SensitiveBuffer(serde_json::to_vec(&serde_json::json!({
+                    "error": if case == "http_error" { "invalid_client" } else { "private-token-sentinel\nforged-event" },
+                    "error_description": "private-code-sentinel private-state-sentinel private-secret-sentinel private-body-sentinel",
+                    "access_token": "private-token-sentinel",
+                })).unwrap()),
+            };
+        }
+        let (result, lines) = diagnostics::capture(|| {
+            oauth::complete_code(
+                &fake,
+                "fixture.apps.googleusercontent.com",
+                "http://127.0.0.1:1234/private-url",
+                &SecretText::from_string("private-verifier-sentinel".into()).unwrap(),
+                SecretText::from_string("private-code-sentinel".into()).unwrap(),
+                Instant::now() + Duration::from_secs(5),
+            )
+        });
+        assert_eq!(result.as_ref().err().copied(), expected_error, "{case}");
+        let events: Vec<Value> = lines
+            .iter()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        let last = events.last().unwrap();
+        assert_eq!(last["stage"], expected_stage, "{case}");
+        assert_eq!(
+            last["outcome"],
+            if expected_error.is_some() {
+                "failed"
+            } else {
+                "succeeded"
+            }
+        );
+        assert!(events.iter().all(|e| e["attempt"] == events[0]["attempt"]));
+        let rendered = lines.join("\n");
+        for sentinel in [
+            "private-",
+            "fixture",
+            "@",
+            "http://",
+            "access_token",
+            "error_description",
+            "code_verifier",
+            "forged-event",
+        ] {
+            assert!(!rendered.contains(sentinel), "leaked {sentinel} in {case}");
+        }
+        for e in &events {
+            assert!(e.as_object().unwrap().keys().all(|key| {
+                [
+                    "schema_version",
+                    "event",
+                    "attempt",
+                    "observed_at_utc_ms",
+                    "elapsed_ms",
+                    "stage",
+                    "outcome",
+                    "error_code",
+                    "http_status",
+                    "provider_error",
+                    "provider_reason",
+                ]
+                .contains(&key.as_str())
+            }));
+        }
+        if matches!(case, "http_error" | "untrusted_error") {
+            let response = events.iter().find(|e| e["outcome"] == "response").unwrap();
+            assert_eq!(response["http_status"], 400);
+            assert_eq!(
+                response["provider_error"],
+                if case == "http_error" {
+                    "invalid_client"
+                } else {
+                    "other"
+                }
+            );
+            assert_eq!(fake.calls.lock().unwrap().len(), 1);
+        }
+    }
+}
+
+#[test]
+fn sec08_oauth_provider_reason_is_an_exact_allowlist_not_error_reflection() {
+    for (description, expected) in [
+        ("client_secret is missing.", "client_secret_missing"),
+        (
+            "Missing required parameter: client_secret",
+            "client_secret_missing",
+        ),
+        ("Invalid code verifier.", "code_verifier_invalid"),
+        (
+            "client_secret is missing. private-secret-sentinel",
+            "unspecified",
+        ),
+    ] {
+        let response = http::Response {
+            status: 400,
+            body: SensitiveBuffer(
+                serde_json::to_vec(&serde_json::json!({
+                    "error": "invalid_request", "error_description": description,
+                }))
+                .unwrap(),
+            ),
+        };
+        let (_, lines) = diagnostics::capture(|| diagnostics::Trace::new().response(&response));
+        assert_eq!(lines.len(), 1);
+        let event: Value = serde_json::from_str(&lines[0]).unwrap();
+        assert_eq!(event["provider_reason"], expected);
+        assert!(!lines[0].contains(description));
+        assert!(!lines[0].contains("private-secret-sentinel"));
+    }
+}
+
+#[cfg(windows)]
+#[test]
+fn acc02_sec08_callback_timeout_diagnostic_preserves_failure_and_no_secrets() {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .start_paused(true)
+        .build()
+        .unwrap();
+    let (result, lines) = diagnostics::capture(|| {
+        runtime.block_on(async {
+            let auth = begin_google_authorization("fixture.apps.googleusercontent.com", false)
+                .await
+                .unwrap();
+            let task = tokio::spawn(auth.complete());
+            tokio::task::yield_now().await;
+            tokio::time::advance(Duration::from_secs(301)).await;
+            task.await.unwrap()
+        })
+    });
+    assert!(matches!(result, Err(ErrorCode::AuthRequired)));
+    let events: Vec<Value> = lines
+        .iter()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    assert_eq!(events.len(), 3);
+    assert_eq!(events[1]["stage"], "callback_timeout");
+    assert_eq!(events[1]["outcome"], "failed");
+    assert_eq!(events[2]["stage"], "callback_wait");
+    assert!(!lines.join("").contains("fixture"));
 }
 #[test]
 fn acc02_pkce_rfc7636_vector_and_account_hash_stability() {
@@ -150,6 +328,26 @@ fn acc01_exchange_requires_refresh_read_scope_and_verified_stable_subject() {
     );
     assert!(normalize_scopes("openid email").is_err());
 }
+
+#[test]
+fn acc02_normalize_scopes_accepts_read_send_exact_grant() {
+    let scopes = normalize_scopes(&format!(
+        "openid https://www.googleapis.com/auth/userinfo.email {} {}",
+        hantong_contracts::google::GOOGLE_READ_SCOPE,
+        hantong_contracts::google_write::GOOGLE_SEND_SCOPE
+    ))
+    .unwrap();
+    assert_eq!(
+        scopes,
+        vec![
+            "openid".to_string(),
+            "email".to_string(),
+            hantong_contracts::google::GOOGLE_READ_SCOPE.to_string(),
+            hantong_contracts::google_write::GOOGLE_SEND_SCOPE.to_string(),
+        ]
+    );
+}
+
 #[test]
 fn sync02_gmail_fetch_uses_fixed_me_read_paths_and_encodes_page_data() {
     let fake = Fake::new(vec![
@@ -158,12 +356,15 @@ fn sync02_gmail_fetch_uses_fixed_me_read_paths_and_encodes_page_data() {
         serde_json::json!({"id":"abc","threadId":"def","internalDate":"123","labelIds":["INBOX"],"sizeEstimate":100,"snippet":"preview","payload":{"mimeType":"text/plain","headers":[{"name":"Subject","value":"Subject"},{"name":"From","value":"Sender"}],"body":{"size":5,"data":"aGVsbG8"}}}),
     ]);
     let binding = GoogleAccountBinding {
+        access_mode: hantong_contracts::google_write::GoogleAccessMode::ReadOnly,
         account_id: account_id("s").unwrap(),
         subject: "s".into(),
         client_id: "fixture.apps.googleusercontent.com".into(),
         credential_version: 1,
     };
     let request = GoogleSyncRequest {
+        message_id: None,
+        verify_attachments: false,
         account_id: binding.account_id.clone(),
         label_id: Some("INBOX".into()),
         page_token: Some("opaque&maxResults=999".into()),
@@ -189,8 +390,77 @@ fn sync02_gmail_fetch_uses_fixed_me_read_paths_and_encodes_page_data() {
 }
 
 #[test]
+fn sync02_targeted_mime_attachment_read_checks_digest_and_rejects_substitution() {
+    let bytes = "한통 첨부 테스트".as_bytes();
+    let attachment_id = "a".repeat(512);
+    let binding = GoogleAccountBinding {
+        access_mode: hantong_contracts::google_write::GoogleAccessMode::ReadOnly,
+        account_id: account_id("synthetic").unwrap(),
+        subject: "synthetic".into(),
+        client_id: "fixture.apps.googleusercontent.com".into(),
+        credential_version: 1,
+    };
+    let mut request = GoogleSyncRequest {
+        message_id: Some("wanted".into()),
+        verify_attachments: true,
+        account_id: binding.account_id.clone(),
+        label_id: None,
+        page_token: None,
+        limit: 1,
+        expected_version: 0,
+        operation_id: "op".into(),
+        idempotency_key: "key".into(),
+    };
+    for returned in ["wanted", "substituted"] {
+        let fake = Fake::new(vec![
+            serde_json::json!({"labels":[]}),
+            serde_json::json!({"id":returned,"threadId":"thread1","internalDate":"123","payload":{"mimeType":"multipart/mixed","parts":[{"mimeType":"text/plain","body":{"size":4,"data":crypto::base64url(b"body")}},{"mimeType":"text/plain","filename":"hantong-test.txt","body":{"size":23,"attachmentId":attachment_id}}]}}),
+            serde_json::json!({"size":23,"data":crypto::base64url(bytes)}),
+        ]);
+        let result = gmail::fetch(
+            &fake,
+            &binding,
+            &request,
+            &SecretText::from_string("synthetic-access".into()).unwrap(),
+            Instant::now() + Duration::from_secs(3),
+            &AtomicBool::new(false),
+        );
+        if returned == "wanted" {
+            let page = result.unwrap();
+            let checks = page.messages[0].attachment_checks.as_ref().unwrap();
+            assert_eq!(checks[0].filename, "hantong-test.txt");
+            assert_eq!(checks[0].size, 23);
+            assert_eq!(checks[0].sha256, crypto::sha256(bytes).unwrap());
+            assert_eq!(
+                fake.calls.lock().unwrap()[1].1,
+                "/gmail/v1/users/me/messages/wanted?format=full"
+            );
+            assert_eq!(fake.calls.lock().unwrap().len(), 3);
+        } else {
+            assert_eq!(result.err(), Some(ErrorCode::AuthRequired));
+        }
+    }
+    request.account_id = account_id("other").unwrap();
+    let fake = Fake::new(vec![]);
+    assert_eq!(
+        gmail::fetch(
+            &fake,
+            &binding,
+            &request,
+            &SecretText::from_string("synthetic-access".into()).unwrap(),
+            Instant::now() + Duration::from_secs(3),
+            &AtomicBool::new(false)
+        )
+        .err(),
+        Some(ErrorCode::ScopeDenied)
+    );
+    assert!(fake.calls.lock().unwrap().is_empty());
+}
+
+#[test]
 fn acc06_refresh_rechecks_subject_and_isolates_accounts() {
     let binding = GoogleAccountBinding {
+        access_mode: hantong_contracts::google_write::GoogleAccessMode::ReadOnly,
         account_id: account_id("subject-a").unwrap(),
         subject: "subject-a".into(),
         client_id: "fixture.apps.googleusercontent.com".into(),
@@ -215,6 +485,7 @@ fn acc06_refresh_rechecks_subject_and_isolates_accounts() {
                 &binding,
                 &refresh,
                 &scopes,
+                None,
                 Instant::now() + Duration::from_secs(1),
                 &AtomicBool::new(false)
             )
@@ -228,7 +499,7 @@ fn acc06_refresh_rechecks_subject_and_isolates_accounts() {
 fn sync02_unsupported_large_and_attachment_bodies_keep_metadata() {
     for payload in [
         serde_json::json!({"mimeType":"application/pdf","body":{"attachmentId":"a"}}),
-        serde_json::json!({"mimeType":"text/plain","body":{"size":65537,"data":""}}),
+        serde_json::json!({"mimeType":"text/plain","body":{"size":1048577,"data":""}}),
         serde_json::json!({"mimeType":"text/plain","filename":"attachment.txt","body":{"data":"aGVsbG8"}}),
     ] {
         let value =
@@ -244,6 +515,44 @@ fn sync02_unsupported_large_and_attachment_bodies_keep_metadata() {
 }
 
 #[test]
+fn sync02_large_visible_body_is_utf8_bounded_instead_of_rejected() {
+    for text in ["x".repeat(96000), "한".repeat(32000)] {
+        let value = serde_json::json!({"id":"a","threadId":"b","internalDate":"0","payload":{"mimeType":"text/plain","body":{"size":text.len(),"data":crypto::base64url(text.as_bytes())}}});
+        let message = gmail::parse_message(&value, false).unwrap();
+        let preview = message.body_text.as_deref().unwrap();
+        assert!(!preview.is_empty() && preview.len() <= 65536);
+        assert!(text.starts_with(preview));
+        assert!(message.body_truncated);
+        assert!(message.body_error.is_none());
+        message.validate().unwrap();
+    }
+}
+
+#[test]
+fn sync02_large_html_renders_before_output_budget_and_strips_active_content() {
+    let html = format!(
+        "<html><head><style>{}</style></head><body>hello<script>forbidden()</script><img src='https://tracking.invalid/x'></body></html>",
+        "x".repeat(96000)
+    );
+    let value = serde_json::json!({"id":"a","threadId":"b","internalDate":"0","payload":{"mimeType":"text/html","body":{"size":html.len(),"data":crypto::base64url(html.as_bytes())}}});
+    let message = gmail::parse_message(&value, false).unwrap();
+    assert_eq!(message.body_text.as_deref(), Some("hello"));
+    assert!(!message.body_truncated);
+    assert!(message.body_error.is_none());
+}
+
+#[test]
+fn sync02_multipart_preview_shares_one_visible_text_budget() {
+    let text = "x".repeat(40000);
+    let part = serde_json::json!({"mimeType":"text/plain","body":{"size":text.len(),"data":crypto::base64url(text.as_bytes())}});
+    let value = serde_json::json!({"id":"a","threadId":"b","internalDate":"0","payload":{"mimeType":"multipart/mixed","parts":[part.clone(),part]}});
+    let message = gmail::parse_message(&value, false).unwrap();
+    assert_eq!(message.body_text.as_ref().unwrap().len(), 65536);
+    assert!(message.body_truncated);
+    assert!(message.body_error.is_none());
+}
+
+#[test]
 fn sync02_large_detail_response_falls_back_to_metadata_without_losing_page() {
     let fake = Fake::new(vec![
         serde_json::json!({"labels":[]}),
@@ -252,12 +561,15 @@ fn sync02_large_detail_response_falls_back_to_metadata_without_losing_page() {
         serde_json::json!({"id":"a","threadId":"b","internalDate":"0","sizeEstimate":99999999,"payload":{"headers":[{"name":"Subject","value":"metadata retained"}]}}),
     ]);
     let binding = GoogleAccountBinding {
+        access_mode: hantong_contracts::google_write::GoogleAccessMode::ReadOnly,
         account_id: account_id("subject").unwrap(),
         subject: "subject".into(),
         client_id: "fixture.apps.googleusercontent.com".into(),
         credential_version: 1,
     };
     let request = GoogleSyncRequest {
+        message_id: None,
+        verify_attachments: false,
         account_id: binding.account_id.clone(),
         label_id: None,
         page_token: None,
@@ -366,6 +678,7 @@ fn sec01_google_generation_case_safe_slots_and_dpapi_binding() {
         std::env::temp_dir().join(format!("hantong-google-generation-{}", std::process::id()));
     let store = SecretStore::open(&root).unwrap();
     let identity = GoogleIdentity {
+        access_mode: hantong_contracts::google_write::GoogleAccessMode::ReadOnly,
         account_id: account_id("subject").unwrap(),
         subject: "subject".into(),
         email: "fixture@example.test".into(),
@@ -374,6 +687,7 @@ fn sec01_google_generation_case_safe_slots_and_dpapi_binding() {
     let pending = PendingGoogleCredential {
         identity,
         client_id: "fixture.apps.googleusercontent.com".into(),
+        client_secret: None,
         refresh: SecretText::from_string("refresh-fixture".into()).unwrap(),
     };
     let binding = pending.binding(1).unwrap();

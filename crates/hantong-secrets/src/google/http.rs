@@ -48,7 +48,7 @@ pub(super) fn success(status: u32) -> Result<(), ErrorCode> {
         _ => Err(ErrorCode::Offline),
     }
 }
-fn validate(r: &Request<'_>) -> Result<(), ErrorCode> {
+pub(super) fn validate(r: &Request<'_>) -> Result<(), ErrorCode> {
     check(r.deadline, r.cancel)?;
     if r.limit == 0
         || r.limit > 2 * 1024 * 1024
@@ -74,19 +74,93 @@ fn validate(r: &Request<'_>) -> Result<(), ErrorCode> {
                 || route
                     .strip_prefix("/gmail/v1/users/me/messages/")
                     .is_some_and(|id| {
-                        !id.is_empty()
-                            && id.len() <= 256
-                            && id
-                                .bytes()
-                                .all(|b| b.is_ascii_alphanumeric() || b"_-".contains(&b))
+                        provider_id(id)
+                            || id.split_once("/attachments/").is_some_and(
+                                |(message, attachment)| {
+                                    route == r.path
+                                        && provider_id(message)
+                                        && attachment_id(attachment)
+                                },
+                            )
                     });
-            read_path && r.post.is_none() && r.bearer.is_some()
+            r.bearer.is_some()
+                && match r.post {
+                    None => read_path,
+                    Some(body) => route == r.path && gmail_write_body(route, body),
+                }
         }
     };
     if valid {
         Ok(())
     } else {
         Err(ErrorCode::InvalidInput)
+    }
+}
+pub(super) fn provider_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= 256
+        && id
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"_-".contains(&b))
+}
+// Attachment IDs are opaque and can exceed the message-ID bound. Keep them
+// one bounded URL-safe component; the full request retains its 8192-byte cap.
+pub(super) const MAX_ATTACHMENT_ID_BYTES: usize = 4096;
+pub(super) fn attachment_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= MAX_ATTACHMENT_ID_BYTES
+        && id
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"_-".contains(&b))
+}
+fn gmail_write_body(route: &str, bytes: &[u8]) -> bool {
+    if bytes.len() > 4 * 1024 * 1024 {
+        return false;
+    }
+    let Ok(json) = SecretJson::parse(bytes) else {
+        return false;
+    };
+    let Some(object) = json.0.as_object() else {
+        return false;
+    };
+    let raw = |v: &Value| {
+        v.as_object().is_some_and(|v| {
+            v.len() == 1
+                && v.get("raw").and_then(Value::as_str).is_some_and(|s| {
+                    !s.is_empty()
+                        && s.bytes()
+                            .all(|b| b.is_ascii_alphanumeric() || b"_-".contains(&b))
+                })
+        })
+    };
+    match route {
+        "/gmail/v1/users/me/messages/send" => raw(&json.0),
+        "/gmail/v1/users/me/drafts" => object.len() == 1 && object.get("message").is_some_and(raw),
+        _ => route
+            .strip_prefix("/gmail/v1/users/me/messages/")
+            .and_then(|s| s.strip_suffix("/modify"))
+            .is_some_and(|id| {
+                if !provider_id(id) || object.len() != 2 {
+                    return false;
+                }
+                let list = |key| {
+                    object
+                        .get(key)
+                        .and_then(Value::as_array)
+                        .filter(|a| a.len() <= 100)
+                        .and_then(|a| {
+                            a.iter()
+                                .map(|v| v.as_str().map(str::to_owned))
+                                .collect::<Option<Vec<_>>>()
+                        })
+                };
+                match (list("addLabelIds"), list("removeLabelIds")) {
+                    (Some(add), Some(remove)) => {
+                        hantong_contracts::google_write::validate_label_delta(&add, &remove).is_ok()
+                    }
+                    _ => false,
+                }
+            }),
     }
 }
 pub(super) struct NativeTransport;
@@ -220,9 +294,11 @@ mod native {
             header.0.extend_from_slice(b"\r\n");
         }
         if r.post.is_some() {
-            header
-                .0
-                .extend_from_slice(b"Content-Type: application/x-www-form-urlencoded\r\n");
+            header.0.extend_from_slice(if r.host == Host::Gmail {
+                b"Content-Type: application/json; charset=UTF-8\r\n"
+            } else {
+                b"Content-Type: application/x-www-form-urlencoded\r\n"
+            });
         }
         let wide_header = SecretWide(
             header

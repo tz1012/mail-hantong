@@ -8,6 +8,25 @@ use hantong_contracts::{
 use serde_json::{Value, json};
 
 pub fn parse(request: &RpcRequest) -> Result<RegistrationCommand, ErrorCode> {
+    if request.method == "registration.google_readonly.request" {
+        let p = request.params.as_object().ok_or(ErrorCode::InvalidInput)?;
+        if p.len() != 2 {
+            return Err(ErrorCode::InvalidInput);
+        }
+        let version = p
+            .get("protocol_version")
+            .and_then(Value::as_u64)
+            .ok_or(ErrorCode::InvalidInput)?;
+        if version != 1 {
+            return Err(ErrorCode::VersionMismatch);
+        }
+        let account = hantong_contracts::registration::GoogleReadAccount::parse(
+            p.get("account_id")
+                .and_then(Value::as_str)
+                .ok_or(ErrorCode::InvalidInput)?,
+        )?;
+        return Ok(RegistrationCommand::RequestGoogleReadOnly(account));
+    }
     let mcp = request.method.starts_with("registration.mcp.");
     let (status, gui) = match request.method.as_str() {
         "registration.mcp.request" => (false, false),
@@ -75,6 +94,49 @@ mod tests {
             method: method.into(),
             params,
         }
+    }
+    #[test]
+    fn sec03_google_readonly_wire_rejects_authority_other_accounts_and_duplicate_fields() {
+        let id = format!("google_{}", "1a".repeat(32));
+        let account = hantong_contracts::registration::GoogleReadAccount::parse(&id).unwrap();
+        assert_eq!(
+            parse(&request(
+                "registration.google_readonly.request",
+                json!({"protocol_version":1,"account_id":id})
+            )),
+            Ok(RegistrationCommand::RequestGoogleReadOnly(account))
+        );
+        assert!(
+            !format!("{:?}", RegistrationCommand::RequestGoogleReadOnly(account)).contains(&id)
+        );
+        for params in [
+            json!({"protocol_version":1}),
+            json!({"protocol_version":1.0,"account_id":id}),
+            json!({"protocol_version":1,"account_id":[id]}),
+            json!({"protocol_version":1,"account_id":"../default"}),
+            json!({"protocol_version":1,"account_id":id,"tools":["mail.send.execute"]}),
+            json!({"protocol_version":1,"account_id":id,"approved":true}),
+        ] {
+            assert_eq!(
+                parse(&request("registration.google_readonly.request", params)),
+                Err(ErrorCode::InvalidInput)
+            );
+        }
+        assert_eq!(
+            parse(&request(
+                "registration.google_readonly.request",
+                json!({"protocol_version":2,"account_id":id})
+            )),
+            Err(ErrorCode::VersionMismatch)
+        );
+        let clean=serde_json::to_string(&json!({"jsonrpc":"2.0","id":"r","method":"registration.google_readonly.request","params":{"protocol_version":1,"account_id":id}})).unwrap();
+        let duplicated = clean.replace(
+            "\"protocol_version\":1",
+            "\"protocol_version\":1,\"protocol_version\":1",
+        );
+        let mut frame = (duplicated.len() as u32).to_le_bytes().to_vec();
+        frame.extend(duplicated.as_bytes());
+        assert_eq!(crate::decode_request(&frame), Err(ErrorCode::InvalidInput));
     }
     #[test]
     fn sec03_gui_registration_routes_fixed_kind_and_rejects_authority_fields() {

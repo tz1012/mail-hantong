@@ -12,6 +12,28 @@ use hantong_platform::{
 };
 use tokio::io::{AsyncRead, AsyncWrite};
 
+// Fixed stage names only: no profile bytes, paths, identities or key material.
+#[derive(Clone, Copy)]
+enum AuthStage {
+    ProfileLoad,
+    ProfileParse,
+    ProofPrepare,
+    Handshake,
+}
+impl AuthStage {
+    fn failure_line(self) -> &'static str {
+        match self {
+            Self::ProfileLoad => "hantong_auth stage=profile_load outcome=failed",
+            Self::ProfileParse => "hantong_auth stage=profile_parse outcome=failed",
+            Self::ProofPrepare => "hantong_auth stage=proof_prepare outcome=failed",
+            Self::Handshake => "hantong_auth stage=handshake outcome=failed",
+        }
+    }
+}
+fn diagnostic_step<T>(stage: AuthStage, result: Result<T, ErrorCode>) -> Result<T, ErrorCode> {
+    result.inspect_err(|_| eprintln!("{}", stage.failure_line()))
+}
+
 /// One mutually authenticated connection. The pinned file/ancestor handles stay
 /// alive until the one protected exchange completes or this value is dropped.
 pub struct AuthenticatedDefaultProfile<S> {
@@ -102,12 +124,18 @@ async fn authenticate_profile(
     selected: ProfileSelector,
     app_read: Option<AppReadTool>,
 ) -> Result<AuthenticatedDefaultProfile<impl AsyncRead + AsyncWrite + Unpin>, ErrorCode> {
-    let loaded = match selected {
-        ProfileSelector::Default => hantong_platform::load_default_client_profile()?,
-        ProfileSelector::Gui => hantong_platform::load_gui_client_profile()?,
-        ProfileSelector::Mcp => hantong_platform::load_mcp_client_profile()?,
-    };
-    let profile = parse_selected_profile(loaded.bytes(), selected)?;
+    let loaded = diagnostic_step(
+        AuthStage::ProfileLoad,
+        match selected {
+            ProfileSelector::Default => hantong_platform::load_default_client_profile(),
+            ProfileSelector::Gui => hantong_platform::load_gui_client_profile(),
+            ProfileSelector::Mcp => hantong_platform::load_mcp_client_profile(),
+        },
+    )?;
+    let profile = diagnostic_step(
+        AuthStage::ProfileParse,
+        parse_selected_profile(loaded.bytes(), selected),
+    )?;
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_err(|_| ErrorCode::AuthRequired)?
@@ -115,23 +143,27 @@ async fn authenticate_profile(
         .try_into()
         .map_err(|_| ErrorCode::AuthRequired)?;
     let pending = match (selected, app_read) {
-        (ProfileSelector::Default, Some(tool)) => prepare_app_profile(&profile, tool, now)?,
-        (ProfileSelector::Default, None) => prepare_profile(&profile, now)?,
+        (ProfileSelector::Default, Some(tool)) => prepare_app_profile(&profile, tool, now),
+        (ProfileSelector::Default, None) => prepare_profile(&profile, now),
         (ProfileSelector::Mcp, None) => {
             require_selector(&profile, ProfileSelector::Mcp)?;
-            prepare_profile_with_scope(&profile, profile.scope().clone(), now)?
+            prepare_profile_with_scope(&profile, profile.scope().clone(), now)
         }
         (ProfileSelector::Mcp, Some(_)) => return Err(ErrorCode::ScopeDenied),
-        (ProfileSelector::Gui, None) => prepare_gui_profile(&profile, now)?,
+        (ProfileSelector::Gui, None) => prepare_gui_profile(&profile, now),
         (ProfileSelector::Gui, Some(_)) => return Err(ErrorCode::ScopeDenied),
     };
+    let pending = diagnostic_step(AuthStage::ProofPrepare, pending)?;
     let scope = pending.requested_scope().clone();
     let id = match selected {
         ProfileSelector::Default => "default-profile-auth-1",
         ProfileSelector::Gui => "gui-profile-auth-1",
         ProfileSelector::Mcp => "mcp-profile-auth-1",
     };
-    let client = authenticated_wire::authenticate(pending, id).await?;
+    let client = diagnostic_step(
+        AuthStage::Handshake,
+        authenticated_wire::authenticate(pending, id).await,
+    )?;
     Ok(AuthenticatedDefaultProfile {
         client,
         loaded,
@@ -245,6 +277,33 @@ mod tests {
     use super::*;
     use hantong_contracts::auth::{AuthTranscript, SignerRole};
     use hantong_platform::{current_peer_context, random_nonce, sha256, verify_signature};
+
+    #[test]
+    fn sec03_auth_stage_diagnostics_are_fixed_and_preserve_denial() {
+        let stages = [
+            AuthStage::ProfileLoad,
+            AuthStage::ProfileParse,
+            AuthStage::ProofPrepare,
+            AuthStage::Handshake,
+        ];
+        let expected = [
+            "profile_load",
+            "profile_parse",
+            "proof_prepare",
+            "handshake",
+        ];
+        for (stage, name) in stages.into_iter().zip(expected) {
+            assert_eq!(
+                stage.failure_line(),
+                format!("hantong_auth stage={name} outcome=failed")
+            );
+            assert_eq!(
+                diagnostic_step::<()>(stage, Err(ErrorCode::ScopeDenied)),
+                Err(ErrorCode::ScopeDenied)
+            );
+            assert_eq!(diagnostic_step(stage, Ok(7)), Ok(7));
+        }
+    }
 
     struct OwnedKey(Option<ClientSigningKey>);
     impl OwnedKey {

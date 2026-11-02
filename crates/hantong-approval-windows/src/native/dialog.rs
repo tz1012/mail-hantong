@@ -16,9 +16,11 @@ pub(super) enum DialogReview {
     Registration(RegistrationReview),
     Imap(AccountSetupReview),
     ScopeRefresh(ScopeRefreshReview),
-    Send(hantong_approval::SendReview),
+    Send(Box<hantong_approval::SendReview>),
+    GoogleMutation(Box<hantong_approval::GoogleMutationReview>),
     Smtp(hantong_approval::SmtpSetupReview),
     Google(hantong_approval::GoogleSetupReview),
+    GoogleClient(hantong_approval::GoogleClientReview),
 }
 impl ReviewSnapshot for DialogReview {
     fn created_at_utc_ms(&self) -> i64 {
@@ -27,7 +29,9 @@ impl ReviewSnapshot for DialogReview {
             Self::Imap(review) => review.created_at_utc_ms(),
             Self::ScopeRefresh(review) => review.created_at_utc_ms(),
             Self::Send(review) => review.created_at_utc_ms(),
+            Self::GoogleMutation(review) => review.created_at_utc_ms(),
             Self::Smtp(review) => review.created_at_utc_ms(),
+            Self::GoogleClient(review) => review.created_at_utc_ms(),
             Self::Google(review) => review.created_at_utc_ms,
         }
     }
@@ -37,7 +41,9 @@ impl ReviewSnapshot for DialogReview {
             Self::Imap(review) => review.expires_at_utc_ms(),
             Self::ScopeRefresh(review) => review.expires_at_utc_ms(),
             Self::Send(review) => review.expires_at_utc_ms(),
+            Self::GoogleMutation(review) => review.expires_at_utc_ms(),
             Self::Smtp(review) => review.expires_at_utc_ms(),
+            Self::GoogleClient(review) => review.expires_at_utc_ms(),
             Self::Google(review) => review.expires_at_utc_ms,
         }
     }
@@ -53,10 +59,14 @@ impl DialogReview {
         match self {
             Self::Imap(v) => Some(v),
             Self::Smtp(v) => Some(v.capture_review()),
+            Self::GoogleClient(v) => Some(v.capture_review()),
             _ => None,
         }
     }
 
+    pub(super) fn is_google_mutation(&self) -> bool {
+        matches!(self, Self::GoogleMutation(_))
+    }
     pub(super) fn is_send(&self) -> bool {
         matches!(self, Self::Send(_))
     }
@@ -67,7 +77,7 @@ impl DialogReview {
         matches!(self, Self::Registration(review) if review.client_kind() == hantong_contracts::client::ClientKind::Gui)
     }
     pub(super) fn is_setup(&self) -> bool {
-        matches!(self, Self::Imap(_) | Self::Smtp(_))
+        matches!(self, Self::Imap(_) | Self::Smtp(_) | Self::GoogleClient(_))
     }
     pub(super) fn is_scope_refresh(&self) -> bool {
         matches!(self, Self::ScopeRefresh(_))
@@ -81,7 +91,9 @@ impl DialogReview {
             Self::Imap(review) => Ok(setup_summary(review, language)),
             Self::ScopeRefresh(review) => Ok(review.summary(language)),
             Self::Send(review) => Ok(review.summary(language)),
+            Self::GoogleMutation(review) => Ok(review.summary(language)),
             Self::Smtp(review) => Ok(review.summary(language)),
+            Self::GoogleClient(review) => Ok(review.summary(language)),
             Self::Google(review) => Ok(review.summary(language)),
         }
     }
@@ -91,9 +103,11 @@ pub(super) enum DialogBinding {
     Registration(CapturedReview),
     Imap(CapturedReview<AccountSetupReview>),
     ScopeRefresh(CapturedReview<ScopeRefreshReview>),
-    Send(CapturedReview<hantong_approval::SendReview>),
+    Send(Box<CapturedReview<hantong_approval::SendReview>>),
+    GoogleMutation(Box<CapturedReview<hantong_approval::GoogleMutationReview>>),
     Smtp(CapturedReview<hantong_approval::SmtpSetupReview>),
     Google(CapturedReview<hantong_approval::GoogleSetupReview>),
+    GoogleClient(CapturedReview<hantong_approval::GoogleClientReview>),
 }
 impl DialogBinding {
     pub(super) fn review(&self) -> DialogReview {
@@ -101,8 +115,12 @@ impl DialogBinding {
             Self::Registration(binding) => DialogReview::Registration(binding.review.clone()),
             Self::Imap(binding) => DialogReview::Imap(binding.review.clone()),
             Self::ScopeRefresh(binding) => DialogReview::ScopeRefresh(binding.review.clone()),
-            Self::Send(binding) => DialogReview::Send(binding.review.clone()),
+            Self::Send(binding) => DialogReview::Send(Box::new(binding.review.clone())),
+            Self::GoogleMutation(binding) => {
+                DialogReview::GoogleMutation(Box::new(binding.review.clone()))
+            }
             Self::Smtp(binding) => DialogReview::Smtp(binding.review.clone()),
+            Self::GoogleClient(binding) => DialogReview::GoogleClient(binding.review.clone()),
             Self::Google(binding) => DialogReview::Google(binding.review.clone()),
         }
     }
@@ -112,7 +130,9 @@ impl DialogBinding {
             Self::Imap(binding) => binding.started,
             Self::ScopeRefresh(binding) => binding.started,
             Self::Send(binding) => binding.started,
+            Self::GoogleMutation(binding) => binding.started,
             Self::Smtp(binding) => binding.started,
+            Self::GoogleClient(binding) => binding.started,
             Self::Google(binding) => binding.started,
         }
     }
@@ -126,7 +146,13 @@ impl DialogBinding {
                 binding.validate(review)
             }
             (Self::Send(binding), DialogReview::Send(review)) => binding.validate(review),
+            (Self::GoogleMutation(binding), DialogReview::GoogleMutation(review)) => {
+                binding.validate(review)
+            }
             (Self::Smtp(binding), DialogReview::Smtp(review)) => binding.validate(review),
+            (Self::GoogleClient(binding), DialogReview::GoogleClient(review)) => {
+                binding.validate(review)
+            }
             (Self::Google(binding), DialogReview::Google(review)) => binding.validate(review),
             _ => Err(ErrorCode::ScopeDenied),
         }
@@ -149,9 +175,15 @@ impl DialogBinding {
             (Self::Send(binding), None) => binding
                 .into_verified()
                 .map(|value| DialogVerified::Send(Box::new(value))),
+            (Self::GoogleMutation(binding), None) => binding
+                .into_verified()
+                .map(|value| DialogVerified::GoogleMutation(Box::new(value))),
             (Self::Smtp(binding), Some(pending)) => binding
                 .into_verified_smtp(pending)
                 .map(|v| DialogVerified::Smtp(Box::new(v))),
+            (Self::GoogleClient(binding), Some(pending)) => binding
+                .into_verified_google_client(pending)
+                .map(|v| DialogVerified::GoogleClient(Box::new(v))),
             (Self::Google(binding), None) => binding
                 .into_verified_google()
                 .map(|v| DialogVerified::Google(Box::new(v))),
@@ -164,8 +196,10 @@ pub(super) enum DialogVerified {
     Imap(Box<VerifiedImapSetup>),
     ScopeRefresh(Box<VerifiedScopeRefresh>),
     Send(Box<crate::VerifiedSend>),
+    GoogleMutation(Box<crate::VerifiedGoogleMutation>),
     Smtp(Box<crate::VerifiedSmtpSetup>),
     Google(Box<crate::VerifiedGoogleSetup>),
+    GoogleClient(Box<crate::VerifiedGoogleClient>),
 }
 
 #[cfg(test)]

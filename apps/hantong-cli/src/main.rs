@@ -14,11 +14,15 @@ use hantong_contracts::scope_refresh::{
 use std::env;
 use std::io::{self, Write};
 mod ai;
+mod core_start;
 mod diagnostics;
 mod google;
+mod google_mutation;
+mod guided_compose;
 mod initial_sync;
 mod mail_send;
 mod message_body;
+mod onboarding;
 mod search;
 mod smtp_setup;
 mod sync;
@@ -686,6 +690,10 @@ fn run_with_mail_actions(
             | "--to"
             | "--subject"
             | "--body-file"
+            | "--attachment-file"
+            | "--attachment-type"
+            | "--add-labels"
+            | "--remove-labels"
             | "--draft-id"
             | "--payload-hash"
             | "--expected-version"
@@ -716,12 +724,16 @@ fn run_with_mail_actions(
                 };
                 folder_options.push((arg, value));
             }
-            "--client-id"
+            "--resume-request"
+            | "--continue-account"
+            | "--client-id"
             | "--reauthorize-account"
             | "--force-consent"
+            | "--access-mode"
             | "--request-id"
             | "--label-id"
             | "--page-token"
+            | "--verify-attachments"
             | "--query"
             | "--after" => {
                 let Some(value) = it.next() else {
@@ -766,6 +778,21 @@ fn run_with_mail_actions(
     if (want_help || want_version) && !command.is_empty() {
         return emit_error(ErrorCode::InvalidInput, lang, json);
     }
+    use std::io::IsTerminal;
+    let terminal = std::io::stdin().is_terminal() && std::io::stdout().is_terminal();
+    let explicit_init = matches!(command.as_slice(), [action] if action == "init");
+    if explicit_init || (command.is_empty() && terminal && !want_help && !want_version) {
+        if !setup_options.is_empty() || !folder_options.is_empty() || seen_client {
+            return emit_error(ErrorCode::InvalidInput, lang, json);
+        }
+        if json || seen_no_input || !terminal {
+            return emit_error(ErrorCode::HumanStepRequired, lang, json);
+        }
+        return match core_start::ensure_started().and_then(|()| onboarding::run(lang)) {
+            Ok(()) => 0,
+            Err(code) => emit_error(code, lang, false),
+        };
+    }
     let mut google_options = setup_options.clone();
     google_options.extend(folder_options.iter().cloned());
     if let Some(code) = google::try_run(&command, &google_options, lang, json, seen_no_input) {
@@ -781,7 +808,16 @@ fn run_with_mail_actions(
     if !folder_options.is_empty()
         && !matches!(
             command.first().map(String::as_str),
-            Some("folders" | "sync" | "search" | "read" | "draft" | "send" | "diagnostics")
+            Some(
+                "folders"
+                    | "sync"
+                    | "search"
+                    | "read"
+                    | "draft"
+                    | "send"
+                    | "diagnostics"
+                    | "change"
+            )
         )
     {
         return emit_error(ErrorCode::InvalidInput, lang, json);
@@ -807,6 +843,9 @@ fn run_with_mail_actions(
     }
     let mut resolve_lang =
         || resolve_display_language(lang, seen_lang, json, &mut display_settings);
+    if command.first().is_some_and(|v| v == "change") {
+        return google_mutation::run(&command, &folder_options, lang, json, &mut resolve_lang);
+    }
     if command.first().is_some_and(|v| v == "diagnostics") {
         return diagnostics::run(&command, &folder_options, lang, json, &mut resolve_lang);
     }
@@ -1109,6 +1148,11 @@ fn folder_refresh_human(
 
 fn registration_command(command: &[String]) -> Result<Option<RegistrationCommand>, ErrorCode> {
     match command {
+        [a, b, account] if a == "clients" && b == "register-readonly" => {
+            Ok(Some(RegistrationCommand::RequestGoogleReadOnly(
+                hantong_contracts::registration::GoogleReadAccount::parse(account)?,
+            )))
+        }
         [a, b] if a == "clients" && b == "register" => Ok(Some(RegistrationCommand::Request)),
         [a, b, id] if a == "clients" && b == "status" => {
             let id = hantong_contracts::wire_hex::decode_fixed::<32>(id)?;
@@ -1124,6 +1168,28 @@ fn registration_command(command: &[String]) -> Result<Option<RegistrationCommand
 
 fn scope_refresh_command(command: &[String]) -> Result<Option<ScopeRefreshCommand>, ErrorCode> {
     match command {
+        [a, b, accounts] if a == "clients" && b == "refresh-gmail-send" => {
+            let accounts = accounts.split(',').map(str::to_owned).collect::<Vec<_>>();
+            Ok(Some(ScopeRefreshCommand::RequestGoogleSend(
+                hantong_contracts::scope_refresh::GoogleSendAccounts::parse(&accounts)?,
+            )))
+        }
+        [a, b, accounts] if a == "clients" && b == "refresh-gmail-changes" => {
+            let accounts = accounts.split(',').map(str::to_owned).collect::<Vec<_>>();
+            Ok(Some(ScopeRefreshCommand::RequestGoogleChanges(
+                hantong_contracts::scope_refresh::GoogleSendAccounts::parse(&accounts)?,
+            )))
+        }
+        [a, b, account] if a == "clients" && b == "refresh-readonly" => {
+            Ok(Some(ScopeRefreshCommand::RequestGoogleReadOnly(
+                hantong_contracts::registration::GoogleReadAccount::parse(account)?,
+            )))
+        }
+        [a, b, account] if a == "clients" && b == "add-readonly" => {
+            Ok(Some(ScopeRefreshCommand::AddGoogleReadOnly(
+                hantong_contracts::registration::GoogleReadAccount::parse(account)?,
+            )))
+        }
         [a, b] if a == "clients" && b == "refresh" => Ok(Some(ScopeRefreshCommand::Request)),
         [a, b, id] if a == "clients" && b == "refresh-status" => {
             let id = hantong_contracts::wire_hex::decode_fixed::<32>(id)?;
@@ -1304,6 +1370,58 @@ fn main() {
 #[cfg(test)]
 mod tests {
     #[test]
+    fn sec03_explicit_readonly_cli_routes_one_account_and_rejects_authority_extensions() {
+        let id = format!("google_{}", "1a".repeat(32));
+        let account = hantong_contracts::registration::GoogleReadAccount::parse(&id).unwrap();
+        let calls = std::cell::Cell::new(0);
+        assert_eq!(
+            run_with_registration(
+                ["--json", "clients", "register-readonly", &id].map(String::from),
+                |command| {
+                    calls.set(calls.get() + 1);
+                    assert_eq!(command, RegistrationCommand::RequestGoogleReadOnly(account));
+                    Err(ErrorCode::HumanStepRequired)
+                }
+            ),
+            24
+        );
+        assert_eq!(
+            run_with_boundaries_and_scope_for_test(
+                ["--json", "clients", "refresh-readonly", &id].map(String::from),
+                |command| {
+                    calls.set(calls.get() + 1);
+                    assert_eq!(command, ScopeRefreshCommand::RequestGoogleReadOnly(account));
+                    Err(ErrorCode::HumanStepRequired)
+                }
+            ),
+            24
+        );
+        assert_eq!(calls.get(), 2);
+        for verb in ["register-readonly", "refresh-readonly"] {
+            for args in [
+                vec!["clients", verb],
+                vec!["clients", verb, "../default"],
+                vec!["clients", verb, &id, &id],
+                vec!["clients", verb, &id, "--approve"],
+                vec!["clients", verb, &id, "--tools", "mail.send.execute"],
+            ] {
+                assert_eq!(
+                    run_with_boundaries_and_scope_for_test(
+                        args.iter().map(|s| s.to_string()),
+                        |_| panic!("invalid request reached scope boundary")
+                    ),
+                    2
+                );
+                assert_eq!(
+                    run_with_registration(args.into_iter().map(String::from), |_| panic!(
+                        "invalid request reached registration boundary"
+                    )),
+                    2
+                );
+            }
+        }
+    }
+    #[test]
     fn metadata_header_escape_is_terminal_safe_and_preserves_invalid_bytes() {
         assert_eq!(
             super::escape_metadata_bytes(b"a\\b\r\n\x00\xff"),
@@ -1327,7 +1445,7 @@ mod tests {
         assert!(super::help(super::Lang::Ko).contains("search는"));
         for lang in [super::Lang::En, super::Lang::Ko] {
             let help = super::help(lang);
-            assert!(help.contains("mail-hantong-core run"));
+            assert!(help.contains("hantong init"));
             assert!(help.contains("folders refresh-status"));
             assert!(help.contains("CLI-LAUNCH.md"));
         }

@@ -268,6 +268,29 @@ fn cli04_no_input_does_not_wait_or_echo_untrusted_input() {
 }
 
 #[test]
+fn cli04_init_rejects_headless_before_core_or_account_actions() {
+    for args in [
+        vec!["init"],
+        vec!["init", "--json"],
+        vec!["init", "--no-input"],
+        vec!["init", "--lang", "ko", "--json"],
+    ] {
+        let output = cli(&args);
+        assert_eq!(
+            output.status.code(),
+            Some(hantong_contracts::ErrorCode::HumanStepRequired.exit_code())
+        );
+        assert!(!String::from_utf8_lossy(&output.stdout).contains("google_"));
+    }
+    for args in [
+        vec!["init", "--client", "default", "--json"],
+        vec!["init", "--account", "synthetic", "--json"],
+    ] {
+        assert_eq!(cli(&args).status.code(), Some(2));
+    }
+}
+
+#[test]
 fn cli15_client_name_cannot_authenticate_and_unknown_options_are_invalid() {
     let spoof = cli(&["--client", "admin", "accounts", "list"]);
     assert_eq!(spoof.status.code(), Some(2));
@@ -276,4 +299,18 @@ fn cli15_client_name_cannot_authenticate_and_unknown_options_are_invalid() {
     assert_eq!(unknown.status.code(), Some(2));
     let missing = cli(&["--client", "--json", "accounts", "list"]);
     assert_eq!(missing.status.code(), Some(2));
+}
+
+#[test]
+fn acc02_resume_cli_options_reach_noninteractive_guard_without_profiles() {
+    let account = format!("google_{}", "a".repeat(64));
+    let request = "01".repeat(32);
+    for (key, value) in [
+        ("--continue-account", account),
+        ("--resume-request", request),
+    ] {
+        let output = cli(&["--json", "--no-input", "login", "google", key, &value]);
+        assert!(String::from_utf8_lossy(&output.stdout).contains("HUMAN_STEP_REQUIRED"));
+        assert!(!output.status.success());
+    }
 }

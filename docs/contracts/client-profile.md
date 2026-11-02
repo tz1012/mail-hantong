@@ -1,5 +1,8 @@
 # 로컬 CLI 공개 프로필 v1
 
+
+> 2026-11-02: [Google personal CLI extension](google-personal-cli.md) supersedes native-only account/CLI setup clauses only for the bounded guided personal flow. Live verified OAuth authorizes its fixed feature configuration; feature selection alone does not. Per-send/mutation approval and advanced native setup remain. Human security review required.
+
 후속 적용: 로컬 메타데이터 공개를 위한 M 집합과 v4 갱신은 [client-metadata-scope-refresh.md](client-metadata-scope-refresh.md)가 정의한다. 최초 등록은 L을 유지하고 과거 L/F/U 프로필·v1~v3 결정의 bytes와 승인 범위를 보존한다. 아래 이전 버전의 기록은 해당 역사적 경로에 적용한다.
 
 상태: 2026-10-30 등록 UI 연결을 위한 구현 계약. 사람 보안 검토 필요. 이 문서는 데이터 형식과 배포 순서를 정하며 프로필을 파싱한 것만으로 권한을 만들지 않는다.

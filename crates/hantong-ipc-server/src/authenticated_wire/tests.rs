@@ -410,13 +410,15 @@ pub(crate) async fn run_fixture_cases() {
         let server = async {
             let connection = listener.accept().await.unwrap();
             let calls = Cell::new(0);
-            let result = dispatch_connection_with_setup(
+            let result = dispatch_connection_with_setup_context(
                 connection,
                 server_key,
                 instance,
                 &mut |_| panic!("scope refresh cannot enter authentication lookup"),
                 &mut |_, _| panic!("scope refresh cannot enter protected mail executor"),
-                &mut |command| {
+                &mut |context, command| {
+                    let observed = hantong_platform::current_peer_context().unwrap();
+                    assert_eq!(context.peer(), &observed);
                     calls.set(calls.get() + 1);
                     match (scenario, command) {
                         ("request", SetupCommand::ScopeRefresh(ScopeRefreshCommand::Request)) => {}

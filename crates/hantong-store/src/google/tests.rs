@@ -46,6 +46,8 @@ impl Fixture {
     }
     fn request(&self, index: usize, op: &str, version: u64) -> GoogleSyncRequest {
         GoogleSyncRequest {
+            message_id: None,
+            verify_attachments: false,
             account_id: self.identities[index].account_id.clone(),
             label_id: None,
             page_token: None,
@@ -116,6 +118,7 @@ impl Drop for Fixture {
 }
 fn identity(subject: &str, email: &str) -> GoogleIdentity {
     GoogleIdentity {
+        access_mode: hantong_contracts::google_write::GoogleAccessMode::ReadOnly,
         account_id: format!(
             "google_{}",
             hantong_contracts::wire_hex::encode(
@@ -129,6 +132,7 @@ fn identity(subject: &str, email: &str) -> GoogleIdentity {
 }
 fn message(id: &str, date: i64) -> GoogleMessage {
     GoogleMessage {
+        attachment_checks: None,
         id: id.into(),
         thread_id: "thread1".into(),
         internal_date_ms: date,
@@ -620,6 +624,8 @@ fn acc03_acc04_acc05_acc06_google_activation_is_readonly_and_never_expands_clien
     assert!(scope.contains(&GOOGLE_READ_SCOPE.to_owned()));
     assert!(!scope.contains(&"https://mail.google.com/".to_owned()));
     let request = GoogleSyncRequest {
+        message_id: None,
+        verify_attachments: false,
         account_id: next.account_id.clone(),
         label_id: None,
         page_token: None,
@@ -645,4 +651,42 @@ fn acc03_acc04_acc05_acc06_google_activation_is_readonly_and_never_expands_clien
         Err(ErrorCode::ScopeDenied)
     );
     assert_eq!(f.count("google_sync_requests"), 0);
+}
+
+mod write_ledger {
+    include!("write_ledger_tests.rs");
+}
+
+#[test]
+fn sync02_targeted_request_roundtrip_and_idempotency_bind_exact_message() {
+    let f = Fixture::new(1);
+    let mut request = f.request(0, "targeted", 0);
+    request.message_id = Some("message1".into());
+    request.limit = 1;
+    let receipt = f.admit(41, 0, &request);
+    let pending = f.s().pending_google_sync(receipt.execution_id).unwrap();
+    assert_eq!(pending.request.message_id.as_deref(), Some("message1"));
+    let mut changed = request.clone();
+    changed.message_id = Some("message2".into());
+    f.begin(42, 0);
+    assert!(
+        f.s()
+            .admit_google_sync([42; 32], [9; 16], 1, &changed)
+            .is_err()
+    );
+    f.s().claim_google_sync(receipt.execution_id).unwrap();
+    let mut page = f.page(0);
+    page.messages = vec![message("substituted", 200)];
+    page.next_page_token = None;
+    let result = f
+        .s()
+        .complete_google_sync(receipt.execution_id, &page)
+        .unwrap();
+    assert_eq!(result.state, "failed");
+    assert_eq!(result.error_code, Some(ErrorCode::InvalidInput));
+    assert_eq!(f.count("google_messages"), 0);
+}
+
+mod mutation_tests {
+    include!("mutation_tests.rs");
 }

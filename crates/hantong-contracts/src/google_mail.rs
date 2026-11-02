@@ -136,6 +136,11 @@ impl GoogleMailRequest {
             }
             ("mail.sync.page", "gmail_page") => {
                 let request = GoogleSyncRequest {
+                    message_id: optional("message_id", 128)?,
+                    verify_attachments: match p.get("verify_attachments") {
+                        None => false,
+                        Some(v) => v.as_bool().ok_or(ErrorCode::InvalidInput)?,
+                    },
                     account_id,
                     label_id: optional("label_id", 128)?,
                     page_token: optional("page_token", 2048)?,
@@ -153,6 +158,8 @@ impl GoogleMailRequest {
                     Self::Sync(request),
                     vec![
                         "mode",
+                        "verify_attachments",
+                        "message_id",
                         "account_id",
                         "label_id",
                         "page_token",
@@ -174,6 +181,21 @@ impl GoogleMailRequest {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn sync02_targeted_gmail_read_rejects_paging_injection_and_multiple_items() {
+        let valid = serde_json::json!({"mode":"gmail_page","account_id":format!("google_{}","a".repeat(64)),"message_id":"message1","limit":1,"verify_attachments":true,"expected_version":0,"operation_id":"op","idempotency_key":"key"});
+        assert!(GoogleMailRequest::parse("mail.sync.page", valid.as_object().unwrap()).is_ok());
+        for (key, value) in [
+            ("message_id", serde_json::json!("../other")),
+            ("limit", serde_json::json!(2)),
+            ("label_id", serde_json::json!("INBOX")),
+            ("page_token", serde_json::json!("next")),
+        ] {
+            let mut bad = valid.clone();
+            bad[key] = value;
+            assert!(GoogleMailRequest::parse("mail.sync.page", bad.as_object().unwrap()).is_err());
+        }
+    }
     #[test]
     fn acc03_gmail_modes_bind_explicit_account_and_never_take_approval_or_tokens() {
         let mut v = serde_json::json!({"mode":"gmail_labels","account_id":format!("google_{}","a".repeat(64))});

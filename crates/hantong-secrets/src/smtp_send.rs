@@ -102,7 +102,7 @@ impl std::error::Error for SmtpSendError {}
 // Keep every wire line ASCII and bounded. Lettre owns SMTP dot stuffing;
 // callers must not insert DATA terminators or reuse this as a raw command API.
 #[cfg(any(windows, test))]
-fn base64(input: &[u8]) -> String {
+pub(crate) fn base64(input: &[u8]) -> String {
     const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = String::with_capacity(input.len().div_ceil(3) * 4);
     for chunk in input.chunks(3) {
@@ -126,7 +126,7 @@ fn base64(input: &[u8]) -> String {
 }
 
 #[cfg(any(windows, test))]
-fn rfc_date(seconds: u64) -> Result<String, SmtpSendError> {
+pub(crate) fn rfc_date(seconds: u64) -> Result<String, SmtpSendError> {
     let mut days = seconds / 86400;
     if days > 2932896 {
         return Err(SmtpSendError::InvalidEnvelope);

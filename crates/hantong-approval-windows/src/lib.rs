@@ -3,9 +3,10 @@
 
 //! Core-owned native user verification. Never a CLI/MCP dependency.
 
+use hantong_approval::GoogleClientReview;
 use hantong_approval::{
-    AccountSetupReview, GoogleSetupReview, RegistrationReview, ScopeRefreshReview, SendReview,
-    SmtpSetupReview,
+    AccountSetupReview, GoogleMutationReview, GoogleSetupReview, RegistrationReview,
+    ScopeRefreshReview, SendReview, SmtpSetupReview,
 };
 use hantong_contracts::ErrorCode;
 use hantong_domain::config::{Language, Theme};
@@ -30,6 +31,25 @@ pub struct PublishedProfile {
     _inner: profile_publication::Publication,
     #[cfg(not(windows))]
     _private: (),
+}
+
+/// Core startup guard for the fixed profile directories. This only creates
+/// absent product/profile directories with the protected ACL and retains
+/// handles through core lifetime; it never publishes a profile or issues an
+/// approval.
+pub struct PreparedProfileDirectories {
+    #[cfg(windows)]
+    _inner: profile_publication::DirectoryGuard,
+    #[cfg(not(windows))]
+    _private: (),
+}
+
+#[cfg(windows)]
+pub fn prepare_profile_directories(
+    directories: &hantong_platform::AppDirectories,
+) -> Result<PreparedProfileDirectories, ErrorCode> {
+    profile_publication::prepare_directories(&directories.profiles)
+        .map(|inner| PreparedProfileDirectories { _inner: inner })
 }
 
 impl fmt::Debug for PublishedProfile {
@@ -430,6 +450,104 @@ pub async fn review_smtp_setup(
     #[cfg(not(windows))]
     {
         let _ = (review, plan, language, theme);
+        Err(ErrorCode::CapabilityUnsupported)
+    }
+}
+
+/// Only the owned native review and Windows verification can create this value.
+pub struct VerifiedGoogleClient {
+    #[cfg(windows)]
+    binding: binding::CapturedReview<GoogleClientReview>,
+    #[cfg(windows)]
+    verified_at_utc_ms: i64,
+    #[cfg(windows)]
+    pending: hantong_secrets::PendingImapCredential,
+    #[cfg(not(windows))]
+    _private: (),
+}
+impl fmt::Debug for VerifiedGoogleClient {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("VerifiedGoogleClient(<redacted>)")
+    }
+}
+impl VerifiedGoogleClient {
+    pub fn consume(
+        self,
+        expected: &GoogleClientReview,
+    ) -> Result<hantong_secrets::google::GoogleClientSecret, ErrorCode> {
+        #[cfg(windows)]
+        {
+            self.binding.consume(expected, self.verified_at_utc_ms)?;
+            setup_binding::validate_pending(expected.capture_review(), &self.pending)?;
+            self.pending.into_google_client_secret(expected.client_id())
+        }
+        #[cfg(not(windows))]
+        {
+            let _ = expected;
+            Err(ErrorCode::CapabilityUnsupported)
+        }
+    }
+}
+pub async fn review_google_client(
+    review: GoogleClientReview,
+    plan: hantong_secrets::ImapPasswordCapturePlan,
+    language: Option<Language>,
+    theme: Theme,
+) -> Result<VerifiedGoogleClient, ErrorCode> {
+    #[cfg(windows)]
+    {
+        native::show_google_client(review, plan, language, theme).await
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (review, plan, language, theme);
+        Err(ErrorCode::CapabilityUnsupported)
+    }
+}
+
+/// Single-use result, constructible only by this module's owned OS verification.
+pub struct VerifiedGoogleMutation {
+    #[cfg(windows)]
+    binding: binding::CapturedReview<GoogleMutationReview>,
+    #[cfg(windows)]
+    verified_at_utc_ms: i64,
+    #[cfg(not(windows))]
+    _private: (),
+}
+impl fmt::Debug for VerifiedGoogleMutation {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("VerifiedGoogleMutation(<redacted>)")
+    }
+}
+impl VerifiedGoogleMutation {
+    pub fn consume(
+        self,
+        expected: &GoogleMutationReview,
+    ) -> Result<GoogleMutationReview, ErrorCode> {
+        #[cfg(windows)]
+        {
+            self.binding.consume(expected, self.verified_at_utc_ms)
+        }
+        #[cfg(not(windows))]
+        {
+            let _ = expected;
+            Err(ErrorCode::CapabilityUnsupported)
+        }
+    }
+}
+pub async fn review_google_mutation(
+    review: GoogleMutationReview,
+    language: Option<Language>,
+    theme: Theme,
+) -> Result<VerifiedGoogleMutation, ErrorCode> {
+    review.validate()?;
+    #[cfg(windows)]
+    {
+        native::show_google_mutation(review, language, theme).await
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (review, language, theme);
         Err(ErrorCode::CapabilityUnsupported)
     }
 }

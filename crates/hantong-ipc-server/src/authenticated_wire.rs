@@ -1,6 +1,6 @@
 //! Connection-owned JSON authentication exchange; no registration issuance.
 
-use crate::setup_dispatch::{SetupCommand, SetupReceipt};
+use crate::setup_dispatch::{SetupCommand, SetupReceipt, SetupRequestContext};
 use crate::{
     RpcRequest,
     auth::{AuthenticatedConnection, PendingAuthentication, RegisteredClient},
@@ -63,6 +63,79 @@ where
     .await
 }
 
+// Fixed failure labels and stable error codes only; no request content.
+#[derive(Clone, Copy)]
+enum AuthStage {
+    BeginParse,
+    RegistrationLookup,
+    RegistrationMissing,
+    RegistrationId,
+    RegistrationEpoch,
+    ChallengePrepare,
+    FinishRead,
+    FinishParse,
+    RegistrationReload,
+    FinishProof,
+}
+impl AuthStage {
+    fn label(self) -> &'static str {
+        match self {
+            Self::BeginParse => "begin_parse",
+            Self::RegistrationLookup => "registration_lookup",
+            Self::RegistrationMissing => "registration_missing",
+            Self::RegistrationId => "registration_id",
+            Self::RegistrationEpoch => "registration_epoch",
+            Self::ChallengePrepare => "challenge_prepare",
+            Self::FinishRead => "finish_read",
+            Self::FinishParse => "finish_parse",
+            Self::RegistrationReload => "registration_reload",
+            Self::FinishProof => "finish_proof",
+        }
+    }
+}
+fn auth_step<T>(stage: AuthStage, result: Result<T, ErrorCode>) -> Result<T, ErrorCode> {
+    result.inspect_err(|error| {
+        eprintln!(
+            "hantong_server_auth stage={} outcome=failed code={}",
+            stage.label(),
+            error.as_str()
+        )
+    })
+}
+#[cfg(test)]
+mod diagnostic_tests {
+    use super::*;
+    #[test]
+    fn cli15_server_auth_diagnostic_preserves_error_without_request_values() {
+        assert_eq!(
+            auth_step::<()>(AuthStage::RegistrationEpoch, Err(ErrorCode::AuthRequired)),
+            Err(ErrorCode::AuthRequired)
+        );
+        let sentinel = "synthetic_private_request_nonce_signature";
+        assert_eq!(auth_step(AuthStage::BeginParse, Ok(sentinel)), Ok(sentinel));
+        for stage in [
+            AuthStage::BeginParse,
+            AuthStage::RegistrationLookup,
+            AuthStage::RegistrationMissing,
+            AuthStage::RegistrationId,
+            AuthStage::RegistrationEpoch,
+            AuthStage::ChallengePrepare,
+            AuthStage::FinishRead,
+            AuthStage::FinishParse,
+            AuthStage::RegistrationReload,
+            AuthStage::FinishProof,
+        ] {
+            assert!(
+                stage
+                    .label()
+                    .bytes()
+                    .all(|v| v.is_ascii_lowercase() || v == b'_')
+            );
+            assert!(!stage.label().contains(sentinel));
+        }
+    }
+}
+
 async fn authenticate_after_begin<'server, F>(
     connection: LocalPipeConnection<'server>,
     first: RpcRequest,
@@ -75,22 +148,35 @@ async fn authenticate_after_begin<'server, F>(
 where
     F: FnMut(&[u8; 16]) -> Result<Option<RegisteredClient>, ErrorCode>,
 {
-    let begin = auth_wire::parse_begin(&first)?;
-    let registration = lookup(&begin.registration_id)?.ok_or(ErrorCode::ClientNotRegistered)?;
+    let begin = auth_step(AuthStage::BeginParse, auth_wire::parse_begin(&first))?;
+    let registration = auth_step(
+        AuthStage::RegistrationLookup,
+        lookup(&begin.registration_id),
+    )?;
+    let registration = auth_step(
+        AuthStage::RegistrationMissing,
+        registration.ok_or(ErrorCode::ClientNotRegistered),
+    )?;
     if registration.registration_id() != &begin.registration_id {
-        return Err(ErrorCode::ClientNotRegistered);
+        return auth_step(
+            AuthStage::RegistrationId,
+            Err(ErrorCode::ClientNotRegistered),
+        );
     }
     if registration.profile_epoch() != begin.profile_epoch {
-        return Err(ErrorCode::AuthRequired);
+        return auth_step(AuthStage::RegistrationEpoch, Err(ErrorCode::AuthRequired));
     }
-    let (mut pending, challenge) = PendingAuthentication::begin(
-        connection,
-        server_key,
-        instance,
-        &registration,
-        begin.client_nonce,
-        begin.scope,
-        utc_now()?,
+    let (mut pending, challenge) = auth_step(
+        AuthStage::ChallengePrepare,
+        PendingAuthentication::begin(
+            connection,
+            server_key,
+            instance,
+            &registration,
+            begin.client_nonce,
+            begin.scope,
+            utc_now()?,
+        ),
     )?;
     if tokio::time::Instant::now() >= begin_deadline {
         return Err(ErrorCode::AuthRequired);
@@ -106,10 +192,19 @@ where
     .await
     .map_err(|_| ErrorCode::AuthRequired)??;
     tokio::time::timeout(finish_deadline, async move {
-        let finish = read_request(pending.transport()).await?;
-        let signature = auth_wire::parse_finish(&finish)?;
-        let current = lookup(&begin.registration_id)?;
-        let mut authenticated = pending.finish(&signature, current.as_ref(), utc_now()?)?;
+        let finish = auth_step(
+            AuthStage::FinishRead,
+            read_request(pending.transport()).await,
+        )?;
+        let signature = auth_step(AuthStage::FinishParse, auth_wire::parse_finish(&finish))?;
+        let current = auth_step(
+            AuthStage::RegistrationReload,
+            lookup(&begin.registration_id),
+        )?;
+        let mut authenticated = auth_step(
+            AuthStage::FinishProof,
+            pending.finish(&signature, current.as_ref(), utc_now()?),
+        )?;
         write_result(
             authenticated.transport()?,
             &finish.id,
@@ -185,7 +280,7 @@ where
 /// Existing `dispatch_connection_with_registration` deliberately remains
 /// registration-only so its compatibility boundary cannot start setup.
 pub async fn dispatch_connection_with_setup<L, E, C>(
-    mut connection: LocalPipeConnection<'_>,
+    connection: LocalPipeConnection<'_>,
     server_key: &ServerSigningKey,
     instance: [u8; 32],
     lookup: &mut L,
@@ -197,6 +292,33 @@ where
     E: FnMut(&mut AuthenticatedConnection<'_>, &RpcRequest) -> Result<Value, ErrorCode>,
     C: FnMut(SetupCommand) -> Result<SetupReceipt, ErrorCode>,
 {
+    let mut compatible = |_: &SetupRequestContext, command| setup(command);
+    dispatch_connection_with_setup_context(
+        connection,
+        server_key,
+        instance,
+        lookup,
+        execute,
+        &mut compatible,
+    )
+    .await
+}
+
+/// Setup receives the peer captured from the actual accepted pipe connection.
+pub async fn dispatch_connection_with_setup_context<L, E, C>(
+    mut connection: LocalPipeConnection<'_>,
+    server_key: &ServerSigningKey,
+    instance: [u8; 32],
+    lookup: &mut L,
+    execute: &mut E,
+    setup: &mut C,
+) -> Result<(), ErrorCode>
+where
+    L: FnMut(&[u8; 16]) -> Result<Option<RegisteredClient>, ErrorCode>,
+    E: FnMut(&mut AuthenticatedConnection<'_>, &RpcRequest) -> Result<Value, ErrorCode>,
+    C: FnMut(&SetupRequestContext, SetupCommand) -> Result<SetupReceipt, ErrorCode>,
+{
+    let context = SetupRequestContext::new(connection.peer_context()?);
     let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
     let (request, frame_length) = tokio::time::timeout_at(
         deadline,
@@ -224,7 +346,9 @@ where
             || request.method.starts_with("setup.smtp.")
             || request.method.starts_with("setup.google.")
         {
-            crate::setup_dispatch::response(&request, frame_length, setup)
+            crate::setup_dispatch::response(&request, frame_length, &mut |command| {
+                setup(&context, command)
+            })
         } else {
             crate::bootstrap::response(request)
         };
@@ -306,6 +430,35 @@ pub async fn serve_until_with_setup<F, R, L, E, C>(
     on_ready: R,
     server_key: &ServerSigningKey,
     instance: [u8; 32],
+    lookup: L,
+    execute: E,
+    mut setup: C,
+) -> Result<(), ErrorCode>
+where
+    F: std::future::Future<Output = Result<(), ErrorCode>>,
+    R: FnOnce(),
+    L: FnMut(&[u8; 16]) -> Result<Option<RegisteredClient>, ErrorCode>,
+    E: FnMut(&mut AuthenticatedConnection<'_>, &RpcRequest) -> Result<Value, ErrorCode>,
+    C: FnMut(SetupCommand) -> Result<SetupReceipt, ErrorCode>,
+{
+    serve_until_with_setup_context(
+        shutdown,
+        on_ready,
+        server_key,
+        instance,
+        lookup,
+        execute,
+        |_: &SetupRequestContext, command| setup(command),
+    )
+    .await
+}
+
+/// Core-only variant retaining the observed OS caller for setup authority.
+pub async fn serve_until_with_setup_context<F, R, L, E, C>(
+    shutdown: F,
+    on_ready: R,
+    server_key: &ServerSigningKey,
+    instance: [u8; 32],
     mut lookup: L,
     mut execute: E,
     mut setup: C,
@@ -315,7 +468,7 @@ where
     R: FnOnce(),
     L: FnMut(&[u8; 16]) -> Result<Option<RegisteredClient>, ErrorCode>,
     E: FnMut(&mut AuthenticatedConnection<'_>, &RpcRequest) -> Result<Value, ErrorCode>,
-    C: FnMut(SetupCommand) -> Result<SetupReceipt, ErrorCode>,
+    C: FnMut(&SetupRequestContext, SetupCommand) -> Result<SetupReceipt, ErrorCode>,
 {
     let mut listener = hantong_platform::LocalPipeServer::bind()?;
     tokio::pin!(shutdown);
@@ -333,7 +486,7 @@ where
         tokio::select! {
             biased;
             result=&mut shutdown => return result,
-            result=dispatch_connection_with_setup(connection,server_key,instance,&mut lookup,&mut execute,&mut setup) => {
+            result=dispatch_connection_with_setup_context(connection,server_key,instance,&mut lookup,&mut execute,&mut setup) => {
                 if result == Err(ErrorCode::InternalError) { return result; }
             },
         }

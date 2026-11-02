@@ -398,11 +398,36 @@ impl<'a, 'server> ExecutionContext for CoreExecutionAdapter<'a, 'server> {
             if state == "ready" { Some(1) } else { None },
         )
     }
+    fn google_mutation(
+        &mut self,
+        account: &str,
+        request: Option<&hantong_contracts::google_mutation::MutationPayload>,
+        id: Option<[u8; 32]>,
+    ) -> Result<ReadResult<Self::Output>, ErrorCode> {
+        let r = match (request, id) {
+            (Some(r), None) => self
+                .send_ui
+                .ok_or(ErrorCode::CoreUnavailable)?
+                .request_google_mutation(
+                    *self.connection.registration_id(),
+                    self.connection.profile_epoch(),
+                    r,
+                )?,
+            (None, Some(id)) => self.store.google_mutation_receipt(
+                *self.connection.registration_id(),
+                self.connection.profile_epoch(),
+                account,
+                id,
+            )?,
+            _ => return Err(ErrorCode::InvalidInput),
+        };
+        ReadResult::new(crate::google_mutation::render(&r), None)
+    }
     fn request_draft_create(
         &mut self,
-        r: &hantong_contracts::mail_send::DraftCreateRequest,
+        r: &hantong_contracts::google_write::ComposeSnapshot,
     ) -> Result<ReadResult<Value>, ErrorCode> {
-        let id = self.store.create_mail_draft(
+        let id = self.store.create_mail_compose(
             *self.connection.registration_id(),
             self.connection.profile_epoch(),
             r,

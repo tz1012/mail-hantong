@@ -1,8 +1,10 @@
 title=Connect a Google mail account
 intro=Google sign-in completed. Review this exact account before saving its protected connection.
 verify=Verify and connect account
-verification=Verify your identity to connect this Google account for read-only mail access.
+verification=Verify your identity to connect this Google account with the reviewed access mode.
 readonly=Gmail read-only: retrieve labels, message metadata and text bodies. No Gmail modifications or sending are enabled.
+read_send=Gmail reading and sending: Google permits reading mail and sending messages. Server drafts, label changes and trash operations are not requested. Each send still requires a separate native review.
+modify=Gmail read and modify: Google permits reading, drafts, sending and label changes. The Google grant also permits moving mail to Trash and permanently deleting drafts; HanTong excludes deletion routes. Each send still requires a separate native review.
 footer=Credentials stay in the Windows protected store. Existing clients need a separate account-scope review. This does not approve sending or external AI disclosure.
 account=Local account ID
 email=Verified email

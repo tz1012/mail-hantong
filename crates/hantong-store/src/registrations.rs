@@ -1,7 +1,7 @@
 //! Bounded persistence for registration requests and read-only registrations.
 //! Approval and activation are deliberately absent from this module.
 
-use crate::Store;
+use crate::{DEFAULT_CLI_LABEL, Store};
 pub use hantong_contracts::client::ClientKind;
 use hantong_contracts::client::validate_client_label as validate_label;
 use hantong_contracts::{ErrorCode, auth::RequestedScope};
@@ -389,11 +389,22 @@ pub(super) fn read_request(
                         channel.is_none() && decided.is_some_and(|time| time >= expires)
                     }
                     RegistrationRequestState::Approved | RegistrationRequestState::Denied => {
-                        matches!(channel, Some("approval_helper" | "gui"))
+                        matches!(channel, Some("approval_helper" | "gui" | "google_oauth"))
                             && decided.is_some_and(|time| time >= created && time < expires)
                     }
                 };
-                if !consistent {
+                if !consistent
+                    || (channel == Some("google_oauth")
+                        && (state != RegistrationRequestState::Approved
+                            || kind != ClientKind::Cli
+                            || label != DEFAULT_CLI_LABEL
+                            || scope.accounts().len() != 1
+                            || hantong_contracts::google::validate_google_account_id(
+                                &scope.accounts()[0],
+                            )
+                            .is_err()
+                            || scope.tools() != ["mail.accounts.list"]))
+                {
                     return Err(rusqlite::Error::InvalidQuery);
                 }
                 Ok(RegistrationRequest {
@@ -464,7 +475,7 @@ pub(super) fn read_registration_bare(
                     || version <= 0
                     || !(0..=1).contains(&read_only)
                     || !(1..=600).contains(&rate)
-                    || !matches!(channel, "approval_helper" | "gui")
+                    || !matches!(channel, "approval_helper" | "gui" | "google_oauth")
                     || approved <= 0
                     || updated < approved
                     || match state {

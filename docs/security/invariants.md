@@ -2,6 +2,8 @@
 
 상태: 구현 경계별 증거, **사람 검토 필요**. 이 목록은 완성된 보안 증명이 아니다. 최신 전체 실행 결과는 `docs/latest/PROGRESS.md`에서 확인한다.
 
+2026-11-02 사용자 결정: 일반 개인 CLI 계정 연결은 추가 한통/Hello 승인 대신 검증된 Google OAuth 완료에 결속한다. [개인 CLI 계약](../contracts/google-personal-cli.md)의 관찰된 OS 호출자·계정·모드·만료·일회 소비와 고정 기능 제한을 따른다. 기능 선택·기존 계정·클라이언트 요청은 권한 증거가 아니다. 발송/대량 변경의 사람 승인과 AI/MCP 별도 활성화는 유지한다. 이 변경은 **사람 보안 검토 필요**이며 사용자 UX 결정으로 보안 검토를 대체하지 않는다.
+
 | 불변 조건 | 현재 증거 | 후속 검증 |
 | --- | --- | --- |
 | 이름·TTY·본문으로 권한을 얻지 못함 | CLI bootstrap의 미등록 accounts/send 거부, `cli15_client_name_cannot_authenticate_and_unknown_options_are_invalid` | 실제 IPC ACL·등록 키·세션 철회 |

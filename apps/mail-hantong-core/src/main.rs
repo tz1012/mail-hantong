@@ -10,6 +10,8 @@ mod execution_adapter;
 #[cfg(windows)]
 mod folder_worker;
 #[cfg(windows)]
+mod google_mutation;
+#[cfg(windows)]
 mod google_worker;
 #[cfg(windows)]
 mod identity;
@@ -86,6 +88,15 @@ fn event(kind: EventKind) {
 #[cfg(windows)]
 fn start() -> Result<(), ErrorCode> {
     let directories = hantong_platform::app_directories()?;
+    // Prepare and pin the profile roots before Secrets/Store can create the
+    // product directory with inherited ACLs. This guard remains alive for the
+    // complete core lifetime and never publishes or approves a profile.
+    let _profile_directories = hantong_approval_windows::prepare_profile_directories(&directories)?;
+    // Validate an optional release-owned Google Desktop asset inside Secrets
+    // before opening the persisted store. The returned credential remains
+    // opaque and is intentionally discarded here; the OAuth setup path loads
+    // it again only when a user explicitly starts Google account connection.
+    drop(hantong_secrets::google::load_installed_publisher_configuration()?);
     // Keep the encrypted store and exclusive file locks alive until transport
     // shutdown. Any schema, key or persisted-config failure precedes readiness.
     let store = storage::initialize_storage(&directories)?;
@@ -126,7 +137,7 @@ fn start() -> Result<(), ErrorCode> {
         );
         let (google_handle, google_worker) =
             google_worker::coordinator(&store, &directories.secrets)?;
-        let server = hantong_ipc_server::authenticated_wire::serve_until_with_setup(
+        let server = hantong_ipc_server::authenticated_wire::serve_until_with_setup_context(
             // All provider jobs have their own account-bound durable claims.
             shutdown,
             || event(EventKind::CoreTransportReady),
@@ -145,7 +156,7 @@ fn start() -> Result<(), ErrorCode> {
                     request,
                 )
             },
-            |command| registration.setup_command(command),
+            |context, command| registration.setup_command_with_context(context, command),
         );
         tokio::select! {
             biased;

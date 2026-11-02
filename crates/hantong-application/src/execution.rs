@@ -84,9 +84,17 @@ pub trait ExecutionContext {
         &mut self,
         request: &AccountsListRequest,
     ) -> Result<ReadResult<Self::Output>, ErrorCode>;
+    fn google_mutation(
+        &mut self,
+        _account: &str,
+        _request: Option<&hantong_contracts::google_mutation::MutationPayload>,
+        _id: Option<[u8; 32]>,
+    ) -> Result<ReadResult<Self::Output>, ErrorCode> {
+        Err(ErrorCode::CapabilityUnsupported)
+    }
     fn request_draft_create(
         &mut self,
-        _request: &hantong_contracts::mail_send::DraftCreateRequest,
+        _request: &hantong_contracts::google_write::ComposeSnapshot,
     ) -> Result<ReadResult<Self::Output>, ErrorCode> {
         Err(ErrorCode::CapabilityUnsupported)
     }
@@ -287,6 +295,15 @@ pub fn execute_tool<C: ExecutionContext>(
             }
             Err(error) => finish_failure(context, audit_id, error),
         },
+        ToolRequest::GoogleMutation {
+            account_ids,
+            request,
+            review_id,
+            ..
+        } => {
+            let result = context.google_mutation(&account_ids[0], request.as_ref(), review_id);
+            finish_local_read(result, context, audit_id)
+        }
         ToolRequest::DraftCreate { request, .. } => {
             let result = context.request_draft_create(&request);
             finish_local_read(result, context, audit_id)

@@ -23,6 +23,16 @@ if ($release.format_version -ne 1 -or $release.target -cne 'windows-x86_64') { t
 Assert-Version ([string]$release.version)
 Assert-FileRecords $release.files
 foreach ($file in $release.files) { Assert-FileHash (Get-ChildPath $sourceFull $file.path) $file.sha256 }
+# The release manifest cannot hash itself. Keep its exact verified-source bytes
+# as a separately owned installed file so first launch can verify sibling code.
+$releaseManifestPath = Get-ChildPath $sourceFull 'release-manifest.json'
+if (@($release.files | Where-Object { [string]$_.path -ieq 'release-manifest.json' }).Count -ne 0) { throw 'Release manifest cannot include itself' }
+$ownedFiles = @($release.files) + @([pscustomobject]@{
+    path = 'release-manifest.json'
+    sha256 = (Get-FileHash -LiteralPath $releaseManifestPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    size = (Get-Item -LiteralPath $releaseManifestPath).Length
+})
+Assert-FileRecords $ownedFiles
 $marker = Get-ChildPath $root '.mail-hantong-owner'
 $statePath = Get-ChildPath $root 'install-manifest.json'
 if ((Test-Path -LiteralPath $root) -and -not (Test-Path -LiteralPath $marker) -and
@@ -50,17 +60,17 @@ try {
     $versionDir = Get-ChildPath $root "versions/$($release.version)"
     $existing = @($versions | Where-Object version -CEQ $release.version)
     if (Test-Path -LiteralPath $versionDir) {
-        if ($existing.Count -ne 1 -or $existing[0].files.Count -ne $release.files.Count) { throw 'Existing version is unmanaged or differs' }
+        if ($existing.Count -ne 1 -or $existing[0].files.Count -ne $ownedFiles.Count) { throw 'Existing version is unmanaged or differs' }
         $old = @{}
         foreach ($file in $existing[0].files) { $old[$file.path.Replace('/', '\')] = $file.sha256 }
-        foreach ($file in $release.files) {
+        foreach ($file in $ownedFiles) {
             if ($old[$file.path.Replace('/', '\')] -ine $file.sha256) { throw 'Existing version differs' }
             Assert-FileHash (Get-ChildPath $versionDir $file.path) $file.sha256
         }
     } else {
         $stage = Get-ChildPath $root "staging/$([guid]::NewGuid().ToString('N'))"
         $null = New-Item -ItemType Directory -Force -Path $stage
-        foreach ($file in $release.files) {
+        foreach ($file in $ownedFiles) {
             $destination = Get-ChildPath $stage $file.path
             $null = New-Item -ItemType Directory -Force -Path ([IO.Path]::GetDirectoryName($destination))
             [IO.File]::Copy((Get-ChildPath $sourceFull $file.path), $destination, $false)
@@ -72,7 +82,7 @@ try {
         [IO.Directory]::Move($stage, $versionDir)
         $stage = $null
         $promoted = $true
-        $versions += [pscustomobject]@{ version = $release.version; files = @($release.files) }
+        $versions += [pscustomobject]@{ version = $release.version; files = @($ownedFiles) }
     }
     $bin = Get-ChildPath $root 'bin'
     $null = New-Item -ItemType Directory -Force -Path $bin
@@ -93,14 +103,13 @@ try {
     # final pointer replacement activates it; the previous version stays usable.
     Write-AtomicText $statePath $stateText
     $recorded = $true
-    if ($AddToPath) { Add-OwnedUserPath $root }
     Write-AtomicText (Get-ChildPath $root 'current.txt') ([string]$release.version)
 } catch {
     if (-not $recorded) {
         foreach ($shim in $createdShims) { Assert-SafePath $shim; Remove-Item -LiteralPath $shim -Force }
     }
     if ($stage -and (Test-Path -LiteralPath $stage)) { Remove-OwnedFiles $stage $createdFiles }
-    if ($promoted -and -not $recorded) { Remove-OwnedFiles $versionDir $release.files }
+    if ($promoted -and -not $recorded) { Remove-OwnedFiles $versionDir $ownedFiles }
     if ($firstInstall -and -not $recorded) {
         foreach ($relative in @('bin/hantong.cmd', 'bin/mail-hantong-core.cmd', '.mail-hantong-owner')) {
             $path = Get-ChildPath $root $relative
@@ -117,8 +126,12 @@ try {
 } finally {
     $lock.Dispose()
 }
+# Persist PATH only after activation succeeds. A locked activation pointer must
+# leave the user's environment unchanged; a PATH failure can be retried safely.
+if ($AddToPath) { Add-OwnedUserPath $root }
 $escapedBin = $bin.Replace("'", "''")
 Write-Output "Installed mail-hantong CLI $($release.version)."
+Write-Output "Start guided setup: & '$($versionDir.Replace("'", "''"))\bin\hantong.exe' init"
 Write-Output "For this PowerShell session: `$env:Path = '$escapedBin;' + `$env:Path"
 Write-Output "Uninstall with: & '$($versionDir.Replace("'", "''"))\uninstall.ps1' -InstallRoot '$($root.Replace("'", "''"))'"
 if ($AddToPath) { Write-Output 'User PATH is configured. Restart existing terminals to reload their environment.' }

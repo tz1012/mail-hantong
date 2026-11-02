@@ -70,6 +70,23 @@ fn validate_base(path: &Path) -> Result<(), ErrorCode> {
 
 #[cfg(windows)]
 fn known_local_app_data() -> Result<PathBuf, ErrorCode> {
+    known_local_app_data_with(resolve_known_folder)
+}
+
+#[cfg(windows)]
+fn known_local_app_data_with(
+    resolve: impl FnOnce(u32) -> Result<PathBuf, ErrorCode>,
+) -> Result<PathBuf, ErrorCode> {
+    use windows_sys::Win32::UI::Shell::KF_FLAG_NO_PACKAGE_REDIRECTION;
+
+    // A packaged host may otherwise receive the package-private LocalAppData
+    // location.  Keep the product data root stable across packaged and
+    // unpackaged launches by explicitly disabling that redirection.
+    resolve(KF_FLAG_NO_PACKAGE_REDIRECTION as u32)
+}
+
+#[cfg(windows)]
+fn resolve_known_folder(flags: u32) -> Result<PathBuf, ErrorCode> {
     use std::os::windows::ffi::OsStringExt;
     use std::ptr;
     use windows_sys::Win32::Foundation::S_OK;
@@ -80,7 +97,7 @@ fn known_local_app_data() -> Result<PathBuf, ErrorCode> {
     // SAFETY: SHGetKnownFolderPath allocates a null-terminated UTF-16 path;
     // the returned pointer is released exactly once with CoTaskMemFree below.
     let status =
-        unsafe { SHGetKnownFolderPath(&FOLDERID_LocalAppData, 0, ptr::null_mut(), &mut raw) };
+        unsafe { SHGetKnownFolderPath(&FOLDERID_LocalAppData, flags, ptr::null_mut(), &mut raw) };
     struct TaskMem(*mut u16);
     impl Drop for TaskMem {
         fn drop(&mut self) {
@@ -181,5 +198,30 @@ mod tests {
             .unwrap();
         assert!(output.status.success(), "known-folder child test failed");
         assert!(String::from_utf8_lossy(&output.stdout).contains("1 passed"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn inst01_known_folder_resolver_disables_package_redirection() {
+        use windows_sys::Win32::UI::Shell::KF_FLAG_NO_PACKAGE_REDIRECTION;
+
+        let package_root =
+            PathBuf::from(r"C:\Users\fixture\AppData\Local\Packages\mail-hantong\LocalCache");
+        let stable_root = PathBuf::from(r"C:\Users\fixture\AppData\Local");
+
+        let mut seen_flags = None;
+        let resolved = known_local_app_data_with(|flags| {
+            seen_flags = Some(flags);
+            if flags == KF_FLAG_NO_PACKAGE_REDIRECTION as u32 {
+                Ok(stable_root.clone())
+            } else {
+                Ok(package_root.clone())
+            }
+        })
+        .unwrap();
+
+        assert_eq!(seen_flags, Some(KF_FLAG_NO_PACKAGE_REDIRECTION as u32));
+        assert_eq!(resolved, stable_root);
+        assert_ne!(resolved, package_root);
     }
 }

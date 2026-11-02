@@ -42,6 +42,30 @@ fn body_file(path: &str) -> Result<String, ErrorCode> {
     }
     String::from_utf8(bytes).map_err(|_| ErrorCode::InvalidInput)
 }
+pub(super) fn attachment_file(
+    path: &str,
+    media_type: &str,
+) -> Result<hantong_contracts::google_write::AttachmentSnapshot, ErrorCode> {
+    use hantong_contracts::google_write::{AttachmentSnapshot, MAX_ATTACHMENT_BYTES};
+    let path = std::path::Path::new(path);
+    let name = path
+        .file_name()
+        .and_then(|v| v.to_str())
+        .ok_or(ErrorCode::InvalidInput)?;
+    let file = std::fs::File::open(path).map_err(|_| ErrorCode::InvalidInput)?;
+    if !file
+        .metadata()
+        .map_err(|_| ErrorCode::InvalidInput)?
+        .is_file()
+    {
+        return Err(ErrorCode::InvalidInput);
+    }
+    let mut bytes = Vec::new();
+    file.take((MAX_ATTACHMENT_BYTES + 1) as u64)
+        .read_to_end(&mut bytes)
+        .map_err(|_| ErrorCode::InvalidInput)?;
+    AttachmentSnapshot::new(name.into(), media_type.into(), bytes)
+}
 fn output_review(v: client::ReviewResponse, lang: Lang, json: bool) -> i32 {
     if json {
         println!(
@@ -81,6 +105,8 @@ pub(super) fn run(
                         "--to",
                         "--subject",
                         "--body-file",
+                        "--attachment-file",
+                        "--attachment-type",
                         "--operation-id",
                         "--idempotency-key",
                     ],
@@ -90,14 +116,28 @@ pub(super) fn run(
                     .map(|v| v.trim().to_owned())
                     .collect();
                 let body = body_file(get(&fields, "--body-file")?)?;
-                Ok(Command::Draft(client::prepare_default_draft(
+                let draft = client::prepare_default_draft(
                     get(&fields, "--account")?,
                     to,
                     get(&fields, "--subject")?.into(),
                     body,
                     get(&fields, "--operation-id")?,
                     get(&fields, "--idempotency-key")?,
-                )?))
+                )?;
+                let attachments = match fields.get("--attachment-file") {
+                    Some(path) => vec![attachment_file(
+                        path,
+                        fields
+                            .get("--attachment-type")
+                            .copied()
+                            .unwrap_or("application/octet-stream"),
+                    )?],
+                    None if fields.contains_key("--attachment-type") => {
+                        return Err(ErrorCode::InvalidInput);
+                    }
+                    None => vec![],
+                };
+                Ok(Command::Draft(client::prepare_compose(draft, attachments)?))
             }
             ["send"] => {
                 let fields = fields(
@@ -149,7 +189,7 @@ pub(super) fn run(
     };
     let lang = resolve_lang();
     match command {
-        Command::Draft(r) => match client::create_default(&r) {
+        Command::Draft(r) => match client::create_compose_default(&r) {
             Ok(v) => {
                 if json {
                     println!(
@@ -182,7 +222,7 @@ pub(super) fn run(
     }
 }
 enum Command {
-    Draft(hantong_contracts::mail_send::DraftCreateRequest),
+    Draft(hantong_contracts::google_write::ComposeSnapshot),
     Send(SendReviewRequest),
     Status(SendReviewStatusRequest),
 }

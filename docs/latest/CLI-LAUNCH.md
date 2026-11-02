@@ -2,18 +2,18 @@
 
 The command is `hantong`. English is the default; use `--lang ko` for Korean. The companion `mail-hantong-core` process handles encrypted local storage, mail operations and policy. The graphical mail application is not included in the CLI package.
 
-**Release status: Windows developer preview.** Package label `0.1.0-preview.4` identifies a preview of binaries reporting `0.1.0`. [Release downloads](https://github.com/tz1012/mail-hantong/releases) include checksums. Security review, clean Windows installation testing and real-provider interoperability remain open. macOS mail operations are not available yet.
+**Release status: Windows beta candidate under verification.** The planned label is `0.1.0-beta.1`; binaries report `0.1.0`. It will be published only after actual mail read/send verification. [Release downloads](https://github.com/tz1012/mail-hantong/releases) include checksums. Human security review, clean Windows VM testing and Google verification remain separate open gates. macOS mail operations are not available yet.
 
 ## What works in this preview
 
-Preview.4 adds Google multi-account browser login and Gmail read-only mail. Preview.3 does not include these features. See [Google setup and commands](GOOGLE-MAIL.md) and [current verification status](https://github.com/tz1012/mail-hantong/blob/main/docs/latest/PROGRESS.md). First setup needs public Google Desktop OAuth client configuration; publisher verification remains a separate prerequisite.
+The current candidate adds guided installation/startup, personal feature selection followed by Google consent, safe bounded Gmail text previews, and an explicit same-account read-to-send feature action. Publisher configuration is included, so ordinary users do not configure Google Cloud. Each actual send still requires native message review and human verification. See [Google setup and commands](GOOGLE-MAIL.md) and [current verification status](PROGRESS.md).
 
 | Available | Not yet available |
 | --- | --- |
 | Windows 11 x64; English/Korean text and JSON output | macOS/Linux product mail operations |
 | Protected IMAP and multi-account Google browser setup; explicit client registration | Graph OAuth setup and Google publisher verification |
 | Account and cached folder listing; explicit folder refresh | Automatic background synchronization of every mailbox |
-| Bounded UID metadata collection, reconciliation and recovery | Attachments and rich HTML rendering |
+| Bounded UID metadata collection, reconciliation and recovery | General attachment download and rich HTML display |
 | Local metadata lookup, bounded text body reading and immutable drafts | Scheduled sending, contacts, tag editing and rules |
 | SMTP setup and individually human-approved sending | Unattended sending or automatic resend |
 | Managed Codex / Claude Console AI sessions and MCP mail tools | Claude subscription OAuth in third-party products |
@@ -55,6 +55,24 @@ mail-hantong-core --help
 ```
 
 ## Start and connect
+
+### Current local development build
+
+The first-run flow in the working tree is newer than published preview.4. Install a package built from this tree, then run:
+
+```powershell
+hantong init
+# Korean:
+hantong --lang ko init
+```
+
+An interactive bare `hantong` opens the same flow. It connects to an existing Core or starts the package's verified sibling Core in the background, offers an existing Gmail account or Google connection, and uses the protected Windows approval screens. Opening the inbox is a separate menu choice; connecting an account does not automatically read mail. Select a numbered message to read its text body. Exit the menu to return to the terminal; Core continues running. This is a guided CLI, not a full-screen TUI.
+
+The Google flow reuses protected app configuration already stored on this PC or a publisher Desktop configuration included in a release. Users of a provisioned release do not create a Google Cloud project or enter an app credential. Provisioned releases are still pending security review. A package without that configuration is a developer preview and cannot complete first Google connection on a clean PC. The working-tree wizard does not make the published preview or Google verification complete. `init --json`, `init --no-input` and redirected input/output stop before starting Core or opening account setup.
+
+Current builds keep the same Windows data location when launched from a packaged terminal host or a normal terminal. Existing data created under a host application's private AppData is preserved and needs a separate recovery step; do not delete it or repeatedly reconnect accounts to address an authentication error.
+
+### Published preview.4 and advanced commands
 
 In terminal 1, run the core in the foreground. Keep this terminal open; Ctrl+C stops it.
 

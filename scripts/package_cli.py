@@ -20,7 +20,7 @@ from traceability import source_hash, ValidationError
 
 ROOT = Path(__file__).resolve().parents[1]
 TARGET = "x86_64-pc-windows-msvc"
-DEFAULT_VERSION = "0.1.0-preview.4"
+DEFAULT_VERSION = "0.1.0-preview.5"
 BINARIES = {"hantong-cli": "hantong", "mail-hantong-core": "mail-hantong-core",
             "hantong-mcp": "hantong-mcp", "hantong-t": "hantong-t"}
 LICENSE_NAME = re.compile(r"^(?:licen[sc]e|copying|copyright|notice)(?:[._-].*)?$", re.I)
@@ -303,13 +303,23 @@ def publish(staged: Path, destination: Path) -> None:
 
 
 def package(root: Path = ROOT, *, version: str = DEFAULT_VERSION, output_dir: Path | None = None,
-            skip_build: bool = False, runner=None, host_system: str | None = None) -> Path:
+            skip_build: bool = False, runner=None, host_system: str | None = None,
+            publisher_config: Path | None = None) -> Path:
     version = release_version(version)
     if (os.name if host_system is None else host_system) != "nt":
         raise PackageError("this release packager requires Windows and the MSVC x86_64 toolchain")
     root = root.resolve()
     runner = subprocess.run if runner is None else runner
     contents = {}
+    if publisher_config is not None:
+        # Opaque data only; Secrets interprets credential fields at runtime.
+        config_path = publisher_config.absolute()
+        if config_path.resolve().is_relative_to(root):
+            raise PackageError("publisher configuration must remain outside the source tree")
+        config_bytes = read_file(config_path, config_path.parent)
+        if not config_bytes or len(config_bytes) > 16384:
+            raise PackageError("publisher configuration must be a bounded nonempty data file")
+        contents["publisher/google-desktop.json"] = config_bytes
     required = {"LICENSE": "LICENSE", "README.md": "README.md", "CLI-LAUNCH.md": "docs/latest/CLI-LAUNCH.md",
                 "GOOGLE-MAIL.md": "docs/latest/GOOGLE-MAIL.md",
                 "install.ps1": "packaging/windows/install.ps1", "uninstall.ps1": "packaging/windows/uninstall.ps1",
@@ -384,9 +394,10 @@ def package(root: Path = ROOT, *, version: str = DEFAULT_VERSION, output_dir: Pa
             contents[f"bin/{binary}.exe"] = data
             hashes[f"bin/{binary}.exe"] = sha(data)
         build = json_bytes({"format_version": 1, "release_label": version, "package_version": roots["hantong-cli"]["version"],
-                            "target": TARGET, "channel": "developer-preview", "build_performed": not skip_build,
+                            "target": TARGET, "channel": "beta" if version.split("-", 1)[1].split(".", 1)[0] == "beta" else "developer-preview", "build_performed": not skip_build,
                             "build_command": command, "rustflags": RUSTFLAGS, "rustc": compiler,
                             "source_hash": source_before,
+                            "google_publisher_config_included": publisher_config is not None,
                             "source_relation": "not_verified" if skip_build else "built_from_current_workspace",
                             "cargo_lock_sha256": sha(lock_bytes), "binaries": hashes,
                             "third_party_inventory_sha256": sha(inventory), "smoke": ["--help", "--version"],
@@ -416,13 +427,16 @@ def main(argv=None) -> int:
     parser.add_argument("--version", default=DEFAULT_VERSION)
     parser.add_argument("--skip-build", action="store_true", help="reuse existing target binaries only after PE/help/version validation")
     parser.add_argument("--output-dir", type=Path, help="output root; the release-version subdirectory is created atomically")
+    parser.add_argument("--publisher-config", type=Path,
+                        help="external publisher Desktop asset; actual distribution requires owner security approval")
     args = parser.parse_args(argv)
     try:
-        result = package(version=args.version, output_dir=args.output_dir, skip_build=args.skip_build)
+        result = package(version=args.version, output_dir=args.output_dir, skip_build=args.skip_build,
+                         publisher_config=args.publisher_config)
     except (PackageError, OSError, UnicodeError) as error:
         print(f"error: {error if isinstance(error, PackageError) else 'unable to read or write a required packaging input'}", file=sys.stderr)
         return 2
-    print(f"Created CLI developer preview: {result}")
+    print(f"Created CLI package: {result}")
     return 0
 
 

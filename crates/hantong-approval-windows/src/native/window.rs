@@ -387,10 +387,38 @@ impl State {
                 self.pending = Some(pending);
                 self.operation = Some(operation);
             }
+            DialogReview::GoogleClient(review) => {
+                let input = self.password_input.take().ok_or(ErrorCode::InternalError)?;
+                let (pending, operation) = capture_before_verification(
+                    || {
+                        let pending = input.capture().map_err(input_error)?;
+                        validate_pending(review.capture_review(), &pending)?;
+                        self.binding
+                            .as_ref()
+                            .ok_or(ErrorCode::InternalError)?
+                            .validate(self.model.review())?;
+                        Ok(pending)
+                    },
+                    || {
+                        ConsentOperation::start(
+                            hwnd,
+                            hantong_approval::google_client_review::text(language, "verification"),
+                        )
+                    },
+                )?;
+                self.pending = Some(pending);
+                self.operation = Some(operation);
+            }
             DialogReview::Send(_) => {
                 self.operation = Some(ConsentOperation::start(
                     hwnd,
                     hantong_approval::send_review::text(language, "verification"),
+                )?);
+            }
+            DialogReview::GoogleMutation(_) => {
+                self.operation = Some(ConsentOperation::start(
+                    hwnd,
+                    hantong_approval::google_mutation_review::text(language, "verification"),
                 )?);
             }
             DialogReview::Google(_) => {
@@ -528,6 +556,23 @@ impl State {
         }
     }
     fn caption(&self, id: i32) -> String {
+        if matches!(self.model.review(), DialogReview::GoogleClient(_)) {
+            let key = match id {
+                HEADING => Some("title"),
+                INTRO => Some("intro"),
+                VERIFY => Some("verify"),
+                FOOTER => Some("footer"),
+                PASSWORD_LABEL => Some("password"),
+                _ => None,
+            };
+            if let Some(key) = key {
+                return hantong_approval::google_client_review::text(
+                    self.model.presentation().language(),
+                    key,
+                )
+                .to_owned();
+            }
+        }
         if self.model.review().is_smtp() {
             let key = match id {
                 HEADING => Some("title"),
@@ -569,6 +614,20 @@ impl State {
             };
             return hantong_approval::send_review::text(self.model.presentation().language(), key)
                 .to_owned();
+        }
+        if self.model.review().is_google_mutation() {
+            let key = match id {
+                HEADING => "title",
+                INTRO => "intro",
+                VERIFY => "verify",
+                FOOTER => "footer",
+                _ => return self.generic_caption(id),
+            };
+            return hantong_approval::google_mutation_review::text(
+                self.model.presentation().language(),
+                key,
+            )
+            .to_owned();
         }
         if self.model.review().is_mcp_registration() {
             let key = match id {
@@ -861,8 +920,10 @@ pub(super) fn run(
         DialogVerified::Imap(_) => Err(ErrorCode::InternalError),
         DialogVerified::ScopeRefresh(_) => Err(ErrorCode::InternalError),
         DialogVerified::Send(_) => Err(ErrorCode::InternalError),
+        DialogVerified::GoogleMutation(_) => Err(ErrorCode::InternalError),
         DialogVerified::Smtp(_) => Err(ErrorCode::InternalError),
         DialogVerified::Google(_) => Err(ErrorCode::InternalError),
+        DialogVerified::GoogleClient(_) => Err(ErrorCode::InternalError),
     }
 }
 
@@ -885,8 +946,10 @@ pub(super) fn run_setup(
         DialogVerified::Registration(_) => Err(ErrorCode::InternalError),
         DialogVerified::ScopeRefresh(_) => Err(ErrorCode::InternalError),
         DialogVerified::Send(_) => Err(ErrorCode::InternalError),
+        DialogVerified::GoogleMutation(_) => Err(ErrorCode::InternalError),
         DialogVerified::Smtp(_) => Err(ErrorCode::InternalError),
         DialogVerified::Google(_) => Err(ErrorCode::InternalError),
+        DialogVerified::GoogleClient(_) => Err(ErrorCode::InternalError),
     }
 }
 
@@ -915,7 +978,7 @@ pub(super) fn run_send(
     cancellation: Receiver<()>,
 ) -> Result<crate::VerifiedSend, ErrorCode> {
     match run_dialog(
-        DialogReview::Send(review),
+        DialogReview::Send(Box::new(review)),
         None,
         language,
         theme,
@@ -983,8 +1046,16 @@ fn run_dialog(
         }
         DialogReview::Imap(review) => DialogBinding::Imap(CapturedReview::capture(review)?),
         DialogReview::Smtp(review) => DialogBinding::Smtp(CapturedReview::capture(review)?),
+        DialogReview::GoogleClient(review) => {
+            DialogBinding::GoogleClient(CapturedReview::capture(review)?)
+        }
         DialogReview::Google(review) => DialogBinding::Google(CapturedReview::capture(review)?),
-        DialogReview::Send(review) => DialogBinding::Send(CapturedReview::capture(review)?),
+        DialogReview::Send(review) => {
+            DialogBinding::Send(Box::new(CapturedReview::capture(*review)?))
+        }
+        DialogReview::GoogleMutation(review) => {
+            DialogBinding::GoogleMutation(Box::new(CapturedReview::capture(*review)?))
+        }
         DialogReview::ScopeRefresh(review) => {
             DialogBinding::ScopeRefresh(CapturedReview::capture(review)?)
         }
@@ -1025,7 +1096,14 @@ fn run_dialog(
     }
     unsafe {
         let _ = ShowWindow(hwnd, SW_SHOWNORMAL);
+        // A hidden background launch can override the first ShowWindow call.
+        // This explicitly requested review must be visible before protected focus.
+        if !IsWindowVisible(hwnd).as_bool() {
+            let _ = ShowWindow(hwnd, SW_SHOWNORMAL);
+        }
         let _ = UpdateWindow(hwnd);
+        // Best-effort normal OS foreground request; never bypass focus restrictions.
+        let _ = windows::Win32::UI::WindowsAndMessaging::SetForegroundWindow(hwnd);
     }
     if let Some(input) = &state.borrow().password_input {
         input.focus().map_err(input_error)?;
@@ -1411,6 +1489,44 @@ fn draw_button(state: &State, draw: &DRAWITEMSTRUCT) {
             rect.bottom -= 3;
             let _ = DrawFocusRect(draw.hDC, &rect);
         }
+    }
+}
+
+pub(super) fn run_google_client(
+    review: hantong_approval::GoogleClientReview,
+    plan: ImapPasswordCapturePlan,
+    language: Option<Language>,
+    theme: Theme,
+    cancellation: Receiver<()>,
+) -> Result<crate::VerifiedGoogleClient, ErrorCode> {
+    validate_plan(review.capture_review(), &plan)?;
+    match run_dialog(
+        DialogReview::GoogleClient(review),
+        Some(plan),
+        language,
+        theme,
+        cancellation,
+    )? {
+        DialogVerified::GoogleClient(value) => Ok(*value),
+        _ => Err(ErrorCode::InternalError),
+    }
+}
+
+pub(super) fn run_google_mutation(
+    review: hantong_approval::GoogleMutationReview,
+    language: Option<Language>,
+    theme: Theme,
+    cancellation: Receiver<()>,
+) -> Result<crate::VerifiedGoogleMutation, ErrorCode> {
+    match run_dialog(
+        DialogReview::GoogleMutation(Box::new(review)),
+        None,
+        language,
+        theme,
+        cancellation,
+    )? {
+        DialogVerified::GoogleMutation(verified) => Ok(*verified),
+        _ => Err(ErrorCode::InternalError),
     }
 }
 

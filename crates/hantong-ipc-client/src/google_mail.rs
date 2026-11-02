@@ -186,19 +186,35 @@ pub fn parse_response(
                 .ok_or(ErrorCode::InvalidInput)?;
             let mut seen = std::collections::BTreeSet::new();
             for m in messages {
-                object(
-                    m,
-                    &[
-                        "id",
-                        "thread_id",
-                        "internal_date_ms",
-                        "label_ids",
-                        "subject",
-                        "sender",
-                        "snippet",
-                        "size",
-                    ],
-                )?;
+                let mut keys = vec![
+                    "id",
+                    "thread_id",
+                    "internal_date_ms",
+                    "label_ids",
+                    "subject",
+                    "sender",
+                    "snippet",
+                    "size",
+                ];
+                if m.get("attachment_checks").is_some() {
+                    keys.push("attachment_checks");
+                }
+                object(m, &keys)?;
+                let attachment_checks = match m.get("attachment_checks") {
+                    None | Some(Value::Null) => None,
+                    Some(value) => {
+                        let checks = value
+                            .as_array()
+                            .filter(|v| v.len() <= 8)
+                            .ok_or(ErrorCode::InvalidInput)?;
+                        Some(
+                            checks
+                                .iter()
+                                .map(GoogleAttachmentCheck::from_json)
+                                .collect::<Result<Vec<_>, _>>()?,
+                        )
+                    }
+                };
                 let labels = m["label_ids"]
                     .as_array()
                     .filter(|v| v.len() <= 1024)
@@ -207,6 +223,7 @@ pub fn parse_response(
                     .map(|l| l.as_str().map(str::to_owned).ok_or(ErrorCode::InvalidInput))
                     .collect::<Result<Vec<_>, _>>()?;
                 let message = GoogleMessage {
+                    attachment_checks,
                     id: text(m, "id", 256)?.into(),
                     thread_id: text(m, "thread_id", 256)?.into(),
                     internal_date_ms: m["internal_date_ms"]
@@ -356,5 +373,114 @@ mod tests {
         assert!(parse_response(&serde_json::to_vec(&v).unwrap(), "r", &r).is_ok());
         v["result"]["body"]["text"] = "too long".into();
         assert!(parse_response(&serde_json::to_vec(&v).unwrap(), "r", &r).is_err());
+    }
+}
+
+/// Probe the negotiated protected profile without reading mail or changing grants.
+/// False means authenticated but missing selected read access. Authentication
+/// errors, including protected-path SCOPE_DENIED, remain errors, never grants.
+pub fn verify_default_readonly(account: &str) -> Result<bool, ErrorCode> {
+    validate_google_account_id(account)?;
+    #[cfg(not(windows))]
+    {
+        Err(ErrorCode::CapabilityUnsupported)
+    }
+    #[cfg(windows)]
+    tokio::runtime::Builder::new_current_thread()
+        .enable_io()
+        .enable_time()
+        .build()
+        .map_err(|_| ErrorCode::CoreUnavailable)?
+        .block_on(async {
+            let connection = crate::authenticate_default().await?;
+            Ok(readonly_scope(connection.scope(), account))
+        })
+}
+/// Verifies the exact selected personal feature profile without reading mail.
+pub fn verify_default_personal(
+    account: &str,
+    profile: hantong_contracts::google_setup::GoogleLocalProfile,
+) -> Result<bool, ErrorCode> {
+    validate_google_account_id(account)?;
+    if profile.access_mode().is_none() {
+        return Err(ErrorCode::InvalidInput);
+    }
+    #[cfg(not(windows))]
+    {
+        Err(ErrorCode::CapabilityUnsupported)
+    }
+    #[cfg(windows)]
+    tokio::runtime::Builder::new_current_thread()
+        .enable_io()
+        .enable_time()
+        .build()
+        .map_err(|_| ErrorCode::CoreUnavailable)?
+        .block_on(async {
+            let connection = crate::authenticate_default().await?;
+            Ok(personal_scope(connection.scope(), account, profile))
+        })
+}
+#[cfg(any(windows, test))]
+fn personal_scope(
+    scope: &hantong_contracts::auth::RequestedScope,
+    account: &str,
+    profile: hantong_contracts::google_setup::GoogleLocalProfile,
+) -> bool {
+    use hantong_contracts::{auth::*, google_setup::GoogleLocalProfile};
+    let tools = match profile {
+        GoogleLocalProfile::PersonalRead => default_cli_body_tools(),
+        GoogleLocalProfile::PersonalReadSend => default_cli_send_tools(),
+        GoogleLocalProfile::None => return false,
+    };
+    scope.accounts() == [account] && scope.tools() == tools
+}
+#[cfg(any(windows, test))]
+fn readonly_scope(scope: &hantong_contracts::auth::RequestedScope, account: &str) -> bool {
+    scope.accounts().iter().any(|a| a == account)
+        && hantong_contracts::auth::default_cli_body_tools()
+            .iter()
+            .all(|t| scope.tools().contains(t))
+}
+#[cfg(test)]
+mod onboarding_tests {
+    use super::*;
+    use hantong_contracts::auth::*;
+    #[test]
+    fn acc02_personal_ready_probe_requires_exact_selected_features_and_account() {
+        use hantong_contracts::google_setup::GoogleLocalProfile::*;
+        let account = format!("google_{}", "a".repeat(64));
+        for (tools, profile, other) in [
+            (default_cli_body_tools(), PersonalRead, PersonalReadSend),
+            (default_cli_send_tools(), PersonalReadSend, PersonalRead),
+        ] {
+            let scope = RequestedScope::new(vec![account.clone()], tools).unwrap();
+            assert!(personal_scope(&scope, &account, profile));
+            assert!(!personal_scope(&scope, &account, other));
+            assert!(!personal_scope(&scope, "different", profile));
+            assert!(!personal_scope(&scope, &account, None));
+        }
+    }
+    #[cfg(not(windows))]
+    #[test]
+    fn acc02_readonly_probe_without_windows_is_explicitly_unsupported() {
+        let account = format!("google_{}", "a".repeat(64));
+        assert_eq!(
+            verify_default_readonly(&account),
+            Err(ErrorCode::CapabilityUnsupported)
+        );
+        assert_eq!(
+            verify_default_readonly("invalid"),
+            Err(ErrorCode::InvalidInput)
+        );
+    }
+    #[test]
+    fn acc02_readonly_probe_requires_selected_account_and_all_read_tools() {
+        let a = format!("google_{}", "a".repeat(64));
+        let b = format!("google_{}", "b".repeat(64));
+        let s = RequestedScope::new(vec![a.clone()], default_cli_body_tools()).unwrap();
+        assert!(readonly_scope(&s, &a));
+        assert!(!readonly_scope(&s, &b));
+        let s = RequestedScope::new(vec![a.clone()], default_cli_folder_tools()).unwrap();
+        assert!(!readonly_scope(&s, &a));
     }
 }
