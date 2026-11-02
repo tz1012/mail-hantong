@@ -173,6 +173,20 @@ fn current(store: &Store, p: &PendingGoogleSync) -> Result<(), ErrorCode> {
             p.profile_epoch,
             std::slice::from_ref(&p.binding.account_id),
         )?
+    } else if r.client_kind == hantong_contracts::client::ClientKind::Ai {
+        let provider = if r.display_label == hantong_store::DEFAULT_AI_CODEX_LABEL {
+            hantong_contracts::registration::AiProvider::Codex
+        } else if r.display_label == hantong_store::DEFAULT_AI_CLAUDE_LABEL {
+            hantong_contracts::registration::AiProvider::Claude
+        } else {
+            return Err(ErrorCode::PolicyBlocked);
+        };
+        store.check_ai_consent(
+            provider,
+            p.owner,
+            p.profile_epoch,
+            std::slice::from_ref(&p.binding.account_id),
+        )?
     }
     if store.google_account_binding(&p.binding.account_id)? != p.binding {
         return Err(ErrorCode::Conflict);

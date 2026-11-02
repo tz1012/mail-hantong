@@ -8,6 +8,42 @@ use hantong_contracts::{
 use serde_json::{Value, json};
 
 pub fn parse(request: &RpcRequest) -> Result<RegistrationCommand, ErrorCode> {
+    if matches!(
+        request.method.as_str(),
+        "registration.ai.request" | "registration.ai.status"
+    ) {
+        let status = request.method == "registration.ai.status";
+        let params = request.params.as_object().ok_or(ErrorCode::InvalidInput)?;
+        if params.len() != if status { 3 } else { 2 } {
+            return Err(ErrorCode::InvalidInput);
+        }
+        let version = params
+            .get("protocol_version")
+            .and_then(Value::as_u64)
+            .ok_or(ErrorCode::InvalidInput)?;
+        if version != 1 {
+            return Err(ErrorCode::VersionMismatch);
+        }
+        let provider = hantong_contracts::registration::AiProvider::parse(
+            params
+                .get("provider")
+                .and_then(Value::as_str)
+                .ok_or(ErrorCode::InvalidInput)?,
+        )?;
+        if !status {
+            return Ok(RegistrationCommand::AiRequest(provider));
+        }
+        let id = wire_hex::decode_fixed::<32>(
+            params
+                .get("request_id")
+                .and_then(Value::as_str)
+                .ok_or(ErrorCode::InvalidInput)?,
+        )?;
+        if id == [0; 32] {
+            return Err(ErrorCode::InvalidInput);
+        }
+        return Ok(RegistrationCommand::AiStatus(provider, id));
+    }
     if request.method == "registration.google_readonly.request" {
         let p = request.params.as_object().ok_or(ErrorCode::InvalidInput)?;
         if p.len() != 2 {
@@ -94,6 +130,82 @@ mod tests {
             method: method.into(),
             params,
         }
+    }
+    #[test]
+    fn ai07_registration_wire_routes_provider_bound_requests_without_authority_fields() {
+        use hantong_contracts::registration::AiProvider;
+        for provider in [AiProvider::Codex, AiProvider::Claude] {
+            assert_eq!(
+                parse(&request(
+                    "registration.ai.request",
+                    json!({"protocol_version":1,"provider":provider.as_str()})
+                )),
+                Ok(RegistrationCommand::AiRequest(provider))
+            );
+            assert_eq!(
+                parse(&request(
+                    "registration.ai.status",
+                    json!({"protocol_version":1,"provider":provider.as_str(),"request_id":"01".repeat(32)})
+                )),
+                Ok(RegistrationCommand::AiStatus(provider, [1; 32]))
+            );
+        }
+        for params in [
+            json!({"protocol_version":1}),
+            json!({"protocol_version":1,"provider":"unknown"}),
+            json!({"protocol_version":1,"provider":"codex","approved":true}),
+            json!({"protocol_version":1,"provider":"codex","accounts":["other"]}),
+            json!({"protocol_version":1.0,"provider":"codex"}),
+        ] {
+            assert_eq!(
+                parse(&request("registration.ai.request", params)),
+                Err(ErrorCode::InvalidInput)
+            );
+        }
+        assert_eq!(
+            parse(&request(
+                "registration.ai.request",
+                json!({"protocol_version":2,"provider":"codex"})
+            )),
+            Err(ErrorCode::VersionMismatch)
+        );
+        assert_eq!(
+            parse(&request(
+                "registration.ai.status",
+                json!({"protocol_version":1,"provider":"codex","request_id":"00".repeat(32)})
+            )),
+            Err(ErrorCode::InvalidInput)
+        );
+        assert_eq!(
+            parse(&request(
+                "registration.ai.activate",
+                json!({"protocol_version":1,"provider":"codex"})
+            )),
+            Err(ErrorCode::InvalidInput)
+        );
+        let rpc = request(
+            "registration.ai.request",
+            json!({"protocol_version":1,"provider":"codex"}),
+        );
+        let mut calls = 0;
+        let mut callback = |command| {
+            calls += 1;
+            assert!(matches!(
+                command,
+                crate::setup_dispatch::SetupCommand::Registration(RegistrationCommand::AiRequest(
+                    AiProvider::Codex
+                ))
+            ));
+            Ok(crate::setup_dispatch::SetupReceipt::Registration(
+                RegistrationReceipt::new([9; 32], 300001, RegistrationProgress::Pending).unwrap(),
+            ))
+        };
+        let result = crate::setup_dispatch::response(&rpc, 180, &mut callback);
+        assert_eq!(result["result"]["state"], "pending");
+        assert_eq!(result["result"]["request_id"], "09".repeat(32));
+        let oversized = crate::setup_dispatch::response(&rpc, 16385, &mut callback);
+        assert!(oversized.get("error").is_some());
+        assert_eq!(calls, 1);
     }
     #[test]
     fn sec03_google_readonly_wire_rejects_authority_other_accounts_and_duplicate_fields() {

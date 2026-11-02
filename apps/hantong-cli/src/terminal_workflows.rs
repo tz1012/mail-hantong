@@ -32,12 +32,17 @@ pub(super) fn registration(
     if matches!(command, C::GuiRequest) {
         return Err(ErrorCode::CapabilityUnsupported);
     }
-    if !matches!(command, C::Status(_) | C::McpStatus(_) | C::GuiStatus(_)) {
+    if !matches!(
+        command,
+        C::Status(_) | C::McpStatus(_) | C::GuiStatus(_) | C::AiStatus(..)
+    ) {
         require_interactive()?;
     }
     let receipt = hantong_ipc_client::registration::exchange(command)?;
-    if !matches!(command, C::Status(_) | C::McpStatus(_) | C::GuiStatus(_))
-        && receipt.state() == P::Pending
+    if !matches!(
+        command,
+        C::Status(_) | C::McpStatus(_) | C::GuiStatus(_) | C::AiStatus(..)
+    ) && receipt.state() == P::Pending
     {
         maybe_review(
             TerminalReviewKind::Registration,
@@ -46,6 +51,7 @@ pub(super) fn registration(
         )?;
         let status = match command {
             C::McpRequest => C::McpStatus(*receipt.request_id()),
+            C::AiRequest(provider) => C::AiStatus(provider, *receipt.request_id()),
             C::GuiRequest => C::GuiStatus(*receipt.request_id()),
             _ => C::Status(*receipt.request_id()),
         };

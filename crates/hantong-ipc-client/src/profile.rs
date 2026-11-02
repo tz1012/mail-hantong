@@ -2,8 +2,8 @@
 use hantong_contracts::{
     ErrorCode,
     auth::{
-        RequestedScope, default_cli_legacy_tools, gui_read_tools, is_supported_default_cli_toolset,
-        mcp_read_tools,
+        RequestedScope, default_cli_legacy_tools, gui_read_tools, is_supported_ai_mail_toolset,
+        is_supported_default_cli_toolset, mcp_read_tools,
     },
     wire_hex,
 };
@@ -18,11 +18,15 @@ pub enum ProfileSelector {
     Default,
     Gui,
     Mcp,
+    AiCodex,
+    AiClaude,
 }
 impl ProfileSelector {
     pub fn parse(value: &str) -> Result<Self, ErrorCode> {
         match value {
             "default" => Ok(Self::Default),
+            "ai-codex" => Ok(Self::AiCodex),
+            "ai-claude" => Ok(Self::AiClaude),
             _ => Err(ErrorCode::InvalidInput),
         }
     }
@@ -31,6 +35,8 @@ impl ProfileSelector {
             Self::Default => "default",
             Self::Gui => "gui",
             Self::Mcp => "mcp",
+            Self::AiCodex => "ai-codex",
+            Self::AiClaude => "ai-claude",
         }
     }
     fn from_wire(value: &str) -> Result<Self, ErrorCode> {
@@ -38,6 +44,8 @@ impl ProfileSelector {
             "default" => Ok(Self::Default),
             "gui" => Ok(Self::Gui),
             "mcp" => Ok(Self::Mcp),
+            "ai-codex" => Ok(Self::AiCodex),
+            "ai-claude" => Ok(Self::AiClaude),
             _ => Err(ErrorCode::InvalidInput),
         }
     }
@@ -46,6 +54,7 @@ impl ProfileSelector {
             Self::Default => is_supported_default_cli_toolset(tools),
             Self::Gui => tools == gui_read_tools(),
             Self::Mcp => hantong_contracts::auth::is_supported_mcp_toolset(tools),
+            Self::AiCodex | Self::AiClaude => is_supported_ai_mail_toolset(tools),
         }
     }
 }
@@ -171,6 +180,31 @@ impl ParsedClientProfile {
             server_public_key,
             profile_epoch,
             RequestedScope::new(account_ids, hantong_contracts::auth::mcp_mail_tools())?,
+        )
+    }
+    pub fn new_ai(
+        provider: ProfileSelector,
+        registration_id: [u8; 16],
+        client_key_id: [u8; 32],
+        client_public_key: [u8; 72],
+        server_public_key: [u8; 72],
+        profile_epoch: u64,
+        account_ids: Vec<String>,
+    ) -> Result<Self, ErrorCode> {
+        if !matches!(
+            provider,
+            ProfileSelector::AiCodex | ProfileSelector::AiClaude
+        ) {
+            return Err(ErrorCode::InvalidInput);
+        }
+        Self::new_for(
+            provider,
+            registration_id,
+            client_key_id,
+            client_public_key,
+            server_public_key,
+            profile_epoch,
+            RequestedScope::new(account_ids, hantong_contracts::auth::ai_mail_tools())?,
         )
     }
     fn new_for(
@@ -827,6 +861,47 @@ mod tests {
         ] {
             assert_eq!(ProfileSelector::parse(value), Err(ErrorCode::InvalidInput));
         }
+    }
+
+    #[test]
+    fn ai09_provider_profiles_are_fixed_and_use_exact_ai_tools() {
+        let codex = ParsedClientProfile::new_ai(
+            ProfileSelector::AiCodex,
+            [1; 16],
+            [2; 32],
+            public_key(5),
+            public_key(6),
+            1,
+            vec!["account_a".into()],
+        )
+        .unwrap();
+        let claude = ParsedClientProfile::new_ai(
+            ProfileSelector::AiClaude,
+            [3; 16],
+            [4; 32],
+            public_key(7),
+            public_key(8),
+            1,
+            vec!["account_a".into()],
+        )
+        .unwrap();
+        assert_eq!(codex.profile(), ProfileSelector::AiCodex);
+        assert_eq!(claude.profile(), ProfileSelector::AiClaude);
+        assert_eq!(
+            codex.scope().tools(),
+            hantong_contracts::auth::ai_mail_tools()
+        );
+        assert_eq!(
+            codex.to_json().unwrap(),
+            ParsedClientProfile::from_json(&codex.to_json().unwrap())
+                .unwrap()
+                .to_json()
+                .unwrap()
+        );
+        assert_eq!(
+            ProfileSelector::parse("ai-codex"),
+            Ok(ProfileSelector::AiCodex)
+        );
     }
 
     #[test]

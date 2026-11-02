@@ -1,6 +1,27 @@
 //! Public registration progress data, never an approval or authentication proof.
 use crate::ErrorCode;
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AiProvider {
+    Codex,
+    Claude,
+}
+impl AiProvider {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Codex => "codex",
+            Self::Claude => "claude",
+        }
+    }
+    pub fn parse(value: &str) -> Result<Self, ErrorCode> {
+        match value {
+            "codex" => Ok(Self::Codex),
+            "claude" => Ok(Self::Claude),
+            _ => Err(ErrorCode::InvalidInput),
+        }
+    }
+}
+
 /// An explicitly selected Gmail account; never a credential or authorization.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct GoogleReadAccount([u8; 32]);
@@ -32,6 +53,8 @@ pub enum RegistrationCommand {
     GuiStatus([u8; 32]),
     McpRequest,
     McpStatus([u8; 32]),
+    AiRequest(AiProvider),
+    AiStatus(AiProvider, [u8; 32]),
 }
 
 impl std::fmt::Debug for RegistrationCommand {
@@ -44,6 +67,14 @@ impl std::fmt::Debug for RegistrationCommand {
             Self::Status(_) => "RegistrationCommand::Status(<redacted>)",
             Self::McpRequest => "RegistrationCommand::McpRequest",
             Self::McpStatus(_) => "RegistrationCommand::McpStatus(<redacted>)",
+            Self::AiRequest(provider) => match provider {
+                AiProvider::Codex => "RegistrationCommand::AiRequest(Codex)",
+                AiProvider::Claude => "RegistrationCommand::AiRequest(Claude)",
+            },
+            Self::AiStatus(provider, _) => match provider {
+                AiProvider::Codex => "RegistrationCommand::AiStatus(Codex, <redacted>)",
+                AiProvider::Claude => "RegistrationCommand::AiStatus(Claude, <redacted>)",
+            },
             Self::GuiRequest => "RegistrationCommand::GuiRequest",
             Self::GuiStatus(_) => "RegistrationCommand::GuiStatus(<redacted>)",
         })

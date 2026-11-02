@@ -89,11 +89,32 @@ mod windows {
         if r.profile_epoch != epoch {
             return Err(ErrorCode::AuthRequired);
         }
-        if r.read_only {
+        let ai = r.client_kind == crate::ClientKind::Ai;
+        if r.read_only || (r.client_kind != crate::ClientKind::Cli && !ai) {
             return Err(ErrorCode::PolicyBlocked);
         }
         if !r.scope.permits_account(account, tool) {
             return Err(ErrorCode::ScopeDenied);
+        }
+        if ai {
+            let provider = match r.display_label.as_str() {
+                crate::registration_activation::DEFAULT_AI_CODEX_LABEL => "codex",
+                crate::registration_activation::DEFAULT_AI_CLAUDE_LABEL => "claude",
+                _ => return Err(ErrorCode::PolicyBlocked),
+            };
+            let approved: i64 = db(tx.query_row(
+                "SELECT approved_at_utc_ms FROM client_registrations WHERE registration_id=?1",
+                [owner.as_slice()],
+                |q| q.get(0),
+            ))?;
+            let consent: bool = db(tx.query_row(
+                "SELECT EXISTS(SELECT 1 FROM ai_consents WHERE provider=?1 AND registration_id=?2 AND account_id=?3 AND profile_epoch=?4 AND registration_request_id=?5 AND approved_at_utc_ms=?6)",
+                rusqlite::params![provider, owner.as_slice(), account, epoch as i64, r.request_id.as_slice(), approved],
+                |q| q.get(0),
+            ))?;
+            if !consent {
+                return Err(ErrorCode::PolicyBlocked);
+            }
         }
         check_send_account(tx, account)?;
         let status: String = db(tx.query_row(

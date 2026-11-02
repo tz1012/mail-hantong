@@ -27,6 +27,7 @@ pub enum ToolRequest {
         account_ids: Vec<String>,
         request: Option<hantong_contracts::google_mutation::MutationPayload>,
         review_id: Option<[u8; 32]>,
+        request_tool: &'static str,
     },
     Google {
         request_id: String,
@@ -181,20 +182,64 @@ impl ToolRequest {
             });
         }
         match tool {
-            hantong_contracts::google_mutation::REQUEST_TOOL => {
+            hantong_contracts::google_mutation::REQUEST_TOOL
+            | hantong_contracts::google_mutation::TRASH_REQUEST_TOOL => {
+                let request_tool = if tool == hantong_contracts::google_mutation::TRASH_REQUEST_TOOL
+                {
+                    hantong_contracts::google_mutation::TRASH_REQUEST_TOOL
+                } else {
+                    hantong_contracts::google_mutation::REQUEST_TOOL
+                };
                 let mode = string(params.get("mode").ok_or(ErrorCode::InvalidInput)?)?;
                 match mode {
                     "request" | "prepare" => {
-                        exact_keys(params, &["mode", "request"])?;
-                        let request =
+                        let request = if request_tool
+                            == hantong_contracts::google_mutation::TRASH_REQUEST_TOOL
+                            && !params.contains_key("request")
+                        {
+                            exact_keys(
+                                params,
+                                &[
+                                    "mode",
+                                    "account_id",
+                                    "message_id",
+                                    "expected_version",
+                                    "operation_id",
+                                    "idempotency_key",
+                                    "payload_hash",
+                                ],
+                            )?;
+                            hantong_contracts::google_mutation::MutationPayload::from_json(
+                                &serde_json::json!({
+                                    "kind":"trash",
+                                    "account_id":params["account_id"],
+                                    "message_id":params["message_id"],
+                                    "expected_version":params["expected_version"],
+                                    "operation_id":params["operation_id"],
+                                    "idempotency_key":params["idempotency_key"],
+                                    "payload_hash":params["payload_hash"],
+                                }),
+                            )?
+                        } else {
+                            exact_keys(params, &["mode", "request"])?;
                             hantong_contracts::google_mutation::MutationPayload::from_json(
                                 &params["request"],
-                            )?;
+                            )?
+                        };
+                        if (request_tool == hantong_contracts::google_mutation::TRASH_REQUEST_TOOL)
+                            != matches!(
+                                request,
+                                hantong_contracts::google_mutation::MutationPayload::Trash { .. }
+                            )
+                        {
+                            return Err(ErrorCode::InvalidInput);
+                        }
                         Ok(Self::GoogleMutation {
                             request_id,
                             account_ids: request.account_ids(),
                             request: Some(request),
                             review_id: None,
+                            request_tool,
                         })
                     }
                     "status" => {
@@ -212,6 +257,7 @@ impl ToolRequest {
                             account_ids: vec![account.into()],
                             request: None,
                             review_id: Some(id),
+                            request_tool,
                         })
                     }
                     _ => Err(ErrorCode::InvalidInput),
@@ -483,7 +529,10 @@ impl ToolRequest {
     pub fn validate_method(method: &str, value: &Value) -> Result<Self, ErrorCode> {
         let request = Self::validate(value)?;
         let expected = request.tool().as_str();
-        if method == expected {
+        if method == request.tool_name()
+            && (method == expected
+                || method == hantong_contracts::google_mutation::TRASH_REQUEST_TOOL)
+        {
             Ok(request)
         } else {
             Err(ErrorCode::InvalidInput)
@@ -507,6 +556,13 @@ impl ToolRequest {
             Self::MessageLocator { request_id, .. }
             | Self::MessagesGet { request_id, .. }
             | Self::MessagesSearch { request_id, .. } => request_id,
+        }
+    }
+
+    pub fn tool_name(&self) -> &str {
+        match self {
+            Self::GoogleMutation { request_tool, .. } => request_tool,
+            _ => self.tool().as_str(),
         }
     }
 
@@ -1193,6 +1249,50 @@ mod tests {
         assert_eq!(parsed.tool(), AuditTool::SendExecute);
         assert_eq!(parsed.account_ids(), &["a"]);
         assert!(ToolRequest::validate_method("mail.unknown", &send).is_err());
+    }
+
+    #[test]
+    fn ai09_trash_tool_is_typed_and_cannot_masquerade_as_generic_change() {
+        let account = format!("google_{}", "a".repeat(64));
+        let request = envelope(
+            hantong_contracts::google_mutation::TRASH_REQUEST_TOOL,
+            serde_json::json!({
+                "mode":"request",
+                "request": {
+                    "kind":"trash", "account_id":account.clone(), "message_id":"message1",
+                    "expected_version":7, "operation_id":"trash-op", "idempotency_key":"trash-key",
+                    "payload_hash":"02".repeat(32)
+                }
+            }),
+        );
+        let parsed = ToolRequest::validate_method(
+            hantong_contracts::google_mutation::TRASH_REQUEST_TOOL,
+            &request,
+        )
+        .unwrap();
+        assert_eq!(
+            parsed.tool_name(),
+            hantong_contracts::google_mutation::TRASH_REQUEST_TOOL
+        );
+        assert_eq!(parsed.account_ids(), std::slice::from_ref(&account));
+        let direct = envelope(
+            hantong_contracts::google_mutation::TRASH_REQUEST_TOOL,
+            serde_json::json!({
+                "mode":"request", "account_id":account.clone(), "message_id":"message1",
+                "expected_version":7, "operation_id":"trash-op", "idempotency_key":"trash-key",
+                "payload_hash":"02".repeat(32)
+            }),
+        );
+        assert!(
+            ToolRequest::validate_method(
+                hantong_contracts::google_mutation::TRASH_REQUEST_TOOL,
+                &direct
+            )
+            .is_ok()
+        );
+        let mut generic = request.clone();
+        generic["tool"] = Value::String(hantong_contracts::google_mutation::REQUEST_TOOL.into());
+        assert!(ToolRequest::validate(&generic).is_err());
     }
 
     #[test]

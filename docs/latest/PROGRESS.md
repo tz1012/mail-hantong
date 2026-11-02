@@ -1638,3 +1638,37 @@ beta.3 실제 ZIP의 격리 설치·모든 manifest 파일 크기/hash·help/ver
 검증: HTML 3개 구조·고유 앵커·내부 링크·필수 베타/AI 내용 검사 통과, 문서 시험 29개 통과(12.935초), 변경 파일 diff check 통과. GitHub Pages build status=built/error=null이며 공개 홈페이지·개인정보·이용 안내·CSS 4개가 HTTP 200 및 커밋 바이트와 정확히 일치한다. https://tz1012.github.io/mail-hantong/ 에 반영됐다. 저장소 README와 CLI-LAUNCH의 후보 버전·이전 창·수동 코어 필수 설명도 최신 beta.3에 맞게 정정했다. 릴리스 설명은 기존 내용을 보존하고 홈페이지·AI 안내 링크를 덧붙였다.
 
 앱 바이너리·계정·권한·비밀값·Google 콘솔 설정은 변경하지 않았으며 실제 로그인·AI 유료 호출·메일 발송을 새로 수행하지 않았다. 문서만 변경했으므로 Rust 전체 검사는 재실행하지 않고 위 beta.3의 1,833개 결과를 기존 검증으로 구분한다. 원본 HEAD/index/미커밋·새 파일을 보존한다. 보안 코드의 사람 검토 필요 상태도 유지한다.
+
+## 2026-11-03 `/help` 명령 설명 구현·AI 자동 메일 도구 변경 제안
+
+사용자가 `/help`에서 이용 가능한 명령 목록과 설명을 요구했다. `apps/hantong-cli/src/ai.rs`와 AI 한국어·영어 리소스에 명령별 설명을 추가했고, 로그인·모델 호출 없이 `hantong ai help`와 JSON 도움말을 제공한다. `main.rs`는 최상위 `/help`를 기존 `--help` 별칭으로 처리하고 AI 명령 설명을 포함한다. `onboarding.rs`와 시작 메뉴 리소스는 계정 선택·계정 연결·기능 선택·작업 메뉴의 현재 선택지 설명을 출력하고 같은 입력 위치에서 계속 기다린다. 도움말은 메일 작업을 실행하지 않으며 메일 본문·비밀값 입력을 명령으로 해석하지 않는다. 숨겨진 추가 실행 경로는 도움말에 노출하지 않았다.
+
+통합 검토에서 계정 선택 메뉴의 도움말 종료 번호가 2로 잘못 표시되는 문제를 0으로 고치고 회귀 시험을 추가했다. 최초 CLI 시험은 한국어 안내를 다른 메뉴 문구로 검사하는 새 시험 1개 실패(99 통과)였으며 실제 메뉴 문구·반복 도움말·부수 효과 0을 검증하도록 수정했다. 최종 `python -X utf8 scripts/cargo_native.py test -p hantong-cli --bin hantong --locked --offline`: **101 통과/실패 0/ignored 0**. CLI all-targets Clippy `-D warnings` exit 0, 수정 Rust 3개 rustfmt check 통과, 해당 diff check 통과. 로그는 `target/help-cli-tests.log`, `target/help-cli-clippy.log`. 추적표 생성 valid=true/341 criteria, source hash `8109be174a252e061f6394b8d34dde4931c48c59e313a740f85c3bea2016116c`이다. 실행 중인 실제 Core와 계정은 건드리지 않았고 전체 workspace 검사는 이번 도움말 변경에 재실행하지 않았다.
+
+사용자는 이어 내장 AI에 메일 접근·본문·작성·발송·삭제 도구가 자동 제공되어야 한다고 정정했다. 현재 AI는 기본 off이며 MCP 고정 identity를 통해 연결하고, 삭제는 계약·도구·공급자 경로에 없음을 실제 코드로 확인했다. 기존 MCP 등록을 자동 승인하면 외부 MCP 호스트에도 같은 권한이 열리므로 단순 `set_agent(true)`/기존 등록 자동 확장은 구현하지 않았다.
+
+AGENTS.md §7의 계약 변경 제안 절차에 따라 `docs/proposals/AI-AUTOMATIC-MAIL-TOOLS-20261103.md`에 구체적인 변경안을 작성했다. 내장 AI 전용 identity·보호 프로필·제공자/계정별 전송 설정을 두고 설정 후 도구를 매 세션 자동 연결한다. 수동 MCP 등록 명령·요청 ID 복사·필수 `/agent on`을 일반 이용 흐름에서 제거한다. 읽기/본문/초안과 발송 요청을 제공하며 삭제는 우선 단일 메일 휴지통 이동으로 제한한다. 발송·삭제는 Core 소유 불변 preview·같은 터미널 확인·단일 claim·불확실 결과 무재시도를 유지한다. Google 읽기/발송 동의는 삭제나 외부 AI 전송 동의가 아니며 필요한 기능 설정·Google 추가 권한을 우회하지 않는다.
+
+이 변경은 `ai-managed-clients.md`의 기본 off/독립 MCP 연결 및 `google-write.md`·`google-mutations.md`의 삭제 제외 계약을 바꿔야 한다. 제안에는 영향 파일·요건(AI-07/AI-09/ACC-02/APR-01/SEC-02/SEC-08/SYNC-07)과 synthetic 수용 검사를 명시했다. **AI 자동 연결·삭제는 아직 구현·배포되지 않았으며 계약 변경 검토 대상**이다. 공개 사이트·beta.3를 이 기능이 있는 것처럼 바꾸지 않았다. 실제 로그인·유료 AI 호출·메일 조회/발송/삭제·기존 권한 확대는 수행하지 않았다. 기존 미커밋·새 파일·HEAD/index를 보존한다. 다음 작업은 이 구체안에 따른 계약 확정 후 identity·migration·자동 연결·휴지통 요청의 구현과 통합 검사이다. **[사람 보안 검토 필요]**.
+
+## 2026-11-03 승인된 AI 자동 메일 도구·휴지통 계약 반영 및 구현
+
+사용자가 위 변경안의 진행과 기존 계약 수정을 승인했다. AGENTS와 `docs/contracts/builtin-ai-mail.md`에 승인 범위·최신 기준을 기록했고 기존 AI/Google/MCP/등록/프로필/저장/DB/터미널 계약 10개와 제안서의 대기 상태를 정정했다. 계정별 외부 AI 전송 기능 설정, 내장 AI와 외부 MCP 분리, 발송·삭제의 같은 터미널 확인, Gmail 단일 메일 휴지통 이동, 영구·대량 삭제 제외가 기준이다. 승인된 제품 방향을 사람 보안 검토 완료로 취급하지 않는다.
+
+구현: `ClientKind::Ai`, Codex/Claude별 고정 등록·키·`ai-codex.json`/`ai-claude.json`, provider/registration/account/epoch/request/time에 결속한 `ai_consents`를 추가했다. schema25 전체 rebuild migration은 v24 DDL을 동결하고 기존 표·행·FK·감사 sequence highwater·과거 scope hash를 보존한다. AI stage와 activation은 `ai_feature` 채널만 사용하고 실제 준비된 Gmail/IMAP 계정만 후보로 삼는다. 같은 터미널에서 표시된 계정 전체 연결 또는 취소를 명시적으로 선택한다. 기존 등록·새 계정·외부 MCP 권한을 묵시적으로 확대하지 않는다.
+
+AI 대화 시작은 설정된 제공자 프로필을 자동 연결한다. 최초 설정에는 내장 CLI가 Core 터미널 검토를 직접 조정하며 수동 MCP 등록 명령·요청 ID 복사·필수 `/agent on`을 요구하지 않는다. 제공자 변경은 해당 제공자의 별도 설정을 검사하고 이전 대화 맥락을 이관하지 않는다. `/agent off`는 현재 도구와 맥락을 해제한다. 프로필 인증·계정 동의는 일반 읽기·본문·지연 동기화·발송/휴지통 claim에서 재검사한다. 비대화형/JSON/no-input은 설정을 생성하지 않으며, 모델의 발송·휴지통 요청도 pending 생성 전에 HUMAN_STEP_REQUIRED로 거부한다.
+
+새 `mail.messages.trash.request`는 request/status만 공개한다. MCP가 canonical payload hash를 로컬 계산하고 Store는 계정/메시지/캐시 버전/operation/idempotency/hash를 재검사한다. 기존 일반 라벨 변경의 TRASH 금지는 유지한다. 실제 Modify 권한이 있는 Gmail만 정확한 messages/{id}/trash 경로를 단일 호출한다. Core의 확인 전에는 실행 job이 없고 확인 후에만 durable claim을 소비한다. 불확실 결과는 자동 재시도하지 않는다. 확인 화면은 대상 제목·보낸 사람·요약과 휴지통 이동임을 표시한다. AI에 실행·확인 RPC는 광고하지 않는다. 다른 공급자 삭제와 영구 삭제는 지원으로 표시하지 않는다.
+
+통합 수정: AI 도구를 read_only=true로 판정하던 조건, AI 승인 채널 reader/activation 불일치, 휴지통의 일반 Google 실행 grant 오용, MCP→CLI 검토의 `--account` 옵션 불일치, 등록의 준비되지 않은 계정 포함, 새 AI 등록 IPC 서버 parser 누락, 제공자 전환의 무조건 no-input 처리, 이전 schema migration의 current DDL 참조를 수정했다. v8 재구성 시험은 새 AI 동의 표가 비어 있음을 검증한 뒤 제거하여 실제 동결 v8 fixture를 복원한다. 계정 범위 오류를 대상 조회보다 먼저 검사하던 기존 Google 상태 조회의 경계도 보존했다. 실패 시험을 삭제하거나 skip하지 않았다.
+
+검증 진행: 초기 CLI/AI/MCP/application/contracts/approval/IPC 묶음 493개 통과, AI Store 등록/권한/휴지통 5개 통과. 전체 Store 검사에서 458/32 실패 후 실제 전이·fixture 오류를 수정했고 다음 전체 검사에서 488/2 실패로 좁혔다. 남은 계정 격리 시험 1개와 v8 실제 이력 보존 시험 1개는 수정 후 각각 1개 통과했다. 문서 29개·Build 101개·요건/아키텍처·전체 Clippy/build가 통과한 실행을 확보했다. 최초 Build 반복 설치 File.Replace 잠금 실패는 단독 재실행 1개와 이후 전체 Build 101개 실행에서 통과했다. 최종 전체 검증 결과는 이 항목에 이어 기록한다.
+
+현재 실제 설치 beta.3·실제 schema24·보호 저장소·계정·발송 이력은 새 빌드로 변경하지 않는다. 기존 코어를 검사 전 동일 경로/hash/인자로 보존하고 검사 후 같은 beta.3를 복구한다. 실제 AI 인증/유료 추론·Google 추가 동의·메일 발송/삭제는 하지 않았다. 새 구현은 아직 배포하지 않았으며 실제 공급자 연결 시험과 **[사람 보안 검토 필요]** 상태를 구분한다. 원본 HEAD/index와 기존 미커밋·새 파일은 보존한다.
+
+최종 통합 검사: `python -X utf8 scripts/check_all.py` **exit 0**. Rust **1,726개/30 suites/실패 0/ignored 0**, Docs **29개**, Build **101개**, 합계 **1,856개 통과**. fmt·전체 Clippy(-D warnings)·전체 all-targets build·요건·문서 원본·아키텍처·추적표 검사도 통과했다. 전체 실행에서 마지막으로 발견한 기존 CLI 등록의 중복 요청 차단 조건 누락을 수정해 기존 등록에는 계속 Conflict를 반환하도록 복원했으며, 해당 회귀 시험 단독 1개 및 최종 전체 Core 141개가 통과했다. Store 490개도 최종 전체 검사에서 통과했다. 새 AI 등록 IPC 서버 parser와 실제 bootstrap callback·프레임 상한 검사도 전체 검사에 포함했다.
+
+검증 소스 hash `2ad5e1917e700713f986d92b6a12397e078953549919b88c805f349c640920d7`; 로그 `target/ai-auto-full-check.log` SHA-256 `91ae37002dd4ecbd2fa42a313e59a4646e725ad6875a5f00282dc69c07999942`; 요약 `target/ai-auto-verification.json`. 검사 후 같은 beta.3 실행 파일 SHA-256 `710aeff80153953f8a2625ba041a0ff48f3f434f41c74efb50781c1397f0b80c`와 실행 인자로 서비스를 복구했다(PID 50332). 설치된 beta.3의 `--json core status`는 exit 0/ok=true/transport_ready=true이다. 이 bootstrap 상태의 mail_ready=false/authenticated=false는 실제 계정·메일 도구를 조회하지 않는 기존 상태 응답이며 계정이 끊겼다는 판정으로 쓰지 않는다. 최종 추적표 검사도 동일 source hash/341 criteria/valid=true이다.
+
+사용자가 ‘코어’의 의미를 물었다. 사용자에게는 별도로 관리할 대상이 아니라 한통 실행 시 자동으로 시작되어 실제 메일 처리와 권한 검사를 맡는 백그라운드 프로그램이라고 설명했다. 이 설명을 새로운 GUI·서비스 설치 방식 변경으로 취급하지 않는다. 내부 개발 용어와 사용자 안내 표현은 구분한다.

@@ -214,11 +214,25 @@ fn render_receipt(receipt: &TerminalReviewReceipt, korean: bool) -> Result<(), E
             out,
             "{}: {}",
             terminal_safe(&field.label),
-            terminal_safe(&field.value)
+            terminal_safe(localized_field_value(&field.label, &field.value, korean))
         )
         .map_err(|_| ErrorCode::CoreUnavailable)?;
     }
     out.flush().map_err(|_| ErrorCode::CoreUnavailable)
+}
+
+fn localized_field_value<'a>(label: &str, value: &'a str, korean: bool) -> &'a str {
+    match (label, value) {
+        ("action", "move_to_trash") => resource(korean, "trash_action"),
+        ("feature", "Connect all listed accounts (explicit confirmation required)") => {
+            resource(korean, "ai_feature")
+        }
+        (
+            "mail_transfer",
+            "selected account mail metadata/body may be sent to the selected AI provider",
+        ) => resource(korean, "ai_mail_transfer"),
+        _ => value,
+    }
 }
 
 #[allow(unused_variables)]

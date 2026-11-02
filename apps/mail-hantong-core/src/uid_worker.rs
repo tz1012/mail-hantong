@@ -65,6 +65,15 @@ fn body_grant(
     }
     if record.client_kind == hantong_contracts::client::ClientKind::Mcp {
         store.check_mcp_ai_consent(id, epoch, r.account_ids())?;
+    } else if record.client_kind == hantong_contracts::client::ClientKind::Ai {
+        let provider = if record.display_label == hantong_store::DEFAULT_AI_CODEX_LABEL {
+            hantong_contracts::registration::AiProvider::Codex
+        } else if record.display_label == hantong_store::DEFAULT_AI_CLAUDE_LABEL {
+            hantong_contracts::registration::AiProvider::Claude
+        } else {
+            return Err(ErrorCode::PolicyBlocked);
+        };
+        store.check_ai_consent(provider, id, epoch, r.account_ids())?;
     }
     store.body_endpoint(r).map(|_| ())
 }

@@ -19,6 +19,7 @@ pub enum GoogleOperation {
     Send,
     SaveDraft,
     ChangeLabels,
+    TrashMessage,
 }
 
 impl GoogleAccessMode {
@@ -87,7 +88,9 @@ impl GoogleAccessMode {
         let permitted = match operation {
             GoogleOperation::Read => true,
             GoogleOperation::Send => self != Self::ReadOnly,
-            GoogleOperation::SaveDraft | GoogleOperation::ChangeLabels => self == Self::Modify,
+            GoogleOperation::SaveDraft
+            | GoogleOperation::ChangeLabels
+            | GoogleOperation::TrashMessage => self == Self::Modify,
         };
         if permitted {
             Ok(())

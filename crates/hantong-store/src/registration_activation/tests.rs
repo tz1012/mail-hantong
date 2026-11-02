@@ -1,4 +1,5 @@
 use super::*;
+mod ai_tests;
 mod google_oauth_tests;
 mod gui_tests;
 mod mcp_tests;

@@ -14,8 +14,8 @@ pub mod authenticated_wire;
 mod trusted_profile;
 #[cfg(windows)]
 pub use trusted_profile::{
-    AuthenticatedDefaultProfile, AuthenticatedGuiProfile, authenticate_default,
-    authenticate_default_app_read, authenticate_gui, authenticate_mcp, verify_default,
+    AuthenticatedDefaultProfile, AuthenticatedGuiProfile, authenticate_ai, authenticate_default,
+    authenticate_default_app_read, authenticate_gui, authenticate_mcp, verify_ai, verify_default,
 };
 
 pub mod accounts;

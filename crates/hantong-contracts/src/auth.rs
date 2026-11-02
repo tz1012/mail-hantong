@@ -880,6 +880,20 @@ pub fn is_supported_mcp_toolset(tools: &[String]) -> bool {
     tools == mcp_read_tools() || tools == mcp_mail_tools()
 }
 
+/// Exact built-in AI mail tool set. The execution capability is internal to
+/// Core and is never exposed as a model-callable tool.
+pub fn ai_mail_tools() -> Vec<String> {
+    let mut tools = mcp_mail_tools();
+    tools.push("mail.messages.trash.request".into());
+    tools.push("mail.messages.trash.execute".into());
+    tools.sort();
+    tools
+}
+
+pub fn is_supported_ai_mail_toolset(tools: &[String]) -> bool {
+    tools == ai_mail_tools()
+}
+
 /// Canonical C11 plus 1..4 exact account-qualified change grants.
 pub fn is_google_change_toolset(tools: &[String]) -> bool {
     if !(12..=15).contains(&tools.len()) || tools.windows(2).any(|p| p[0] >= p[1]) {

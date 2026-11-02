@@ -237,6 +237,31 @@ fn apr01_label_change_and_remote_draft_response_are_checked_without_provider_ref
 }
 
 #[test]
+fn ai09_trash_uses_only_the_fixed_single_message_endpoint() {
+    let fake = Fake::response(200, serde_json::json!({"id":"message1"}));
+    assert_eq!(
+        trash(
+            &fake,
+            "message1",
+            &access(),
+            deadline(),
+            &AtomicBool::new(false)
+        )
+        .unwrap(),
+        GmailWriteOutcome::Accepted
+    );
+    let calls = fake.calls.borrow();
+    assert_eq!(calls.len(), 1);
+    assert_eq!(calls[0].0, "/gmail/v1/users/me/messages/message1/trash");
+    assert!(calls[0].1.is_none());
+    for id in ["../other", "message/other", "message?x=1", ""] {
+        let fake = Fake::response(200, serde_json::json!({"id":id}));
+        assert!(trash(&fake, id, &access(), deadline(), &AtomicBool::new(false)).is_err());
+        assert!(fake.calls.borrow().is_empty());
+    }
+}
+
+#[test]
 fn sec02_attachment_receive_checks_exact_size_and_decoded_synthetic_bytes() {
     let bytes = "한통 첨부 테스트".as_bytes();
     let fake = Fake::response(

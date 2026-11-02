@@ -1,5 +1,7 @@
 //! Data and UI intents only; neither type proves user presence or approval.
-use hantong_contracts::{ErrorCode, auth::RequestedScope, client::ClientKind};
+use hantong_contracts::{
+    ErrorCode, auth::RequestedScope, client::ClientKind, registration::AiProvider,
+};
 use hantong_domain::config::{Language, Theme};
 use std::{fmt, time::Duration};
 
@@ -10,6 +12,7 @@ const REVIEW_DOMAIN: &[u8] = b"mail-hantong/registration-review/v1\0";
 #[derive(Clone, Eq, PartialEq)]
 pub struct RegistrationReview {
     client_kind: ClientKind,
+    provider: Option<AiProvider>,
     request_id: [u8; 32],
     request_version: u64,
     scope: RequestedScope,
@@ -44,6 +47,7 @@ impl RegistrationReview {
         let scope = RequestedScope::new(account_ids, vec!["mail.accounts.list".into()])?;
         Ok(Self {
             client_kind: ClientKind::Cli,
+            provider: None,
             request_id,
             request_version,
             scope,
@@ -120,6 +124,33 @@ impl RegistrationReview {
         )?;
         Ok(review)
     }
+    pub fn new_ai(
+        provider: AiProvider,
+        request_id: [u8; 32],
+        request_version: u64,
+        account_ids: Vec<String>,
+        server_public_key_hash: [u8; 32],
+        created_at_utc_ms: i64,
+        expires_at_utc_ms: i64,
+    ) -> Result<Self, ErrorCode> {
+        let mut review = Self::new(
+            request_id,
+            request_version,
+            account_ids,
+            server_public_key_hash,
+            created_at_utc_ms,
+            expires_at_utc_ms,
+        )?;
+        review.client_kind = ClientKind::Ai;
+        review.scope = RequestedScope::new(
+            review.account_ids().to_vec(),
+            hantong_contracts::auth::ai_mail_tools(),
+        )?;
+        // Keep Codex and Claude reviews cryptographically distinct even when
+        // all account and tool fields happen to be identical.
+        review.provider = Some(provider);
+        Ok(review)
+    }
     pub fn request_id(&self) -> &[u8; 32] {
         &self.request_id
     }
@@ -149,6 +180,12 @@ impl RegistrationReview {
             "mcp"
         } else if self.client_kind == ClientKind::Gui {
             "gui"
+        } else if self.client_kind == ClientKind::Ai {
+            match self.provider {
+                Some(AiProvider::Codex) => "ai-codex",
+                Some(AiProvider::Claude) => "ai-claude",
+                None => "ai",
+            }
         } else {
             "default"
         }
@@ -164,7 +201,16 @@ impl RegistrationReview {
         let accounts = self.scope.accounts();
         let account_bytes: usize = accounts.iter().map(|value| 4 + value.len()).sum();
         let mut output = Vec::with_capacity(REVIEW_DOMAIN.len() + 92 + account_bytes);
-        if self.client_kind == ClientKind::Mcp {
+        if self.client_kind == ClientKind::Ai {
+            output.extend_from_slice(b"mail-hantong/ai-registration-review/v1\0");
+            output.extend_from_slice(self.profile_name().as_bytes());
+            output.push(0);
+            output.extend_from_slice(&(self.scope.tools().len() as u32).to_be_bytes());
+            for tool in self.scope.tools() {
+                output.extend_from_slice(&(tool.len() as u32).to_be_bytes());
+                output.extend_from_slice(tool.as_bytes());
+            }
+        } else if self.client_kind == ClientKind::Mcp {
             if self.scope.tools() == hantong_contracts::auth::mcp_mail_tools() {
                 output.extend_from_slice(b"mail-hantong/mcp-mail-registration-review/v2\0");
             } else {

@@ -7,6 +7,7 @@ use crate::{
 };
 use hantong_contracts::ErrorCode;
 use hantong_contracts::auth::{AppReadTool, RequestedScope};
+use hantong_contracts::registration::AiProvider;
 use hantong_platform::{
     ClientSigningKey, LoadedClientProfile, client_key_id_for_registration, validate_public_key,
 };
@@ -115,6 +116,20 @@ pub async fn authenticate_mcp()
     authenticate_profile(ProfileSelector::Mcp, None).await
 }
 
+/// Authenticates only the provider-qualified built-in AI profile.
+pub async fn authenticate_ai(
+    provider: AiProvider,
+) -> Result<AuthenticatedDefaultProfile<impl AsyncRead + AsyncWrite + Unpin>, ErrorCode> {
+    authenticate_profile(
+        match provider {
+            AiProvider::Codex => ProfileSelector::AiCodex,
+            AiProvider::Claude => ProfileSelector::AiClaude,
+        },
+        None,
+    )
+    .await
+}
+
 async fn authenticate_default_for(
     app_read: Option<AppReadTool>,
 ) -> Result<AuthenticatedDefaultProfile<impl AsyncRead + AsyncWrite + Unpin>, ErrorCode> {
@@ -130,6 +145,8 @@ async fn authenticate_profile(
             ProfileSelector::Default => hantong_platform::load_default_client_profile(),
             ProfileSelector::Gui => hantong_platform::load_gui_client_profile(),
             ProfileSelector::Mcp => hantong_platform::load_mcp_client_profile(),
+            ProfileSelector::AiCodex => hantong_platform::load_ai_codex_client_profile(),
+            ProfileSelector::AiClaude => hantong_platform::load_ai_claude_client_profile(),
         },
     )?;
     let profile = diagnostic_step(
@@ -152,6 +169,13 @@ async fn authenticate_profile(
         (ProfileSelector::Mcp, Some(_)) => return Err(ErrorCode::ScopeDenied),
         (ProfileSelector::Gui, None) => prepare_gui_profile(&profile, now),
         (ProfileSelector::Gui, Some(_)) => return Err(ErrorCode::ScopeDenied),
+        (ProfileSelector::AiCodex, None) | (ProfileSelector::AiClaude, None) => {
+            require_selector(&profile, selected)?;
+            prepare_profile_with_scope(&profile, profile.scope().clone(), now)
+        }
+        (ProfileSelector::AiCodex, Some(_)) | (ProfileSelector::AiClaude, Some(_)) => {
+            return Err(ErrorCode::ScopeDenied);
+        }
     };
     let pending = diagnostic_step(AuthStage::ProofPrepare, pending)?;
     let scope = pending.requested_scope().clone();
@@ -159,6 +183,8 @@ async fn authenticate_profile(
         ProfileSelector::Default => "default-profile-auth-1",
         ProfileSelector::Gui => "gui-profile-auth-1",
         ProfileSelector::Mcp => "mcp-profile-auth-1",
+        ProfileSelector::AiCodex => "ai-codex-profile-auth-1",
+        ProfileSelector::AiClaude => "ai-claude-profile-auth-1",
     };
     let client = diagnostic_step(
         AuthStage::Handshake,
@@ -204,6 +230,43 @@ pub fn verify_default() -> Result<(), ErrorCode> {
             drop(connection);
             Ok(())
         })
+}
+
+/// Verifies the provider-qualified built-in AI profile and its scoped mail
+/// access without returning account or message data to the caller.
+#[cfg(windows)]
+pub fn verify_ai(provider: AiProvider) -> Result<(), ErrorCode> {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_io()
+        .enable_time()
+        .build()
+        .map_err(|_| ErrorCode::CoreUnavailable)?
+        .block_on(async move {
+            let profile = authenticate_ai(provider).await?;
+            let ids = profile.accounts().to_vec();
+            if ids.is_empty() {
+                return Err(ErrorCode::ScopeDenied);
+            }
+            let request_id = "ai-accounts-list-1";
+            let request = serde_json::json!({
+                "schema_version": 1,
+                "request_id": request_id,
+                "tool": "mail.accounts.list",
+                "params": {"account_ids": ids, "include_capabilities": false}
+            });
+            let raw = profile
+                .exchange(request_id, "mail.accounts.list", &request)
+                .await?;
+            if raw.is_empty() {
+                return Err(ErrorCode::CoreUnavailable);
+            }
+            Ok(())
+        })
+}
+
+#[cfg(not(windows))]
+pub fn verify_ai(_: AiProvider) -> Result<(), ErrorCode> {
+    Err(ErrorCode::CapabilityUnsupported)
 }
 
 fn prepare_profile(

@@ -14,12 +14,16 @@ use rusqlite::{OptionalExtension, TransactionBehavior, params};
 pub const DEFAULT_CLI_LABEL: &str = "hantong CLI (default)";
 pub const DEFAULT_MCP_LABEL: &str = "mail-hantong MCP";
 pub const DEFAULT_GUI_LABEL: &str = "mail-hantong GUI";
+pub const DEFAULT_AI_CODEX_LABEL: &str = "mail-hantong AI Codex";
+pub const DEFAULT_AI_CLAUDE_LABEL: &str = "mail-hantong AI Claude";
 
 #[derive(Clone, Copy, Eq, PartialEq)]
 enum RegistrationFlavor {
     Cli,
     Gui,
     Mcp,
+    AiCodex,
+    AiClaude,
 }
 impl RegistrationFlavor {
     fn kind(self) -> ClientKind {
@@ -27,6 +31,7 @@ impl RegistrationFlavor {
             Self::Cli => ClientKind::Cli,
             Self::Gui => ClientKind::Gui,
             Self::Mcp => ClientKind::Mcp,
+            Self::AiCodex | Self::AiClaude => ClientKind::Ai,
         }
     }
     fn label(self) -> &'static str {
@@ -34,6 +39,8 @@ impl RegistrationFlavor {
             Self::Cli => DEFAULT_CLI_LABEL,
             Self::Gui => DEFAULT_GUI_LABEL,
             Self::Mcp => DEFAULT_MCP_LABEL,
+            Self::AiCodex => DEFAULT_AI_CODEX_LABEL,
+            Self::AiClaude => DEFAULT_AI_CLAUDE_LABEL,
         }
     }
     fn tools(self) -> Vec<String> {
@@ -41,6 +48,7 @@ impl RegistrationFlavor {
             Self::Cli => vec!["mail.accounts.list".into()],
             Self::Gui => hantong_contracts::auth::gui_read_tools(),
             Self::Mcp => hantong_contracts::auth::mcp_read_tools(),
+            Self::AiCodex | Self::AiClaude => hantong_contracts::auth::ai_mail_tools(),
         }
     }
     fn matches_request(self, request: &RegistrationRequest) -> bool {
@@ -49,8 +57,15 @@ impl RegistrationFlavor {
             && request.scope.accounts().len() <= 128
             && (request.scope.tools() == self.tools()
                 || (self == Self::Mcp
-                    && request.scope.tools() == hantong_contracts::auth::mcp_mail_tools()))
+                    && request.scope.tools() == hantong_contracts::auth::mcp_mail_tools())
+                || ((self == Self::AiCodex || self == Self::AiClaude)
+                    && request.scope.tools() == hantong_contracts::auth::ai_mail_tools()))
     }
+}
+
+fn is_read_only_toolset(tools: &[String]) -> bool {
+    tools != hantong_contracts::auth::mcp_mail_tools()
+        && tools != hantong_contracts::auth::ai_mail_tools()
 }
 
 pub struct CliRegistrationStage {
@@ -209,6 +224,62 @@ impl GuiRegistrationStage {
 pub struct McpRegistrationStage {
     inner: CliRegistrationStage,
 }
+
+pub struct AiRegistrationStage {
+    inner: CliRegistrationStage,
+    flavor: RegistrationFlavor,
+}
+impl fmt::Debug for AiRegistrationStage {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("AiRegistrationStage { <redacted> }")
+    }
+}
+impl AiRegistrationStage {
+    pub fn new(
+        provider: hantong_contracts::registration::AiProvider,
+        expected_request: RegistrationRequest,
+        registration_id: [u8; 16],
+        client_public_key: [u8; 72],
+        expected_server_public_key_hash: [u8; 32],
+    ) -> Result<Self, ErrorCode> {
+        let flavor = match provider {
+            hantong_contracts::registration::AiProvider::Codex => RegistrationFlavor::AiCodex,
+            hantong_contracts::registration::AiProvider::Claude => RegistrationFlavor::AiClaude,
+        };
+        let mut inner = CliRegistrationStage::new_for(
+            flavor,
+            expected_request,
+            registration_id,
+            client_public_key,
+            expected_server_public_key_hash,
+        )?;
+        inner.decision_channel = "ai_feature";
+        Ok(Self { inner, flavor })
+    }
+    pub fn new_terminal(
+        provider: hantong_contracts::registration::AiProvider,
+        expected_request: RegistrationRequest,
+        registration_id: [u8; 16],
+        client_public_key: [u8; 72],
+        expected_server_public_key_hash: [u8; 32],
+    ) -> Result<Self, ErrorCode> {
+        let flavor = match provider {
+            hantong_contracts::registration::AiProvider::Codex => RegistrationFlavor::AiCodex,
+            hantong_contracts::registration::AiProvider::Claude => RegistrationFlavor::AiClaude,
+        };
+        Ok(Self {
+            inner: CliRegistrationStage::new_for_channel(
+                flavor,
+                expected_request,
+                registration_id,
+                client_public_key,
+                expected_server_public_key_hash,
+                "terminal_cli",
+            )?,
+            flavor,
+        })
+    }
+}
 impl fmt::Debug for McpRegistrationStage {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str("McpRegistrationStage { <redacted> }")
@@ -327,6 +398,15 @@ impl Store {
     ) -> Result<Vec<RegistrationRequest>, ErrorCode> {
         self.list_orphan_registration_requests(RegistrationFlavor::Mcp)
     }
+    pub fn list_orphan_ai_registration_requests(
+        &self,
+        provider: hantong_contracts::registration::AiProvider,
+    ) -> Result<Vec<RegistrationRequest>, ErrorCode> {
+        self.list_orphan_registration_requests(match provider {
+            hantong_contracts::registration::AiProvider::Codex => RegistrationFlavor::AiCodex,
+            hantong_contracts::registration::AiProvider::Claude => RegistrationFlavor::AiClaude,
+        })
+    }
     fn list_orphan_registration_requests(
         &self,
         flavor: RegistrationFlavor,
@@ -366,7 +446,7 @@ impl Store {
                 orphan_requests(tx, RegistrationFlavor::Gui)?;
                 orphan_requests(tx, RegistrationFlavor::Mcp)?;
                 let request=read_request(tx,&request_id).map_err(internal)?.ok_or(ErrorCode::NotFound)?;
-                if !RegistrationFlavor::Cli.matches_request(&request) && !RegistrationFlavor::Gui.matches_request(&request) && !RegistrationFlavor::Mcp.matches_request(&request) {return Err(ErrorCode::Conflict);}
+                if !RegistrationFlavor::Cli.matches_request(&request) && !RegistrationFlavor::Gui.matches_request(&request) && !RegistrationFlavor::Mcp.matches_request(&request) && !RegistrationFlavor::AiCodex.matches_request(&request) && !RegistrationFlavor::AiClaude.matches_request(&request) {return Err(ErrorCode::Conflict);}
                 let mut statement=tx.prepare("SELECT registration_id FROM client_registrations WHERE registration_id=?1 OR request_id=?2 OR public_key=?3 LIMIT 4").map_err(internal)?;
                 let ids=statement.query_map(params![id.as_slice(),request_id.as_slice(),public_key.as_slice()],|r|blob_column::<16>(r,0)).map_err(internal)?.collect::<rusqlite::Result<Vec<_>>>().map_err(internal)?;
                 if ids.len()>3 {return Err(ErrorCode::InternalError);}
@@ -418,8 +498,58 @@ impl Store {
         }
     }
 
+    /// Validates provider-bound built-in AI consent for the exact registration
+    /// epoch and selected accounts. This never grants or expands consent.
+    pub fn check_ai_consent(
+        &self,
+        provider: hantong_contracts::registration::AiProvider,
+        registration_id: [u8; 16],
+        expected_epoch: u64,
+        account_ids: &[String],
+    ) -> Result<(), ErrorCode> {
+        if registration_id == [0; 16]
+            || !(1..=i64::MAX as u64).contains(&expected_epoch)
+            || account_ids.is_empty()
+        {
+            return Err(ErrorCode::InvalidInput);
+        }
+        let requested = hantong_contracts::auth::RequestedScope::new(account_ids.to_vec(), vec![])?;
+        let flavor = match provider {
+            hantong_contracts::registration::AiProvider::Codex => RegistrationFlavor::AiCodex,
+            hantong_contracts::registration::AiProvider::Claude => RegistrationFlavor::AiClaude,
+        };
+        #[cfg(not(windows))]
+        {
+            let _ = (requested, flavor);
+            Err(ErrorCode::CapabilityUnsupported)
+        }
+        #[cfg(windows)]
+        {
+            self.registration_transaction(TransactionBehavior::Deferred, |tx| {
+                let record = read_registration(tx, &registration_id).map_err(internal)?.ok_or(ErrorCode::ClientNotRegistered)?;
+                if record.client_kind != ClientKind::Ai || record.display_label != flavor.label() || record.state != RegistrationState::Active { return Err(ErrorCode::PolicyBlocked); }
+                if record.profile_epoch != expected_epoch || requested.accounts().iter().any(|a| record.scope.accounts().binary_search(a).is_err()) { return Err(ErrorCode::AuthRequired); }
+                let approved: i64 = tx.query_row("SELECT approved_at_utc_ms FROM client_registrations WHERE registration_id=?1", [registration_id.as_slice()], |r| r.get(0)).map_err(internal)?;
+                let mut statement = tx.prepare("SELECT account_id,registration_request_id,approved_at_utc_ms FROM ai_consents WHERE provider=?1 AND registration_id=?2 AND profile_epoch=?3 ORDER BY account_id LIMIT 129").map_err(internal)?;
+                let rows = statement.query_map(params![provider.as_str(), registration_id.as_slice(), expected_epoch as i64], |row| Ok((text_column(row,0,128)?.to_owned(), blob_column::<32>(row,1)?, row.get::<_,i64>(2)?))).map_err(internal)?.collect::<rusqlite::Result<Vec<_>>>().map_err(internal)?;
+                if rows.len() > 128 || rows.iter().any(|(a,r,t)| record.scope.accounts().binary_search(a).is_err() || r != &record.request_id || *t != approved || *t <= 0) { return Err(ErrorCode::InternalError); }
+                if requested.accounts().iter().any(|a| !rows.iter().any(|(allowed,_,_)| allowed == a)) { return Err(ErrorCode::PolicyBlocked); }
+                Ok(())
+            })
+        }
+    }
+
     pub fn load_mcp_registration(&self) -> Result<Option<RegistrationRecord>, ErrorCode> {
         self.load_fixed_registration(RegistrationFlavor::Mcp)
+    }
+    pub fn load_ai_registration(
+        &self,
+        provider: hantong_contracts::registration::AiProvider,
+    ) -> Result<Option<RegistrationRecord>, ErrorCode> {
+        self.load_fixed_registration(match provider {
+            hantong_contracts::registration::AiProvider::Codex => RegistrationFlavor::AiCodex,
+            hantong_contracts::registration::AiProvider::Claude => RegistrationFlavor::AiClaude,
+        })
     }
     fn load_fixed_registration(
         &self,
@@ -450,6 +580,15 @@ impl Store {
     }
     pub fn load_pending_mcp_request(&self) -> Result<Option<RegistrationRequest>, ErrorCode> {
         self.load_pending_fixed_request(RegistrationFlavor::Mcp)
+    }
+    pub fn load_pending_ai_request(
+        &self,
+        provider: hantong_contracts::registration::AiProvider,
+    ) -> Result<Option<RegistrationRequest>, ErrorCode> {
+        self.load_pending_fixed_request(match provider {
+            hantong_contracts::registration::AiProvider::Codex => RegistrationFlavor::AiCodex,
+            hantong_contracts::registration::AiProvider::Claude => RegistrationFlavor::AiClaude,
+        })
     }
     fn load_pending_fixed_request(
         &self,
@@ -516,6 +655,12 @@ impl Store {
         stage: &McpRegistrationStage,
     ) -> Result<RegistrationRecord, ErrorCode> {
         self.stage_registration(&stage.inner, RegistrationFlavor::Mcp)
+    }
+    pub fn stage_ai_registration(
+        &self,
+        stage: &AiRegistrationStage,
+    ) -> Result<RegistrationRecord, ErrorCode> {
+        self.stage_registration(&stage.inner, stage.flavor)
     }
     pub fn stage_terminal_mcp_registration(
         &self,
@@ -603,6 +748,10 @@ impl Store {
                         let ready: bool = tx.query_row("SELECT provider='gmail' AND status='ready' FROM accounts WHERE account_id=?1", [account], |r| r.get(0)).map_err(internal)?;
                         if !ready { return Err(ErrorCode::Conflict); }
                     }
+                    if stage.decision_channel == "ai_feature" {
+                        let ready: bool = tx.query_row("SELECT provider IN ('gmail','imap') AND status='ready' FROM accounts WHERE account_id=?1", [account], |r| r.get(0)).map_err(internal)?;
+                        if !ready { return Err(ErrorCode::Conflict); }
+                    }
                 }
                 if let Some(old)=&stage.expected_mcp_replacement {
                     if flavor!=RegistrationFlavor::Mcp || request.scope.tools()!=hantong_contracts::auth::mcp_mail_tools(){return Err(ErrorCode::InvalidInput)}
@@ -622,7 +771,7 @@ impl Store {
                 if changed != 1 { return Err(ErrorCode::Conflict); }
                 tx.execute(
                     "INSERT INTO client_registrations(registration_id,request_id,client_kind,display_label,public_key,profile_epoch,state,read_only,requests_per_minute,approved_channel,approved_at_utc_ms,updated_at_utc_ms,revoked_at_utc_ms,version) VALUES(?1,?2,?3,?4,?5,1,'provisioning',?7,60,?8,?6,?6,NULL,1)",
-                    params![stage.registration_id.as_slice(),request.request_id.as_slice(),flavor.kind().as_str(),flavor.label(),stage.client_public_key.as_slice(),now,i64::from(request.scope.tools()!=hantong_contracts::auth::mcp_mail_tools()),stage.decision_channel]
+                    params![stage.registration_id.as_slice(),request.request_id.as_slice(),flavor.kind().as_str(),flavor.label(),stage.client_public_key.as_slice(),now,i64::from(is_read_only_toolset(request.scope.tools())),stage.decision_channel]
                 ).map_err(internal)?;
                 for account in request.scope.accounts() {
                     tx.execute("INSERT INTO client_registration_accounts(registration_id,account_id) VALUES(?1,?2)", params![stage.registration_id.as_slice(),account]).map_err(internal)?;
@@ -675,6 +824,23 @@ impl Store {
             expected_server_public_key_hash,
         )
     }
+    pub fn activate_ai_registration(
+        &self,
+        provider: hantong_contracts::registration::AiProvider,
+        registration_id: [u8; 16],
+        expected_version: u64,
+        expected_server_public_key_hash: [u8; 32],
+    ) -> Result<RegistrationRecord, ErrorCode> {
+        self.activate_registration(
+            match provider {
+                hantong_contracts::registration::AiProvider::Codex => RegistrationFlavor::AiCodex,
+                hantong_contracts::registration::AiProvider::Claude => RegistrationFlavor::AiClaude,
+            },
+            registration_id,
+            expected_version,
+            expected_server_public_key_hash,
+        )
+    }
     fn activate_registration(
         &self,
         flavor: RegistrationFlavor,
@@ -711,14 +877,16 @@ impl Store {
                 if !flavor.matches_request(&request)
                     || registration.client_kind != flavor.kind()
                     || registration.display_label != flavor.label()
-                    || registration.read_only != (registration.scope.tools()!=hantong_contracts::auth::mcp_mail_tools())
+                    || registration.read_only != is_read_only_toolset(registration.scope.tools())
                     || registration.requests_per_minute != 60
                     || !(registration.approved_channel == "approval_helper"
                         || (flavor == RegistrationFlavor::Cli
                             && (registration.approved_channel == "google_oauth"
                                 || registration.approved_channel == "terminal_cli"))
                         || (flavor == RegistrationFlavor::Mcp
-                            && registration.approved_channel == "terminal_cli"))
+                            && registration.approved_channel == "terminal_cli")
+                        || ((flavor == RegistrationFlavor::AiCodex || flavor == RegistrationFlavor::AiClaude)
+                            && registration.approved_channel == "ai_feature"))
                     || registration.scope != request.scope
                 { return Err(ErrorCode::InternalError); }
                 same_server(tx, &server)?;
@@ -738,6 +906,16 @@ impl Store {
                         let inserted=tx.execute("INSERT INTO mcp_ai_consents(registration_id,account_id,profile_epoch,registration_request_id,approved_at_utc_ms) VALUES(?1,?2,?3,?4,?5)",
                             params![registration_id.as_slice(),account,registration.profile_epoch as i64,registration.request_id.as_slice(),approved]).map_err(internal)?;
                         if inserted!=1 { return Err(ErrorCode::InternalError); }
+                    }
+                }
+                if flavor == RegistrationFlavor::AiCodex || flavor == RegistrationFlavor::AiClaude {
+                    let provider = if flavor == RegistrationFlavor::AiCodex { "codex" } else { "claude" };
+                    for account in registration.scope.accounts() {
+                        let inserted = tx.execute(
+                            "INSERT INTO ai_consents(provider,registration_id,account_id,profile_epoch,registration_request_id,approved_at_utc_ms) VALUES(?1,?2,?3,?4,?5,?6)",
+                            params![provider,registration_id.as_slice(),account,registration.profile_epoch as i64,registration.request_id.as_slice(),approved],
+                        ).map_err(internal)?;
+                        if inserted != 1 { return Err(ErrorCode::InternalError); }
                     }
                 }
                 read_registration(tx,&registration_id).map_err(internal)?.ok_or(ErrorCode::InternalError)
@@ -875,6 +1053,24 @@ impl Store {
         }
     }
 
+    /// Snapshot of ready Gmail/IMAP accounts for explicit built-in AI setup.
+    pub fn list_ready_ai_account_ids(&self) -> Result<Vec<String>, ErrorCode> {
+        #[cfg(not(windows))]
+        {
+            Err(ErrorCode::CapabilityUnsupported)
+        }
+        #[cfg(windows)]
+        {
+            self.registration_transaction(TransactionBehavior::Deferred, |tx| {
+                let mut statement = tx.prepare("SELECT account_id FROM accounts WHERE provider IN ('gmail','imap') AND status='ready' ORDER BY account_id LIMIT 129").map_err(internal)?;
+                let accounts = statement.query_map([], |r| Ok(text_column(r, 0, 128)?.to_owned())).map_err(internal)?.collect::<rusqlite::Result<Vec<_>>>().map_err(internal)?;
+                if accounts.len() > 128 { return Err(ErrorCode::QuotaExceeded); }
+                let scope = hantong_contracts::auth::RequestedScope::new(accounts, vec![]).map_err(|_| ErrorCode::InternalError)?;
+                Ok(scope.accounts().to_vec())
+            })
+        }
+    }
+
     #[cfg(windows)]
     fn registration_transaction<T>(
         &self,
@@ -1004,6 +1200,37 @@ pub(super) fn validate_gui_registration(
     }
     Ok(())
 }
+
+#[cfg(windows)]
+pub(super) fn validate_ai_registration(
+    connection: &rusqlite::Connection,
+    record: &RegistrationRecord,
+) -> rusqlite::Result<()> {
+    let flavor = if record.display_label == DEFAULT_AI_CODEX_LABEL {
+        RegistrationFlavor::AiCodex
+    } else if record.display_label == DEFAULT_AI_CLAUDE_LABEL {
+        RegistrationFlavor::AiClaude
+    } else {
+        return Ok(());
+    };
+    let request =
+        read_request(connection, &record.request_id)?.ok_or(rusqlite::Error::InvalidQuery)?;
+    if !flavor.matches_request(&request)
+        || request.state != RegistrationRequestState::Approved
+        || record.client_kind != ClientKind::Ai
+        || record.scope != request.scope
+        || record.read_only != is_read_only_toolset(record.scope.tools())
+        || record.requests_per_minute != 60
+        || record.approved_channel != "ai_feature"
+        || record.profile_epoch != 1
+        || record.registration_id
+            != hantong_platform::registration_id_for_request(record.request_id)
+                .map_err(|_| rusqlite::Error::InvalidQuery)?
+    {
+        return Err(rusqlite::Error::InvalidQuery);
+    }
+    Ok(())
+}
 #[cfg(windows)]
 pub(super) fn validate_mcp_registration(
     connection: &rusqlite::Connection,
@@ -1019,7 +1246,7 @@ pub(super) fn validate_mcp_registration(
         || record.client_kind != ClientKind::Mcp
         || record.display_label != DEFAULT_MCP_LABEL
         || record.scope != request.scope
-        || record.read_only != (record.scope.tools() != hantong_contracts::auth::mcp_mail_tools())
+        || record.read_only != is_read_only_toolset(record.scope.tools())
         || record.requests_per_minute != 60
         || !(record.approved_channel == "approval_helper"
             || record.approved_channel == "terminal_cli")

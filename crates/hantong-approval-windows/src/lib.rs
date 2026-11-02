@@ -95,6 +95,21 @@ pub fn publish_mcp_profile(bytes: &[u8]) -> Result<PublishedProfile, ErrorCode> 
         Err(ErrorCode::CapabilityUnsupported)
     }
 }
+pub fn publish_ai_profile(
+    provider: hantong_contracts::registration::AiProvider,
+    bytes: &[u8],
+) -> Result<PublishedProfile, ErrorCode> {
+    #[cfg(windows)]
+    {
+        profile_publication::publish_ai(provider, bytes)
+            .map(|inner| PublishedProfile { _inner: inner })
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (provider, bytes);
+        Err(ErrorCode::CapabilityUnsupported)
+    }
+}
 
 /// Publishes a new default profile while retaining the exact old profile as a
 /// request-bound backup until Store activation. This is not authorization.

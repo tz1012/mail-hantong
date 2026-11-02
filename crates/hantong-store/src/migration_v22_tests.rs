@@ -178,7 +178,7 @@ fn acc02_v24_migration_preserves_all_v23_rows_fk_sequence_and_google_history() {
         assert_eq!(before,v23_product_rows(c)?);
         assert_eq!(c.query_row("SELECT seq FROM sqlite_sequence WHERE name='audit_starts'",[],|r|r.get::<_,i64>(0))?,9000);
         assert!(c.prepare("PRAGMA foreign_key_check")?.query([])?.next()?.is_none());
-        validate_schema(c,SCHEMA,24)
+        validate_schema(c,SCHEMA_V24,24)
     }).unwrap();
     let next = store.create_terminal_cli_scope_refresh([31;32],
         hantong_contracts::auth::RequestedScope::new(vec![account],hantong_contracts::auth::default_cli_send_tools()).unwrap(),pin).unwrap();
@@ -199,7 +199,7 @@ fn acc02_v24_migration_failure_rolls_back_all_v23_rows_and_schema() {
     let store = Store { connection:f.keyed() };
     store.migrate_v22_to_v23().unwrap();
     let before = store.with_connection(v23_product_rows).unwrap();
-    assert_eq!(store.migrate_with_backup(23,24,SCHEMA,|c| {
+    assert_eq!(store.migrate_with_backup(23,24,SCHEMA_V24,|c| {
         c.execute_batch(MIGRATION_V23_TO_V24)?;
         c.execute_batch("CREATE TABLE unexpected_terminal_failure(value)")
     }),Err(ErrorCode::InternalError));

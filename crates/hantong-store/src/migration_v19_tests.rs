@@ -63,7 +63,7 @@ fn acc01_sync02_v18_to_v19_preserves_every_frozen_table_highwater_and_no_consent
     store
         .with_connection(|c| {
             assert_eq!(before, v18_product_rows(c)?);
-            assert_eq!(product_table_names(c)?.len(), 48);
+            assert_eq!(product_table_names(c)?.len(), 49);
             assert_eq!(
                 c.query_row(
                     "SELECT seq FROM sqlite_sequence WHERE name='audit_starts'",

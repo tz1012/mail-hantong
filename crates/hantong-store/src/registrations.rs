@@ -391,7 +391,13 @@ pub(super) fn read_request(
                     RegistrationRequestState::Approved | RegistrationRequestState::Denied => {
                         matches!(
                             channel,
-                            Some("approval_helper" | "gui" | "google_oauth" | "terminal_cli")
+                            Some(
+                                "approval_helper"
+                                    | "gui"
+                                    | "google_oauth"
+                                    | "terminal_cli"
+                                    | "ai_feature"
+                            )
                         ) && decided.is_some_and(|time| time >= created && time < expires)
                     }
                 };
@@ -434,6 +440,7 @@ pub(super) fn read_registration(
         crate::scope_refresh::validate_registration(connection, value)?;
         crate::registration_activation::validate_gui_registration(connection, value)?;
         crate::registration_activation::validate_mcp_registration(connection, value)?;
+        crate::registration_activation::validate_ai_registration(connection, value)?;
     }
     Ok(record)
 }
@@ -479,7 +486,7 @@ pub(super) fn read_registration_bare(
                     || !(1..=600).contains(&rate)
                     || !matches!(
                         channel,
-                        "approval_helper" | "gui" | "google_oauth" | "terminal_cli"
+                        "approval_helper" | "gui" | "google_oauth" | "terminal_cli" | "ai_feature"
                     )
                     || approved <= 0
                     || updated < approved

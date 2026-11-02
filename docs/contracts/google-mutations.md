@@ -2,10 +2,20 @@
 
 # Gmail reviewed changes (proposed implementation; human security review required)
 
+> Approved 2026-11-03 extension: built-in AI may discover the separate
+> single-message Gmail trash request/status tool when the AI identity has an
+> exact `gmail.modify` grant. The full request/confirm/claim contract is in
+> [`builtin-ai-mail.md`](builtin-ai-mail.md). Permanent delete, batch delete,
+> empty-trash and spam remain unsupported; this document's existing change and
+> review rules remain in force. Implementation and human security review are
+> still pending.
+
 This extends google-write.md without changing existing send approvals. Two
 operations are supported: save one immutable local draft to Gmail, and change
 allowlisted labels on one cached Gmail message. UNREAD removal marks read;
-UNREAD addition marks unread. Delete, trash, spam and batch routes are absent.
+UNREAD addition marks unread. Permanent delete, batch delete, empty-trash and
+spam routes are absent; single-message trash is the separately specified
+built-in AI extension above.
 
 Every request binds one Google account, operation/idempotency IDs, expected
 local object/cache version and payload digest. Draft requests bind the immutable

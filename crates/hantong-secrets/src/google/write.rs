@@ -101,6 +101,23 @@ impl SecretStore {
         )
     }
     #[cfg(windows)]
+    pub fn trash_google_message(
+        &self,
+        binding: &GoogleAccountBinding,
+        message_id: &str,
+        cancel: &AtomicBool,
+    ) -> Result<GmailWriteOutcome, ErrorCode> {
+        if binding.account_id.is_empty() || !http::provider_id(message_id) {
+            return Err(ErrorCode::InvalidInput);
+        }
+        self.with_google_access(
+            binding,
+            cancel,
+            GoogleOperation::TrashMessage,
+            |transport, access, _, deadline| trash(transport, message_id, access, deadline, cancel),
+        )
+    }
+    #[cfg(windows)]
     pub fn fetch_google_attachment(
         &self,
         binding: &GoogleAccountBinding,
@@ -243,6 +260,29 @@ fn change_labels(
         false,
         Some(change.message_id()),
     ))
+}
+fn trash(
+    transport: &impl http::Transport,
+    message_id: &str,
+    access: &SecretText,
+    deadline: Instant,
+    cancel: &AtomicBool,
+) -> Result<GmailWriteOutcome, ErrorCode> {
+    if !http::provider_id(message_id) {
+        return Err(ErrorCode::InvalidInput);
+    }
+    let path = format!("/gmail/v1/users/me/messages/{message_id}/trash");
+    let request = http::Request {
+        host: http::Host::Gmail,
+        path: &path,
+        post: None,
+        bearer: Some(access.text()),
+        limit: 65536,
+        deadline,
+        cancel,
+    };
+    http::validate(&request)?;
+    Ok(outcome(transport.request(request), false, Some(message_id)))
 }
 pub(super) fn attachment(
     transport: &impl http::Transport,

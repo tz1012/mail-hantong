@@ -477,6 +477,20 @@ account_id:account.into(),subject:r.get(0)?,client_id:r.get(1)?,credential_versi
             if !consent {
                 return Err(ErrorCode::PolicyBlocked);
             }
+        } else if r.client_kind == crate::ClientKind::Ai {
+            let provider = match r.display_label.as_str() {
+                crate::registration_activation::DEFAULT_AI_CODEX_LABEL => "codex",
+                crate::registration_activation::DEFAULT_AI_CLAUDE_LABEL => "claude",
+                _ => return Err(ErrorCode::PolicyBlocked),
+            };
+            let consent: bool = db(c.query_row(
+                "SELECT EXISTS(SELECT 1 FROM ai_consents consent JOIN client_registrations registration ON registration.registration_id=consent.registration_id WHERE consent.provider=?1 AND consent.registration_id=?2 AND consent.account_id=?3 AND consent.profile_epoch=?4 AND consent.registration_request_id=registration.request_id AND consent.approved_at_utc_ms=registration.approved_at_utc_ms)",
+                params![provider, owner.as_slice(), account, epoch as i64],
+                |row| row.get(0),
+            ))?;
+            if !consent {
+                return Err(ErrorCode::PolicyBlocked);
+            }
         }
         Ok(())
     }

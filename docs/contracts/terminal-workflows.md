@@ -8,6 +8,12 @@ registration, scope changes and advanced Google/IMAP/SMTP secret setup. Human
 security review required. Same-user terminal automation is a documented residual
 risk; terminal choice is intent, not OS-verified human presence.
 
+The approved 2026-11-03 built-in AI extension uses the same foreground terminal
+review boundary for send and single-message Gmail trash requests, as specified
+in [builtin-ai-mail.md](builtin-ai-mail.md). It does not make the model an
+approval issuer, and it does not remove the separate explicit external MCP
+registration flow. Implementation and human security review remain pending.
+
 ## Core-owned typed review
 
 Each existing immutable request keeps its typed DTO, owner/account/epoch,

@@ -18,8 +18,8 @@ mod windows_pipe;
 
 pub use paths::{AppDirectories, app_directories};
 pub use profile_file::{
-    LoadedClientProfile, load_default_client_profile, load_gui_client_profile,
-    load_mcp_client_profile,
+    LoadedClientProfile, load_ai_claude_client_profile, load_ai_codex_client_profile,
+    load_default_client_profile, load_gui_client_profile, load_mcp_client_profile,
 };
 
 #[cfg(windows)]

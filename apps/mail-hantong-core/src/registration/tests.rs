@@ -96,6 +96,176 @@ fn gui_request() -> RegistrationRequest {
     value
 }
 
+fn ai_request(provider: AiProvider) -> RegistrationRequest {
+    RegistrationRequest {
+        request_id: [7; 32],
+        client_kind: ClientKind::Ai,
+        display_label: match provider {
+            AiProvider::Codex => DEFAULT_AI_CODEX_LABEL.into(),
+            AiProvider::Claude => DEFAULT_AI_CLAUDE_LABEL.into(),
+        },
+        scope: RequestedScope::new(vec!["a".into()], hantong_contracts::auth::ai_mail_tools())
+            .unwrap(),
+        state: RegistrationRequestState::Pending,
+        version: 1,
+        created_at_utc_ms: 1000,
+        expires_at_utc_ms: 301000,
+    }
+}
+
+fn ai_record(provider: AiProvider) -> RegistrationRecord {
+    RegistrationRecord {
+        registration_id: hantong_platform::registration_id_for_request([7; 32]).unwrap(),
+        request_id: [7; 32],
+        client_kind: ClientKind::Ai,
+        display_label: match provider {
+            AiProvider::Codex => DEFAULT_AI_CODEX_LABEL.into(),
+            AiProvider::Claude => DEFAULT_AI_CLAUDE_LABEL.into(),
+        },
+        public_key: public(),
+        profile_epoch: 1,
+        state: RegistrationState::Provisioning,
+        read_only: false,
+        requests_per_minute: 60,
+        approved_channel: "ai_feature".into(),
+        version: 1,
+        scope: ai_request(provider).scope,
+    }
+}
+
+fn ai_review(provider: AiProvider) -> RegistrationReview {
+    review_snapshot(
+        &ai_request(provider),
+        hantong_platform::sha256(&public()).unwrap(),
+    )
+    .unwrap()
+}
+
+#[test]
+fn ai09_registration_review_is_provider_bound_and_mail_scope_explicit() {
+    let codex = review_snapshot(&ai_request(AiProvider::Codex), [2; 32]).unwrap();
+    let claude = review_snapshot(&ai_request(AiProvider::Claude), [2; 32]).unwrap();
+    assert_eq!(codex.client_kind(), ClientKind::Ai);
+    assert_eq!(codex.profile_name(), "ai-codex");
+    assert_eq!(claude.profile_name(), "ai-claude");
+    assert_eq!(
+        codex.scope().tools(),
+        hantong_contracts::auth::ai_mail_tools()
+    );
+    assert_ne!(codex.canonical_bytes(), claude.canonical_bytes());
+}
+
+#[test]
+fn ai09_registration_commit_and_recovery_keep_ai_profile_and_channel() {
+    let f = Fake::ai(AiProvider::Codex);
+    let expected = ai_request(AiProvider::Codex);
+    assert_eq!(
+        commit_consumed_review(&f, &expected, &ai_review(AiProvider::Codex)),
+        Ok(())
+    );
+    assert_eq!(
+        f.events(),
+        [
+            "request",
+            "server",
+            "open",
+            "create",
+            "key_public",
+            "stage",
+            "publish",
+            "activate",
+            "release_publication"
+        ]
+    );
+    f.events.borrow_mut().clear();
+    f.current.borrow_mut().state = RegistrationRequestState::Approved;
+    f.current.borrow_mut().version = 2;
+    f.missing.set(false);
+    assert_eq!(recover_record(&f, &ai_record(AiProvider::Codex)), Ok(()));
+    assert_eq!(
+        f.events(),
+        [
+            "request",
+            "server",
+            "open",
+            "key_public",
+            "publish",
+            "activate",
+            "release_publication"
+        ]
+    );
+}
+
+#[test]
+fn ai09_expired_revoked_or_account_mismatched_review_has_no_effect() {
+    for mode in 0..3 {
+        let mut f = Fake::ai(AiProvider::Claude);
+        let mut expected = ai_request(AiProvider::Claude);
+        let mut review = ai_review(AiProvider::Claude);
+        match mode {
+            0 => f.now = expected.expires_at_utc_ms,
+            1 => {
+                expected.state = RegistrationRequestState::Denied;
+                *f.current.borrow_mut() = expected.clone();
+            }
+            _ => {
+                expected.scope = RequestedScope::new(
+                    vec!["different-account".into()],
+                    hantong_contracts::auth::ai_mail_tools(),
+                )
+                .unwrap();
+                review = ai_review(AiProvider::Claude);
+            }
+        }
+        assert!(commit_consumed_review(&f, &expected, &review).is_err());
+        assert!(
+            !f.events()
+                .iter()
+                .any(|event| ["create", "stage", "publish", "activate"].contains(event))
+        );
+    }
+}
+
+#[cfg(windows)]
+#[test]
+fn ai09_request_is_pending_only_and_never_enqueues_a_background_job() {
+    let fixture = crate::send_mail::integration_tests::Fixture::new();
+    let server = ServerSigningKey::create(hantong_platform::random_nonce().unwrap()).unwrap();
+    let (handle, mut worker) = coordinator(fixture.store(), &server, fixture.secrets_root());
+    let receipt = handle
+        .command(RegistrationCommand::AiRequest(AiProvider::Codex))
+        .unwrap();
+    assert_eq!(receipt.state(), RegistrationProgress::Pending);
+    let stored = fixture
+        .store()
+        .get_registration_request(*receipt.request_id())
+        .unwrap()
+        .unwrap();
+    assert_eq!(stored.scope.accounts(), ["a"]);
+    assert!(matches!(
+        handle.command(RegistrationCommand::AiStatus(
+            AiProvider::Claude,
+            *receipt.request_id()
+        )),
+        Err(ErrorCode::ScopeDenied)
+    ));
+    assert_eq!(
+        handle
+            .command(RegistrationCommand::AiStatus(
+                AiProvider::Codex,
+                *receipt.request_id()
+            ))
+            .unwrap()
+            .state(),
+        RegistrationProgress::Pending
+    );
+    assert_eq!(
+        stored.scope.tools(),
+        hantong_contracts::auth::ai_mail_tools()
+    );
+    assert!(worker.receiver.try_recv().is_err());
+}
+
 #[test]
 fn apr01_terminal_personal_prepare_has_no_job_and_confirm_queues_only_terminal_job() {
     let fixture = crate::send_mail::integration_tests::Fixture::new();
@@ -462,6 +632,7 @@ fn sec03_gui_failure_preserves_provisioning_key_and_never_replaces_missing_key()
 }
 struct Fake {
     gui: bool,
+    ai: Option<AiProvider>,
     events: Rc<RefCell<Vec<&'static str>>>,
     fail: Option<&'static str>,
     current: RefCell<RegistrationRequest>,
@@ -477,6 +648,7 @@ impl Fake {
     fn new() -> Self {
         Self {
             gui: false,
+            ai: None,
             events: Rc::new(RefCell::new(vec![])),
             fail: None,
             current: RefCell::new(request()),
@@ -503,11 +675,29 @@ impl Fake {
         *value.current.borrow_mut() = gui_request();
         value
     }
+    fn ai(provider: AiProvider) -> Self {
+        let mut value = Self::new();
+        value.ai = Some(provider);
+        *value.current.borrow_mut() = ai_request(provider);
+        value
+    }
     fn expected_request(&self) -> RegistrationRequest {
-        if self.gui { gui_request() } else { request() }
+        if self.gui {
+            gui_request()
+        } else if let Some(provider) = self.ai {
+            ai_request(provider)
+        } else {
+            request()
+        }
     }
     fn expected_record(&self) -> RegistrationRecord {
-        if self.gui { gui_record() } else { record() }
+        if self.gui {
+            gui_record()
+        } else if let Some(provider) = self.ai {
+            ai_record(provider)
+        } else {
+            record()
+        }
     }
     fn events(&self) -> Vec<&'static str> {
         self.events.borrow().clone()
@@ -551,7 +741,8 @@ impl Effects for Fake {
     fn create_key(&self, id: [u8; 16]) -> Result<(), ErrorCode> {
         assert_eq!(
             id,
-            hantong_platform::registration_id_for_request([1; 32]).unwrap()
+            hantong_platform::registration_id_for_request(self.expected_request().request_id)
+                .unwrap()
         );
         self.hit("create")?;
         self.missing.set(false);
@@ -592,7 +783,8 @@ impl Effects for Fake {
         assert_eq!(r, self.expected_request());
         assert_eq!(
             id,
-            hantong_platform::registration_id_for_request([1; 32]).unwrap()
+            hantong_platform::registration_id_for_request(self.expected_request().request_id)
+                .unwrap()
         );
         assert_eq!(key, public());
         assert_eq!(hash, *review().server_public_key_hash());
@@ -606,12 +798,21 @@ impl Effects for Fake {
         let p = ParsedClientProfile::from_json(bytes).unwrap();
         assert_eq!(
             p.registration_id(),
-            &hantong_platform::registration_id_for_request([1; 32]).unwrap()
+            &hantong_platform::registration_id_for_request(self.expected_request().request_id)
+                .unwrap()
         );
         assert_eq!(p.scope(), &self.expected_request().scope);
         assert_eq!(
             p.profile().as_str(),
-            if self.gui { "gui" } else { "default" }
+            if self.gui {
+                "gui"
+            } else if self.ai == Some(AiProvider::Codex) {
+                "ai-codex"
+            } else if self.ai == Some(AiProvider::Claude) {
+                "ai-claude"
+            } else {
+                "default"
+            }
         );
         self.hit("publish")?;
         Ok(Publication(self.events.clone()))

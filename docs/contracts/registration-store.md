@@ -2,6 +2,11 @@
 
 # 서버 신원·클라이언트 등록 저장 계약 v1
 
+> 2026-11-03 승인된 내장 AI 확장은 별도 `ClientKind::Ai` 등록과
+> 제공자별 프로필을 추가하는 방향을 [builtin-ai-mail.md](builtin-ai-mail.md)에
+> 정의한다. 기존 CLI/MCP 등록·동의·epoch를 자동 변환하거나 확장하지 않는다.
+> AI의 별도 저장 전이는 v25와 `ai_feature` provenance를 사용하며 기존 CLI/MCP 전이는 보존한다. 사람 보안 검토는 별도로 필요하다.
+
 
 > 2026-11-02: [Google personal CLI extension](google-personal-cli.md) supersedes native-only account/CLI setup clauses only for the bounded guided personal flow. Live verified OAuth authorizes its fixed feature configuration; feature selection alone does not. Per-send/mutation approval and advanced native setup remain. Human security review required.
 

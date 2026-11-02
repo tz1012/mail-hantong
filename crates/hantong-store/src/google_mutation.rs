@@ -66,15 +66,24 @@ pub(crate) fn validate_history(c: &rusqlite::Connection) -> rusqlite::Result<()>
         {
             return Err(invalid());
         }
-        if let MutationPayload::Labels {
-            change,
-            payload_hash,
-            ..
-        } = &request
-            && hantong_platform::sha256_storage_payload(&change.canonical_payload())
-                .map_err(|_| invalid())?
-                != *payload_hash
-        {
+        let canonical_hash = match &request {
+            MutationPayload::Labels {
+                change,
+                payload_hash,
+                ..
+            } => Some((
+                hantong_platform::sha256_storage_payload(&change.canonical_payload())
+                    .map_err(|_| invalid())?,
+                *payload_hash,
+            )),
+            MutationPayload::Trash { payload_hash, .. } => Some((
+                hantong_platform::sha256_storage_payload(&request.canonical_payload())
+                    .map_err(|_| invalid())?,
+                *payload_hash,
+            )),
+            MutationPayload::SaveDraft(_) => None,
+        };
+        if canonical_hash.is_some_and(|(actual, expected)| actual != expected) {
             return Err(invalid());
         }
         let state: String = row.get(7)?;
@@ -144,7 +153,7 @@ mod windows {
     };
     use hantong_contracts::{
         audit::{AuditTerminal, AuditTool},
-        google_mutation::{EXECUTE_TOOL, REQUEST_TOOL},
+        google_mutation::{EXECUTE_TOOL, REQUEST_TOOL, TRASH_EXECUTE_TOOL, TRASH_REQUEST_TOOL},
         google_write::GoogleAccessMode,
     };
     use rusqlite::{OptionalExtension, Transaction, TransactionBehavior, params};
@@ -184,11 +193,34 @@ mod windows {
         if r.profile_epoch != epoch {
             return Err(ErrorCode::AuthRequired);
         }
-        if r.read_only || r.client_kind != hantong_contracts::client::ClientKind::Cli {
+        let ai_trash = matches!(tool, TRASH_REQUEST_TOOL | TRASH_EXECUTE_TOOL)
+            && r.client_kind == hantong_contracts::client::ClientKind::Ai;
+        if r.read_only || (r.client_kind != hantong_contracts::client::ClientKind::Cli && !ai_trash)
+        {
             return Err(ErrorCode::PolicyBlocked);
         }
         if !r.scope.permits_account(account, tool) {
             return Err(ErrorCode::ScopeDenied);
+        }
+        if r.client_kind == hantong_contracts::client::ClientKind::Ai {
+            let provider = match r.display_label.as_str() {
+                crate::registration_activation::DEFAULT_AI_CODEX_LABEL => "codex",
+                crate::registration_activation::DEFAULT_AI_CLAUDE_LABEL => "claude",
+                _ => return Err(ErrorCode::PolicyBlocked),
+            };
+            let approved: i64 = db(tx.query_row(
+                "SELECT approved_at_utc_ms FROM client_registrations WHERE registration_id=?1",
+                [owner.as_slice()],
+                |q| q.get(0),
+            ))?;
+            let consent: bool = db(tx.query_row(
+                "SELECT EXISTS(SELECT 1 FROM ai_consents WHERE provider=?1 AND registration_id=?2 AND account_id=?3 AND profile_epoch=?4 AND registration_request_id=?5 AND approved_at_utc_ms=?6)",
+                params![provider, owner.as_slice(), account, epoch as i64, r.request_id.as_slice(), approved],
+                |q| q.get(0),
+            ))?;
+            if !consent {
+                return Err(ErrorCode::PolicyBlocked);
+            }
         }
         let b = crate::google::google_binding_in_transaction(tx, account)?;
         if b.access_mode != GoogleAccessMode::Modify {
@@ -254,6 +286,54 @@ mod windows {
                 }
                 Ok((None, labels))
             }
+            MutationPayload::Trash {
+                account_id,
+                message_id,
+                expected_version,
+                operation_id,
+                idempotency_key,
+                payload_hash,
+                ..
+            } => {
+                let version: i64 = db(tx.query_row(
+                    "SELECT version FROM google_sync_state WHERE account_id=?1",
+                    [account_id],
+                    |q| q.get(0),
+                ))?;
+                if version < 0 || version as u64 != *expected_version {
+                    return Err(ErrorCode::Conflict);
+                }
+                let raw: Option<String> = db(tx.query_row(
+                    "SELECT message_json FROM google_messages WHERE account_id=?1 AND message_id=?2",
+                    params![account_id, message_id],
+                    |q| q.get(0),
+                ).optional())?;
+                let v: serde_json::Value = serde_json::from_str(&raw.ok_or(ErrorCode::NotFound)?)
+                    .map_err(|_| ErrorCode::InternalError)?;
+                let labels: Vec<String> = serde_json::from_value(
+                    v.get("label_ids")
+                        .cloned()
+                        .ok_or(ErrorCode::InternalError)?,
+                )
+                .map_err(|_| ErrorCode::InternalError)?;
+                if labels.len() > 100 {
+                    return Err(ErrorCode::QuotaExceeded);
+                }
+                let request = MutationPayload::Trash {
+                    account_id: account_id.clone(),
+                    message_id: message_id.clone(),
+                    expected_version: *expected_version,
+                    operation_id: operation_id.clone(),
+                    idempotency_key: idempotency_key.clone(),
+                    payload_hash: *payload_hash,
+                };
+                if hantong_platform::sha256_storage_payload(&request.canonical_payload())?
+                    != *payload_hash
+                {
+                    return Err(ErrorCode::InvalidInput);
+                }
+                Ok((None, labels))
+            }
         }
     }
     fn receipt(tx: &Transaction<'_>, id: [u8; 32]) -> Result<MutationReceipt, ErrorCode> {
@@ -275,6 +355,13 @@ mod windows {
             state,
             error,
         })
+    }
+    fn execute_tool(request: &MutationPayload) -> &'static str {
+        if matches!(request, MutationPayload::Trash { .. }) {
+            TRASH_EXECUTE_TOOL
+        } else {
+            EXECUTE_TOOL
+        }
     }
     fn pending(tx: &Transaction<'_>, id: [u8; 32]) -> Result<(PendingMutation, String), ErrorCode> {
         let row=db(tx.query_row("SELECT owner_registration_id,profile_epoch,account_id,account_version,credential_version,request_json,before_labels_json,created_at_utc_ms,expires_at_utc_ms,state FROM google_mutation_requests WHERE review_id=?1",[id.as_slice()],|r|Ok((blob_column::<16>(r,0)?,unsigned(r,1)?,r.get::<_,String>(2)?,unsigned(r,3)?,unsigned(r,4)?,r.get::<_,String>(5)?,r.get::<_,String>(6)?,r.get::<_,i64>(7)?,r.get::<_,i64>(8)?,r.get::<_,String>(9)?))).optional())?.ok_or(ErrorCode::NotFound)?;
@@ -325,7 +412,12 @@ mod windows {
                 if MutationPayload::from_json(&r.to_json())? != *r {
                     return Err(ErrorCode::InvalidInput);
                 }
-                grant(tx, owner, epoch, r.account_id(), REQUEST_TOOL)?;
+                let request_tool = if matches!(r, MutationPayload::Trash { .. }) {
+                    TRASH_REQUEST_TOOL
+                } else {
+                    REQUEST_TOOL
+                };
+                grant(tx, owner, epoch, r.account_id(), request_tool)?;
                 let raw =
                     serde_json::to_string(&r.to_json()).map_err(|_| ErrorCode::InvalidInput)?;
                 if raw.len() > 65536 {
@@ -345,6 +437,7 @@ mod windows {
                         hantong_contracts::wire_hex::encode(d.draft_id())
                     }
                     MutationPayload::Labels { change, .. } => change.message_id().into(),
+                    MutationPayload::Trash { message_id, .. } => message_id.clone(),
                 };
                 let field = match r {
                     MutationPayload::SaveDraft(_) => "$.draft_id",
@@ -385,9 +478,22 @@ mod windows {
             id: [u8; 32],
         ) -> Result<MutationReceipt, ErrorCode> {
             run(self, |tx| {
-                grant(tx, owner, epoch, account, REQUEST_TOOL)?;
-                let matches:bool=db(tx.query_row("SELECT EXISTS(SELECT 1 FROM google_mutation_requests WHERE review_id=?1 AND owner_registration_id=?2 AND account_id=?3 AND profile_epoch=?4)",params![id.as_slice(),owner.as_slice(),account,epoch as i64],|q|q.get(0)))?;
-                if !matches {
+                let raw: Option<String> = db(tx.query_row(
+                    "SELECT request_json FROM google_mutation_requests WHERE review_id=?1 AND owner_registration_id=?2 AND profile_epoch=?3",
+                    params![id.as_slice(), owner.as_slice(), epoch as i64],
+                    |q| q.get(0),
+                ).optional())?;
+                let request = MutationPayload::from_json(
+                    &serde_json::from_str(&raw.ok_or(ErrorCode::NotFound)?)
+                        .map_err(|_| ErrorCode::InternalError)?,
+                )?;
+                let request_tool = if matches!(request, MutationPayload::Trash { .. }) {
+                    TRASH_REQUEST_TOOL
+                } else {
+                    REQUEST_TOOL
+                };
+                grant(tx, owner, epoch, account, request_tool)?;
+                if request.account_id() != account {
                     return Err(ErrorCode::NotFound);
                 }
                 receipt(tx, id)
@@ -404,7 +510,7 @@ mod windows {
                     p.owner_registration_id,
                     p.profile_epoch,
                     p.request.account_id(),
-                    EXECUTE_TOOL,
+                    execute_tool(&p.request),
                 )?;
                 if now()? >= p.expires_at_utc_ms {
                     return Err(ErrorCode::ApprovalExpired);
@@ -427,7 +533,7 @@ mod windows {
                     p.owner_registration_id,
                     p.profile_epoch,
                     p.request.account_id(),
-                    EXECUTE_TOOL,
+                    execute_tool(&p.request),
                 )?;
                 if now()? >= p.expires_at_utc_ms {
                     return Err(ErrorCode::ApprovalExpired);
@@ -460,7 +566,7 @@ mod windows {
                     p.owner_registration_id,
                     p.profile_epoch,
                     p.request.account_id(),
-                    EXECUTE_TOOL,
+                    execute_tool(&p.request),
                 )
             })
         }
@@ -529,20 +635,32 @@ mod windows {
             MutationOutcome::Unknown => ("unknown", Some(ErrorCode::SendUnknown)),
         };
         db(tx.execute("UPDATE google_mutation_requests SET state=?2,error_code=?3 WHERE review_id=?1 AND state='claimed'",params![id.as_slice(),state,error.map(ErrorCode::as_str)]))?;
-        if outcome == MutationOutcome::Accepted
-            && let MutationPayload::Labels { change, .. } = MutationPayload::from_json(
+        if outcome == MutationOutcome::Accepted {
+            let payload = MutationPayload::from_json(
                 &serde_json::from_str(&raw).map_err(|_| ErrorCode::InternalError)?,
-            )?
-        {
-            // Invalidate only local cached labels; fetch the provider state before the next change.
-            db(tx.execute(
-                "DELETE FROM google_messages WHERE account_id=?1 AND message_id=?2",
-                params![change.account_id(), change.message_id()],
-            ))?;
-            db(tx.execute(
-                "UPDATE google_sync_state SET version=version+1 WHERE account_id=?1",
-                [change.account_id()],
-            ))?;
+            )?;
+            let message_id = match &payload {
+                MutationPayload::Labels { change, .. } => {
+                    Some((change.account_id(), change.message_id()))
+                }
+                MutationPayload::Trash {
+                    account_id,
+                    message_id,
+                    ..
+                } => Some((account_id.as_str(), message_id.as_str())),
+                MutationPayload::SaveDraft(_) => None,
+            };
+            if let Some((account, message)) = message_id {
+                // Invalidate only local cached labels; fetch the provider state before the next change.
+                db(tx.execute(
+                    "DELETE FROM google_messages WHERE account_id=?1 AND message_id=?2",
+                    params![account, message],
+                ))?;
+                db(tx.execute(
+                    "UPDATE google_sync_state SET version=version+1 WHERE account_id=?1",
+                    [account],
+                ))?;
+            }
         }
         let terminal = match error {
             Some(e) => AuditTerminal::failed(e),

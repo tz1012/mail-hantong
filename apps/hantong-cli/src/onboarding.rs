@@ -151,13 +151,36 @@ fn say(io: &mut impl Io, lang: Lang, key: &str) -> Result<(), ErrorCode> {
     io.write("\n")
 }
 
-fn choose(io: &mut impl Io) -> Result<Option<String>, ErrorCode> {
-    io.read_line()
+fn choose(io: &mut impl Io, lang: Lang, help_keys: &[&str]) -> Result<Option<String>, ErrorCode> {
+    loop {
+        let Some(value) = io.read_line()? else {
+            return Ok(None);
+        };
+        if value == "/help" {
+            say(io, lang, "help_header")?;
+            for key in help_keys {
+                say(io, lang, key)?;
+            }
+            say(io, lang, "help_prompt")?;
+            continue;
+        }
+        return Ok(Some(value));
+    }
 }
 
 fn choose_profile(lang: Lang, io: &mut impl Io) -> Result<Option<GoogleLocalProfile>, ErrorCode> {
     say(io, lang, "feature_menu")?;
-    match choose(io)?.as_deref() {
+    match choose(
+        io,
+        lang,
+        &[
+            "help_feature_read",
+            "help_feature_send",
+            "help_feature_cancel",
+        ],
+    )?
+    .as_deref()
+    {
         Some("1") => Ok(Some(GoogleLocalProfile::PersonalRead)),
         Some("2") => Ok(Some(GoogleLocalProfile::PersonalReadSend)),
         None | Some("0") => Ok(None),
@@ -177,7 +200,19 @@ fn work_menu(
     let mut current_account = account.to_owned();
     loop {
         say(io, lang, "work_menu")?;
-        match choose(io)?.as_deref() {
+        match choose(
+            io,
+            lang,
+            &[
+                "help_work_inbox",
+                "help_work_connect",
+                "help_work_exit",
+                "help_work_enable_send",
+                "help_work_compose",
+            ],
+        )?
+        .as_deref()
+        {
             None | Some("3") => return Ok(()),
             Some("1") => effects.inbox(&current_account, lang)?,
             Some("2") => {
@@ -205,7 +240,7 @@ fn connect_prompt(
     say(io, lang, "no_accounts")?;
     loop {
         say(io, lang, "connect_or_exit")?;
-        match choose(io)?.as_deref() {
+        match choose(io, lang, &["help_connect", "help_exit"])?.as_deref() {
             Some("1") => {
                 let Some(profile) = choose_profile(lang, io)? else {
                     return Ok(());
@@ -238,7 +273,17 @@ fn select_existing(
             ))?;
         }
         say(io, lang, "add_or_exit")?;
-        match choose(io)?.as_deref() {
+        match choose(
+            io,
+            lang,
+            &[
+                "help_account_number",
+                "help_account_add",
+                "help_account_exit",
+            ],
+        )?
+        .as_deref()
+        {
             None | Some("0") => return Ok(()),
             Some("add") => {
                 let Some(profile) = choose_profile(lang, io)? else {
@@ -572,5 +617,72 @@ mod tests {
         assert_eq!(effects.connect_calls, 0);
         assert_eq!(effects.inbox_calls, 0);
         assert!(io.output.contains(resource(Lang::En, "invalid_choice")));
+    }
+
+    #[test]
+    fn cli04_help_is_local_and_keeps_the_current_menu_open() {
+        let mut io = TestIo::new(&["1", "/help", "2", "3"]);
+        let mut effects = TestEffects {
+            connected: Ok("google_new".into()),
+            inbox_calls: 0,
+            enable_send_calls: 0,
+            compose_calls: 0,
+            connect_calls: 0,
+            continue_calls: 0,
+            profiles: Vec::new(),
+        };
+        assert_eq!(run_flow(Lang::En, &[], &mut io, &mut effects), Ok(()));
+        assert_eq!(effects.connect_calls, 1);
+        assert_eq!(effects.profiles, vec![GoogleLocalProfile::PersonalReadSend]);
+        assert!(io.output.contains("Available choices:"));
+        assert!(io.output.contains("2) Read, write, and send mail"));
+    }
+
+    #[test]
+    fn cli04_help_is_localized_for_the_basic_menu() {
+        let mut io = TestIo::new(&["/help", "/help", "2"]);
+        let mut effects = TestEffects {
+            connected: Ok("google_new".into()),
+            inbox_calls: 0,
+            enable_send_calls: 0,
+            compose_calls: 0,
+            connect_calls: 0,
+            continue_calls: 0,
+            profiles: Vec::new(),
+        };
+        assert_eq!(run_flow(Lang::Ko, &[], &mut io, &mut effects), Ok(()));
+        assert_eq!(effects.connect_calls, 0);
+        assert!(io.output.contains("사용 가능한 선택:"));
+        assert!(io.output.contains("1) Google 계정 연결 —"));
+        assert_eq!(io.output.matches("사용 가능한 선택:").count(), 2);
+        assert_eq!(effects.inbox_calls, 0);
+        assert_eq!(effects.compose_calls, 0);
+        assert_eq!(effects.enable_send_calls, 0);
+        assert_eq!(effects.continue_calls, 0);
+    }
+
+    #[test]
+    fn cli04_account_help_uses_zero_to_exit_without_effects() {
+        let mut io = TestIo::new(&["/help", "0"]);
+        let mut effects = TestEffects {
+            connected: Ok("google_new".into()),
+            inbox_calls: 0,
+            enable_send_calls: 0,
+            compose_calls: 0,
+            connect_calls: 0,
+            continue_calls: 0,
+            profiles: Vec::new(),
+        };
+        assert_eq!(
+            run_flow(Lang::En, &[account()], &mut io, &mut effects),
+            Ok(())
+        );
+        assert!(io.output.contains("0) Exit —"));
+        assert!(!io.output.contains("2) Exit —"));
+        assert_eq!(effects.connect_calls, 0);
+        assert_eq!(effects.continue_calls, 0);
+        assert_eq!(effects.inbox_calls, 0);
+        assert_eq!(effects.compose_calls, 0);
+        assert_eq!(effects.enable_send_calls, 0);
     }
 }

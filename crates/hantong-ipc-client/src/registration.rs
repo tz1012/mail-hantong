@@ -32,6 +32,10 @@ pub fn request(id: &str, command: RegistrationCommand) -> Result<Vec<u8>, ErrorC
         RegistrationCommand::GuiRequest => {
             ("registration.gui.request", json!({"protocol_version":1}))
         }
+        RegistrationCommand::AiRequest(provider) => (
+            "registration.ai.request",
+            json!({"protocol_version":1,"provider":provider.as_str()}),
+        ),
         RegistrationCommand::Status(request_id)
         | RegistrationCommand::GuiStatus(request_id)
         | RegistrationCommand::McpStatus(request_id) => {
@@ -47,6 +51,15 @@ pub fn request(id: &str, command: RegistrationCommand) -> Result<Vec<u8>, ErrorC
                     "registration.status"
                 },
                 json!({"protocol_version":1,"request_id":wire_hex::encode(&request_id)}),
+            )
+        }
+        RegistrationCommand::AiStatus(provider, request_id) => {
+            if request_id == [0; 32] {
+                return Err(ErrorCode::InvalidInput);
+            }
+            (
+                "registration.ai.status",
+                json!({"protocol_version":1,"provider":provider.as_str(),"request_id":wire_hex::encode(&request_id)}),
             )
         }
     };
@@ -77,7 +90,8 @@ pub fn parse_response(
     };
     if let RegistrationCommand::Status(expected)
     | RegistrationCommand::GuiStatus(expected)
-    | RegistrationCommand::McpStatus(expected) = command
+    | RegistrationCommand::McpStatus(expected)
+    | RegistrationCommand::AiStatus(_, expected) = command
         && receipt.request_id() != &expected
     {
         return Err(ErrorCode::CoreUnavailable);

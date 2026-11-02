@@ -8,6 +8,7 @@ pub enum ClientKind {
     Cli,
     Mcp,
     Gui,
+    Ai,
 }
 impl ClientKind {
     pub const fn as_str(self) -> &'static str {
@@ -15,6 +16,7 @@ impl ClientKind {
             Self::Cli => "cli",
             Self::Mcp => "mcp",
             Self::Gui => "gui",
+            Self::Ai => "ai",
         }
     }
     pub fn parse(value: &str) -> Result<Self, ErrorCode> {
@@ -22,6 +24,7 @@ impl ClientKind {
             "cli" => Ok(Self::Cli),
             "mcp" => Ok(Self::Mcp),
             "gui" => Ok(Self::Gui),
+            "ai" => Ok(Self::Ai),
             _ => Err(ErrorCode::InvalidInput),
         }
     }
@@ -71,7 +74,12 @@ mod tests {
     use super::*;
     #[test]
     fn client_kind_roundtrip_and_label_bounds() {
-        for kind in [ClientKind::Cli, ClientKind::Mcp, ClientKind::Gui] {
+        for kind in [
+            ClientKind::Cli,
+            ClientKind::Mcp,
+            ClientKind::Gui,
+            ClientKind::Ai,
+        ] {
             assert_eq!(ClientKind::parse(kind.as_str()), Ok(kind));
         }
         assert_eq!(ClientKind::parse("invalid"), Err(ErrorCode::InvalidInput));

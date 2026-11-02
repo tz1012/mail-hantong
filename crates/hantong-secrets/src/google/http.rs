@@ -73,6 +73,10 @@ pub(super) fn validate(r: &Request<'_>) -> Result<(), ErrorCode> {
                 || route == "/gmail/v1/users/me/messages"
                 || route
                     .strip_prefix("/gmail/v1/users/me/messages/")
+                    .and_then(|id| id.strip_suffix("/trash"))
+                    .is_some_and(provider_id)
+                || route
+                    .strip_prefix("/gmail/v1/users/me/messages/")
                     .is_some_and(|id| {
                         provider_id(id)
                             || id.split_once("/attachments/").is_some_and(

@@ -1,5 +1,5 @@
 #![forbid(unsafe_code)]
-//! Explicit user chat only; provider-owned authentication, no automatic mail context.
+//! Provider-owned authentication and automatically connected, consent-bound mail tools.
 use serde_json::{Value, json};
 use std::{
     env, fs,
@@ -54,6 +54,7 @@ pub enum AiError {
     BrowserFailed,
     Unsupported,
     AgentUnavailable,
+    HumanStepRequired,
 }
 impl AiError {
     pub fn code(self) -> &'static str {
@@ -71,6 +72,7 @@ impl AiError {
             Self::BrowserFailed => "AI_BROWSER_FAILED",
             Self::Unsupported => "AI_SETTING_UNSUPPORTED",
             Self::AgentUnavailable => "AI_AGENT_NOT_REGISTERED_OR_CONSENT_MISSING",
+            Self::HumanStepRequired => "HUMAN_STEP_REQUIRED",
         }
     }
 }
@@ -534,7 +536,7 @@ impl Session {
             history: String::new(),
             models: Vec::new(),
             preferences: Preferences::default(),
-            agent: None,
+            agent: Some(agent::Agent::connect(provider)?),
         };
         session.refresh_models()?;
         session.preferences.model = session.current_model().map(|m| m.id.clone());
@@ -600,7 +602,7 @@ impl Session {
         }
         let old = self.agent.take();
         if on {
-            self.agent = Some(agent::Agent::connect()?);
+            self.agent = Some(agent::Agent::connect(self.provider)?);
         }
         if let Err(e) = self.start_thread() {
             self.agent = old;
@@ -650,7 +652,7 @@ impl Session {
                     params["effort"] = json!(effort);
                 }
                 p.send(&json!({"method":"turn/start","id":request,"params":params}))?;
-                let deadline = Instant::now() + Duration::from_secs(180);
+                let deadline = Instant::now() + Duration::from_secs(660);
                 let reply = p.wait_turn_result(request, deadline)?;
                 let turn = reply["turn"]["id"]
                     .as_str()
@@ -724,7 +726,7 @@ impl Session {
                 p.send(&json!({"type":"user","session_id":"","message":{"role":"user","content":input},"parent_tool_use_id":null,"client_composed":true}))?;
                 p.close_input();
                 let mut answer = String::new();
-                let deadline = Instant::now() + Duration::from_secs(180);
+                let deadline = Instant::now() + Duration::from_secs(660);
                 for _ in 0..16384 {
                     let event = p.receive(deadline)?.ok_or(AiError::ProviderFailed)?;
                     if event["type"] == "control_request" {

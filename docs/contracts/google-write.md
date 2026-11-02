@@ -6,6 +6,12 @@
 Status: **human security review required**. ACC-02, APR-01, AI-09,
 SYNC-07, SEC-02. No real grant or mail operation is authorized by this contract.
 
+The approved 2026-11-03 built-in AI extension is specified separately in
+[`builtin-ai-mail.md`](builtin-ai-mail.md). It adds provider-qualified AI tool
+discovery and a single-message Gmail trash request under `Modify`; it does not
+make permanent, batch, empty-trash, spam, or arbitrary-delete operations
+available, and it does not change the send/mutation review rules below.
+
 The existing readonly runtime remains unchanged until all integration checks pass.
 This extends google-mail.md and native-send-ledger.md; it does not remove their
 policy, native verification, audit, account isolation, TLS or single-attempt rules.

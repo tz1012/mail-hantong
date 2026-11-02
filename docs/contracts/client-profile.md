@@ -1,5 +1,11 @@
 # 로컬 CLI 공개 프로필 v1
 
+> 2026-11-03 승인된 내장 AI 프로필은 이 CLI `default` 프로필과 별개다.
+> 제공자별 `ai-codex.json`·`ai-claude.json`과 `ClientKind::Ai` 검증은
+> [builtin-ai-mail.md](builtin-ai-mail.md)를 따른다. 기존 CLI 프로필을
+> AI에 재사용하거나 자동으로 범위를 넓히지 않는다. 이 확장은 아직
+> 구현·베타 지원 완료가 아니며 사람 보안 검토가 필요하다.
+
 
 > 2026-11-02: [Google personal CLI extension](google-personal-cli.md) supersedes native-only account/CLI setup clauses only for the bounded guided personal flow. Live verified OAuth authorizes its fixed feature configuration; feature selection alone does not. Per-send/mutation approval and advanced native setup remain. Human security review required.
 

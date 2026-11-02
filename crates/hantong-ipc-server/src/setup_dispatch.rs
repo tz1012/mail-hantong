@@ -112,7 +112,9 @@ where
             | RegistrationCommand::McpRequest => None,
             RegistrationCommand::Status(id)
             | RegistrationCommand::GuiStatus(id)
-            | RegistrationCommand::McpStatus(id) => Some(id),
+            | RegistrationCommand::McpStatus(id)
+            | RegistrationCommand::AiStatus(_, id) => Some(id),
+            RegistrationCommand::AiRequest(_) => None,
         };
         let SetupReceipt::Registration(receipt) = callback(SetupCommand::Registration(command))?
         else {

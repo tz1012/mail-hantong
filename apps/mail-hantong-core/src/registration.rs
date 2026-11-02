@@ -5,14 +5,15 @@ use hantong_contracts::scope_refresh::ScopeRefreshCommand;
 use hantong_contracts::{
     ErrorCode,
     auth::RequestedScope,
-    registration::{RegistrationCommand, RegistrationProgress, RegistrationReceipt},
+    registration::{AiProvider, RegistrationCommand, RegistrationProgress, RegistrationReceipt},
 };
 use hantong_ipc_client::profile::ParsedClientProfile;
 use hantong_ipc_server::setup_dispatch::{SetupCommand, SetupReceipt};
 use hantong_platform::{ClientSigningKey, ServerSigningKey};
 use hantong_secrets::{SecretStore, TerminalSecretBinding, TerminalSecretTicket};
 use hantong_store::{
-    CliRegistrationStage, ClientKind, DEFAULT_CLI_LABEL, DEFAULT_GUI_LABEL, DEFAULT_MCP_LABEL,
+    AiRegistrationStage, CliRegistrationStage, ClientKind, DEFAULT_AI_CLAUDE_LABEL,
+    DEFAULT_AI_CODEX_LABEL, DEFAULT_CLI_LABEL, DEFAULT_GUI_LABEL, DEFAULT_MCP_LABEL,
     GuiRegistrationStage, McpMailRegistrationStage, McpRegistrationStage, RegistrationRecord,
     RegistrationRequest, RegistrationRequestState, RegistrationState, ServerIdentity, Store,
 };
@@ -333,6 +334,32 @@ impl RegistrationHandle<'_> {
                         .state
                         .store
                         .pending_google_mutation(request.request_id)?;
+                    let owner = self
+                        .state
+                        .store
+                        .load_registration(pending.owner_registration_id)?
+                        .ok_or(ErrorCode::ClientNotRegistered)?;
+                    if !matches!(owner.client_kind, ClientKind::Cli | ClientKind::Ai)
+                        || owner.state != RegistrationState::Active
+                        || owner.profile_epoch != pending.profile_epoch
+                    {
+                        return Err(ErrorCode::PolicyBlocked);
+                    }
+                    if owner.client_kind == ClientKind::Ai {
+                        let provider = if owner.display_label == DEFAULT_AI_CODEX_LABEL {
+                            AiProvider::Codex
+                        } else if owner.display_label == DEFAULT_AI_CLAUDE_LABEL {
+                            AiProvider::Claude
+                        } else {
+                            return Err(ErrorCode::PolicyBlocked);
+                        };
+                        self.state.store.check_ai_consent(
+                            provider,
+                            owner.registration_id,
+                            owner.profile_epoch,
+                            std::slice::from_ref(&pending.request.account_id().to_owned()),
+                        )?;
+                    }
                     if request
                         .account_id
                         .as_deref()
@@ -342,7 +369,7 @@ impl RegistrationHandle<'_> {
                     {
                         return Err(ErrorCode::PolicyBlocked);
                     }
-                    let fields = vec![
+                    let mut fields = vec![
                         crate::terminal_review::field(
                             "account",
                             pending.request.account_id().into(),
@@ -357,6 +384,22 @@ impl RegistrationHandle<'_> {
                             pending.before_labels.join(", "),
                         )?,
                     ];
+                    if let hantong_contracts::google_mutation::MutationPayload::Trash {
+                        message_id,
+                        ..
+                    } = &pending.request
+                    {
+                        let message = self
+                            .state
+                            .store
+                            .google_message(pending.request.account_id(), message_id)?;
+                        fields.extend([
+                            crate::terminal_review::field("action", "move_to_trash".into())?,
+                            crate::terminal_review::field("subject", message.subject)?,
+                            crate::terminal_review::field("message_from", message.sender)?,
+                            crate::terminal_review::field("message_excerpt", message.snippet)?,
+                        ]);
+                    }
                     return crate::terminal_review::make_entry_ticket(
                         &mut self.state.terminal_reviews.borrow_mut(),
                         hantong_platform::random_nonce()?,
@@ -374,6 +417,33 @@ impl RegistrationHandle<'_> {
                 }
                 if request.kind == TerminalReviewKind::ProtectedSend {
                     let pending = self.state.store.pending_mail_send(request.request_id)?;
+                    let owner = self
+                        .state
+                        .store
+                        .load_registration(pending.owner_registration_id)?
+                        .ok_or(ErrorCode::ClientNotRegistered)?;
+                    if owner.state != RegistrationState::Active
+                        || owner.profile_epoch != pending.profile_epoch
+                    {
+                        return Err(ErrorCode::PolicyBlocked);
+                    }
+                    if owner.client_kind == ClientKind::Ai {
+                        let provider = if owner.display_label == DEFAULT_AI_CODEX_LABEL {
+                            AiProvider::Codex
+                        } else if owner.display_label == DEFAULT_AI_CLAUDE_LABEL {
+                            AiProvider::Claude
+                        } else {
+                            return Err(ErrorCode::PolicyBlocked);
+                        };
+                        self.state.store.check_ai_consent(
+                            provider,
+                            owner.registration_id,
+                            owner.profile_epoch,
+                            std::slice::from_ref(&pending.request.account_id().to_owned()),
+                        )?;
+                    } else if owner.client_kind != ClientKind::Cli {
+                        return Err(ErrorCode::PolicyBlocked);
+                    }
                     if request
                         .account_id
                         .as_deref()
@@ -465,8 +535,10 @@ impl RegistrationHandle<'_> {
                         .store
                         .get_registration_request(request.request_id)?
                         .ok_or(ErrorCode::NotFound)?;
-                    if !matches!(registration.client_kind, ClientKind::Cli | ClientKind::Mcp)
-                        || registration.state != RegistrationRequestState::Pending
+                    if !matches!(
+                        registration.client_kind,
+                        ClientKind::Cli | ClientKind::Mcp | ClientKind::Ai
+                    ) || registration.state != RegistrationRequestState::Pending
                         || !supported_identity(
                             registration.client_kind,
                             &registration.display_label,
@@ -482,8 +554,20 @@ impl RegistrationHandle<'_> {
                     {
                         return Err(ErrorCode::PolicyBlocked);
                     }
-                    let fields = vec![
-                        crate::terminal_review::field("client", registration.display_label)?,
+                    let mut fields = vec![
+                        crate::terminal_review::field("client", registration.display_label.clone())?,
+                        if registration.client_kind == ClientKind::Ai {
+                            crate::terminal_review::field(
+                                "provider",
+                                if registration.display_label == DEFAULT_AI_CODEX_LABEL {
+                                    "codex".to_string()
+                                } else {
+                                    "claude".to_string()
+                                },
+                            )?
+                        } else {
+                            crate::terminal_review::field("provider", "none".to_string())?
+                        },
                         crate::terminal_review::field(
                             "accounts",
                             registration.scope.accounts().join(", "),
@@ -492,7 +576,18 @@ impl RegistrationHandle<'_> {
                             "tools",
                             registration.scope.tools().join(", "),
                         )?,
+                        crate::terminal_review::field(
+                            "mail_transfer",
+                            "selected account mail metadata/body may be sent to the selected AI provider".to_string(),
+                        )?,
                     ];
+                    if registration.client_kind == ClientKind::Ai {
+                        fields.push(crate::terminal_review::field(
+                            "feature",
+                            "Connect all listed accounts (explicit confirmation required)"
+                                .to_string(),
+                        )?);
+                    }
                     return crate::terminal_review::make_entry_ticket(
                         &mut self.state.terminal_reviews.borrow_mut(),
                         hantong_platform::random_nonce()?,
@@ -767,6 +862,31 @@ impl RegistrationHandle<'_> {
                             {
                                 return Err(ErrorCode::Conflict);
                             }
+                            let owner = self
+                                .state
+                                .store
+                                .load_registration(current.owner_registration_id)?
+                                .ok_or(ErrorCode::ClientNotRegistered)?;
+                            if owner.state != RegistrationState::Active
+                                || owner.profile_epoch != current.profile_epoch
+                            {
+                                return Err(ErrorCode::PolicyBlocked);
+                            }
+                            if owner.client_kind == ClientKind::Ai {
+                                let provider = if owner.display_label == DEFAULT_AI_CODEX_LABEL {
+                                    AiProvider::Codex
+                                } else if owner.display_label == DEFAULT_AI_CLAUDE_LABEL {
+                                    AiProvider::Claude
+                                } else {
+                                    return Err(ErrorCode::PolicyBlocked);
+                                };
+                                self.state.store.check_ai_consent(
+                                    provider,
+                                    owner.registration_id,
+                                    owner.profile_epoch,
+                                    std::slice::from_ref(&current.request.account_id().to_owned()),
+                                )?;
+                            }
                         }
                         TerminalReviewKind::GoogleSetup => {
                             let (identity, binding, _) =
@@ -787,6 +907,31 @@ impl RegistrationHandle<'_> {
                                 || current.profile_epoch != entry.epoch
                             {
                                 return Err(ErrorCode::Conflict);
+                            }
+                            let owner = self
+                                .state
+                                .store
+                                .load_registration(current.owner_registration_id)?
+                                .ok_or(ErrorCode::ClientNotRegistered)?;
+                            if owner.state != RegistrationState::Active
+                                || owner.profile_epoch != current.profile_epoch
+                            {
+                                return Err(ErrorCode::PolicyBlocked);
+                            }
+                            if owner.client_kind == ClientKind::Ai {
+                                let provider = if owner.display_label == DEFAULT_AI_CODEX_LABEL {
+                                    AiProvider::Codex
+                                } else if owner.display_label == DEFAULT_AI_CLAUDE_LABEL {
+                                    AiProvider::Claude
+                                } else {
+                                    return Err(ErrorCode::PolicyBlocked);
+                                };
+                                self.state.store.check_ai_consent(
+                                    provider,
+                                    owner.registration_id,
+                                    owner.profile_epoch,
+                                    std::slice::from_ref(&current.request.account_id().to_owned()),
+                                )?;
                             }
                         }
                         _ => return Err(ErrorCode::CapabilityUnsupported),
@@ -1048,6 +1193,10 @@ impl RegistrationHandle<'_> {
                             .deny_mcp_registration_request(entry.request_id, current.version)?,
                         ClientKind::Gui => return Err(ErrorCode::CapabilityUnsupported),
                         ClientKind::Cli => self
+                            .state
+                            .store
+                            .deny_cli_registration_request(entry.request_id, current.version)?,
+                        ClientKind::Ai => self
                             .state
                             .store
                             .deny_cli_registration_request(entry.request_id, current.version)?,
@@ -1660,10 +1809,18 @@ impl RegistrationHandle<'_> {
             command,
             RegistrationCommand::McpRequest | RegistrationCommand::McpStatus(_)
         );
+        let ai_provider = match command {
+            RegistrationCommand::AiRequest(provider)
+            | RegistrationCommand::AiStatus(provider, _) => Some(provider),
+            _ => None,
+        };
+        let ai = ai_provider.is_some();
         let kind = if mcp {
             ClientKind::Mcp
         } else if gui {
             ClientKind::Gui
+        } else if ai {
+            ClientKind::Ai
         } else {
             ClientKind::Cli
         };
@@ -1679,14 +1836,32 @@ impl RegistrationHandle<'_> {
             RegistrationCommand::Status(id)
             | RegistrationCommand::GuiStatus(id)
             | RegistrationCommand::McpStatus(id) => self.state.receipt(id, kind),
+            RegistrationCommand::AiStatus(provider, id) => {
+                let request = self
+                    .state
+                    .store
+                    .get_registration_request(id)?
+                    .ok_or(ErrorCode::NotFound)?;
+                let label = match provider {
+                    AiProvider::Codex => DEFAULT_AI_CODEX_LABEL,
+                    AiProvider::Claude => DEFAULT_AI_CLAUDE_LABEL,
+                };
+                if request.client_kind != ClientKind::Ai || request.display_label != label {
+                    return Err(ErrorCode::ScopeDenied);
+                }
+                self.state.receipt(id, ClientKind::Ai)
+            }
             RegistrationCommand::Request
             | RegistrationCommand::RequestGoogleReadOnly(_)
             | RegistrationCommand::GuiRequest
-            | RegistrationCommand::McpRequest => {
+            | RegistrationCommand::McpRequest
+            | RegistrationCommand::AiRequest(_) => {
                 let registered = if mcp {
                     self.state.store.load_mcp_registration()?
                 } else if gui {
                     self.state.store.load_gui_registration()?
+                } else if let Some(provider) = ai_provider {
+                    self.state.store.load_ai_registration(provider)?
                 } else {
                     self.state.store.load_default_cli_registration()?
                 };
@@ -1740,6 +1915,8 @@ impl RegistrationHandle<'_> {
                     self.state.store.load_pending_mcp_request()?
                 } else if gui {
                     self.state.store.load_pending_gui_request()?
+                } else if let Some(provider) = ai_provider {
+                    self.state.store.load_pending_ai_request(provider)?
                 } else {
                     self.state.store.load_pending_default_cli_request()?
                 };
@@ -1749,27 +1926,59 @@ impl RegistrationHandle<'_> {
                         let scope = if let Some(account) = selected {
                             selected_registration_scope(self.state.store, account)?
                         } else {
+                            let accounts = if ai {
+                                // Built-in AI may only be offered accounts that
+                                // have completed provider setup.  The complete
+                                // list is placed in the pending request and is
+                                // shown for one explicit terminal confirmation;
+                                // it is never interpreted as an implicit grant.
+                                let accounts = self.state.store.list_ready_ai_account_ids()?;
+                                if accounts.is_empty() {
+                                    return Err(ErrorCode::NotFound);
+                                }
+                                accounts
+                            } else {
+                                self.state.store.list_registrable_account_ids()?
+                            };
                             RequestedScope::new(
-                                self.state.store.list_registrable_account_ids()?,
+                                accounts,
                                 if mcp {
                                     hantong_contracts::auth::mcp_mail_tools()
                                 } else if gui {
                                     hantong_contracts::auth::gui_read_tools()
                                 } else {
-                                    vec!["mail.accounts.list".into()]
+                                    if ai {
+                                        hantong_contracts::auth::ai_mail_tools()
+                                    } else {
+                                        vec!["mail.accounts.list".into()]
+                                    }
                                 },
                             )?
                         };
+                        let (client_kind, label) = if let Some(provider) = ai_provider {
+                            (
+                                ClientKind::Ai,
+                                match provider {
+                                    AiProvider::Codex => DEFAULT_AI_CODEX_LABEL,
+                                    AiProvider::Claude => DEFAULT_AI_CLAUDE_LABEL,
+                                },
+                            )
+                        } else {
+                            (
+                                kind,
+                                if mcp {
+                                    DEFAULT_MCP_LABEL
+                                } else if gui {
+                                    DEFAULT_GUI_LABEL
+                                } else {
+                                    DEFAULT_CLI_LABEL
+                                },
+                            )
+                        };
                         self.state.store.create_registration_request(
                             hantong_platform::random_nonce()?,
-                            kind,
-                            if mcp {
-                                DEFAULT_MCP_LABEL
-                            } else if gui {
-                                DEFAULT_GUI_LABEL
-                            } else {
-                                DEFAULT_CLI_LABEL
-                            },
+                            client_kind,
+                            label,
                             &scope,
                         )?
                     }
@@ -2148,6 +2357,23 @@ fn review_snapshot(
         }
     } else if request.client_kind == ClientKind::Gui {
         RegistrationReview::new_gui
+    } else if request.client_kind == ClientKind::Ai {
+        let provider = if request.display_label == DEFAULT_AI_CODEX_LABEL {
+            AiProvider::Codex
+        } else if request.display_label == DEFAULT_AI_CLAUDE_LABEL {
+            AiProvider::Claude
+        } else {
+            return Err(ErrorCode::Conflict);
+        };
+        return RegistrationReview::new_ai(
+            provider,
+            request.request_id,
+            request.version,
+            request.scope.accounts().to_vec(),
+            hash,
+            request.created_at_utc_ms,
+            request.expires_at_utc_ms,
+        );
     } else {
         RegistrationReview::new
     };
@@ -2188,6 +2414,10 @@ fn supported_identity(kind: ClientKind, label: &str, tools: &[String]) -> bool {
         }
         ClientKind::Mcp => {
             label == DEFAULT_MCP_LABEL && hantong_contracts::auth::is_supported_mcp_toolset(tools)
+        }
+        ClientKind::Ai => {
+            (label == DEFAULT_AI_CODEX_LABEL || label == DEFAULT_AI_CLAUDE_LABEL)
+                && tools == hantong_contracts::auth::ai_mail_tools()
         }
     }
 }
@@ -2374,8 +2604,10 @@ fn commit_terminal_registration(
     effects: &NativeEffects<'_>,
     expected: &RegistrationRequest,
 ) -> Result<(), ErrorCode> {
-    if !matches!(expected.client_kind, ClientKind::Cli | ClientKind::Mcp)
-        || expected.state != RegistrationRequestState::Pending
+    if !matches!(
+        expected.client_kind,
+        ClientKind::Cli | ClientKind::Mcp | ClientKind::Ai
+    ) || expected.state != RegistrationRequestState::Pending
         || !supported_identity(
             expected.client_kind,
             &expected.display_label,
@@ -2419,6 +2651,23 @@ fn commit_terminal_registration(
                     server_hash,
                 )?)
         }
+    } else if current.client_kind == ClientKind::Ai {
+        let provider = if current.display_label == DEFAULT_AI_CODEX_LABEL {
+            AiProvider::Codex
+        } else if current.display_label == DEFAULT_AI_CLAUDE_LABEL {
+            AiProvider::Claude
+        } else {
+            return Err(ErrorCode::Conflict);
+        };
+        effects
+            .store
+            .stage_ai_registration(&AiRegistrationStage::new(
+                provider,
+                current.clone(),
+                id,
+                client_public,
+                server_hash,
+            )?)
     } else {
         effects
             .store
@@ -2464,6 +2713,12 @@ fn recover_record<E: Effects>(effects: &E, record: &RegistrationRecord) -> Resul
     effects.cleanup_publication(&mut publication)
 }
 fn validate_initial_record(record: &RegistrationRecord) -> Result<(), ErrorCode> {
+    let tools = record.scope.tools();
+    // AI mail tools include read/write operations (send and single-message
+    // trash requests), so they must not be classified as read-only merely
+    // because they are not the legacy MCP mail set.
+    let expected_read_only = tools != hantong_contracts::auth::mcp_mail_tools()
+        && tools != hantong_contracts::auth::ai_mail_tools();
     if record.registration_id != hantong_platform::registration_id_for_request(record.request_id)?
         || record.state != RegistrationState::Provisioning
         || record.profile_epoch != 1
@@ -2472,11 +2727,11 @@ fn validate_initial_record(record: &RegistrationRecord) -> Result<(), ErrorCode>
             &record.display_label,
             record.scope.tools(),
         )
-        || record.read_only != (record.scope.tools() != hantong_contracts::auth::mcp_mail_tools())
+        || record.read_only != expected_read_only
         || record.requests_per_minute != 60
         || !matches!(
             record.approved_channel.as_str(),
-            "approval_helper" | "google_oauth" | "terminal_cli"
+            "approval_helper" | "google_oauth" | "terminal_cli" | "ai_feature"
         )
     {
         return Err(ErrorCode::Conflict);
@@ -2496,6 +2751,24 @@ fn raw_profile_bytes(record: &RegistrationRecord, server: [u8; 72]) -> Result<Ve
         }
     } else if record.client_kind == ClientKind::Gui {
         ParsedClientProfile::new_gui
+    } else if record.client_kind == ClientKind::Ai {
+        let provider = if record.display_label == DEFAULT_AI_CODEX_LABEL {
+            hantong_ipc_client::profile::ProfileSelector::AiCodex
+        } else if record.display_label == DEFAULT_AI_CLAUDE_LABEL {
+            hantong_ipc_client::profile::ProfileSelector::AiClaude
+        } else {
+            return Err(ErrorCode::Conflict);
+        };
+        return ParsedClientProfile::new_ai(
+            provider,
+            record.registration_id,
+            hantong_platform::client_key_id_for_registration(record.registration_id)?,
+            record.public_key,
+            server,
+            record.profile_epoch,
+            record.scope.accounts().to_vec(),
+        )?
+        .to_json();
     } else {
         ParsedClientProfile::new
     };
@@ -2597,6 +2870,17 @@ impl Effects for NativeEffects<'_> {
         } else if request.client_kind == ClientKind::Gui {
             self.store
                 .stage_gui_registration(&GuiRegistrationStage::new(request, id, public, hash)?)
+        } else if request.client_kind == ClientKind::Ai {
+            let provider = if request.display_label == DEFAULT_AI_CODEX_LABEL {
+                AiProvider::Codex
+            } else if request.display_label == DEFAULT_AI_CLAUDE_LABEL {
+                AiProvider::Claude
+            } else {
+                return Err(ErrorCode::Conflict);
+            };
+            self.store.stage_ai_registration(&AiRegistrationStage::new(
+                provider, request, id, public, hash,
+            )?)
         } else {
             self.store
                 .stage_cli_registration(&CliRegistrationStage::new(request, id, public, hash)?)
@@ -2630,6 +2914,12 @@ impl Effects for NativeEffects<'_> {
             hantong_ipc_client::profile::ProfileSelector::Gui => {
                 hantong_approval_windows::publish_gui_profile(bytes)
             }
+            hantong_ipc_client::profile::ProfileSelector::AiCodex => {
+                hantong_approval_windows::publish_ai_profile(AiProvider::Codex, bytes)
+            }
+            hantong_ipc_client::profile::ProfileSelector::AiClaude => {
+                hantong_approval_windows::publish_ai_profile(AiProvider::Claude, bytes)
+            }
         }
     }
     fn cleanup_publication(&self, publication: &mut Self::Publication) -> Result<(), ErrorCode> {
@@ -2643,6 +2933,17 @@ impl Effects for NativeEffects<'_> {
         } else if record.client_kind == ClientKind::Gui {
             self.store
                 .activate_gui_registration(record.registration_id, record.version, hash)
+                .map(drop)
+        } else if record.client_kind == ClientKind::Ai {
+            let provider = if record.display_label == DEFAULT_AI_CODEX_LABEL {
+                AiProvider::Codex
+            } else if record.display_label == DEFAULT_AI_CLAUDE_LABEL {
+                AiProvider::Claude
+            } else {
+                return Err(ErrorCode::Conflict);
+            };
+            self.store
+                .activate_ai_registration(provider, record.registration_id, record.version, hash)
                 .map(drop)
         } else {
             self.store

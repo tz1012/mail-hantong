@@ -265,6 +265,7 @@ fn cli16_invalid_help_and_bootstrap_commands_do_not_lookup_saved_language() {
     for args in [
         vec![],
         vec!["--help"],
+        vec!["/help"],
         vec!["--version"],
         vec!["unknown"],
         vec!["folders", "list"],
@@ -303,7 +304,7 @@ fn message(code: ErrorCode, lang: Lang) -> &'static str {
 
 fn help(lang: Lang) -> String {
     format!(
-        "mail-hantong / hantong\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}",
+        "mail-hantong / hantong\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}",
         resource(lang, "usage"),
         resource(lang, "preview_scope"),
         resource(lang, "quick_start"),
@@ -314,7 +315,8 @@ fn help(lang: Lang) -> String {
         resource(lang, "message_search_help"),
         resource(lang, "protected"),
         resource(lang, "help_language"),
-        resource(lang, "google_help")
+        resource(lang, "google_help"),
+        ai::help(matches!(lang, Lang::Ko))
     )
 }
 
@@ -749,7 +751,7 @@ fn run_with_mail_actions(
                 };
                 folder_options.push((arg, value));
             }
-            "--help" | "-h" if command.is_empty() => {
+            "--help" | "-h" | "/help" if command.is_empty() => {
                 if want_help {
                     return emit_error(ErrorCode::InvalidInput, lang, json);
                 }

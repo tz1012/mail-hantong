@@ -210,7 +210,7 @@ impl<'a, 'server> ExecutionContext for CoreExecutionAdapter<'a, 'server> {
         self.connection.check_accounts_scope(
             Some(&current),
             request.account_ids(),
-            request.tool().as_str(),
+            request.tool_name(),
         )
     }
 
@@ -221,6 +221,20 @@ impl<'a, 'server> ExecutionContext for CoreExecutionAdapter<'a, 'server> {
         self.connection.revalidate_registration(Some(&current))?;
         if record.client_kind == hantong_contracts::client::ClientKind::Mcp {
             self.store.check_mcp_ai_consent(
+                record.registration_id,
+                record.profile_epoch,
+                request.account_ids(),
+            )?;
+        } else if record.client_kind == hantong_contracts::client::ClientKind::Ai {
+            let provider = if record.display_label == hantong_store::DEFAULT_AI_CODEX_LABEL {
+                hantong_contracts::registration::AiProvider::Codex
+            } else if record.display_label == hantong_store::DEFAULT_AI_CLAUDE_LABEL {
+                hantong_contracts::registration::AiProvider::Claude
+            } else {
+                return Err(ErrorCode::PolicyBlocked);
+            };
+            self.store.check_ai_consent(
+                provider,
                 record.registration_id,
                 record.profile_epoch,
                 request.account_ids(),

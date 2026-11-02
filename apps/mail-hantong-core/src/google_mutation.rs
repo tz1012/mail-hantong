@@ -88,6 +88,9 @@ pub(crate) async fn run_job(
                 MutationPayload::Labels { change, .. } => {
                     secrets.change_google_labels(&captured.binding, change, &cancel)
                 }
+                MutationPayload::Trash { message_id, .. } => {
+                    secrets.trash_google_message(&captured.binding, message_id, &cancel)
+                }
             }
         })
         .await

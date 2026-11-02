@@ -1,4 +1,7 @@
 review_title=Terminal review
+trash_action=Move this one message to trash. This does not permanently delete it.
+ai_feature=Connect all accounts listed above. Confirm only if you want this AI provider to use those accounts.
+ai_mail_transfer=Requested mail metadata and bodies from these accounts may be sent to the selected AI provider. The inbox is not uploaded in bulk.
 confirm_prompt=Enter 1 to confirm this operation, or 0 to cancel: 
 result_label=Result
 google_client=Google Desktop app setup. Enter the client secret only in the hidden input below.

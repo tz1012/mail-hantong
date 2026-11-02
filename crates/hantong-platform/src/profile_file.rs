@@ -63,6 +63,26 @@ pub fn load_mcp_client_profile() -> Result<LoadedClientProfile, ErrorCode> {
         Err(ErrorCode::CapabilityUnsupported)
     }
 }
+pub fn load_ai_codex_client_profile() -> Result<LoadedClientProfile, ErrorCode> {
+    #[cfg(windows)]
+    {
+        windows::load_ai(&crate::app_directories()?.profiles, false)
+    }
+    #[cfg(not(windows))]
+    {
+        Err(ErrorCode::CapabilityUnsupported)
+    }
+}
+pub fn load_ai_claude_client_profile() -> Result<LoadedClientProfile, ErrorCode> {
+    #[cfg(windows)]
+    {
+        windows::load_ai(&crate::app_directories()?.profiles, true)
+    }
+    #[cfg(not(windows))]
+    {
+        Err(ErrorCode::CapabilityUnsupported)
+    }
+}
 
 #[cfg(windows)]
 #[allow(unsafe_code)]
@@ -101,10 +121,22 @@ mod windows {
     pub(super) fn load_gui(profiles: &Path) -> Result<LoadedClientProfile, ErrorCode> {
         load_fixed(profiles, ProfileFile::Gui)
     }
+    pub(super) fn load_ai(profiles: &Path, claude: bool) -> Result<LoadedClientProfile, ErrorCode> {
+        load_fixed(
+            profiles,
+            if claude {
+                ProfileFile::AiClaude
+            } else {
+                ProfileFile::AiCodex
+            },
+        )
+    }
     enum ProfileFile {
         Default,
         Gui,
         Mcp,
+        AiCodex,
+        AiClaude,
     }
     impl ProfileFile {
         fn name(&self) -> &'static str {
@@ -112,6 +144,8 @@ mod windows {
                 Self::Default => "default.json",
                 Self::Gui => "gui.json",
                 Self::Mcp => "mcp.json",
+                Self::AiCodex => "ai-codex.json",
+                Self::AiClaude => "ai-claude.json",
             }
         }
     }

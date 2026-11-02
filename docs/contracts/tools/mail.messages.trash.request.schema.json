@@ -1,0 +1,105 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "mail.messages.trash.request.schema.json",
+  "title": "mail.messages.trash.request",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "request_id",
+    "tool",
+    "params"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "request_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[A-Za-z0-9._:-]+$"
+    },
+    "tool": {
+      "const": "mail.messages.trash.request"
+    },
+    "params": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "mode",
+            "account_id",
+            "message_id",
+            "operation_id",
+            "idempotency_key",
+            "expected_version",
+            "payload_hash"
+          ],
+          "properties": {
+            "mode": {
+              "const": "request"
+            },
+            "account_id": {
+              "type": "string",
+              "pattern": "^google_[0-9a-f]{64}$"
+            },
+            "message_id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256,
+              "pattern": "^[A-Za-z0-9_-]+$"
+            },
+            "operation_id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[A-Za-z0-9._:-]+$"
+            },
+            "idempotency_key": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[A-Za-z0-9._:-]+$"
+            },
+            "expected_version": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9223372036854775807
+            },
+            "payload_hash": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "mode",
+            "account_id",
+            "review_id"
+          ],
+          "properties": {
+            "mode": {
+              "const": "status"
+            },
+            "account_id": {
+              "type": "string",
+              "pattern": "^google_[0-9a-f]{64}$"
+            },
+            "review_id": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$",
+              "not": {
+                "const": "0000000000000000000000000000000000000000000000000000000000000000"
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}

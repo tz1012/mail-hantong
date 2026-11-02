@@ -1,4 +1,4 @@
-//! Explicit provider login and freeform chat frontend; no implicit mail context.
+//! Provider chat with automatically connected, separately configured mail tools.
 use hantong_ai::{AiError, Provider, Session};
 use hantong_contracts::ErrorCode;
 use serde_json::{Value, json};
@@ -17,8 +17,99 @@ fn text(ko: bool, key: &str) -> &'static str {
         })
         .expect("compiled AI resource")
 }
+/// Renders the commands available inside an interactive AI chat session.
+///
+/// Keep this output provider-independent: asking for help must not start a
+/// provider call, refresh models, or change the current session.
+pub(super) fn help(ko: bool) -> String {
+    [
+        "help_header",
+        "help_help",
+        "help_status",
+        "help_provider",
+        "help_model",
+        "help_mode",
+        "help_fast",
+        "help_agent",
+        "help_cli",
+        "help_quit",
+    ]
+    .into_iter()
+    .map(|key| text(ko, key))
+    .collect::<Vec<_>>()
+    .join("\n")
+}
 fn emit(value: Value) {
     println!("{value}");
+}
+
+#[cfg(any(windows, test))]
+fn ensure_mail_access_with(
+    interactive: bool,
+    mut ready: impl FnMut() -> Result<bool, ErrorCode>,
+    configure: impl FnOnce() -> Result<(), ErrorCode>,
+) -> Result<(), ErrorCode> {
+    if ready()? {
+        return Ok(());
+    }
+    if !interactive {
+        return Err(ErrorCode::HumanStepRequired);
+    }
+    configure()?;
+    if ready()? {
+        Ok(())
+    } else {
+        Err(ErrorCode::ApprovalRequired)
+    }
+}
+
+fn ensure_mail_access(provider: Provider, ko: bool, no_input: bool) -> Result<(), ErrorCode> {
+    #[cfg(windows)]
+    {
+        use hantong_contracts::registration::{
+            AiProvider, RegistrationCommand, RegistrationProgress,
+        };
+        let provider = match provider {
+            Provider::Codex => AiProvider::Codex,
+            Provider::Claude => AiProvider::Claude,
+        };
+        super::core_start::ensure_started()?;
+        let ready = || match hantong_ipc_client::verify_ai(provider) {
+            Ok(()) => Ok(true),
+            Err(ErrorCode::ClientNotRegistered | ErrorCode::AuthRequired) => Ok(false),
+            Err(error) => Err(error),
+        };
+        ensure_mail_access_with(
+            !no_input && io::stdin().is_terminal() && io::stdout().is_terminal(),
+            ready,
+            || {
+                println!("{}", text(ko, "mail_setup"));
+                let receipt = super::terminal_workflows::registration(
+                    RegistrationCommand::AiRequest(provider),
+                    if ko { super::Lang::Ko } else { super::Lang::En },
+                )?;
+                match receipt.state() {
+                    RegistrationProgress::Ready => Ok(()),
+                    RegistrationProgress::Denied => Err(ErrorCode::ApprovalDenied),
+                    RegistrationProgress::Expired => Err(ErrorCode::ApprovalExpired),
+                    _ => Err(ErrorCode::ApprovalRequired),
+                }
+            },
+        )
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (provider, ko, no_input);
+        Err(ErrorCode::CapabilityUnsupported)
+    }
+}
+fn ensure_switch_mail_access(provider: Provider, ko: bool, no_input: bool) -> Result<(), AiError> {
+    ensure_mail_access(provider, ko, no_input).map_err(|error| match error {
+        ErrorCode::HumanStepRequired => AiError::HumanStepRequired,
+        ErrorCode::ApprovalDenied => AiError::Cancelled,
+        ErrorCode::AuthRequired => AiError::LoginRequired,
+        _ => AiError::AgentUnavailable,
+    })
 }
 fn failure(e: AiError, ko: bool, json_mode: bool) -> i32 {
     let code = match e {
@@ -30,6 +121,7 @@ fn failure(e: AiError, ko: bool, json_mode: bool) -> i32 {
         AiError::LoginRequired => ErrorCode::AuthRequired,
         AiError::Timeout => ErrorCode::Offline,
         AiError::Cancelled => ErrorCode::ApprovalDenied,
+        AiError::HumanStepRequired => ErrorCode::HumanStepRequired,
         _ => ErrorCode::InternalError,
     };
     if json_mode {
@@ -59,8 +151,16 @@ pub(super) fn try_run(
         return None;
     }
     Some(match command.get(1).map(String::as_str) {
+        Some("help") if command.len() == 2 => {
+            if json_mode {
+                emit(json!({"schema_version":1,"ok":true,"help":help(ko)}));
+            } else {
+                println!("{}", help(ko));
+            }
+            0
+        }
         Some("providers") if command.len() == 2 => {
-            let values:Vec<_>=[Provider::Codex,Provider::Claude].into_iter().map(|p|json!({"provider":p.name(),"installed":hantong_ai::available(p),"browser_login":true,"billing":if p==Provider::Claude{"console_api"}else{"managed_account"},"automatic_mail_context":false})).collect();
+            let values:Vec<_>=[Provider::Codex,Provider::Claude].into_iter().map(|p|json!({"provider":p.name(),"installed":hantong_ai::available(p),"browser_login":true,"billing":if p==Provider::Claude{"console_api"}else{"managed_account"},"automatic_mail_tools":true,"bulk_mail_upload":false})).collect();
             if json_mode {
                 emit(json!({"schema_version":1,"ok":true,"providers":values}));
             } else {
@@ -137,19 +237,31 @@ pub(super) fn try_run(
                     eprintln!("{}", text(ko, "human"));
                     return Some(ErrorCode::HumanStepRequired.exit_code());
                 }
+                if let Err(error) = ensure_mail_access(provider, ko, no_input || json_mode) {
+                    if json_mode {
+                        emit(
+                            json!({"schema_version":1,"ok":false,"error":{"code":error.as_str(),"message":error.as_str(),"retryable":false}}),
+                        );
+                    } else {
+                        eprintln!("{} ({})", text(ko, "mail_setup_failed"), error.as_str());
+                    }
+                    return Some(error.exit_code());
+                }
                 let mut session = match Session::start(provider) {
                     Ok(v) => v,
                     Err(e) => return Some(failure(e, ko, json_mode)),
                 };
                 if let Some(prompt) = prompt {
                     if prompt.starts_with('/') {
-                        return Some(match command_result(&mut session, prompt, ko) {
-                            Ok(value) => {
-                                emit(value);
-                                0
-                            }
-                            Err(e) => failure(e, ko, json_mode),
-                        });
+                        return Some(
+                            match command_result(&mut session, prompt, ko, no_input || json_mode) {
+                                Ok(value) => {
+                                    emit(value);
+                                    0
+                                }
+                                Err(e) => failure(e, ko, json_mode),
+                            },
+                        );
                     }
                     let mut reply = String::new();
                     match session.ask(prompt, |delta| {
@@ -232,7 +344,12 @@ enum Slash {
     Continue,
     Exit,
 }
-fn command_result(session: &mut Session, line: &str, ko: bool) -> Result<Value, AiError> {
+fn command_result(
+    session: &mut Session,
+    line: &str,
+    ko: bool,
+    no_input: bool,
+) -> Result<Value, AiError> {
     let words: Vec<_> = line.split_whitespace().collect();
     if words.len() > 2 {
         return Err(AiError::InvalidInput);
@@ -245,6 +362,7 @@ fn command_result(session: &mut Session, line: &str, ko: bool) -> Result<Value, 
             {
                 let provider = Provider::parse(value)?;
                 if provider != session.provider() {
+                    ensure_switch_mail_access(provider, ko, no_input)?;
                     *session = Session::start(provider)?;
                 }
             }
@@ -303,9 +421,7 @@ fn command_result(session: &mut Session, line: &str, ko: bool) -> Result<Value, 
         Some("/status") if arg.is_none() => Ok(
             json!({"schema_version":1,"ok":true,"provider":session.provider().name(),"model":session.current_model().map(|m|&m.id),"effort":session.preferences().effort,"fast_requested":session.preferences().fast,"agent":session.agent_enabled()}),
         ),
-        Some("/help") if arg.is_none() => {
-            Ok(json!({"schema_version":1,"ok":true,"help":text(ko,"commands")}))
-        }
+        Some("/help") if arg.is_none() => Ok(json!({"schema_version":1,"ok":true,"help":help(ko)})),
         _ => Err(AiError::InvalidInput),
     }
 }
@@ -393,7 +509,7 @@ fn slash(session: &mut Session, line: &str, ko: bool) -> Result<Slash, AiError> 
     }
     let arg = parts.get(1).copied();
     match parts.first().copied() {
-        Some("/help") if arg.is_none() => println!("{}", text(ko, "commands")),
+        Some("/help") if arg.is_none() => println!("{}", help(ko)),
         Some("/status") if arg.is_none() => show_status(session),
         Some("/cli") if arg.is_none() => return Ok(Slash::Exit),
         Some("/tui") if arg.is_none() => {
@@ -441,6 +557,7 @@ fn slash(session: &mut Session, line: &str, ko: bool) -> Result<Slash, AiError> 
             if let Some(provider) = provider
                 && provider != session.provider()
             {
+                ensure_switch_mail_access(provider, ko, false)?;
                 let next = Session::start(provider)?;
                 *session = next;
                 println!("{}", text(ko, "clean"));
@@ -494,6 +611,42 @@ fn slash(session: &mut Session, line: &str, ko: bool) -> Result<Slash, AiError> 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn ai07_automatic_mail_setup_does_not_register_again_or_escalate_headless() {
+        assert_eq!(
+            ensure_mail_access_with(false, || Ok(true), || panic!("already configured")),
+            Ok(())
+        );
+        assert_eq!(
+            ensure_mail_access_with(false, || Ok(false), || panic!("headless cannot configure")),
+            Err(ErrorCode::HumanStepRequired)
+        );
+        assert_eq!(
+            ensure_mail_access_with(
+                true,
+                || Err(ErrorCode::ClientSuspended),
+                || panic!("revocation cannot be repaired")
+            ),
+            Err(ErrorCode::ClientSuspended)
+        );
+        let mut calls = 0;
+        assert_eq!(
+            ensure_mail_access_with(
+                true,
+                || {
+                    calls += 1;
+                    Ok(calls == 2)
+                },
+                || Ok(())
+            ),
+            Ok(())
+        );
+        assert_eq!(calls, 2);
+        assert_eq!(
+            ensure_mail_access_with(true, || Ok(false), || Err(ErrorCode::ApprovalDenied)),
+            Err(ErrorCode::ApprovalDenied)
+        );
+    }
     #[test]
     fn cli16_provider_arrow_chooser_and_escape_preserve_preferences() {
         let current = Provider::Codex;
@@ -585,6 +738,30 @@ mod tests {
         assert_eq!(
             keys(include_str!("../resources/ai-en.txt")),
             keys(include_str!("../resources/ai-ko.txt"))
+        );
+    }
+
+    #[test]
+    fn ai07_help_is_localized_and_does_not_need_a_provider() {
+        let english = help(false);
+        let korean = help(true);
+        assert!(english.contains("/provider PROVIDER"));
+        assert!(english.contains("/provide is an alias"));
+        assert!(english.contains("/model [list|ID]"));
+        assert!(english.contains("/quit"));
+        assert!(korean.contains("/provider PROVIDER"));
+        assert!(korean.contains("/provide"));
+        assert!(korean.contains("/model [list|ID]"));
+        assert!(korean.contains("/quit"));
+        assert_ne!(english, korean);
+
+        assert_eq!(
+            try_run(&["ai".into(), "help".into()], false, false, true),
+            Some(0)
+        );
+        assert_eq!(
+            try_run(&["ai".into(), "help".into()], true, true, true),
+            Some(0)
         );
     }
 }

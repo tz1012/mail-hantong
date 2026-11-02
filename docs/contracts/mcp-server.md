@@ -1,5 +1,12 @@
 # MCP stdio server
 
+> 2026-11-03 approved extension: built-in AI uses the separate
+> [`builtin-ai-mail.md`](builtin-ai-mail.md) contract and `ClientKind::Ai`
+> profiles. This document continues to define **external MCP** only:
+> `hantong-mcp register` and its explicit review remain required there. The
+> extension does not grant external MCP access automatically and does not claim
+> that the current beta implements built-in automatic tools.
+
 Status: contract draft; human security review required. Requirements MCP-03, CLI-15, SEC-03, AI-09.
 
 `hantong-mcp` is a newline-delimited UTF-8 JSON-RPC stdio server, using MCP 2025-11-25 initialization, tools/list, tools/call and ping. It writes only protocol messages to stdout. Frames are bounded to 1 MiB and nested duplicate JSON keys are rejected. Calls before initialization, unknown fields/tools and malformed protocol versions fail closed; a well-formed client version negotiates the server-supported 2025-11-25 version. No remote HTTP listener is opened.

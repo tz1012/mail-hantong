@@ -85,11 +85,26 @@ pub(super) fn publish_mcp(bytes: &[u8]) -> Result<Publication, ErrorCode> {
         ProfileFile::Mcp,
     )
 }
+pub(super) fn publish_ai(
+    provider: hantong_contracts::registration::AiProvider,
+    bytes: &[u8],
+) -> Result<Publication, ErrorCode> {
+    publish_fixed(
+        &hantong_platform::app_directories()?.profiles,
+        bytes,
+        match provider {
+            hantong_contracts::registration::AiProvider::Codex => ProfileFile::AiCodex,
+            hantong_contracts::registration::AiProvider::Claude => ProfileFile::AiClaude,
+        },
+    )
+}
 
 enum ProfileFile {
     Default,
     Gui,
     Mcp,
+    AiCodex,
+    AiClaude,
 }
 impl ProfileFile {
     fn name(&self) -> &'static str {
@@ -97,6 +112,8 @@ impl ProfileFile {
             Self::Default => "default.json",
             Self::Gui => "gui.json",
             Self::Mcp => "mcp.json",
+            Self::AiCodex => "ai-codex.json",
+            Self::AiClaude => "ai-claude.json",
         }
     }
 }

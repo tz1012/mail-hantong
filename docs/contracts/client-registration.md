@@ -2,6 +2,12 @@
 
 # 기본 CLI 등록 요청과 진행 조회 v1
 
+> 2026-11-03 승인된 내장 AI 확장은 [builtin-ai-mail.md](builtin-ai-mail.md)에
+> 정의된 별도 `ClientKind::Ai` 등록·프로필을 사용한다. 이 문서의 기본 CLI
+> 등록은 내장 AI 권한으로 자동 변환되지 않으며, 외부 MCP 등록 절차도
+> 대체하지 않는다. 확장은 계약 승인 상태일 뿐 현재 구현·베타 지원 완료를
+> 뜻하지 않으며 사람 보안 검토가 남아 있다.
+
 
 > 2026-11-02: [Google personal CLI extension](google-personal-cli.md) supersedes native-only account/CLI setup clauses only for the bounded guided personal flow. Live verified OAuth authorizes its fixed feature configuration; feature selection alone does not. Per-send/mutation approval and advanced native setup remain. Human security review required.
 

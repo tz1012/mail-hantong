@@ -1,8 +1,8 @@
-# mail-hantong CLI — Windows beta.3
+# mail-hantong CLI — Windows beta.4
 
 The command is `hantong`. English is the default; use `--lang ko` for Korean. The companion `mail-hantong-core` process handles encrypted local storage, mail operations and policy. The graphical mail application is not included in the CLI package.
 
-**Published release: [0.1.0-beta.3](https://github.com/tz1012/mail-hantong/releases/tag/v0.1.0-beta.3).** The [Korean website guide](https://tz1012.github.io/mail-hantong/) covers installation, mail and AI feature switching. Release downloads include checksums and build metadata. Full checks passed 1,833 tests; manual Gmail verification covered account retention, terminal cancellation, one synthetic send/receive and matching body/attachment. Human security review, clean Windows VM testing, other real mail providers and Google verification remain separate open gates. Real AI login and paid inference were not tested. macOS mail operations are not available yet.
+**Release: [0.1.0-beta.4](https://github.com/tz1012/mail-hantong/releases/tag/v0.1.0-beta.4).** The [Korean website guide](https://tz1012.github.io/mail-hantong/) covers installation, mail and AI feature switching. Release downloads include checksums and build metadata. Full checks passed 1,856 tests. Earlier beta.3 manual Gmail verification covered account retention, terminal cancellation, one synthetic send/receive and matching body/attachment; it does not validate the new AI or trash path against real services. Human security review, clean Windows VM testing, other real mail providers and Google verification remain separate open gates. Real AI login, paid inference and real trash operations were not tested. This version migrates local storage from schema 24 to 25; do not run an older core against migrated data. macOS mail operations are not available yet.
 
 ## What works in this preview
 
@@ -185,13 +185,16 @@ Inside an interactive AI session:
 | `/model` | Choose from the provider's current model catalog |
 | `/mode` | Choose supported light, med, high or ultra-high effort |
 | `/fast on`, `/fast off` | Request the provider's actual supported fast service setting |
-| `/agent on`, `/agent off` | Enable or disconnect the separately authorized mail tools |
+| `/help` | List available session commands with descriptions |
+| `/agent on`, `/agent off` | Reconnect or disconnect the current provider's configured mail tools |
 | `/agent`, `/fast`, `/status` | Show current state |
 | `/cli`, `/quit` | Return to the command line |
 
 Typed arguments such as `/provider claude`, `/model MODEL_ID`, `/mode high` also work. Unsupported model settings return an error and preserve the previous state. Redirected input, JSON and `--no-input` do not open selection menus. Fast mode is not a promise of latency or lower cost.
 
-Freeform chat initially has no mail access or automatic mail context. To let an agent discover and use authorized mail tools, register the independent stdio server:
+Built-in AI chat automatically connects mail tools after its first provider-specific setup. The same terminal shows all ready accounts, permitted tools and external mail-data transfer before you choose Connect or Cancel. Codex and Claude use separate registrations and consent. No manual registration command, request-ID copying or required `/agent on` is needed for this built-in flow. Startup does not upload the inbox; scoped tool results can be sent to the selected AI provider when used. `/agent off` disconnects tools and clears session context. Existing registrations are not silently expanded when new accounts are added.
+
+For an independent external MCP host, registration remains a separate workflow:
 
 ```powershell
 hantong-mcp register
@@ -199,7 +202,9 @@ hantong review --kind registration --request-id REQUEST_ID
 hantong-mcp status REQUEST_ID
 ```
 
-Replace REQUEST_ID with the ID printed by `register`. Registration prepares a pending request; the explicit `hantong review` step completes it in the same terminal. Review the accounts and tools before connecting them to external AI: authorized tool results may disclose mail data to the selected provider. Then `/agent on` may connect the packaged server. Other MCP hosts may launch `hantong-mcp` without arguments over stdio. Tool discovery returns current grants; accounts are discovered through the authorized account-list tool. Send requests require separate full-message terminal review; an AI session cannot itself confirm them. Generic shell, filesystem and web tools are disabled in the integrated AI session. Revoked or missing account consent blocks mail disclosure.
+Replace REQUEST_ID with the ID printed by `register`. Registration prepares a pending request; the explicit `hantong review` step completes it in the same terminal. External MCP hosts launch `hantong-mcp` without arguments over stdio and retain their own grants. The built-in AI setup does not expand these grants. Tool discovery returns current grants; accounts are discovered through the authorized account-list tool. Send and trash requests require separate terminal review; an AI cannot confirm them itself. Generic shell, filesystem and web tools are disabled in the integrated AI session. Revoked or missing account consent blocks mail disclosure.
+
+Built-in AI also exposes `mail.messages.trash.request` for moving one Gmail message to Trash. It requires an existing Google Modify grant and a final same-terminal preview and confirmation. Missing permissions are not granted automatically. Permanent deletion, batch deletion and deletion through other mail providers are not supported. An uncertain send or trash outcome is never automatically retried. JSON, redirected input/output and `--no-input` cannot perform the interactive confirmation.
 
 ## Update and remove
 
@@ -224,7 +229,7 @@ The package tool builds the terminal distribution and core, records versions and
 
 `hantong`은 터미널에서 사용하는 CLI입니다. `--lang ko`로 한국어를 선택하고 자동화에는 `--json`과 종료 코드를 사용합니다.
 
-현재 beta.3는 Windows x64의 IMAP·SMTP 설정, 등록, 폴더·메타데이터·본문 조회, 초안·첨부 작성, 터미널 전체 검토 후 발송, AI 대화와 MCP 연동을 제공합니다. 새 `clients refresh`에서 필요한 권한을 검토합니다. 업데이트만으로 권한을 부여하지 않으며 과거 중단 요청의 범위도 바꾸지 않습니다. 일반 첨부 다운로드·예약·주소록·규칙 자동화와 Mac 제품은 후속입니다.
+현재 beta.4는 기존 메일 기능에 `/help`, 내장 AI 메일 도구 자동 연결과 Gmail 단일 메일 휴지통 이동을 추가합니다. AI 최초 이용에는 같은 터미널에서 제공자별 계정·도구·외부 전송 범위를 확인하며, 설정 후 수동 MCP 등록이나 필수 `/agent on` 없이 연결합니다. 발송·휴지통 이동은 매번 같은 터미널에서 최종 확인합니다. 휴지통 이동에는 Google Modify 권한이 필요하며 영구·대량 삭제는 지원하지 않습니다. 업데이트만으로 권한을 부여하지 않으며 과거 중단 요청의 범위도 바꾸지 않습니다. 일반 첨부 다운로드·예약·주소록·규칙 자동화와 Mac 제품은 후속입니다.
 
 위 PowerShell 한 줄로 설치·업데이트한 뒤 `hantong --lang ko init`을 실행하세요. 코어는 필요할 때 자동으로 시작합니다. 계정 연결·기능 선택·숨김 입력·메일 전체 검토·보내기/취소는 같은 터미널에서 진행하며, Google 로그인·동의만 브라우저를 사용합니다. 계정 작업 메뉴 4번은 작성·보내기 활성화, 5번은 메일 작성입니다. AI는 별도 `hantong ai login codex`, `hantong ai chat codex` 명령으로 시작하고 `/provider`, `/model`, `/mode`, `/fast`, `/agent`로 지원 기능을 전환합니다. 자세한 순서는 [홈페이지](https://tz1012.github.io/mail-hantong/)에 있습니다.
 

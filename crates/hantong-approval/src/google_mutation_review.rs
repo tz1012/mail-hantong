@@ -69,6 +69,14 @@ impl GoogleMutationReview {
                             && s.bytes()
                                 .all(|b| b.is_ascii_alphanumeric() || b"_-".contains(&b))
                     }) => {}
+            (MutationPayload::Trash { .. }, None)
+                if self.before_labels.len() <= 100
+                    && self.before_labels.iter().all(|s| {
+                        !s.is_empty()
+                            && s.len() <= 256
+                            && s.bytes()
+                                .all(|b| b.is_ascii_alphanumeric() || b"_-".contains(&b))
+                    }) => {}
             _ => return Err(ErrorCode::InvalidInput),
         }
         if self.summary(Language::En).encode_utf16().count() > 2 * 1024 * 1024
@@ -130,6 +138,13 @@ impl GoogleMutationReview {
                 label("remove"),
                 change.remove().join(", ")
             )),
+            (MutationPayload::Trash { message_id, .. }, _) => out.push_str(&format!(
+                "{}\r\n{}: {}\r\n{}\r\n",
+                label("trash"),
+                label("message"),
+                message_id,
+                label("trash_warning")
+            )),
             _ => {}
         }
         out.push_str(&format!(
@@ -184,6 +199,8 @@ mod tests {
             "subject",
             "body",
             "labels",
+            "trash",
+            "trash_warning",
             "message",
             "before",
             "add",

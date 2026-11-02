@@ -1,4 +1,4 @@
-//! A closed bridge to the packaged MCP executable, never a CLI identity.
+//! A closed bridge using a provider-bound built-in AI identity, never CLI/MCP keys.
 use super::*;
 const MAIL_TOOLS: &[&str] = &[
     "mail.accounts.list",
@@ -9,12 +9,15 @@ const MAIL_TOOLS: &[&str] = &[
     "mail.messages.get",
     "mail.drafts.create",
     "mail.send.request",
+    "mail.messages.trash.request",
 ];
 pub(super) struct Agent {
     process: Process,
     pub tools: Vec<Value>,
     next: u64,
     pub executable: PathBuf,
+    provider: Provider,
+    review_allowed: bool,
 }
 impl Agent {
     #[cfg(test)]
@@ -22,10 +25,12 @@ impl Agent {
         Self::initialize(
             crate::tests::fake("mcp"),
             PathBuf::from("synthetic-mcp-never-executed"),
+            Provider::Codex,
+            true,
         )
         .unwrap()
     }
-    pub fn connect() -> Result<Self, AiError> {
+    pub fn connect(provider: Provider) -> Result<Self, AiError> {
         let current = env::current_exe().map_err(|_| AiError::Io)?;
         let executable = current.parent().ok_or(AiError::Io)?.join(if cfg!(windows) {
             "hantong-mcp.exe"
@@ -35,10 +40,21 @@ impl Agent {
         if !executable.is_file() {
             return Err(AiError::AgentUnavailable);
         }
-        let process = Process::spawn(&executable, &[])?;
-        Self::initialize(process, executable)
+        use std::io::IsTerminal;
+        let review_allowed = std::io::stdin().is_terminal()
+            && std::io::stdout().is_terminal()
+            && !env::args_os().any(|arg| arg == "--json" || arg == "--no-input");
+        let args = bridge_args(provider, review_allowed);
+        let refs = args.iter().map(String::as_str).collect::<Vec<_>>();
+        let process = Process::spawn(&executable, &refs)?;
+        Self::initialize(process, executable, provider, review_allowed)
     }
-    fn initialize(mut process: Process, executable: PathBuf) -> Result<Self, AiError> {
+    fn initialize(
+        mut process: Process,
+        executable: PathBuf,
+        provider: Provider,
+        review_allowed: bool,
+    ) -> Result<Self, AiError> {
         process.send(&json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","clientInfo":{"name":"mail-hantong-ai","version":env!("CARGO_PKG_VERSION")},"capabilities":{}}}))?;
         let result = process.wait_result(1, Instant::now() + Duration::from_secs(20))?;
         if result["protocolVersion"] != "2025-11-25" {
@@ -80,6 +96,8 @@ impl Agent {
             tools,
             next: 3,
             executable,
+            provider,
+            review_allowed,
         };
         // Current Core policy checks every explicitly scoped account consent.
         // The preflight result is deliberately discarded, not sent to a model.
@@ -102,15 +120,22 @@ impl Agent {
         self.process.send(&json!({"jsonrpc":"2.0","id":id,"method":"tools/call","params":{"name":name,"arguments":args}}))?;
         let result = self
             .process
-            .wait_result(id, Instant::now() + Duration::from_secs(30))?;
+            .wait_result(id, Instant::now() + Duration::from_secs(360))?;
         if !result["content"].is_array() || !result["isError"].is_boolean() {
             return Err(AiError::Protocol);
         }
         Ok(result)
     }
     pub fn claude_config(&self) -> Value {
-        json!({"mcpServers":{"hantong":{"type":"stdio","command":self.executable,"args":[]}}})
+        json!({"mcpServers":{"hantong":{"type":"stdio","command":self.executable,"args":bridge_args(self.provider, self.review_allowed)}}})
     }
+}
+fn bridge_args(provider: Provider, review_allowed: bool) -> Vec<String> {
+    let mut args = vec!["--builtin-ai".into(), provider.name().into()];
+    if !review_allowed {
+        args.push("--no-input".into());
+    }
+    args
 }
 #[cfg(test)]
 mod tests {
@@ -127,6 +152,20 @@ mod tests {
         assert_eq!(
             a.call("mail_accounts_list", json!({})).unwrap()["isError"],
             false
+        );
+        assert_eq!(
+            a.claude_config()["mcpServers"]["hantong"]["args"],
+            json!(["--builtin-ai", "codex"])
+        );
+        a.provider = Provider::Claude;
+        assert_eq!(
+            a.claude_config()["mcpServers"]["hantong"]["args"],
+            json!(["--builtin-ai", "claude"])
+        );
+        a.review_allowed = false;
+        assert_eq!(
+            a.claude_config()["mcpServers"]["hantong"]["args"],
+            json!(["--builtin-ai", "claude", "--no-input"])
         );
     }
 }

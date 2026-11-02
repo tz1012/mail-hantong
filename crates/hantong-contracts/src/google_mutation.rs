@@ -8,6 +8,8 @@ use std::fmt;
 
 pub const REQUEST_TOOL: &str = "mail.google.changes.request";
 pub const EXECUTE_TOOL: &str = "mail.google.changes.execute";
+pub const TRASH_REQUEST_TOOL: &str = "mail.messages.trash.request";
+pub const TRASH_EXECUTE_TOOL: &str = "mail.messages.trash.execute";
 const GRANT_PREFIX: &str = "mail.google.change.";
 
 pub fn account_grant(account: &str) -> Result<String, ErrorCode> {
@@ -25,6 +27,14 @@ pub enum MutationPayload {
     SaveDraft(SendReviewRequest),
     Labels {
         change: MessageLabelChange,
+        expected_version: u64,
+        operation_id: String,
+        idempotency_key: String,
+        payload_hash: [u8; 32],
+    },
+    Trash {
+        account_id: String,
+        message_id: String,
         expected_version: u64,
         operation_id: String,
         idempotency_key: String,
@@ -86,6 +96,26 @@ impl MutationPayload {
                     payload_hash: hash,
                 })
             }
+            "trash" if obj.len() == 7 => {
+                SendReviewRequest::new(account, [1; 32], version, operation, key, hash)?;
+                let message_id = text("message_id")?;
+                if !message_id
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+                    || message_id.is_empty()
+                    || message_id.len() > 256
+                {
+                    return Err(ErrorCode::InvalidInput);
+                }
+                Ok(Self::Trash {
+                    account_id: account.into(),
+                    message_id: message_id.into(),
+                    expected_version: version,
+                    operation_id: operation.into(),
+                    idempotency_key: key.into(),
+                    payload_hash: hash,
+                })
+            }
             _ => Err(ErrorCode::InvalidInput),
         }
     }
@@ -106,12 +136,23 @@ impl MutationPayload {
                     "expected_version":expected_version,"operation_id":operation_id,"idempotency_key":idempotency_key,
                     "payload_hash":wire_hex::encode(payload_hash),"add_labels":change.add(),"remove_labels":change.remove()})
             }
+            Self::Trash {
+                account_id,
+                message_id,
+                expected_version,
+                operation_id,
+                idempotency_key,
+                payload_hash,
+            } => json!({"kind":"trash","account_id":account_id,"message_id":message_id,
+                "expected_version":expected_version,"operation_id":operation_id,"idempotency_key":idempotency_key,
+                "payload_hash":wire_hex::encode(payload_hash)}),
         }
     }
     pub fn account_id(&self) -> &str {
         match self {
             Self::SaveDraft(r) => r.account_id(),
             Self::Labels { change, .. } => change.account_id(),
+            Self::Trash { account_id, .. } => account_id,
         }
     }
     pub fn account_ids(&self) -> Vec<String> {
@@ -121,12 +162,16 @@ impl MutationPayload {
         match self {
             Self::SaveDraft(r) => r.operation_id(),
             Self::Labels { operation_id, .. } => operation_id,
+            Self::Trash { operation_id, .. } => operation_id,
         }
     }
     pub fn idempotency_key(&self) -> &str {
         match self {
             Self::SaveDraft(r) => r.idempotency_key(),
             Self::Labels {
+                idempotency_key, ..
+            } => idempotency_key,
+            Self::Trash {
                 idempotency_key, ..
             } => idempotency_key,
         }
@@ -137,12 +182,43 @@ impl MutationPayload {
             Self::Labels {
                 expected_version, ..
             } => *expected_version,
+            Self::Trash {
+                expected_version, ..
+            } => *expected_version,
         }
     }
     pub fn payload_hash(&self) -> &[u8; 32] {
         match self {
             Self::SaveDraft(r) => r.payload_hash(),
             Self::Labels { payload_hash, .. } => payload_hash,
+            Self::Trash { payload_hash, .. } => payload_hash,
+        }
+    }
+    pub fn canonical_payload(&self) -> Vec<u8> {
+        match self {
+            Self::Trash {
+                account_id,
+                message_id,
+                expected_version,
+                operation_id,
+                idempotency_key,
+                ..
+            } => {
+                let mut out = b"mail-hantong.gmail.trash.v1\0".to_vec();
+                out.extend(
+                    serde_json::to_vec(&(
+                        account_id,
+                        message_id,
+                        expected_version,
+                        operation_id,
+                        idempotency_key,
+                    ))
+                    .expect("bounded strings"),
+                );
+                out
+            }
+            Self::Labels { change, .. } => change.canonical_payload(),
+            Self::SaveDraft(_) => serde_json::to_vec(&self.to_json()).expect("bounded request"),
         }
     }
 }
@@ -166,7 +242,7 @@ mod tests {
             v[field] = json!(true);
             assert!(MutationPayload::from_json(&v).is_err());
         }
-        for kind in ["delete", "trash", "batch", "send"] {
+        for kind in ["delete", "batch", "send"] {
             let mut v = value.clone();
             v["kind"] = json!(kind);
             assert!(MutationPayload::from_json(&v).is_err());
@@ -176,6 +252,17 @@ mod tests {
             v["add_labels"] = json!([label]);
             assert!(MutationPayload::from_json(&v).is_err());
         }
+    }
+
+    #[test]
+    fn ai09_trash_roundtrips_as_a_single_bounded_message_operation() {
+        let value = json!({"kind":"trash","account_id":format!("google_{}","a".repeat(64)),
+            "message_id":"message1","expected_version":7,"operation_id":"trash-op",
+            "idempotency_key":"trash-key","payload_hash":"02".repeat(32)});
+        let request = MutationPayload::from_json(&value).unwrap();
+        assert_eq!(request.to_json(), value);
+        assert_eq!(request.account_id(), format!("google_{}", "a".repeat(64)));
+        assert_eq!(request.expected_version(), 7);
     }
     #[test]
     fn sec03_mutation_rejects_invalid_version_identity_and_overlap() {

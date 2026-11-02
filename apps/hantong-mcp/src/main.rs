@@ -50,22 +50,38 @@ const TOOLS: &[(&str, &str, &str)] = &[
     ),
     (
         "mail.send.request",
-        "Request protected native human review of a draft or inspect review status; this tool cannot issue approval",
+        "Request terminal review of a draft or inspect review status; this tool cannot confirm sending",
         include_str!("../../../docs/contracts/tools/mail.send.request.schema.json"),
+    ),
+    (
+        "mail.messages.trash.request",
+        "Request terminal review to move one Gmail message to trash, or inspect status; requires Modify access; cannot permanently delete or confirm",
+        include_str!("../../../docs/contracts/tools/mail.messages.trash.request.schema.json"),
     ),
 ];
 trait Backend {
     fn allowed(&mut self) -> Result<Vec<String>, ErrorCode>;
     fn call(&mut self, name: &str, arguments: Value) -> Result<Value, ErrorCode>;
 }
-struct Native;
+struct Native {
+    provider: Option<hantong_contracts::registration::AiProvider>,
+    review_allowed: bool,
+}
 impl Backend for Native {
     fn allowed(&mut self) -> Result<Vec<String>, ErrorCode> {
         #[cfg(windows)]
         {
             runtime()?.block_on(async {
-                let profile = hantong_ipc_client::authenticate_mcp().await?;
-                Ok(profile.tools().to_vec())
+                match self.provider {
+                    Some(provider) => Ok(hantong_ipc_client::authenticate_ai(provider)
+                        .await?
+                        .tools()
+                        .to_vec()),
+                    None => Ok(hantong_ipc_client::authenticate_mcp()
+                        .await?
+                        .tools()
+                        .to_vec()),
+                }
             })
         }
         #[cfg(not(windows))]
@@ -74,49 +90,57 @@ impl Backend for Native {
         }
     }
     fn call(&mut self, name: &str, arguments: Value) -> Result<Value, ErrorCode> {
+        validate_review_mode(
+            name,
+            &arguments,
+            self.provider.is_some(),
+            self.review_allowed,
+        )?;
         #[cfg(windows)]
         {
-            runtime()?.block_on(async {
-                let profile = hantong_ipc_client::authenticate_mcp().await?;
-                if !profile.tools().iter().any(|tool| tool == name) {
-                    return Err(ErrorCode::ScopeDenied);
-                }
-                let arguments = bound_arguments(name, arguments, profile.accounts())?;
-                let id = "mcp-tool-1";
-                let request =
-                    json!({"schema_version":1,"request_id":id,"tool":name,"params":arguments});
-                let raw = profile.exchange(id, name, &request).await?;
-                let response = strict(&raw).map_err(|_| ErrorCode::CoreUnavailable)?;
-                if response["id"] != id || response["jsonrpc"] != "2.0" {
-                    return Err(ErrorCode::CoreUnavailable);
-                }
-                if response.as_object().is_none_or(|map| map.len() != 3)
-                    || response.get("error").is_some() == response.get("result").is_some()
-                {
-                    return Err(ErrorCode::CoreUnavailable);
-                }
-                if let Some(error) = response.get("error") {
-                    let code = error["code"].as_str().ok_or(ErrorCode::CoreUnavailable)?;
-                    if error["message"] != code
-                        || error.as_object().is_none_or(|map| map.len() != 2)
-                    {
-                        return Err(ErrorCode::CoreUnavailable);
+            let account = arguments
+                .get("account_id")
+                .and_then(Value::as_str)
+                .map(str::to_owned);
+            let requested = arguments.get("mode").and_then(Value::as_str) == Some("request");
+            let mut value = runtime()?.block_on(async {
+                match self.provider {
+                    Some(provider) => {
+                        exchange_profile(
+                            hantong_ipc_client::authenticate_ai(provider).await?,
+                            name,
+                            arguments,
+                        )
+                        .await
                     }
-                    return Err(ErrorCode::ALL
-                        .iter()
-                        .copied()
-                        .find(|e| e.as_str() == code)
-                        .unwrap_or(ErrorCode::CoreUnavailable));
+                    None => {
+                        exchange_profile(
+                            hantong_ipc_client::authenticate_mcp().await?,
+                            name,
+                            arguments,
+                        )
+                        .await
+                    }
                 }
-                let value = response
-                    .get("result")
-                    .filter(|v| v.is_object())
-                    .ok_or(ErrorCode::CoreUnavailable)?;
-                if value["schema_version"] != 1 || value["ok"] != true {
-                    return Err(ErrorCode::CoreUnavailable);
-                }
-                Ok(value.clone())
-            })
+            })?;
+            if let Some(provider) = self.provider
+                && requested
+                && review_pending(name, &value)
+            {
+                let account = account.ok_or(ErrorCode::InvalidInput)?;
+                review_in_console(name, &value, &account)?;
+                let status =
+                    json!({"mode":"status","account_id":account,"review_id":value["review_id"]});
+                value = runtime()?.block_on(async {
+                    exchange_profile(
+                        hantong_ipc_client::authenticate_ai(provider).await?,
+                        name,
+                        status,
+                    )
+                    .await
+                })?;
+            }
+            Ok(value)
         }
         #[cfg(not(windows))]
         {
@@ -124,6 +148,149 @@ impl Backend for Native {
             Err(ErrorCode::CapabilityUnsupported)
         }
     }
+}
+fn validate_review_mode(
+    name: &str,
+    arguments: &Value,
+    builtin: bool,
+    interactive: bool,
+) -> Result<(), ErrorCode> {
+    if matches!(name, "mail.send.request" | "mail.messages.trash.request") {
+        match arguments["mode"].as_str() {
+            Some("request") if builtin && !interactive => return Err(ErrorCode::HumanStepRequired),
+            Some("request" | "status") => {}
+            _ => return Err(ErrorCode::InvalidInput),
+        }
+    }
+    Ok(())
+}
+#[cfg(any(windows, test))]
+fn review_pending(name: &str, value: &Value) -> bool {
+    matches!(name, "mail.send.request" | "mail.messages.trash.request")
+        && value["state"] == "pending"
+        && value["review_id"]
+            .as_str()
+            .is_some_and(|id| wire_hex::decode_fixed::<32>(id).is_ok())
+}
+
+#[cfg(windows)]
+fn review_in_console(name: &str, receipt: &Value, account: &str) -> Result<(), ErrorCode> {
+    use std::{
+        fs::OpenOptions,
+        io::IsTerminal,
+        process::{Command, Stdio},
+    };
+    let id = receipt["review_id"]
+        .as_str()
+        .ok_or(ErrorCode::InvalidInput)?;
+    let args = terminal_review_args(name, id, account)?;
+    // The bridge's stdio is reserved for MCP. Use its existing console for
+    // the installed CLI/Core foreground helper; never open a second window.
+    let input = OpenOptions::new()
+        .read(true)
+        .open("CONIN$")
+        .map_err(|_| ErrorCode::HumanStepRequired)?;
+    let output = OpenOptions::new()
+        .write(true)
+        .open("CONOUT$")
+        .map_err(|_| ErrorCode::HumanStepRequired)?;
+    if !input.is_terminal() || !output.is_terminal() {
+        return Err(ErrorCode::HumanStepRequired);
+    }
+    let current = std::env::current_exe().map_err(|_| ErrorCode::CoreUnavailable)?;
+    let cli = current
+        .parent()
+        .ok_or(ErrorCode::CoreUnavailable)?
+        .join("hantong.exe");
+    let status = Command::new(cli)
+        .args(args)
+        .stdin(Stdio::from(input))
+        .stderr(Stdio::from(
+            output.try_clone().map_err(|_| ErrorCode::CoreUnavailable)?,
+        ))
+        .stdout(Stdio::from(output))
+        .status()
+        .map_err(|_| ErrorCode::CoreUnavailable)?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(ErrorCode::ALL
+            .iter()
+            .copied()
+            .find(|e| Some(e.exit_code()) == status.code())
+            .unwrap_or(ErrorCode::InternalError))
+    }
+}
+#[cfg(any(windows, test))]
+fn terminal_review_args(name: &str, id: &str, account: &str) -> Result<Vec<String>, ErrorCode> {
+    let kind = match name {
+        "mail.send.request" => "protected_send",
+        "mail.messages.trash.request" => "google_mutation",
+        _ => return Err(ErrorCode::InvalidInput),
+    };
+    wire_hex::decode_fixed::<32>(id)?;
+    if account.is_empty()
+        || account.len() > 128
+        || !account
+            .bytes()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, b'_' | b'-'))
+    {
+        return Err(ErrorCode::InvalidInput);
+    }
+    Ok([
+        "review",
+        "--kind",
+        kind,
+        "--request-id",
+        id,
+        "--account",
+        account,
+    ]
+    .into_iter()
+    .map(str::to_owned)
+    .collect())
+}
+#[cfg(windows)]
+async fn exchange_profile<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin>(
+    profile: hantong_ipc_client::AuthenticatedDefaultProfile<S>,
+    name: &str,
+    arguments: Value,
+) -> Result<Value, ErrorCode> {
+    if !profile.tools().iter().any(|tool| tool == name) {
+        return Err(ErrorCode::ScopeDenied);
+    }
+    let arguments = bound_arguments(name, arguments, profile.accounts())?;
+    let id = "mcp-tool-1";
+    let request = json!({"schema_version":1,"request_id":id,"tool":name,"params":arguments});
+    let raw = profile.exchange(id, name, &request).await?;
+    let response = strict(&raw).map_err(|_| ErrorCode::CoreUnavailable)?;
+    if response["id"] != id || response["jsonrpc"] != "2.0" {
+        return Err(ErrorCode::CoreUnavailable);
+    }
+    if response.as_object().is_none_or(|map| map.len() != 3)
+        || response.get("error").is_some() == response.get("result").is_some()
+    {
+        return Err(ErrorCode::CoreUnavailable);
+    }
+    if let Some(error) = response.get("error") {
+        let code = error["code"].as_str().ok_or(ErrorCode::CoreUnavailable)?;
+        if error["message"] != code || error.as_object().is_none_or(|map| map.len() != 2) {
+            return Err(ErrorCode::CoreUnavailable);
+        }
+        return Err(ErrorCode::ALL
+            .iter()
+            .copied()
+            .find(|e| e.as_str() == code)
+            .unwrap_or(ErrorCode::CoreUnavailable));
+    }
+    let value = response
+        .get("result")
+        .filter(|v| v.is_object())
+        .ok_or(ErrorCode::CoreUnavailable)?;
+    if value["schema_version"] != 1 || value["ok"] != true {
+        return Err(ErrorCode::CoreUnavailable);
+    }
+    Ok(value.clone())
 }
 #[cfg(windows)]
 fn runtime() -> Result<tokio::runtime::Runtime, ErrorCode> {
@@ -234,9 +401,16 @@ impl<B: Backend> Server<B> {
      let source:Value=serde_json::from_str(raw).expect("compiled schema");
      let mut schema=if *name=="mail.accounts.list" { json!({"type":"object","additionalProperties":false,"properties":{"include_capabilities":{"type":"boolean","default":false}}}) } else if source["properties"]["params"].is_object(){source["properties"]["params"].clone()}else{source.clone()};
      if *name=="mail.drafts.create" {schema["properties"].as_object_mut().expect("draft schema").remove("payload_hash");schema["required"].as_array_mut().expect("draft schema").retain(|v|v!="payload_hash");}
+     if *name=="mail.messages.trash.request"
+         && let Some(variants) = schema["oneOf"].as_array_mut() {
+             for variant in variants {
+                 if let Some(properties) = variant["properties"].as_object_mut() { properties.remove("payload_hash"); }
+                 if let Some(required) = variant["required"].as_array_mut() { required.retain(|v| v != "payload_hash"); }
+             }
+     }
      let definitions:Value=serde_json::from_str(include_str!("../../../docs/contracts/tools/common.schema.json")).expect("compiled common schema");
      schema["$defs"]=definitions["$defs"].clone(); local_refs(&mut schema);
-     json!({"name":name,"description":description,"inputSchema":schema,"annotations":{"readOnlyHint":!matches!(*name,"mail.drafts.create"|"mail.send.request"|"mail.folders.refresh"|"mail.sync.page"),"destructiveHint":false,"openWorldHint":matches!(*name,"mail.send.request"|"mail.folders.refresh"|"mail.sync.page"|"mail.messages.get")}})
+     json!({"name":name,"description":description,"inputSchema":schema,"annotations":{"readOnlyHint":!matches!(*name,"mail.drafts.create"|"mail.send.request"|"mail.messages.trash.request"|"mail.folders.refresh"|"mail.sync.page"),"destructiveHint":*name=="mail.messages.trash.request","openWorldHint":matches!(*name,"mail.send.request"|"mail.messages.trash.request"|"mail.folders.refresh"|"mail.sync.page"|"mail.messages.get")}})
     }).collect();
                 Some(success(id, json!({"tools":tools})))
             }
@@ -273,6 +447,9 @@ impl<B: Backend> Server<B> {
 }
 #[cfg(any(windows, test))]
 fn bound_arguments(name: &str, arguments: Value, accounts: &[String]) -> Result<Value, ErrorCode> {
+    if name == "mail.messages.trash.request" && arguments["mode"] == "request" {
+        return trash_arguments(arguments);
+    }
     if name == "mail.drafts.create" {
         return compose_arguments(arguments);
     }
@@ -292,6 +469,36 @@ fn bound_arguments(name: &str, arguments: Value, accounts: &[String]) -> Result<
         return Err(ErrorCode::ScopeDenied);
     }
     Ok(json!({"account_ids":accounts,"include_capabilities":capabilities}))
+}
+
+#[cfg(windows)]
+fn trash_arguments(mut value: Value) -> Result<Value, ErrorCode> {
+    let map = value.as_object().ok_or(ErrorCode::InvalidInput)?;
+    let fields = [
+        "mode",
+        "account_id",
+        "message_id",
+        "expected_version",
+        "operation_id",
+        "idempotency_key",
+    ];
+    if map.len() != fields.len() || fields.iter().any(|key| !map.contains_key(*key)) {
+        return Err(ErrorCode::InvalidInput);
+    }
+    let mut payload = value.clone();
+    let object = payload.as_object_mut().ok_or(ErrorCode::InvalidInput)?;
+    object.remove("mode");
+    object.insert("kind".into(), json!("trash"));
+    object.insert("payload_hash".into(), json!("01".repeat(32)));
+    let payload = hantong_contracts::google_mutation::MutationPayload::from_json(&payload)?;
+    value["payload_hash"] = json!(wire_hex::encode(&hantong_platform::sha256_storage_payload(
+        &payload.canonical_payload()
+    )?));
+    Ok(value)
+}
+#[cfg(all(test, not(windows)))]
+fn trash_arguments(_: Value) -> Result<Value, ErrorCode> {
+    Err(ErrorCode::CapabilityUnsupported)
 }
 
 #[cfg(windows)]
@@ -519,11 +726,26 @@ fn main() {
     }
     if args == ["--help"] {
         println!(
-            "mail-hantong MCP stdio server\nUsage: hantong-mcp [register | status REQUEST_ID]\nRegistration requires protected Windows human verification."
+            "mail-hantong MCP stdio server\nUsage: hantong-mcp [register | status REQUEST_ID]\nExternal MCP registration requires review in the HanTong terminal."
         );
         return;
     }
-    if !args.is_empty() {
+    let review_allowed = !args.iter().any(|arg| arg == "--no-input");
+    let provider = if args.first().map(String::as_str) == Some("--builtin-ai") {
+        if !(args.len() == 2 || (args.len() == 3 && args[2] == "--no-input")) {
+            std::process::exit(ErrorCode::InvalidInput.exit_code());
+        }
+        match hantong_contracts::registration::AiProvider::parse(&args[1]) {
+            Ok(provider) => Some(provider),
+            Err(error) => {
+                eprintln!("{}", error.as_str());
+                std::process::exit(error.exit_code());
+            }
+        }
+    } else {
+        None
+    };
+    if !args.is_empty() && provider.is_none() {
         let command = match args.as_slice() {
             [a] if a == "register" => Ok(RegistrationCommand::McpRequest),
             [a, id] if a == "status" => {
@@ -544,7 +766,16 @@ fn main() {
         }
         return;
     }
-    if serve(&mut io::stdin().lock(), &mut io::stdout().lock(), Native).is_err() {
+    if serve(
+        &mut io::stdin().lock(),
+        &mut io::stdout().lock(),
+        Native {
+            provider,
+            review_allowed,
+        },
+    )
+    .is_err()
+    {
         eprintln!("MCP_IO_ERROR");
         std::process::exit(70);
     }
@@ -552,6 +783,112 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn ai07_builtin_discovery_includes_trash_but_never_confirmation_or_execution() {
+        struct Ai;
+        impl Backend for Ai {
+            fn allowed(&mut self) -> Result<Vec<String>, ErrorCode> {
+                Ok(hantong_contracts::auth::ai_mail_tools())
+            }
+            fn call(&mut self, _: &str, _: Value) -> Result<Value, ErrorCode> {
+                panic!("discovery has no effects")
+            }
+        }
+        let mut server = Server {
+            backend: Ai,
+            initialized: true,
+            ready: true,
+        };
+        let response = server
+            .handle(br#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#)
+            .unwrap();
+        let tools = response["result"]["tools"].as_array().unwrap();
+        assert_eq!(tools.len(), 9);
+        assert!(
+            !tools
+                .iter()
+                .any(|tool| tool["name"].as_str().unwrap().contains("execute")
+                    || tool["name"].as_str().unwrap().contains("confirm"))
+        );
+        let trash = tools
+            .iter()
+            .find(|tool| tool["name"] == "mail.messages.trash.request")
+            .unwrap();
+        assert_eq!(trash["annotations"]["destructiveHint"], true);
+        let request = &trash["inputSchema"]["oneOf"][0];
+        assert!(request["properties"].get("payload_hash").is_none());
+        assert_eq!(request["properties"]["mode"]["const"], "request");
+    }
+    #[test]
+    fn ai09_only_pending_review_receipts_can_open_terminal() {
+        for name in ["mail.send.request", "mail.messages.trash.request"] {
+            assert_eq!(
+                validate_review_mode(name, &json!({"mode":"request"}), true, false),
+                Err(ErrorCode::HumanStepRequired)
+            );
+            assert_eq!(
+                validate_review_mode(name, &json!({"mode":"status"}), true, false),
+                Ok(())
+            );
+            assert_eq!(
+                validate_review_mode(name, &json!({"mode":"request"}), true, true),
+                Ok(())
+            );
+            for mode in ["confirm", "execute", "prepare", "cancel"] {
+                assert_eq!(
+                    validate_review_mode(name, &json!({"mode":mode}), true, true),
+                    Err(ErrorCode::InvalidInput)
+                );
+            }
+        }
+        assert_eq!(
+            terminal_review_args("mail.send.request", &"01".repeat(32), "synthetic-account")
+                .unwrap(),
+            vec![
+                "review",
+                "--kind",
+                "protected_send",
+                "--request-id",
+                &"01".repeat(32),
+                "--account",
+                "synthetic-account"
+            ]
+        );
+        let pending = json!({"state":"pending","review_id":"01".repeat(32)});
+        assert!(review_pending("mail.messages.trash.request", &pending));
+        assert!(review_pending("mail.send.request", &pending));
+        assert!(!review_pending("mail.drafts.create", &pending));
+        for state in ["sent", "accepted", "unknown", "denied", "claimed"] {
+            assert!(!review_pending(
+                "mail.send.request",
+                &json!({"state":state,"review_id":"01".repeat(32)})
+            ));
+        }
+        assert!(!review_pending(
+            "mail.send.request",
+            &json!({"state":"pending","review_id":"../../other"})
+        ));
+    }
+    #[cfg(windows)]
+    #[test]
+    fn ai09_trash_binding_computes_hash_and_rejects_caller_override() {
+        let raw = json!({"mode":"request","account_id":format!("google_{}", "a".repeat(64)),"message_id":"abc123","expected_version":1,"operation_id":"op","idempotency_key":"key"});
+        let bound = bound_arguments("mail.messages.trash.request", raw.clone(), &[]).unwrap();
+        assert_eq!(bound["payload_hash"].as_str().unwrap().len(), 64);
+        let mut payload = bound.clone();
+        payload.as_object_mut().unwrap().remove("mode");
+        payload["kind"] = json!("trash");
+        let request =
+            hantong_contracts::google_mutation::MutationPayload::from_json(&payload).unwrap();
+        assert_eq!(
+            wire_hex::decode_fixed::<32>(bound["payload_hash"].as_str().unwrap()).unwrap(),
+            hantong_platform::sha256_storage_payload(&request.canonical_payload()).unwrap()
+        );
+        assert_eq!(trash_arguments(bound), Err(ErrorCode::InvalidInput));
+        let mut extra = raw;
+        extra["approved"] = json!(true);
+        assert_eq!(trash_arguments(extra), Err(ErrorCode::InvalidInput));
+    }
     #[test]
     fn mcp03_full_mail_discovery_advertises_eight_real_tools_and_never_direct_execution() {
         struct Full;

@@ -59,12 +59,12 @@ CREATE TABLE server_identity (
 
 CREATE TABLE client_registration_requests (
     request_id BLOB PRIMARY KEY CHECK (length(request_id) = 32),
-    client_kind TEXT NOT NULL CHECK (client_kind IN ('cli', 'mcp', 'gui')),
+    client_kind TEXT NOT NULL CHECK (client_kind IN ('cli', 'mcp', 'gui', 'ai')),
     display_label TEXT NOT NULL CHECK (length(display_label) BETWEEN 1 AND 128),
     requested_accounts_json TEXT NOT NULL CHECK (json_valid(requested_accounts_json) AND json_type(requested_accounts_json) = 'array' AND json_array_length(requested_accounts_json) <= 128),
     requested_tools_json TEXT NOT NULL CHECK (json_valid(requested_tools_json) AND json_type(requested_tools_json) = 'array' AND json_array_length(requested_tools_json) <= 128),
     state TEXT NOT NULL CHECK (state IN ('pending', 'approved', 'denied', 'expired')),
-    decision_channel TEXT CHECK (decision_channel IS NULL OR decision_channel IN ('approval_helper', 'gui', 'google_oauth', 'terminal_cli')),
+    decision_channel TEXT CHECK (decision_channel IS NULL OR decision_channel IN ('approval_helper', 'gui', 'google_oauth', 'terminal_cli', 'ai_feature')),
     version INTEGER NOT NULL CHECK (version >= 1),
     created_at_utc_ms INTEGER NOT NULL CHECK (created_at_utc_ms > 0),
     expires_at_utc_ms INTEGER NOT NULL CHECK (expires_at_utc_ms > created_at_utc_ms AND expires_at_utc_ms - created_at_utc_ms <= 300000),
@@ -75,14 +75,14 @@ CREATE TABLE client_registration_requests (
 CREATE TABLE client_registrations (
     registration_id BLOB PRIMARY KEY CHECK (length(registration_id) = 16),
     request_id BLOB NOT NULL UNIQUE REFERENCES client_registration_requests(request_id) ON DELETE RESTRICT,
-    client_kind TEXT NOT NULL CHECK (client_kind IN ('cli', 'mcp', 'gui')),
+    client_kind TEXT NOT NULL CHECK (client_kind IN ('cli', 'mcp', 'gui', 'ai')),
     display_label TEXT NOT NULL CHECK (length(display_label) BETWEEN 1 AND 128),
     public_key BLOB NOT NULL UNIQUE CHECK (length(public_key) = 72),
     profile_epoch INTEGER NOT NULL CHECK (profile_epoch >= 1),
     state TEXT NOT NULL CHECK (state IN ('provisioning', 'active', 'suspended', 'revoked')),
     read_only INTEGER NOT NULL CHECK (read_only IN (0, 1)),
     requests_per_minute INTEGER NOT NULL CHECK (requests_per_minute BETWEEN 1 AND 600),
-    approved_channel TEXT NOT NULL CHECK (approved_channel IN ('approval_helper', 'gui', 'google_oauth', 'terminal_cli')),
+    approved_channel TEXT NOT NULL CHECK (approved_channel IN ('approval_helper', 'gui', 'google_oauth', 'terminal_cli', 'ai_feature')),
     approved_at_utc_ms INTEGER NOT NULL CHECK (approved_at_utc_ms > 0),
     updated_at_utc_ms INTEGER NOT NULL CHECK (updated_at_utc_ms >= approved_at_utc_ms),
     revoked_at_utc_ms INTEGER CHECK (revoked_at_utc_ms IS NULL OR revoked_at_utc_ms >= approved_at_utc_ms),
@@ -118,7 +118,7 @@ CREATE TABLE audit_starts (
     registration_id BLOB NOT NULL REFERENCES client_registrations(registration_id) ON DELETE RESTRICT
         CHECK (length(registration_id) = 16),
     profile_epoch INTEGER NOT NULL CHECK (profile_epoch >= 1),
-    client_kind TEXT NOT NULL CHECK (client_kind IN ('cli', 'mcp', 'gui')),
+    client_kind TEXT NOT NULL CHECK (client_kind IN ('cli', 'mcp', 'gui', 'ai')),
     display_label TEXT NOT NULL CHECK (length(display_label) BETWEEN 1 AND 128 AND length(CAST(display_label AS BLOB)) <= 512),
     tool_code TEXT NOT NULL CHECK (tool_code IN ('mail.accounts.list', 'mail.send.execute', 'mail.folders.list', 'mail.folders.refresh', 'mail.sync.page', 'mail.messages.search', 'app.settings.display.get', 'app.diagnostics.snapshot', 'mail.messages.get', 'mail.drafts.create', 'mail.send.request', 'mail.google.changes.request', 'mail.google.changes.execute')),
     started_at_utc_ms INTEGER NOT NULL CHECK (started_at_utc_ms > 0)
@@ -769,6 +769,16 @@ CREATE TABLE mcp_ai_consents (
  registration_request_id BLOB NOT NULL REFERENCES client_registration_requests(request_id) ON DELETE RESTRICT,
  approved_at_utc_ms INTEGER NOT NULL CHECK(approved_at_utc_ms>0),
  PRIMARY KEY(registration_id,account_id,profile_epoch)
+) STRICT;
+
+CREATE TABLE ai_consents (
+ provider TEXT NOT NULL CHECK(provider IN ('codex','claude')),
+ registration_id BLOB NOT NULL REFERENCES client_registrations(registration_id) ON DELETE RESTRICT,
+ account_id TEXT NOT NULL REFERENCES accounts(account_id) ON DELETE RESTRICT,
+ profile_epoch INTEGER NOT NULL CHECK(profile_epoch>0),
+ registration_request_id BLOB NOT NULL REFERENCES client_registration_requests(request_id) ON DELETE RESTRICT,
+ approved_at_utc_ms INTEGER NOT NULL CHECK(approved_at_utc_ms>0),
+ PRIMARY KEY(provider,registration_id,account_id,profile_epoch)
 ) STRICT;
 
 -- Explicit native-reviewed metadata-to-mail MCP identity replacement only.

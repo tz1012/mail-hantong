@@ -2,6 +2,14 @@
 
 # Google consent and personal CLI feature configuration
 
+> 2026-11-03 approved extension: built-in AI mail access is a separate
+> provider-qualified `ClientKind::Ai` flow defined in
+> [`builtin-ai-mail.md`](builtin-ai-mail.md). Google account feature setup may
+> be followed by automatic discovery for that built-in identity; it does not
+> convert the Google CLI or MCP registration, and does not make `/agent on` or
+> manual MCP registration a prerequisite. This extension remains an approved
+> contract change pending implementation and human security review.
+
 Latest personal sending UX: [terminal-personal-send](terminal-personal-send.md)
 supersedes the native personal send window below. Preview, confirm, cancel and
 result remain in CLI. Terminal choice is intent, not OS human-presence proof.
@@ -30,7 +38,10 @@ before opening Google so only that feature's provider scopes are requested.
 Google consent then connects the account and applies the selected fixed local
 feature set without an additional HanTong/Hello approval. Cancel/EOF has no
 OAuth/registration/grant effects. Selecting compose does not approve a message.
-AI/MCP configuration remains a separate opt-in action and is never preselected.
+External MCP configuration remains a separate opt-in action and is never
+preselected by Google setup. Built-in AI feature setup is a separate
+provider/account flow; when completed, its supported tools are discovered
+automatically under `ClientKind::Ai`.
 After ready, show available actions; never automatically read an inbox or send.
 
 ## Authority and identity
