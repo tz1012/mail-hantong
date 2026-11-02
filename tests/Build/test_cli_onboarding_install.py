@@ -15,6 +15,38 @@ POWERSHELL = Path(os.environ.get("SystemRoot", "C:/Windows")) / "System32/Window
 
 @unittest.skipUnless(os.name == "nt" and POWERSHELL.is_file(), "Windows PowerShell required")
 class OnboardingInstallTests(unittest.TestCase):
+    def test_inst03_latest_bootstrap_selects_release_from_powershell51_rest_array(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            bootstrap = str(ROOT / "install.ps1").replace("'", "''")
+            script = root / "probe.ps1"
+            script.write_text("""$ErrorActionPreference = 'Stop'
+. '%s'
+function Invoke-RestMethod {
+    $assets = @(
+        [pscustomobject]@{name='mail-hantong-cli-0.1.0-beta.4-windows-x86_64.zip';size=100;browser_download_url='https://github.com/tz1012/mail-hantong/releases/download/v0.1.0-beta.4/mail-hantong-cli-0.1.0-beta.4-windows-x86_64.zip'},
+        [pscustomobject]@{name='SHA256SUMS';size=100;browser_download_url='https://github.com/tz1012/mail-hantong/releases/download/v0.1.0-beta.4/SHA256SUMS'}
+    )
+    $draft = [pscustomobject]@{draft=$true;tag_name='v0.1.0-beta.5';assets=$assets}
+    $release = [pscustomobject]@{draft=$false;tag_name='v0.1.0-beta.4';assets=$assets}
+    # Match native Invoke-RestMethod's non-enumerated array output on PS 5.1.
+    return ,@($draft,$release)
+}
+function Invoke-WebRequest {
+    param($Uri,[switch]$UseBasicParsing,$Headers,$OutFile)
+    if ($Uri -cne 'https://github.com/tz1012/mail-hantong/releases/download/v0.1.0-beta.4/mail-hantong-cli-0.1.0-beta.4-windows-x86_64.zip') { throw 'Wrong release asset' }
+    $script:SelectedExpectedAsset = $true
+    throw 'Download intentionally stopped before network access'
+}
+try { Install-MailHantong -SessionOnly } catch {
+    if (-not $script:SelectedExpectedAsset) { throw }
+}
+if (-not $script:SelectedExpectedAsset) { throw 'No release selected' }
+""" % bootstrap, encoding="utf-8")
+            result = subprocess.run([str(POWERSHELL), "-NoProfile", "-NonInteractive",
+                "-File", str(script)], capture_output=True, timeout=30)
+            self.assertEqual(result.returncode, 0, result.stderr.decode("utf-8", "replace"))
+
     def test_inst03_cli04_installed_manifest_survives_repeat_and_is_owned_on_uninstall(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

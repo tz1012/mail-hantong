@@ -15,7 +15,10 @@ function Install-MailHantong {
     $headers = @{ 'User-Agent' = 'mail-hantong-installer'; 'Accept' = 'application/vnd.github+json' }
     $base = 'https://api.github.com/repos/tz1012/mail-hantong/releases'
     if ($ReleaseVersion -eq 'latest') {
-        $releases = @(Invoke-RestMethod -Uri "$base`?per_page=20" -Headers $headers)
+        # Windows PowerShell 5.1 emits a REST JSON array as one pipeline item.
+        # Assign first, then enumerate the returned value rather than nesting it.
+        $response = Invoke-RestMethod -Uri "$base`?per_page=20" -Headers $headers
+        $releases = @($response)
     } else {
         $tag = if ($ReleaseVersion.StartsWith('v')) { $ReleaseVersion } else { "v$ReleaseVersion" }
         $releases = @(Invoke-RestMethod -Uri "$base/tags/$tag" -Headers $headers)
