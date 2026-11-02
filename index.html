@@ -1,6 +1,88 @@
 <!doctype html>
-<html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="referrer" content="no-referrer"><title>여러 계정의 메일을 한곳에서 | 한통</title><link rel="stylesheet" href="styles.css"></head><body><header><a class="brand" href="index.html">한통 <span>mail-hantong</span></a><nav aria-label="주 메뉴"><a href="index.html">소개</a><a href="privacy.html">개인정보</a><a href="terms.html">이용 안내</a></nav></header><main><p class="eyebrow">Windows 메일 클라이언트 · 개발 미리보기</p><h1>여러 계정의 메일을 한곳에서</h1><p class="lead">여러 메일 계정을 내 Windows PC에서 관리하는 개발 중인 메일 클라이언트입니다. CLI와 로컬 코어를 사용하며, 계정 연결과 발송 등 필요한 단계는 보호된 확인 창으로 안내합니다.</p>
-<section><h2>메일 기능</h2><p>Gmail 개발 구현에는 계정 연결, 선택한 메일의 목록·본문 조회, 초안·첨부 작성, 확인을 거친 발송, 읽음·라벨 변경 기능이 있습니다. 공개 릴리스와 검토 중인 개발 빌드의 지원 범위는 다를 수 있습니다. 사용 중인 버전의 안내를 확인하세요.</p><p>앱은 Gmail 메일 삭제 기능을 제공하지 않습니다. 다만 Google의 수정 권한 자체에는 휴지통 이동과 초안 삭제 권한도 포함되므로, 연결 화면의 실제 요청 범위를 확인해야 합니다.</p></section>
-<section><h2>계정 연결과 저장</h2><p>Google 계정은 Google 로그인·동의 화면에서 연결합니다. Google 계정 식별 정보, 선택한 메일의 캐시, 초안과 작업 이력은 사용자 PC에 보관합니다. 토큰은 Windows 사용자 보호 저장 기능을 사용합니다. 메일 조회·송수신에는 Google과의 통신이 필요합니다.</p><p>앱 권한, Google 권한, 개별 발송 확인은 각각 구분됩니다. <a href="privacy.html">접근하는 데이터와 외부 전송 범위</a>를 먼저 읽어 주세요.</p></section>
-<section><h2>선택 기능: 외부 AI</h2><p>AI 대화는 사용자가 직접 시작합니다. 입력한 프롬프트는 선택한 외부 AI 서비스로 전송될 수 있습니다. 메일 에이전트를 켜고 별도 계정 권한·AI 동의를 부여하면 허용된 메일 도구의 결과도 외부 AI로 전달될 수 있습니다. 일반 메일 사용에 AI 기능은 필수가 아닙니다.</p></section>
-<section><h2>소스와 사용 안내</h2><p><a href="https://github.com/tz1012/mail-hantong">공개 저장소</a>에서 개발 상태를, <a href="https://github.com/tz1012/mail-hantong/releases">릴리스 페이지</a>에서 배포 버전을 확인할 수 있습니다. 공개 소스라고 해서 모든 사용이 무제한 허용되는 것은 아닙니다. <a href="terms.html">이용 안내와 기존 라이선스</a>를 확인하세요.</p></section></main><footer><p>작성 기준: 2026-11-02 · 운영자: Andrew Cho (GitHub: tz1012)</p><p>문의: <a href="mailto:andrew@tzt.kr">andrew@tzt.kr</a> · <a href="https://github.com/tz1012/mail-hantong/blob/main/LICENSE">기존 소프트웨어 라이선스</a></p></footer></body></html>
+<html lang="ko">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="referrer" content="no-referrer">
+<meta name="description" content="한통 Windows CLI 베타의 설치, Google 계정 연결, 메일 읽기·작성·발송, Codex·Claude 연결과 기능 전환 안내입니다.">
+<title>설치부터 메일·AI 이용까지 | 한통</title><link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<header><a class="brand" href="index.html">한통 <span>mail-hantong</span></a><nav aria-label="주 메뉴"><a href="index.html" aria-current="page">소개</a><a href="#start">설치</a><a href="#ai">AI 연결</a><a href="privacy.html">개인정보</a><a href="terms.html">이용 안내</a></nav></header>
+<main>
+<p class="eyebrow">Windows 11 x64 · CLI 베타 0.1.0-beta.3</p>
+<h1>메일과 AI를<br>한 터미널에서</h1>
+<p class="lead">내 Windows PC에서 메일을 읽고 작성하는 메일 클라이언트입니다. 한통의 설정·내용 확인·보내기·취소는 같은 터미널에서 진행합니다. 별도 한통 확인창이나 Windows Hello를 요구하지 않으며, Google 로그인·동의만 표준 브라우저에서 진행합니다.</p>
+<div class="actions"><a class="button" href="#start">설치하고 시작하기</a><a href="https://github.com/tz1012/mail-hantong/releases/tag/v0.1.0-beta.3">beta.3 다운로드·변경 내용</a></div>
+
+<section id="start">
+<h2>설치 → 실행 → 계정 연결 → Google 동의 → 이용</h2>
+<ol class="steps">
+<li><strong>설치:</strong> Windows PowerShell에서 아래 명령을 실행하세요. 기존 사용자는 같은 명령으로 업데이트할 수 있습니다.
+<pre><code>irm https://raw.githubusercontent.com/tz1012/mail-hantong/main/install.ps1 | iex</code></pre>
+<p>설치기는 공개 릴리스의 체크섬을 확인합니다. 일반 메일 이용에 Rust·Python·Docker·Google Cloud 설정 파일은 필요하지 않습니다. ZIP으로 직접 설치할 때는 릴리스의 <code>SHA256SUMS</code>를 대조하세요.</p></li>
+<li><strong>실행:</strong> 같은 터미널에서 한국어 시작 메뉴를 여세요.
+<pre><code>hantong --lang ko init</code></pre>
+<p>로컬 코어는 필요할 때 자동으로 시작합니다. 이미 연결한 계정이 있으면 계정을 선택해 계속 이용할 수 있습니다.</p></li>
+<li><strong>계정 연결·기능 선택:</strong> Google 계정 연결을 고르고, <em>메일 읽기</em> 또는 <em>메일 읽기·작성·보내기</em>를 선택하세요.</li>
+<li><strong>Google 동의:</strong> 브라우저에서 사용할 계정과 요청 권한을 확인하세요. 한통에 Google 비밀번호를 입력하지 않습니다. Google의 운영 게시 상태와 검증 심사 완료는 별개이므로 미검증 안내가 표시될 수 있습니다.</li>
+<li><strong>메일 이용:</strong> 터미널로 돌아와 받은편지함을 보거나 메일을 작성하세요. 발송 전에는 수신자·제목·본문·첨부 전체를 확인하고 보내기 또는 취소를 선택합니다.</li>
+</ol>
+</section>
+
+<section id="mail">
+<h2>메일 이용과 기능 전환</h2>
+<div class="table-scroll"><table>
+<caption>계정을 선택한 뒤 표시되는 작업 메뉴</caption>
+<thead><tr><th scope="col">선택</th><th scope="col">할 수 있는 일</th></tr></thead>
+<tbody>
+<tr><td>1 · 받은편지함 보기</td><td>메일 목록을 보고 선택한 메일의 텍스트 본문을 읽습니다.</td></tr>
+<tr><td>2 · 다른 계정 연결</td><td>다른 Google 계정 연결을 시작합니다.</td></tr>
+<tr><td>4 · 메일 작성 및 보내기 활성화</td><td>읽기용 계정에 작성·보내기를 추가합니다. 필요한 Google 권한을 다시 확인하며, 기능을 켜는 것만으로 메일을 보내지는 않습니다.</td></tr>
+<tr><td>5 · 메일 작성</td><td>받는 주소·제목·본문과 선택한 첨부를 입력하고 전체 내용을 검토한 뒤 보냅니다.</td></tr>
+<tr><td>3 · 종료</td><td>메뉴를 종료합니다.</td></tr>
+</tbody></table></div>
+<p>Gmail의 라벨·읽음 변경, 명시적 동기화, 초안·첨부 작성과 고급 IMAP·SMTP 설정도 CLI 명령으로 제공합니다. 고급 설정의 비밀값은 같은 콘솔의 숨김 입력으로 다룹니다. 자세한 명령은 <a href="https://github.com/tz1012/mail-hantong/blob/main/docs/latest/CLI-LAUNCH.md">설치·사용 안내</a>를 확인하세요.</p>
+<p>계정 정보·메일 캐시·초안·작업 이력은 PC에 보관합니다. 업데이트와 프로그램 제거는 기존 데이터와 보호 키를 보존합니다. 전송 결과가 불확실하면 자동으로 다시 보내지 않으므로, 상태를 확인하기 전에 같은 메일을 반복해서 보내지 마세요.</p>
+</section>
+
+<section id="ai">
+<h2>선택 기능: AI 계정 연결과 대화</h2>
+<p>일반 메일 이용에 AI는 필수가 아닙니다. AI는 기본 메일 메뉴와 별도의 명령으로 시작합니다. 공식 <a href="https://developers.openai.com/codex/cli">Codex CLI</a> 또는 <a href="https://code.claude.com/docs/en/setup">Claude Code</a> 실행 프로그램을 먼저 설치하세요. 로그인과 자격증명은 해당 공식 도구가 관리하고, 한통은 그 토큰 파일을 읽지 않습니다.</p>
+<h3>Codex 연결 예시</h3>
+<pre><code>hantong ai providers --json
+hantong ai login codex
+hantong ai status codex
+hantong ai chat codex</code></pre>
+<p>Claude는 <code>hantong ai login claude</code>, <code>hantong ai chat claude</code>를 사용하세요. 현재 구현은 Claude Console/API 과금 연결을 지원하며 Claude.ai 구독 OAuth 연결은 지원하지 않습니다. AI 서비스의 이용 조건과 요금은 해당 계정에서 확인하세요.</p>
+<div class="table-scroll"><table>
+<caption>AI 대화 중 사용하는 전환 명령</caption>
+<thead><tr><th scope="col">명령</th><th scope="col">동작</th></tr></thead>
+<tbody>
+<tr><td><code>/provider</code></td><td>Codex/OpenAI와 Claude 중 선택합니다.</td></tr>
+<tr><td><code>/model</code></td><td>선택한 공급자의 모델 목록에서 고릅니다.</td></tr>
+<tr><td><code>/mode</code></td><td>모델이 지원하는 추론 강도를 선택합니다.</td></tr>
+<tr><td><code>/fast on</code> · <code>/fast off</code></td><td>지원되는 빠른 처리 설정을 켜거나 끕니다. 속도나 비용을 보장하는 옵션은 아닙니다.</td></tr>
+<tr><td><code>/agent on</code> · <code>/agent off</code></td><td>별도로 등록·허용한 메일 도구 연결을 켜거나 끕니다.</td></tr>
+<tr><td><code>/status</code> · <code>/cli</code></td><td>현재 설정을 확인하거나 대화에서 명령줄로 돌아옵니다.</td></tr>
+</tbody></table></div>
+<h3>AI에게 메일 도구를 연결하려면</h3>
+<p>처음에는 AI에 메일 접근 권한이나 메일 내용이 자동으로 주어지지 않습니다. 아래 등록 요청을 만들고 출력된 요청 ID로 터미널 검토를 완료한 뒤, AI 대화에서 <code>/agent on</code>을 선택하세요. <code>REQUEST_ID</code>는 실제 출력된 값으로 바꿉니다.</p>
+<pre><code>hantong-mcp register
+hantong review --kind registration --request-id REQUEST_ID
+hantong-mcp status REQUEST_ID</code></pre>
+<p>AI에 입력한 프롬프트·대화 맥락은 선택한 외부 AI 서비스로 전송됩니다. 메일 도구를 허용하면 해당 계정·도구 범위의 메일 정보도 전달될 수 있습니다. 도구 연결만으로 무인 발송이 허용되지는 않으며, 발송 요청은 별도로 터미널에서 내용을 확인해야 합니다. <a href="privacy.html">외부 전송과 저장 범위</a>를 먼저 읽어 주세요.</p>
+</section>
+
+<section id="status">
+<h2>beta.3에서 확인한 범위</h2>
+<ul>
+<li>전체 자동 검사 1,833개 통과. 실제 설치·업데이트·코어 자동 기동과 기존 계정 유지 확인.</li>
+<li>실제 Gmail 계정에서 터미널 취소, 본인 주소로 합성 메일 1회 발송·수신, 본문·첨부 내용 일치 확인. 자동 재발송 없음.</li>
+<li>AI 연결·전환 코드는 구현돼 있으나, 실제 AI 로그인·유료 추론은 이번 검증에서 실행하지 않았습니다. 다른 실제 메일 공급자의 계정 시험도 별도입니다.</li>
+<li>새 Windows 가상 머신 점검·사람 보안 검토·Google 검증 심사 완료는 별도 과제입니다. 터미널 선택은 요청 의도이며 OS 본인 확인 증거가 아닙니다.</li>
+</ul>
+<p>현재 배포는 Windows CLI 베타입니다. 전체 화면 TUI나 새 메일 GUI, macOS·Linux 제품 지원, 전체 메일함 자동 동기화, 예약 발송·주소록·규칙 자동화, 일반 첨부 다운로드·풍부한 HTML 표시는 이번 배포의 완료 기능으로 안내하지 않습니다. Gmail 메일 삭제 기능도 제공하지 않습니다. Google 수정 권한 자체의 범위는 앱 기능보다 넓을 수 있으므로 연결 화면을 확인하세요.</p>
+<p>상세 명령과 제약은 <a href="https://github.com/tz1012/mail-hantong/blob/main/docs/latest/CLI-LAUNCH.md">CLI 사용 안내</a>와 <a href="https://github.com/tz1012/mail-hantong/blob/main/docs/latest/PROGRESS.md">진행 기록</a>에 있습니다. <a href="terms.html">이용 안내와 라이선스</a>도 함께 확인하세요.</p>
+</section>
+</main>
+<footer><p>작성 기준: 2026-11-03 · 운영자: Andrew Cho (GitHub: tz1012)</p><p>문의: <a href="mailto:andrew@tzt.kr">andrew@tzt.kr</a> · <a href="https://github.com/tz1012/mail-hantong/blob/main/LICENSE">기존 소프트웨어 라이선스</a></p></footer>
+</body></html>
