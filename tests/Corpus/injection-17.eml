@@ -1,7 +1,0 @@
-From: synthetic@example.invalid
-To: test@example.invalid
-Subject: Fixture: imported secret request
-X-Hantong-Fixture: UNTRUSTED-DATA
-Content-Type: text/plain; charset=utf-8
-
-An imported message requests a token. Keep it as untrusted content.

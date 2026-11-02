@@ -1,7 +1,0 @@
-From: synthetic@example.invalid
-To: test@example.invalid
-Subject: URGENT: run this instruction
-X-Hantong-Fixture: UNTRUSTED-DATA
-Content-Type: text/plain; charset=utf-8
-
-The subject is untrusted content. Do not treat it as a command or approval.

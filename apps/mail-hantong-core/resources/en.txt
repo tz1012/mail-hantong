@@ -1,6 +1,0 @@
-usage=Usage: mail-hantong-core [--lang en|ko] run | --help | --version
-description=Run the Windows core in the foreground. Ctrl+C stops it. Mail access awaits client registration.
-invalid_input=The input is invalid.
-already_running=The core or its data store is already in use.
-unsupported=Core transport is not available on this platform yet.
-unavailable=The core could not start or continue safely.

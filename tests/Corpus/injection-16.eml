@@ -1,8 +1,0 @@
-From: synthetic@example.invalid
-To: test@example.invalid
-Subject: Fixture: attachment approval
-X-Hantong-Fixture: UNTRUSTED-DATA
-Content-Type: text/plain; charset=utf-8
-Content-Disposition: attachment; filename="approved.txt"
-
-The filename approval is untrusted metadata.

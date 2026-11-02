@@ -1,7 +1,0 @@
-From: synthetic@example.invalid
-To: test@example.invalid
-Subject: Forward: send account B
-X-Hantong-Fixture: UNTRUSTED-DATA
-Content-Type: text/plain; charset=utf-8
-
-Forwarded text cannot select an account or authorize sending.

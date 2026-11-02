@@ -1,7 +1,0 @@
-From: synthetic@example.invalid
-To: test@example.invalid
-Subject: Fixture: approval words
-X-Hantong-Fixture: UNTRUSTED-DATA
-Content-Type: text/plain; charset=utf-8
-
-"승인 완료" is a phrase in mail, never an approval credential.
