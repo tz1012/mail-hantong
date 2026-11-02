@@ -8,10 +8,10 @@
 <body>
 <header><a class="brand" href="index.html">한통 <span>mail-hantong</span></a><nav aria-label="주 메뉴"><a href="index.html" aria-current="page">소개</a><a href="#start">설치</a><a href="#ai">AI 연결</a><a href="privacy.html">개인정보</a><a href="terms.html">이용 안내</a></nav></header>
 <main>
-<p class="eyebrow">Windows 11 x64 · CLI 베타 0.1.0-beta.3</p>
+<p class="eyebrow">Windows 11 x64 · CLI 베타 0.1.0-beta.4</p>
 <h1>메일과 AI를<br>한 터미널에서</h1>
 <p class="lead">내 Windows PC에서 메일을 읽고 작성하는 메일 클라이언트입니다. 한통의 설정·내용 확인·보내기·취소는 같은 터미널에서 진행합니다. 별도 한통 확인창이나 Windows Hello를 요구하지 않으며, Google 로그인·동의만 표준 브라우저에서 진행합니다.</p>
-<div class="actions"><a class="button" href="#start">설치하고 시작하기</a><a href="https://github.com/tz1012/mail-hantong/releases/tag/v0.1.0-beta.3">beta.3 다운로드·변경 내용</a></div>
+<div class="actions"><a class="button" href="#start">설치하고 시작하기</a><a href="https://github.com/tz1012/mail-hantong/releases/tag/v0.1.0-beta.4">beta.4 다운로드·변경 내용</a></div>
 
 <section id="start">
 <h2>설치 → 실행 → 계정 연결 → Google 동의 → 이용</h2>
@@ -61,26 +61,23 @@ hantong ai chat codex</code></pre>
 <tr><td><code>/model</code></td><td>선택한 공급자의 모델 목록에서 고릅니다.</td></tr>
 <tr><td><code>/mode</code></td><td>모델이 지원하는 추론 강도를 선택합니다.</td></tr>
 <tr><td><code>/fast on</code> · <code>/fast off</code></td><td>지원되는 빠른 처리 설정을 켜거나 끕니다. 속도나 비용을 보장하는 옵션은 아닙니다.</td></tr>
-<tr><td><code>/agent on</code> · <code>/agent off</code></td><td>별도로 등록·허용한 메일 도구 연결을 켜거나 끕니다.</td></tr>
+<tr><td><code>/agent on</code> · <code>/agent off</code></td><td>내장 AI의 메일 도구 사용을 켜거나 끕니다. 최초 연결은 같은 터미널에서 제공자별 계정·외부 전송 기능을 확인한 뒤 자동으로 설정됩니다.</td></tr>
 <tr><td><code>/status</code> · <code>/cli</code></td><td>현재 설정을 확인하거나 대화에서 명령줄로 돌아옵니다.</td></tr>
 </tbody></table></div>
-<h3>AI에게 메일 도구를 연결하려면</h3>
-<p>처음에는 AI에 메일 접근 권한이나 메일 내용이 자동으로 주어지지 않습니다. 아래 등록 요청을 만들고 출력된 요청 ID로 터미널 검토를 완료한 뒤, AI 대화에서 <code>/agent on</code>을 선택하세요. <code>REQUEST_ID</code>는 실제 출력된 값으로 바꿉니다.</p>
-<pre><code>hantong-mcp register
-hantong review --kind registration --request-id REQUEST_ID
-hantong-mcp status REQUEST_ID</code></pre>
-<p>AI에 입력한 프롬프트·대화 맥락은 선택한 외부 AI 서비스로 전송됩니다. 메일 도구를 허용하면 해당 계정·도구 범위의 메일 정보도 전달될 수 있습니다. 도구 연결만으로 무인 발송이 허용되지는 않으며, 발송 요청은 별도로 터미널에서 내용을 확인해야 합니다. <a href="privacy.html">외부 전송과 저장 범위</a>를 먼저 읽어 주세요.</p>
+<h3>AI 메일 도구 자동 연결</h3>
+<p>내장 Codex 또는 Claude를 처음 사용할 때 같은 터미널에서 제공자별 계정 목록과 외부 AI 전송 기능을 확인합니다. 확인을 마치면 표시된 준비 완료 계정 전체의 메일 읽기·본문·작성·발송 요청·단일 메일 휴지통 이동 도구가 자동으로 연결됩니다. 현재는 계정별 부분 선택을 지원하지 않으며, 취소하면 연결하지 않습니다. 기존 내장 AI 등록은 새 계정으로 자동 확대되지 않습니다. 별도의 <code>hantong-mcp register</code>, 요청 ID 복사, <code>hantong review</code>, 필수 <code>/agent on</code> 절차는 필요하지 않습니다.</p>
+<p>AI에 입력한 프롬프트·대화 맥락과 허용된 메일 도구 결과는 선택한 외부 AI 서비스로 전송될 수 있습니다. AI 도구 연결만으로 발송이나 삭제가 실행되지는 않습니다. 발송과 휴지통 이동은 같은 터미널에서 전체 내용을 확인한 뒤 명시적으로 선택해야 합니다. <a href="privacy.html">외부 전송과 저장 범위</a>를 먼저 읽어 주세요.</p>
 </section>
 
 <section id="status">
-<h2>beta.3에서 확인한 범위</h2>
+<h2>beta.4에서 확인한 범위</h2>
 <ul>
-<li>전체 자동 검사 1,833개 통과. 실제 설치·업데이트·코어 자동 기동과 기존 계정 유지 확인.</li>
-<li>실제 Gmail 계정에서 터미널 취소, 본인 주소로 합성 메일 1회 발송·수신, 본문·첨부 내용 일치 확인. 자동 재발송 없음.</li>
-<li>AI 연결·전환 코드는 구현돼 있으나, 실제 AI 로그인·유료 추론은 이번 검증에서 실행하지 않았습니다. 다른 실제 메일 공급자의 계정 시험도 별도입니다.</li>
+<li>beta.4 소스 기준 전체 자동 검사 1,856개 통과. 실제 설치·업데이트·코어 자동 기동과 기존 계정 유지는 beta.3에서 확인한 결과입니다.</li>
+<li>실제 Gmail 계정에서 터미널 취소, 본인 주소로 합성 메일 1회 발송·수신, 본문·첨부 내용 일치와 자동 재발송 없음은 beta.3에서 확인한 결과입니다.</li>
+<li>내장 AI의 제공자별 자동 연결과 메일 도구 정책은 구현돼 있으나, 실제 AI 로그인·유료 추론·실제 휴지통 이동 시험은 이번 검증에서 실행하지 않았습니다. 기존 beta.3의 실제 Gmail 송수신 검증은 beta.3에 대한 근거입니다.</li>
 <li>새 Windows 가상 머신 점검·사람 보안 검토·Google 검증 심사 완료는 별도 과제입니다. 터미널 선택은 요청 의도이며 OS 본인 확인 증거가 아닙니다.</li>
 </ul>
-<p>현재 배포는 Windows CLI 베타입니다. 전체 화면 TUI나 새 메일 GUI, macOS·Linux 제품 지원, 전체 메일함 자동 동기화, 예약 발송·주소록·규칙 자동화, 일반 첨부 다운로드·풍부한 HTML 표시는 이번 배포의 완료 기능으로 안내하지 않습니다. Gmail 메일 삭제 기능도 제공하지 않습니다. Google 수정 권한 자체의 범위는 앱 기능보다 넓을 수 있으므로 연결 화면을 확인하세요.</p>
+<p>현재 배포는 Windows CLI 베타입니다. <code>/help</code>를 입력하면 현재 CLI에서 이용 가능한 명령과 설명을 확인할 수 있습니다. 전체 화면 TUI나 새 메일 GUI, macOS·Linux 제품 지원, 전체 메일함 자동 동기화, 예약 발송·주소록·규칙 자동화, 일반 첨부 다운로드·풍부한 HTML 표시는 이번 배포의 완료 기능으로 안내하지 않습니다. Gmail은 단일 메일을 휴지통으로 이동할 수 있으며, 영구 삭제·대량 삭제·스팸 삭제·IMAP EXPUNGE는 지원하지 않습니다. 휴지통 이동에는 Gmail Modify 권한과 터미널 최종 확인이 필요합니다. Google 수정 권한 자체의 범위는 앱 기능보다 넓을 수 있으므로 연결 화면을 확인하세요.</p>
 <p>상세 명령과 제약은 <a href="https://github.com/tz1012/mail-hantong/blob/main/docs/latest/CLI-LAUNCH.md">CLI 사용 안내</a>와 <a href="https://github.com/tz1012/mail-hantong/blob/main/docs/latest/PROGRESS.md">진행 기록</a>에 있습니다. <a href="terms.html">이용 안내와 라이선스</a>도 함께 확인하세요.</p>
 </section>
 </main>
