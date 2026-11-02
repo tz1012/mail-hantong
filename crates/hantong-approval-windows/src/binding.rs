@@ -153,6 +153,14 @@ impl CapturedReview<SendReview> {
             verified_at_utc_ms,
         })
     }
+
+    pub(super) fn into_confirmed_personal(self) -> Result<ConfirmedPersonalSend, ErrorCode> {
+        let confirmed_at_utc_ms = self.verification_time()?;
+        Ok(ConfirmedPersonalSend {
+            binding: self,
+            confirmed_at_utc_ms,
+        })
+    }
 }
 impl CapturedReview<GoogleSetupReview> {
     pub(super) fn into_verified_google(self) -> Result<VerifiedGoogleSetup, ErrorCode> {

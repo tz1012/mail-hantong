@@ -46,10 +46,13 @@ pub enum SendOutcome {
 mod windows {
     use super::*;
     use crate::{
-        RegistrationState, Store,
+        DEFAULT_CLI_LABEL, RegistrationState, Store,
         registrations::{blob_column, read_registration},
     };
     use hantong_contracts::audit::{AuditTerminal, AuditTool};
+    use hantong_contracts::{
+        auth::default_cli_send_tools, client::ClientKind, google_write::GoogleAccessMode,
+    };
     use hantong_domain::mail_connection::MailConnectionConfig;
     use rusqlite::{OptionalExtension, Transaction, TransactionBehavior, params};
 
@@ -171,6 +174,48 @@ mod windows {
                 .access_mode
                 .check_operation(GoogleOperation::Send),
             _ => crate::mail_connection::check_account(tx, account),
+        }
+    }
+
+    /// The no-Hello personal path is deliberately narrower than the normal
+    /// send grant.  This is a classification derived from persisted state;
+    /// callers cannot select it with a request flag.
+    fn personal_send_eligible(tx: &Transaction<'_>, p: &PendingSend) -> Result<bool, ErrorCode> {
+        let Some(registration) = db(read_registration(tx, &p.owner_registration_id))? else {
+            return Ok(false);
+        };
+        if registration.state != RegistrationState::Active
+            || registration.client_kind != ClientKind::Cli
+            || registration.display_label != DEFAULT_CLI_LABEL
+            || registration.approved_channel != "google_oauth"
+            || registration.read_only
+            || registration.profile_epoch != p.profile_epoch
+            || registration.scope.accounts() != [p.request.account_id().to_owned()]
+            || registration.scope.tools() != default_cli_send_tools().as_slice()
+            || p.request.account_ids() != [p.request.account_id().to_owned()]
+        {
+            return Ok(false);
+        }
+
+        let (current_version, current_endpoint) = endpoint(tx, p.request.account_id())?;
+        if current_version != p.account_version
+            || current_endpoint != p.endpoint
+            || target_version(&current_endpoint) != target_version(&p.endpoint)
+        {
+            return Ok(false);
+        }
+        match (&p.endpoint, current_endpoint) {
+            (
+                MailSendTarget::Gmail { binding, .. },
+                MailSendTarget::Gmail {
+                    binding: current_binding,
+                    ..
+                },
+            ) => Ok(binding.account_id == p.request.account_id()
+                && binding.access_mode == GoogleAccessMode::ReadSend
+                && current_binding.account_id == p.request.account_id()
+                && current_binding.access_mode == GoogleAccessMode::ReadSend),
+            _ => Ok(false),
         }
     }
     pub(crate) fn draft(
@@ -322,6 +367,16 @@ mod windows {
             state,
             error,
         })
+    }
+    // SQL keeps only the durable review states allowed by the schema. The
+    // public receipt projects denied+error into interrupted/failed, while
+    // expiration has its own persisted state.
+    fn persisted_review_state(error: ErrorCode) -> &'static str {
+        if error == ErrorCode::ApprovalExpired {
+            "expired"
+        } else {
+            "denied"
+        }
     }
     impl Store {
         pub fn create_mail_draft(
@@ -492,6 +547,21 @@ mod windows {
             p: &PendingSend,
             audit_id: [u8; 32],
         ) -> Result<(), ErrorCode> {
+            transaction(self, |tx| claim_mail_send_tx(tx, p, audit_id, false))
+        }
+        /// Claims a personal Google send after the native content-confirmation
+        /// proof has been consumed. The eligibility guard is repeated inside
+        /// this immediate transaction before the pending review is consumed.
+        pub fn claim_personal_mail_send(
+            &self,
+            p: &PendingSend,
+            audit_id: [u8; 32],
+        ) -> Result<(), ErrorCode> {
+            transaction(self, |tx| claim_mail_send_tx(tx, p, audit_id, true))
+        }
+        /// Returns whether this pending review may use the personal native
+        /// content-confirmation path. This is advisory and never issues proof.
+        pub fn can_confirm_personal_mail_send(&self, p: &PendingSend) -> Result<bool, ErrorCode> {
             transaction(self, |tx| {
                 let (current, state, _) = pending(tx, p.review_id)?;
                 if state != "pending"
@@ -502,45 +572,18 @@ mod windows {
                     || current.endpoint != p.endpoint
                     || current.account_version != p.account_version
                 {
-                    return Err(ErrorCode::Conflict);
+                    return Ok(false);
                 }
-                grant(
-                    tx,
-                    p.owner_registration_id,
-                    p.profile_epoch,
-                    p.request.account_id(),
-                    "mail.send.execute",
-                )?;
                 let now = crate::utc_millis().map_err(|_| ErrorCode::InternalError)?;
                 if now >= p.expires_at_utc_ms {
-                    return Err(ErrorCode::ApprovalExpired);
+                    return Ok(false);
                 }
-                let audit =
-                    db(crate::audit::read_audit(tx, &audit_id))?.ok_or(ErrorCode::InternalError)?;
-                if audit.registration_id() != &p.owner_registration_id
-                    || audit.profile_epoch() != p.profile_epoch
-                    || audit.tool() != AuditTool::SendExecute
-                    || audit.account_ids() != p.request.account_ids()
-                    || audit.completion().is_some()
-                {
-                    return Err(ErrorCode::InternalError);
-                }
-                let occupied:bool=db(tx.query_row("SELECT EXISTS(SELECT 1 FROM mail_outbox WHERE account_id=?1 AND (operation_id=?2 OR idempotency_key=?3))",params![p.request.account_id(),p.request.operation_id(),p.request.idempotency_key()],|r|r.get(0)))?;
-                if occupied {
-                    return Err(ErrorCode::Conflict);
-                }
-                if db(tx.execute("UPDATE mail_send_reviews SET state='consumed' WHERE review_id=?1 AND state='pending'",[p.review_id.as_slice()]))?!=1{return Err(ErrorCode::Conflict)}
-                if db(tx.execute("INSERT INTO mail_outbox(account_id,operation_id,idempotency_key,review_id,draft_id,owner_registration_id,payload_hash,state,created_at_utc_ms,completed_at_utc_ms,audit_id,error_code) VALUES(?1,?2,?3,?4,?5,?6,?7,'sending',?8,NULL,?9,NULL)",params![p.request.account_id(),p.request.operation_id(),p.request.idempotency_key(),p.review_id.as_slice(),p.request.draft_id().as_slice(),p.owner_registration_id.as_slice(),p.request.payload_hash().as_slice(),now,audit_id.as_slice()]))?!=1{return Err(ErrorCode::InternalError)}
-                Ok(())
+                personal_send_eligible(tx, &current)
             })
         }
         pub fn deny_mail_send(&self, id: [u8; 32], error: ErrorCode) -> Result<(), ErrorCode> {
             transaction(self, |tx| {
-                let state = if error == ErrorCode::ApprovalExpired {
-                    "expired"
-                } else {
-                    "denied"
-                };
+                let state = persisted_review_state(error);
                 db(tx.execute("UPDATE mail_send_reviews SET state=?2,error_code=?3 WHERE review_id=?1 AND state='pending'",params![id.as_slice(),state,error.as_str()]))?;
                 Ok(())
             })
@@ -604,11 +647,7 @@ mod windows {
                     AuditTerminal::failed(error),
                     now,
                 )?;
-                let state = if error == ErrorCode::ApprovalExpired {
-                    "expired"
-                } else {
-                    "denied"
-                };
+                let state = persisted_review_state(error);
                 db(tx.execute("UPDATE mail_send_reviews SET state=?2,error_code=?3 WHERE review_id=?1 AND state='pending'",params![id.as_slice(),state,error.as_str()]))?;
                 Ok(())
             })
@@ -632,6 +671,70 @@ mod windows {
                 Ok(ids.len())
             })
         }
+    }
+
+    fn claim_mail_send_tx(
+        tx: &Transaction<'_>,
+        p: &PendingSend,
+        audit_id: [u8; 32],
+        personal: bool,
+    ) -> Result<(), ErrorCode> {
+        let (current, state, _) = pending(tx, p.review_id)?;
+        if state != "pending"
+            || current.owner_registration_id != p.owner_registration_id
+            || current.profile_epoch != p.profile_epoch
+            || current.request != p.request
+            || current.draft != p.draft
+            || current.endpoint != p.endpoint
+            || current.account_version != p.account_version
+        {
+            return Err(ErrorCode::Conflict);
+        }
+        grant(
+            tx,
+            p.owner_registration_id,
+            p.profile_epoch,
+            p.request.account_id(),
+            "mail.send.execute",
+        )?;
+        if personal && !personal_send_eligible(tx, &current)? {
+            return Err(ErrorCode::PolicyBlocked);
+        }
+        let now = crate::utc_millis().map_err(|_| ErrorCode::InternalError)?;
+        if now >= p.expires_at_utc_ms {
+            return Err(ErrorCode::ApprovalExpired);
+        }
+        let audit = db(crate::audit::read_audit(tx, &audit_id))?.ok_or(ErrorCode::InternalError)?;
+        if audit.registration_id() != &p.owner_registration_id
+            || audit.profile_epoch() != p.profile_epoch
+            || audit.tool() != AuditTool::SendExecute
+            || audit.account_ids() != p.request.account_ids()
+            || audit.completion().is_some()
+        {
+            return Err(ErrorCode::InternalError);
+        }
+        let occupied: bool = db(tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM mail_outbox WHERE account_id=?1 AND (operation_id=?2 OR idempotency_key=?3))",
+            params![p.request.account_id(), p.request.operation_id(), p.request.idempotency_key()],
+            |r| r.get(0),
+        ))?;
+        if occupied {
+            return Err(ErrorCode::Conflict);
+        }
+        if db(tx.execute(
+            "UPDATE mail_send_reviews SET state='consumed' WHERE review_id=?1 AND state='pending'",
+            [p.review_id.as_slice()],
+        ))? != 1
+        {
+            return Err(ErrorCode::Conflict);
+        }
+        if db(tx.execute(
+            "INSERT INTO mail_outbox(account_id,operation_id,idempotency_key,review_id,draft_id,owner_registration_id,payload_hash,state,created_at_utc_ms,completed_at_utc_ms,audit_id,error_code) VALUES(?1,?2,?3,?4,?5,?6,?7,'sending',?8,NULL,?9,NULL)",
+            params![p.request.account_id(), p.request.operation_id(), p.request.idempotency_key(), p.review_id.as_slice(), p.request.draft_id().as_slice(), p.owner_registration_id.as_slice(), p.request.payload_hash().as_slice(), now, audit_id.as_slice()],
+        ))? != 1 {
+            return Err(ErrorCode::InternalError);
+        }
+        Ok(())
     }
     fn finish(tx: &Transaction<'_>, id: [u8; 32], outcome: SendOutcome) -> Result<(), ErrorCode> {
         let row = db(tx
@@ -667,3 +770,21 @@ mod windows {
 
 #[cfg(windows)]
 pub(crate) use windows::draft as draft_in_transaction;
+
+#[cfg(not(windows))]
+impl crate::Store {
+    pub fn can_confirm_personal_mail_send(
+        &self,
+        _pending: &PendingSend,
+    ) -> Result<bool, ErrorCode> {
+        Err(ErrorCode::CapabilityUnsupported)
+    }
+
+    pub fn claim_personal_mail_send(
+        &self,
+        _pending: &PendingSend,
+        _audit_id: [u8; 32],
+    ) -> Result<(), ErrorCode> {
+        Err(ErrorCode::CapabilityUnsupported)
+    }
+}

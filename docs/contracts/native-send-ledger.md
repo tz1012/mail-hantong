@@ -2,6 +2,25 @@
 
 Status: human security review required. APR-01, AI-09, SYNC-07, SEC-03.
 
+## 2026-11-02 personal CLI confirmation exception
+
+The latest user UX decision and proposed ADR-028 narrowly replace OS verification
+with native content confirmation for the active default Cli registration whose
+approved channel is google_oauth, writable scope is exactly the single-account
+personal send tool set, and endpoint is that account's Gmail ReadSend binding.
+Core derives this classification from Store; no RPC flag selects it. Pending
+owner/epoch/account/version/endpoint must match current state. The same guard is
+repeated inside the immediate send-claim transaction before any outbox effect.
+All other registrations retain the OS Verified path described below.
+
+The native helper alone issues a distinct opaque ConfirmedPersonalSend after
+the complete immutable snapshot is displayed and the user presses Send. It is
+single-use, exact-bound and expiring; it is not a VerifiedSend or a synthetic OS
+verification result. CLI/MCP confirmation cannot issue either proof. Policy,
+audit, CAS, single attempt and SEND_UNKNOWN behavior remain mandatory. No schema
+or wire change is required. A Cli identity does not prove human origin; same-user
+UI automation resistance is weaker. Human security review remains required.
+
 `mail.drafts.create` stores one immutable version-1 draft in SQLCipher. Its
 canonical compose hash binds account, ordered recipients, subject, and complete
 UTF-8 body. Exact account/operation/idempotency replay returns the same draft;
@@ -18,12 +37,13 @@ restricted to the original account, registration, and profile epoch.
 
 Only the trusted Core native coordinator calls the protected approval helper.
 The helper displays all recipients, account, SMTP sender/server, subject, and
-full body, then requires the existing native human verification. Its opaque
+full body, then requires native personal confirmation for the bounded exception
+above, or existing OS human verification for protected registrations. Its opaque
 proof is consumed against that exact immutable review. Review DTOs and Store
 constructors are data, not approval. CLI/MCP host confirmation cannot substitute
 for this proof. Normal RPC `mail.send.execute` remains policy blocked.
 
-After consuming native verification, Core repeats current registration, writable
+After consuming native confirmation or verification, Core repeats registration, writable
 scope, account, endpoint, review expiry, and shared rate-policy checks. It
 creates an immutable SendExecute audit start. One immediate Store transaction
 then verifies that audit's owner/epoch/tool/account and missing terminal,

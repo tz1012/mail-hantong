@@ -50,6 +50,17 @@ pub(super) async fn show_send(
 ) -> Result<VerifiedSend, ErrorCode> {
     spawn_review(move |cancellation| window::run_send(review, language, theme, cancellation)).await
 }
+
+pub(super) async fn show_personal_send(
+    review: SendReview,
+    language: Option<Language>,
+    theme: Theme,
+) -> Result<ConfirmedPersonalSend, ErrorCode> {
+    spawn_review(move |cancellation| {
+        window::run_personal_send(review, language, theme, cancellation)
+    })
+    .await
+}
 pub(super) async fn show_google_setup(
     review: GoogleSetupReview,
     language: Option<Language>,

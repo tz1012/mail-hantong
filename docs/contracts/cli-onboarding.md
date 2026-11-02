@@ -78,3 +78,12 @@ confirmation as authority. The native message review and human verification
 remain mandatory. Display bounded stable status, never raw internal identifiers
 or provider errors. Cancellation does not send; pending/unknown outcomes are
 never retried automatically. Automated tests use synthetic Effects only.
+
+## Personal sending confirmation, 2026-11-02
+
+After composing in the personal Google flow, the CLI requests a native content
+review once and polls its status. The native window displays the complete
+message and its Send button issues a distinct personal confirmation without
+Windows Hello. The CLI prompt only opens that window. Eligibility and atomic
+claim guards follow native-send-ledger; other registrations keep OS verification.
+No human/direct/approved wire option is introduced. Unknown never resubmits.

@@ -368,6 +368,36 @@ pub struct VerifiedSend {
     #[cfg(not(windows))]
     _private: (),
 }
+
+/// Single-use result for the narrowly scoped personal CLI send confirmation.
+/// This is intentionally a different type from `VerifiedSend`: it carries no
+/// OS identity-verification claim and cannot enter protected review branches.
+pub struct ConfirmedPersonalSend {
+    #[cfg(windows)]
+    binding: binding::CapturedReview<SendReview>,
+    #[cfg(windows)]
+    confirmed_at_utc_ms: i64,
+    #[cfg(not(windows))]
+    _private: (),
+}
+impl fmt::Debug for ConfirmedPersonalSend {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("ConfirmedPersonalSend(<redacted>)")
+    }
+}
+impl ConfirmedPersonalSend {
+    pub fn consume(self, expected: &SendReview) -> Result<SendReview, ErrorCode> {
+        #[cfg(windows)]
+        {
+            self.binding.consume(expected, self.confirmed_at_utc_ms)
+        }
+        #[cfg(not(windows))]
+        {
+            let _ = expected;
+            Err(ErrorCode::CapabilityUnsupported)
+        }
+    }
+}
 impl fmt::Debug for VerifiedSend {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str("VerifiedSend(<redacted>)")
@@ -395,6 +425,25 @@ pub async fn review_send(
     #[cfg(windows)]
     {
         native::show_send(review, language, theme).await
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (review, language, theme);
+        Err(ErrorCode::CapabilityUnsupported)
+    }
+}
+
+/// Shows the personal CLI message review. The native `Send` button issues a
+/// private, message-bound confirmation without invoking Windows Hello.
+pub async fn confirm_personal_send(
+    review: SendReview,
+    language: Option<Language>,
+    theme: Theme,
+) -> Result<ConfirmedPersonalSend, ErrorCode> {
+    review.validate()?;
+    #[cfg(windows)]
+    {
+        native::show_personal_send(review, language, theme).await
     }
     #[cfg(not(windows))]
     {

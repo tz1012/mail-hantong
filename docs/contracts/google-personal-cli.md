@@ -111,3 +111,13 @@ choice; source/channel/hash tamper, wrong kind/label/account and profile conflic
 L->B/C policy/audit/protected profile integration; migration preservation and
 rollback; interrupted key/profile stages; no AI/MCP grant; per-send human proof
 still required. Automated tests never use actual accounts or provider traffic.
+
+## Personal per-message confirmation, 2026-11-02
+
+The native-send-ledger personal exception now applies after this exact writable
+single-account personal Gmail setup. Review contents and press Send in the
+native window; no Hello is requested for that bounded send. Account connection
+and per-message confirmation remain distinct. Core derives eligibility from
+persisted registration and rechecks it in the claim transaction. Other profiles
+retain OS verification. CLI identity is not evidence of human origin. See
+proposed ADR-028; human security review remains pending.

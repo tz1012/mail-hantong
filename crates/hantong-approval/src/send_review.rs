@@ -127,6 +127,46 @@ impl SendReview {
         summary.push_str(label("footer"));
         summary
     }
+
+    /// The personal CLI view omits internal identifiers and delivery-server
+    /// details while retaining the complete user-visible message.
+    pub fn personal_summary(&self, lang: Language) -> String {
+        let label = |key| text(lang, key);
+        let sender = match &self.endpoint {
+            MailSendTarget::Smtp(smtp) => smtp.login_name(),
+            MailSendTarget::Gmail { sender, .. } => sender.as_str(),
+        };
+        let mut summary = format!(
+            "{}: {}\r\n{}: {}\r\n{}: {}\r\n\r\n{}:\r\n{}\r\n",
+            label("from"),
+            visible(sender),
+            label("to"),
+            self.draft
+                .recipients()
+                .iter()
+                .map(|s| visible(s))
+                .collect::<Vec<_>>()
+                .join(", "),
+            label("subject"),
+            visible(self.draft.subject()),
+            label("body"),
+            visible(self.draft.body()),
+        );
+        if !self.draft.attachments().is_empty() {
+            summary.push_str(&format!("\r\n{}:\r\n", label("attachments")));
+            for attachment in self.draft.attachments() {
+                summary.push_str(&format!(
+                    "{} | {} | {} bytes\r\n",
+                    visible(attachment.name()),
+                    visible(attachment.media_type()),
+                    attachment.bytes().len()
+                ));
+            }
+        }
+        summary.push_str("\r\n");
+        summary.push_str(label("personal_footer"));
+        summary
+    }
 }
 pub(crate) fn visible(value: &str) -> String {
     let mut out = String::new();
@@ -172,5 +212,53 @@ mod tests {
             keys(include_str!("../resources/send-ko.txt"))
         );
         assert_eq!(visible("x\u{1b}\u{202e}\ny"), "x\\u{001b}\\u{202e}\r\ny");
+    }
+
+    #[test]
+    fn apr01_personal_summary_keeps_message_and_hides_internal_fields() {
+        let endpoint = hantong_domain::mail_connection::MailConnectionConfig::from_json(
+            br#"{"schema_version":1,"account_id":"acct","imap":{"settings_version":1,"host":"imap.example","port":993,"tls":"implicit_tls","login_name":"sender@example.com","authentication":"app_password"},"smtp":{"settings_version":1,"host":"smtp.example","port":587,"tls":"starttls_required","login_name":"sender@example.com","authentication":"app_password"}}"#,
+        )
+        .unwrap()
+        .smtp()
+        .unwrap()
+        .clone();
+        let draft = hantong_contracts::mail_send::DraftCreateRequest::new(
+            "acct",
+            vec!["to@example.com".into()],
+            "Subject".into(),
+            "Complete body".into(),
+            "draft",
+            "draft",
+            0,
+            [5; 32],
+        )
+        .unwrap();
+        let review = SendReview {
+            review_id: [1; 32],
+            owner_registration_id: [2; 16],
+            profile_epoch: 1,
+            account_version: 1,
+            endpoint: endpoint.into(),
+            draft: draft.clone().into(),
+            request: SendReviewRequest::new("acct", [6; 32], 1, "op", "idem", [5; 32]).unwrap(),
+            created_at_utc_ms: 1000,
+            expires_at_utc_ms: 301000,
+        };
+        let summary = review.personal_summary(Language::En);
+        assert!(summary.contains("sender@example.com"));
+        assert!(summary.contains("to@example.com"));
+        assert!(summary.contains("Complete body"));
+        for hidden in [
+            "acct",
+            "smtp.example",
+            "Operation",
+            "Reviewed message digest",
+        ] {
+            assert!(
+                !summary.contains(hidden),
+                "personal summary leaked {hidden}"
+            );
+        }
     }
 }

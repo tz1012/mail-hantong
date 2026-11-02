@@ -10,8 +10,8 @@
 상태 조회는 `hantong send status --account ACCOUNT --review-id REVIEW_HEX`다.
 
 CLI·MCP는 승인 문자열이나 토큰을 발급·소비하지 않는다. native 창이 계정,
-SMTP 발신자·서버, 수신자 전부, 제목, 전체 본문을 표시하고 OS 사람 확인을
-요구한다. 확인은 정확한 draft/version/hash, profile epoch, 계정·SMTP 설정
+SMTP 발신자·서버, 수신자 전부, 제목, 전체 본문을 표시하고 보호 등록에서는 OS 사람 확인을
+요구한다. 개인 Google CLI 예외는 아래 규칙을 따른다. 확인은 정확한 draft/version/hash, profile epoch, 계정·SMTP 설정
 버전, operation/idempotency와 결속된다. 일반 RPC `mail.send.execute`는
 차단되며 신뢰된 Core coordinator만 opaque proof를 소비한다.
 
@@ -25,3 +25,7 @@ canonical hash는 사람이 검토하는 계정·수신자 순서·제목·본�
 전송 모듈은 이를 MIME 인코딩하고 Date/Message-ID를 생성한다.
 원시 SMTP 응답·인증값·수신자·제목·본문은 상태 오류에 반사하지 않는다.
 개발 검증은 가짜 제공자와 메모리 TLS 스트림만 사용한다.
+
+## 2026-11-02 개인 Google CLI 예외
+
+위 OS 본인 확인 조건은 native-send-ledger의 개인 발송 예외에서만 대체된다. Core가 저장된 정확한 개인 Google CLI 범위를 판정하면 별도의 불투명 네이티브 내용 확인 proof를 소비한다. 사용자는 내용을 보고 보내기를 누르며 Hello는 없다. CLI yes나 새 플래그로 발급할 수 없고 같은 guard를 claim 트랜잭션에서 재검사한다. 다른 등록은 기존 OS Verified 경로를 유지한다. source identity는 사람 실행 증거가 아니며 사람 보안 검토가 필요하다.

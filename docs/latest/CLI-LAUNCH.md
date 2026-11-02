@@ -226,3 +226,11 @@ The package tool builds the terminal distribution and core, records versions and
 위 PowerShell 한 줄로 설치·업데이트할 수 있습니다. 한 터미널에서 `mail-hantong-core run`, 다른 터미널에서 `hantong` 명령을 실행합니다. 비밀번호 입력과 권한 승인은 보호된 Windows 확인 창에서 사람이 수행합니다. 메일 GUI 실행 파일은 필요하지 않습니다.
 
 서명·새 Windows 설치·실제 제공자 검증과 사람 보안 검토가 남아 있습니다. 진행 상황은 저장소의 `docs/latest/PROGRESS.md`에서 관리합니다.
+
+## Simple personal Gmail sending
+
+In the personal Gmail work menu, choose Compose, enter the recipients, subject,
+body and optional attachment, then open Review message. Read the complete native
+review and press Send. This bounded personal path does not request Windows Hello.
+Other registered profiles and protected settings retain their existing identity
+checks. Cancelling does not send; unknown is never automatically retried.

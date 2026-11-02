@@ -1,5 +1,7 @@
 # ADR-015 코어 소유 승인 창과 Windows Hello
 
+2026-11-02 한정 변경: 사용자가 승인한 개인 Google CLI 발송 단순화는 [ADR-028](proposed/ADR-028-personal-send-confirmation.md)을 따른다. 그 좁은 경로만 네이티브 내용 확인 버튼으로 별도 confirmation을 발급하고 Hello를 요구하지 않는다. 아래 OS Verified 전용 규칙은 다른 모든 보호 경로에 유지한다. CLI 입력은 어느 경로에서도 발급 증거가 아니며 사람 보안 검토는 미완료다.
+
 상태: 2026-10-30 연속 개발 위임에 따른 구현 결정. **사람 보안 검토 필요.** API 조사와 설계 검토만 수행했으며 실제 Windows Hello 등록·사람 확인·승인 발급 시험을 실행하지 않았다.
 
 ## 문제와 근거

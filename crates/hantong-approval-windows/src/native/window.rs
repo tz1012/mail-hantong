@@ -4,7 +4,7 @@ use super::{
     presentation::{Colors, os_colors, os_language_is_korean},
 };
 use crate::{
-    VerifiedImapSetup, VerifiedRegistration, VerifiedScopeRefresh,
+    ConfirmedPersonalSend, VerifiedImapSetup, VerifiedRegistration, VerifiedScopeRefresh,
     binding::{CapturedReview, utc_ms},
     setup_binding::{capture_before_verification, input_error, validate_pending, validate_plan},
 };
@@ -264,8 +264,10 @@ impl State {
                     self.validate_display(hwnd)?;
                     let binding = self.binding.take().ok_or(ErrorCode::InternalError)?;
                     binding.validate(self.model.review())?;
-                    // This is the only product issuance branch. Clicks/intents
-                    // never enter it: only the private OS completion channel does.
+                    // Protected reviews issue their Verified* proof only from
+                    // the private OS completion channel. PersonalSend is a
+                    // separate button-confirmation branch below and never
+                    // enters this adapter.
                     let result = binding.into_verified(self.pending.take());
                     self.finish(result);
                 }
@@ -301,6 +303,13 @@ impl State {
                     .begin_verification(utc_ms()?, binding.started().elapsed())
                 {
                     ReviewIntent::RequestVerification => {
+                        if self.model.review().is_personal_send() {
+                            let binding = self.binding.take().ok_or(ErrorCode::InternalError)?;
+                            binding.validate(self.model.review())?;
+                            let result = binding.into_confirmed_personal();
+                            self.finish(result);
+                            return Ok(true);
+                        }
                         self.start_verification(hwnd)?;
                         if self
                             .operation
@@ -415,6 +424,7 @@ impl State {
                     hantong_approval::send_review::text(language, "verification"),
                 )?);
             }
+            DialogReview::PersonalSend(_) => return Err(ErrorCode::InternalError),
             DialogReview::GoogleMutation(_) => {
                 self.operation = Some(ConsentOperation::start(
                     hwnd,
@@ -556,6 +566,25 @@ impl State {
         }
     }
     fn caption(&self, id: i32) -> String {
+        if self.model.review().is_personal_send() {
+            let key = match id {
+                HEADING => "personal_title",
+                INTRO => "personal_intro",
+                VERIFY => "personal_verify",
+                CLOSE => "personal_cancel",
+                FOOTER => "personal_footer",
+                STATUS => match self.model.state() {
+                    ReviewState::AwaitingPaint | ReviewState::Reviewing => "personal_ready",
+                    ReviewState::Verifying => "personal_waiting",
+                    ReviewState::Expired => "expired",
+                    ReviewState::Closed => "closed",
+                    ReviewState::Unavailable => "unavailable",
+                },
+                _ => return self.generic_caption(id),
+            };
+            return hantong_approval::send_review::text(self.model.presentation().language(), key)
+                .to_owned();
+        }
         if matches!(self.model.review(), DialogReview::GoogleClient(_)) {
             let key = match id {
                 HEADING => Some("title"),
@@ -793,9 +822,11 @@ fn register_class() -> Result<(), ErrorCode> {
 }
 fn create_controls(hwnd: HWND, state: &mut State) -> Result<(), ErrorCode> {
     let password_label = state.model.review().is_setup().then_some(PASSWORD_LABEL);
+    let personal_send = state.model.review().is_personal_send();
     for id in (HEADING..=REVIEW)
         .chain(password_label)
         .chain(STATUS..=CLOSE)
+        .filter(|id| !personal_send || *id != DENY)
     {
         let (class, style) = if id == REVIEW {
             (
@@ -924,6 +955,7 @@ pub(super) fn run(
         DialogVerified::Smtp(_) => Err(ErrorCode::InternalError),
         DialogVerified::Google(_) => Err(ErrorCode::InternalError),
         DialogVerified::GoogleClient(_) => Err(ErrorCode::InternalError),
+        DialogVerified::PersonalSend(_) => Err(ErrorCode::InternalError),
     }
 }
 
@@ -950,6 +982,7 @@ pub(super) fn run_setup(
         DialogVerified::Smtp(_) => Err(ErrorCode::InternalError),
         DialogVerified::Google(_) => Err(ErrorCode::InternalError),
         DialogVerified::GoogleClient(_) => Err(ErrorCode::InternalError),
+        DialogVerified::PersonalSend(_) => Err(ErrorCode::InternalError),
     }
 }
 
@@ -985,6 +1018,24 @@ pub(super) fn run_send(
         cancellation,
     )? {
         DialogVerified::Send(verified) => Ok(*verified),
+        _ => Err(ErrorCode::InternalError),
+    }
+}
+
+pub(super) fn run_personal_send(
+    review: hantong_approval::SendReview,
+    language: Option<Language>,
+    theme: Theme,
+    cancellation: Receiver<()>,
+) -> Result<ConfirmedPersonalSend, ErrorCode> {
+    match run_dialog(
+        DialogReview::PersonalSend(Box::new(review)),
+        None,
+        language,
+        theme,
+        cancellation,
+    )? {
+        DialogVerified::PersonalSend(verified) => Ok(*verified),
         _ => Err(ErrorCode::InternalError),
     }
 }
@@ -1052,6 +1103,9 @@ fn run_dialog(
         DialogReview::Google(review) => DialogBinding::Google(CapturedReview::capture(review)?),
         DialogReview::Send(review) => {
             DialogBinding::Send(Box::new(CapturedReview::capture(*review)?))
+        }
+        DialogReview::PersonalSend(review) => {
+            DialogBinding::PersonalSend(Box::new(CapturedReview::capture(*review)?))
         }
         DialogReview::GoogleMutation(review) => {
             DialogBinding::GoogleMutation(Box::new(CapturedReview::capture(*review)?))

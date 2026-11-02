@@ -5,6 +5,8 @@ use hantong_contracts::{
     audit::{AuditBegin, AuditTool},
     mail_send::{DraftCreateRequest, SendReviewRequest},
 };
+#[cfg(windows)]
+use hantong_contracts::{google::GoogleIdentity, google_write::GoogleAccessMode};
 
 const OWNER: [u8; 16] = [71; 16];
 fn fixture() -> Fixture {
@@ -61,6 +63,283 @@ fn audit(f: &Fixture, p: &PendingSend, id: u8, tool: AuditTool) -> [u8; 32] {
         )
         .unwrap();
     id
+}
+
+#[cfg(windows)]
+fn personal_identity(subject: &str) -> GoogleIdentity {
+    GoogleIdentity {
+        access_mode: GoogleAccessMode::ReadSend,
+        account_id: format!(
+            "google_{}",
+            hantong_contracts::wire_hex::encode(
+                &hantong_platform::sha256(subject.as_bytes()).unwrap()
+            )
+        ),
+        subject: subject.into(),
+        email: "personal@example.test".into(),
+        granted_scopes: GoogleAccessMode::ReadSend
+            .required_scopes()
+            .iter()
+            .map(|scope| (*scope).into())
+            .collect(),
+    }
+}
+
+#[cfg(windows)]
+fn personal_fixture(body_first: bool) -> (Fixture, String, PendingSend) {
+    let f = Fixture::new();
+    let identity = personal_identity("personal-send-fixture");
+    let account = identity.account_id.clone();
+    f.store()
+        .activate_google_account(&identity, "fixture.apps.googleusercontent.com", 0, None)
+        .unwrap();
+    let request = f.request(1, &[&account]);
+    let registration_id =
+        hantong_platform::registration_id_for_request(request.request_id).unwrap();
+    let stage = CliRegistrationStage::new_google_oauth(
+        request,
+        registration_id,
+        public_key(),
+        server_hash(),
+    )
+    .unwrap();
+    let record = f
+        .store()
+        .stage_google_oauth_cli_registration(&stage)
+        .unwrap();
+    f.store()
+        .activate_cli_registration(registration_id, record.version, server_hash())
+        .unwrap();
+
+    if body_first {
+        let body = RequestedScope::new(
+            vec![account.clone()],
+            hantong_contracts::auth::default_cli_body_tools(),
+        )
+        .unwrap();
+        let refresh = f
+            .store()
+            .create_google_oauth_cli_scope_refresh([2; 32], body, server_hash())
+            .unwrap();
+        let staged = f.store().stage_cli_scope_refresh(&refresh).unwrap();
+        f.store().activate_cli_scope_refresh(&staged).unwrap();
+        let send = RequestedScope::new(
+            vec![account.clone()],
+            hantong_contracts::auth::default_cli_send_tools(),
+        )
+        .unwrap();
+        let refresh = f
+            .store()
+            .create_google_oauth_cli_send_upgrade([3; 32], send, server_hash())
+            .unwrap();
+        let staged = f.store().stage_cli_scope_refresh(&refresh).unwrap();
+        f.store().activate_cli_scope_refresh(&staged).unwrap();
+    } else {
+        let send = RequestedScope::new(
+            vec![account.clone()],
+            hantong_contracts::auth::default_cli_send_tools(),
+        )
+        .unwrap();
+        let refresh = f
+            .store()
+            .create_google_oauth_cli_scope_refresh([2; 32], send, server_hash())
+            .unwrap();
+        let staged = f.store().stage_cli_scope_refresh(&refresh).unwrap();
+        f.store().activate_cli_scope_refresh(&staged).unwrap();
+    }
+
+    let draft = DraftCreateRequest::new(
+        &account,
+        vec!["recipient@example.test".into()],
+        "personal send".into(),
+        "complete body".into(),
+        if body_first {
+            "personal-draft-b"
+        } else {
+            "personal-draft-c"
+        },
+        if body_first {
+            "personal-draft-b"
+        } else {
+            "personal-draft-c"
+        },
+        0,
+        [0; 32],
+    )
+    .unwrap();
+    let payload_hash =
+        hantong_platform::sha256_storage_payload(&draft.canonical_payload()).unwrap();
+    let draft = DraftCreateRequest::new(
+        &account,
+        draft.recipients().to_vec(),
+        draft.subject().into(),
+        draft.body().into(),
+        draft.operation_id(),
+        draft.idempotency_key(),
+        0,
+        payload_hash,
+    )
+    .unwrap();
+    let registration = f.store().load_default_cli_registration().unwrap().unwrap();
+    let draft_id = f
+        .store()
+        .create_mail_draft(
+            registration.registration_id,
+            registration.profile_epoch,
+            &draft,
+        )
+        .unwrap();
+    let request = SendReviewRequest::new(
+        &account,
+        draft_id,
+        1,
+        if body_first {
+            "personal-send-b"
+        } else {
+            "personal-send-c"
+        },
+        if body_first {
+            "personal-send-b"
+        } else {
+            "personal-send-c"
+        },
+        *draft.payload_hash(),
+    )
+    .unwrap();
+    let receipt = f
+        .store()
+        .request_mail_send_review(
+            registration.registration_id,
+            registration.profile_epoch,
+            &request,
+        )
+        .unwrap();
+    let pending = f.store().pending_mail_send(receipt.review_id).unwrap();
+    (f, account, pending)
+}
+
+#[cfg(windows)]
+fn personal_audit(f: &Fixture, p: &PendingSend, id: u8) -> [u8; 32] {
+    let audit_id = [id; 32];
+    f.store()
+        .begin_audit(
+            &AuditBegin::new(
+                audit_id,
+                p.owner_registration_id,
+                p.profile_epoch,
+                AuditTool::SendExecute,
+                p.request.account_ids().to_vec(),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    audit_id
+}
+
+#[cfg(windows)]
+#[test]
+fn apr01_personal_google_send_allows_initial_and_upgraded_epochs() {
+    for (body_first, audit_id) in [(false, 91), (true, 92)] {
+        let (f, _account, pending) = personal_fixture(body_first);
+        assert!(f.store().can_confirm_personal_mail_send(&pending).unwrap());
+        let audit_id = personal_audit(&f, &pending, audit_id);
+        f.store()
+            .claim_personal_mail_send(&pending, audit_id)
+            .unwrap();
+        assert_eq!(count(f.store(), "mail_outbox"), 1);
+    }
+}
+
+#[cfg(windows)]
+#[test]
+fn apr01_personal_google_send_rejects_wrong_provenance_and_scope() {
+    for case in 0..7 {
+        let (f, _account, pending) = personal_fixture(false);
+        f.store().with_connection(|c| {
+            match case {
+                0 => {
+                    c.execute(
+                        "UPDATE client_registration_requests SET decision_channel='approval_helper' WHERE request_id=(SELECT request_id FROM client_registrations WHERE registration_id=?1)",
+                        [pending.owner_registration_id.as_slice()],
+                    )?;
+                    c.execute(
+                        "UPDATE client_registrations SET approved_channel='approval_helper' WHERE registration_id=?1",
+                        [pending.owner_registration_id.as_slice()],
+                    )?;
+                }
+                1 => {
+                    c.execute(
+                        "UPDATE client_registrations SET read_only=1 WHERE registration_id=?1",
+                        [pending.owner_registration_id.as_slice()],
+                    )?;
+                }
+                2 => {
+                    c.execute(
+                        "DELETE FROM client_registration_tools WHERE registration_id=?1",
+                        [pending.owner_registration_id.as_slice()],
+                    )?;
+                }
+                3 => {
+                    c.execute(
+                        "UPDATE client_registrations SET display_label='other-cli' WHERE registration_id=?1",
+                        [pending.owner_registration_id.as_slice()],
+                    )?;
+                }
+                4 => {
+                    c.execute(
+                        "UPDATE client_registrations SET client_kind='mcp' WHERE registration_id=?1",
+                        [pending.owner_registration_id.as_slice()],
+                    )?;
+                }
+                5 => {
+                    c.execute(
+                        "UPDATE client_registrations SET profile_epoch=profile_epoch+1 WHERE registration_id=?1",
+                        [pending.owner_registration_id.as_slice()],
+                    )?;
+                }
+                _ => {
+                    c.execute(
+                        "UPDATE accounts SET settings_version=settings_version+1 WHERE account_id=?1",
+                        [pending.request.account_id()],
+                    )?;
+                }
+            }
+            Ok(())
+        }).unwrap();
+        assert!(matches!(
+            f.store().can_confirm_personal_mail_send(&pending),
+            Ok(false) | Err(_)
+        ));
+        assert_eq!(count(f.store(), "mail_outbox"), 0);
+    }
+}
+
+#[cfg(windows)]
+#[test]
+fn apr01_personal_google_send_rechecks_provenance_before_claim() {
+    let (f, _account, pending) = personal_fixture(false);
+    assert!(f.store().can_confirm_personal_mail_send(&pending).unwrap());
+    let audit_id = personal_audit(&f, &pending, 93);
+    f.store()
+        .with_connection(|c| {
+            c.execute(
+                "UPDATE client_registration_requests SET decision_channel='approval_helper' WHERE request_id=(SELECT request_id FROM client_registrations WHERE registration_id=?1)",
+                [pending.owner_registration_id.as_slice()],
+            )?;
+            c.execute(
+                "UPDATE client_registrations SET approved_channel='approval_helper' WHERE registration_id=?1",
+                [pending.owner_registration_id.as_slice()],
+            )?;
+            Ok(())
+        })
+        .unwrap();
+    assert_eq!(
+        f.store().claim_personal_mail_send(&pending, audit_id),
+        // Provenance contradicts the immutable OAuth scope history. Reject
+        // corruption before it can masquerade as a valid helper registration.
+        Err(ErrorCode::InternalError)
+    );
+    assert_eq!(count(f.store(), "mail_outbox"), 0);
 }
 
 #[test]

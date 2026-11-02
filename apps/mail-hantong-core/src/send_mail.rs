@@ -52,13 +52,33 @@ pub(crate) async fn run_job(
     };
     let config = store.load_config()?.ok_or(ErrorCode::InternalError)?;
     let expected = review(&p);
-    let verified = hantong_approval_windows::review_send(
-        expected.clone(),
-        config.gui.language,
-        config.gui.theme,
-    )
-    .await;
-    let _authority = match verified.and_then(|v| v.consume(&expected)) {
+    // This is a persisted eligibility decision, never a caller-supplied claim
+    // that a human launched the CLI. Claim rechecks it atomically after the UI.
+    let personal = match store.can_confirm_personal_mail_send(&p) {
+        Ok(personal) => personal,
+        Err(e) => {
+            store.deny_mail_send(id, e)?;
+            return Err(e);
+        }
+    };
+    let confirmation = if personal {
+        hantong_approval_windows::confirm_personal_send(
+            expected.clone(),
+            config.gui.language,
+            config.gui.theme,
+        )
+        .await
+        .and_then(|v| v.consume(&expected))
+    } else {
+        hantong_approval_windows::review_send(
+            expected.clone(),
+            config.gui.language,
+            config.gui.theme,
+        )
+        .await
+        .and_then(|v| v.consume(&expected))
+    };
+    let _authority = match confirmation {
         Ok(v) => v,
         Err(e) => {
             store.deny_mail_send(id, e)?;
@@ -140,18 +160,30 @@ pub(crate) async fn run_job(
             }
         }
     };
-    execute_verified(store, policy, &p, submit).await
+    execute_confirmed(store, policy, &p, personal, submit).await
 }
-// Kept private to this module: the only product caller has just consumed the
-// opaque native proof. A test may supply a synthetic SMTP future, never a proof.
+// Existing protected-path tests supply synthetic futures without issuing proof.
+#[cfg(test)]
 async fn execute_verified(
     store: &Store,
     policy: &Rc<RefCell<ReadPolicy>>,
     p: &PendingSend,
     submit: impl std::future::Future<Output = SendOutcome>,
 ) -> Result<(), ErrorCode> {
+    execute_confirmed(store, policy, p, false, submit).await
+}
+
+// Private coordinator: its only product caller has consumed an exact opaque
+// native proof. RPC clients cannot invoke this seam or choose the claim mode.
+async fn execute_confirmed(
+    store: &Store,
+    policy: &Rc<RefCell<ReadPolicy>>,
+    p: &PendingSend,
+    personal: bool,
+    submit: impl std::future::Future<Output = SendOutcome>,
+) -> Result<(), ErrorCode> {
     let id = p.review_id;
-    // No effect before native verification, a fresh policy check, durable audit,
+    // No provider effect before native confirmation/verification, policy, audit,
     // and the atomic single-use Sending claim.
     let audit_id = hantong_platform::random_nonce()?;
     store.begin_audit(&AuditBegin::new(
@@ -179,7 +211,11 @@ async fn execute_verified(
             registration.requests_per_minute,
             Instant::now(),
         )?;
-        store.claim_mail_send(p, audit_id)
+        if personal {
+            store.claim_personal_mail_send(p, audit_id)
+        } else {
+            store.claim_mail_send(p, audit_id)
+        }
     })();
     if let Err(e) = admission {
         store.fail_mail_send_admission(id, audit_id, e)?;

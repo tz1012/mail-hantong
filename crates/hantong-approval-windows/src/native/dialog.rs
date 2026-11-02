@@ -17,6 +17,7 @@ pub(super) enum DialogReview {
     Imap(AccountSetupReview),
     ScopeRefresh(ScopeRefreshReview),
     Send(Box<hantong_approval::SendReview>),
+    PersonalSend(Box<hantong_approval::SendReview>),
     GoogleMutation(Box<hantong_approval::GoogleMutationReview>),
     Smtp(hantong_approval::SmtpSetupReview),
     Google(hantong_approval::GoogleSetupReview),
@@ -29,6 +30,7 @@ impl ReviewSnapshot for DialogReview {
             Self::Imap(review) => review.created_at_utc_ms(),
             Self::ScopeRefresh(review) => review.created_at_utc_ms(),
             Self::Send(review) => review.created_at_utc_ms(),
+            Self::PersonalSend(review) => review.created_at_utc_ms(),
             Self::GoogleMutation(review) => review.created_at_utc_ms(),
             Self::Smtp(review) => review.created_at_utc_ms(),
             Self::GoogleClient(review) => review.created_at_utc_ms(),
@@ -41,6 +43,7 @@ impl ReviewSnapshot for DialogReview {
             Self::Imap(review) => review.expires_at_utc_ms(),
             Self::ScopeRefresh(review) => review.expires_at_utc_ms(),
             Self::Send(review) => review.expires_at_utc_ms(),
+            Self::PersonalSend(review) => review.expires_at_utc_ms(),
             Self::GoogleMutation(review) => review.expires_at_utc_ms(),
             Self::Smtp(review) => review.expires_at_utc_ms(),
             Self::GoogleClient(review) => review.expires_at_utc_ms(),
@@ -70,6 +73,9 @@ impl DialogReview {
     pub(super) fn is_send(&self) -> bool {
         matches!(self, Self::Send(_))
     }
+    pub(super) fn is_personal_send(&self) -> bool {
+        matches!(self, Self::PersonalSend(_))
+    }
     pub(super) fn is_mcp_registration(&self) -> bool {
         matches!(self, Self::Registration(review) if review.client_kind() == hantong_contracts::client::ClientKind::Mcp)
     }
@@ -91,6 +97,7 @@ impl DialogReview {
             Self::Imap(review) => Ok(setup_summary(review, language)),
             Self::ScopeRefresh(review) => Ok(review.summary(language)),
             Self::Send(review) => Ok(review.summary(language)),
+            Self::PersonalSend(review) => Ok(review.personal_summary(language)),
             Self::GoogleMutation(review) => Ok(review.summary(language)),
             Self::Smtp(review) => Ok(review.summary(language)),
             Self::GoogleClient(review) => Ok(review.summary(language)),
@@ -104,6 +111,7 @@ pub(super) enum DialogBinding {
     Imap(CapturedReview<AccountSetupReview>),
     ScopeRefresh(CapturedReview<ScopeRefreshReview>),
     Send(Box<CapturedReview<hantong_approval::SendReview>>),
+    PersonalSend(Box<CapturedReview<hantong_approval::SendReview>>),
     GoogleMutation(Box<CapturedReview<hantong_approval::GoogleMutationReview>>),
     Smtp(CapturedReview<hantong_approval::SmtpSetupReview>),
     Google(CapturedReview<hantong_approval::GoogleSetupReview>),
@@ -116,6 +124,9 @@ impl DialogBinding {
             Self::Imap(binding) => DialogReview::Imap(binding.review.clone()),
             Self::ScopeRefresh(binding) => DialogReview::ScopeRefresh(binding.review.clone()),
             Self::Send(binding) => DialogReview::Send(Box::new(binding.review.clone())),
+            Self::PersonalSend(binding) => {
+                DialogReview::PersonalSend(Box::new(binding.review.clone()))
+            }
             Self::GoogleMutation(binding) => {
                 DialogReview::GoogleMutation(Box::new(binding.review.clone()))
             }
@@ -130,6 +141,7 @@ impl DialogBinding {
             Self::Imap(binding) => binding.started,
             Self::ScopeRefresh(binding) => binding.started,
             Self::Send(binding) => binding.started,
+            Self::PersonalSend(binding) => binding.started,
             Self::GoogleMutation(binding) => binding.started,
             Self::Smtp(binding) => binding.started,
             Self::GoogleClient(binding) => binding.started,
@@ -146,6 +158,9 @@ impl DialogBinding {
                 binding.validate(review)
             }
             (Self::Send(binding), DialogReview::Send(review)) => binding.validate(review),
+            (Self::PersonalSend(binding), DialogReview::PersonalSend(review)) => {
+                binding.validate(review)
+            }
             (Self::GoogleMutation(binding), DialogReview::GoogleMutation(review)) => {
                 binding.validate(review)
             }
@@ -190,12 +205,21 @@ impl DialogBinding {
             _ => Err(ErrorCode::InternalError),
         }
     }
+    pub(super) fn into_confirmed_personal(self) -> Result<DialogVerified, ErrorCode> {
+        match self {
+            Self::PersonalSend(binding) => binding
+                .into_confirmed_personal()
+                .map(|value| DialogVerified::PersonalSend(Box::new(value))),
+            _ => Err(ErrorCode::InternalError),
+        }
+    }
 }
 pub(super) enum DialogVerified {
     Registration(Box<VerifiedRegistration>),
     Imap(Box<VerifiedImapSetup>),
     ScopeRefresh(Box<VerifiedScopeRefresh>),
     Send(Box<crate::VerifiedSend>),
+    PersonalSend(Box<crate::ConfirmedPersonalSend>),
     GoogleMutation(Box<crate::VerifiedGoogleMutation>),
     Smtp(Box<crate::VerifiedSmtpSetup>),
     Google(Box<crate::VerifiedGoogleSetup>),
@@ -206,13 +230,96 @@ pub(super) enum DialogVerified {
 mod tests {
     use super::*;
     use hantong_approval::{
-        Presentation, ReviewIntent, ReviewModel, ReviewState, ScopeRefreshReview,
+        Presentation, ReviewIntent, ReviewModel, ReviewState, ScopeRefreshReview, SendReview,
     };
     use hantong_domain::{
         account_provisioning::NewImapAccountDraft, config::Theme,
         mail_connection::MailConnectionConfig,
     };
     use std::time::Duration;
+
+    fn personal_send_review() -> SendReview {
+        let endpoint = MailConnectionConfig::from_json(
+            br#"{"schema_version":1,"account_id":"acct","imap":{"settings_version":1,"host":"imap.example","port":993,"tls":"implicit_tls","login_name":"sender@example.com","authentication":"app_password"},"smtp":{"settings_version":1,"host":"smtp.example","port":587,"tls":"starttls_required","login_name":"sender@example.com","authentication":"app_password"}}"#,
+        )
+        .unwrap()
+        .smtp()
+        .unwrap()
+        .clone();
+        let draft = hantong_contracts::mail_send::DraftCreateRequest::new(
+            "acct",
+            vec!["to@example.com".into()],
+            "Subject".into(),
+            "Body".into(),
+            "draft",
+            "draft",
+            0,
+            [5; 32],
+        )
+        .unwrap();
+        SendReview {
+            review_id: [1; 32],
+            owner_registration_id: [2; 16],
+            profile_epoch: 1,
+            account_version: 1,
+            endpoint: endpoint.into(),
+            draft: draft.into(),
+            request: hantong_contracts::mail_send::SendReviewRequest::new(
+                "acct", [6; 32], 1, "op", "idem", [5; 32],
+            )
+            .unwrap(),
+            created_at_utc_ms: 1000,
+            expires_at_utc_ms: 301000,
+        }
+    }
+
+    #[test]
+    fn apr01_personal_send_requires_exact_paint_and_live_expiry() {
+        let review = personal_send_review();
+        let personal = DialogReview::PersonalSend(Box::new(review.clone()));
+        let protected = DialogReview::Send(Box::new(review.clone()));
+        assert!(personal.is_personal_send());
+        assert!(!personal.is_send());
+        let mut model = ReviewModel::new(
+            personal.clone(),
+            Presentation::new(Some(Language::En), Theme::System, false, true, false),
+        );
+        assert!(!model.paint_completed(&protected));
+        assert_eq!(
+            model.begin_verification(2000, Duration::from_secs(1)),
+            ReviewIntent::None
+        );
+        assert!(model.paint_completed(&personal));
+        assert_eq!(
+            model.begin_verification(2001, Duration::from_secs(2)),
+            ReviewIntent::RequestVerification
+        );
+
+        let mut expired = review;
+        expired.expires_at_utc_ms = 2000;
+        let expired = DialogReview::PersonalSend(Box::new(expired));
+        let mut expired_model = ReviewModel::new(
+            expired.clone(),
+            Presentation::new(Some(Language::En), Theme::System, false, true, false),
+        );
+        assert!(expired_model.paint_completed(&expired));
+        assert_eq!(
+            expired_model.begin_verification(2000, Duration::from_secs(1)),
+            ReviewIntent::Expired
+        );
+    }
+
+    #[test]
+    fn apr01_protected_send_binding_cannot_issue_personal_confirmation() {
+        let mut review = personal_send_review();
+        review.created_at_utc_ms = crate::binding::utc_ms().unwrap();
+        review.expires_at_utc_ms = review.created_at_utc_ms + 300_000;
+        let binding = DialogBinding::Send(Box::new(CapturedReview::capture(review).unwrap()));
+        assert!(matches!(
+            binding.into_confirmed_personal(),
+            Err(ErrorCode::InternalError)
+        ));
+    }
     #[test]
     fn inst04_gui_review_requires_own_painted_snapshot_before_verification() {
         let gui = RegistrationReview::new_gui([1; 32], 1, vec!["a".into()], [2; 32], 1000, 301000)

@@ -36,6 +36,7 @@ impl Fixture {
         );
         hantong_secrets::KeyedConnection::open(root.join("data"),root.join("keys")).unwrap().with_connection(|c|{
             let now=1_i64;
+            c.execute("INSERT INTO server_identity(singleton,key_id,state,public_key,key_epoch,version,created_at_utc_ms,updated_at_utc_ms) VALUES(1,?1,'active',?2,1,1,1,1)",([9_u8;32].as_slice(),key.as_slice()))?;
             c.execute_batch("INSERT INTO accounts(account_id,provider,account_number,status,capabilities,granted_scopes,settings_version) VALUES('a','imap',1,'ready','[]','[]',1);")?;
             c.execute("INSERT INTO client_registration_requests(request_id,client_kind,display_label,requested_accounts_json,requested_tools_json,state,decision_channel,version,created_at_utc_ms,expires_at_utc_ms,decided_at_utc_ms) VALUES(?1,'cli','Synthetic send fixture','[\"a\"]','[\"mail.drafts.create\",\"mail.send.execute\",\"mail.send.request\"]','approved','approval_helper',2,1,300001,1)",[[1_u8;32].as_slice()])?;
             c.execute("INSERT INTO client_registrations(registration_id,request_id,client_kind,display_label,public_key,profile_epoch,state,read_only,requests_per_minute,approved_channel,approved_at_utc_ms,updated_at_utc_ms,revoked_at_utc_ms,version) VALUES(?1,?2,'cli','Synthetic send fixture',?3,1,'active',0,60,'approval_helper',?4,?4,NULL,2)",([2_u8;16].as_slice(),[1_u8;32].as_slice(),key.as_slice(),now))?;
@@ -75,6 +76,125 @@ impl Fixture {
             .unwrap();
         self.store().pending_mail_send(r.review_id).unwrap()
     }
+    fn prepare_personal(&self) -> PendingSend {
+        use hantong_contracts::{
+            auth::{RequestedScope, default_cli_send_tools},
+            client::ClientKind,
+            google::GoogleIdentity,
+            google_write::GoogleAccessMode,
+        };
+        use hantong_store::DEFAULT_CLI_LABEL;
+        let subject = "synthetic-personal-send-core";
+        let account = format!(
+            "google_{}",
+            hantong_contracts::wire_hex::encode(
+                &hantong_platform::sha256(subject.as_bytes()).unwrap()
+            )
+        );
+        self.store()
+            .activate_google_account(
+                &GoogleIdentity {
+                    access_mode: GoogleAccessMode::ReadSend,
+                    account_id: account.clone(),
+                    subject: subject.into(),
+                    email: "sender@example.test".into(),
+                    granted_scopes: GoogleAccessMode::ReadSend
+                        .required_scopes()
+                        .iter()
+                        .map(|s| (*s).into())
+                        .collect(),
+                },
+                "fixture.apps.googleusercontent.com",
+                0,
+                None,
+            )
+            .unwrap();
+        let mut key = self
+            .store()
+            .load_registration([2; 16])
+            .unwrap()
+            .unwrap()
+            .public_key;
+        let server_hash = hantong_platform::sha256(&key).unwrap();
+        // A distinct public P-256 point (-G) avoids reusing the synthetic
+        // helper registration's key. No private key is generated or persisted.
+        key[40..].copy_from_slice(
+            &hantong_contracts::wire_hex::decode_fixed::<32>(
+                "b01cbd1c01e58065711814b583f061e9d431cca994cea1313449bf97c840ae0a",
+            )
+            .unwrap(),
+        );
+        let request = self
+            .store()
+            .create_registration_request(
+                [3; 32],
+                ClientKind::Cli,
+                DEFAULT_CLI_LABEL,
+                &RequestedScope::new(vec![account.clone()], vec!["mail.accounts.list".into()])
+                    .unwrap(),
+            )
+            .unwrap();
+        let registration_id =
+            hantong_platform::registration_id_for_request(request.request_id).unwrap();
+        let stage = hantong_store::CliRegistrationStage::new_google_oauth(
+            request,
+            registration_id,
+            key,
+            server_hash,
+        )
+        .unwrap();
+        let staged = self
+            .store()
+            .stage_google_oauth_cli_registration(&stage)
+            .unwrap();
+        self.store()
+            .activate_cli_registration(registration_id, staged.version, server_hash)
+            .unwrap();
+        let refresh = self
+            .store()
+            .create_google_oauth_cli_scope_refresh(
+                [4; 32],
+                RequestedScope::new(vec![account.clone()], default_cli_send_tools()).unwrap(),
+                server_hash,
+            )
+            .unwrap();
+        let staged = self.store().stage_cli_scope_refresh(&refresh).unwrap();
+        let registration = self.store().activate_cli_scope_refresh(&staged).unwrap();
+        let make = |hash| {
+            DraftCreateRequest::new(
+                &account,
+                vec!["recipient@example.test".into()],
+                "Synthetic personal".into(),
+                "Complete fake body".into(),
+                "personal-draft",
+                "personal-draft",
+                0,
+                hash,
+            )
+            .unwrap()
+        };
+        let d = make(
+            hantong_platform::sha256_storage_payload(&make([0; 32]).canonical_payload()).unwrap(),
+        );
+        let id = self
+            .store()
+            .create_mail_draft(registration_id, registration.profile_epoch, &d)
+            .unwrap();
+        let request = SendReviewRequest::new(
+            &account,
+            id,
+            1,
+            "personal-send",
+            "personal-send",
+            *d.payload_hash(),
+        )
+        .unwrap();
+        let receipt = self
+            .store()
+            .request_mail_send_review(registration_id, registration.profile_epoch, &request)
+            .unwrap();
+        self.store().pending_mail_send(receipt.review_id).unwrap()
+    }
 }
 impl Drop for Fixture {
     fn drop(&mut self) {
@@ -88,6 +208,76 @@ fn run<F: std::future::Future>(future: F) -> F::Output {
         .build()
         .unwrap()
         .block_on(future)
+}
+
+#[test]
+fn apr01_personal_confirmation_cannot_claim_helper_origin_smtp_or_poll_provider() {
+    let f = Fixture::new();
+    let p = f.prepare();
+    assert!(!f.store().can_confirm_personal_mail_send(&p).unwrap());
+    let policy = Rc::new(RefCell::new(ReadPolicy::new()));
+    let calls = Cell::new(0);
+    assert_eq!(
+        run(execute_confirmed(f.store(), &policy, &p, true, async {
+            calls.set(calls.get() + 1);
+            SendOutcome::Sent
+        })),
+        Err(ErrorCode::PolicyBlocked)
+    );
+    assert_eq!(calls.get(), 0);
+    let receipt = f
+        .store()
+        .mail_send_receipt([2; 16], 1, "a", p.review_id)
+        .unwrap();
+    assert_eq!(receipt.state, "failed");
+    assert_eq!(receipt.error, Some(ErrorCode::PolicyBlocked));
+}
+
+#[test]
+fn apr01_personal_send_polls_once_only_after_durable_claim_and_never_replays() {
+    let f = Fixture::new();
+    let p = f.prepare_personal();
+    assert!(f.store().can_confirm_personal_mail_send(&p).unwrap());
+    let policy = Rc::new(RefCell::new(ReadPolicy::new()));
+    let calls = Cell::new(0);
+    run(execute_confirmed(f.store(), &policy, &p, true, async {
+        calls.set(calls.get() + 1);
+        assert_eq!(
+            f.store()
+                .mail_send_receipt(
+                    p.owner_registration_id,
+                    p.profile_epoch,
+                    p.request.account_id(),
+                    p.review_id
+                )
+                .unwrap()
+                .state,
+            "sending"
+        );
+        SendOutcome::Sent
+    }))
+    .unwrap();
+    assert_eq!(calls.get(), 1);
+    assert_eq!(
+        f.store()
+            .mail_send_receipt(
+                p.owner_registration_id,
+                p.profile_epoch,
+                p.request.account_id(),
+                p.review_id
+            )
+            .unwrap()
+            .state,
+        "sent"
+    );
+    assert_eq!(
+        run(execute_confirmed(f.store(), &policy, &p, true, async {
+            calls.set(calls.get() + 1);
+            SendOutcome::Sent
+        })),
+        Err(ErrorCode::Conflict)
+    );
+    assert_eq!(calls.get(), 1);
 }
 
 #[test]
