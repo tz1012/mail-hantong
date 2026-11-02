@@ -2,7 +2,7 @@
 
 A multi-account mail hub for Windows, with a shared core service, the `hantong` CLI, MCP access, and an optional GUI. GUI languages are Korean and English; themes are light, dark, and system. The CLI defaults to English and supports Korean.
 
-**Status: Windows CLI beta candidate under verification.** [Download releases](https://github.com/tz1012/mail-hantong/releases). Account setup, feature selection, composing and Send/Cancel use the same terminal. Google OAuth opens its standard provider browser. See the [CLI installation and usage guide](docs/latest/CLI-LAUNCH.md) for body reading, composing, sending, AI sessions, MCP tools and remaining limitations.
+**Current release: [Windows CLI 0.1.0-beta.3](https://github.com/tz1012/mail-hantong/releases/tag/v0.1.0-beta.3).** Start with the [Korean installation and feature guide](https://tz1012.github.io/mail-hantong/). Account setup, feature selection, composing and Send/Cancel use the same terminal without a separate HanTong window or Windows Hello. Google OAuth opens its standard provider browser. See the [CLI usage guide](docs/latest/CLI-LAUNCH.md) for mail, AI sessions, MCP tools and remaining limitations.
 
 Install or update from PowerShell on Windows x64:
 
@@ -10,9 +10,11 @@ Install or update from PowerShell on Windows x64:
 irm https://raw.githubusercontent.com/tz1012/mail-hantong/main/install.ps1 | iex
 ```
 
-The installer verifies release checksums and adds the current user's launcher directory to PATH. This unsigned developer preview still needs human security review and real-provider validation.
+Then run `hantong --lang ko init` (or `hantong` for English). The existing account menu offers inbox reading, enabling composing/sending with option 4, and composing with option 5. Core starts automatically when needed. The installer verifies release checksums and adds the current user's launcher directory to PATH.
 
-Preview.4 adds Google multi-account browser login and Gmail read-only synchronization. Preview.3 does not include them. See [Google setup and mail commands](docs/latest/GOOGLE-MAIL.md); initial setup requires public Google Desktop OAuth client configuration. Implementation and verification status are recorded in [PROGRESS.md](docs/latest/PROGRESS.md).
+The beta includes publisher Google Desktop configuration; ordinary users do not configure Google Cloud. Full checks passed 1,833 tests, and manual Gmail checks covered account retention, terminal cancellation, one synthetic self-addressed send/receive and attachment matching. This unsigned beta still needs human security review, clean Windows VM testing and additional provider verification. Google publisher verification is separate. See [Google commands](docs/latest/GOOGLE-MAIL.md) and [PROGRESS.md](docs/latest/PROGRESS.md).
+
+Optional AI sessions use separately installed official Codex CLI or Claude Code: `hantong ai login codex` then `hantong ai chat codex` (use `claude` for Console/API billing). Within chat, `/provider`, `/model`, `/mode`, `/fast on|off` and `/agent on|off` switch supported features. AI is separate from the basic mail menu; agent mail access requires explicit MCP registration and account permissions. Real AI login and paid inference were not exercised in the beta verification. Follow the [AI and agent instructions](docs/latest/CLI-LAUNCH.md#ai-sessions-and-agent-tools).
 
 Windows GUI는 `cargo run -p mail-hantong-gui -- --lang ko --theme system`으로 실행합니다. 영어는 `--lang en`, 테마는 `light`, `dark`, `system`입니다. GUI는 CLI와 별도 등록을 사용하며, 사용자가 연결을 요청하고 보호된 확인 창에서 검토한 계정의 저장된 폴더·메일 메타데이터만 읽습니다. 선택한 폴더에서 전체·읽지 않음·즐겨찾기로 목록을 좁히고 다시 조회할 수 있습니다. 현대적인 메일 화면의 구성과 참조 기준은 [디자인 가이드](docs/latest/DESIGN.md)에 기록합니다. 표시 설정 저장·본문·첨부·작성·발송은 아직 개발 중입니다. 최신 검증 여부는 [진행 기록](docs/latest/PROGRESS.md)을 확인하세요.
 

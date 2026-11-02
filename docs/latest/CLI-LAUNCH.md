@@ -1,12 +1,12 @@
-# mail-hantong CLI — Windows developer preview
+# mail-hantong CLI — Windows beta.3
 
 The command is `hantong`. English is the default; use `--lang ko` for Korean. The companion `mail-hantong-core` process handles encrypted local storage, mail operations and policy. The graphical mail application is not included in the CLI package.
 
-**Release status: Windows beta candidate under verification.** The planned label is `0.1.0-beta.3`; binaries report `0.1.0`. The terminal workflow is being verified before publication. [Release downloads](https://github.com/tz1012/mail-hantong/releases) include checksums. Human security review, clean Windows VM testing and Google verification remain separate open gates. macOS mail operations are not available yet.
+**Published release: [0.1.0-beta.3](https://github.com/tz1012/mail-hantong/releases/tag/v0.1.0-beta.3).** The [Korean website guide](https://tz1012.github.io/mail-hantong/) covers installation, mail and AI feature switching. Release downloads include checksums and build metadata. Full checks passed 1,833 tests; manual Gmail verification covered account retention, terminal cancellation, one synthetic send/receive and matching body/attachment. Human security review, clean Windows VM testing, other real mail providers and Google verification remain separate open gates. Real AI login and paid inference were not tested. macOS mail operations are not available yet.
 
 ## What works in this preview
 
-The current candidate adds guided installation/startup, personal feature selection followed by Google consent, safe bounded Gmail text previews, and an explicit same-account read-to-send feature action. Publisher configuration is included, so ordinary users do not configure Google Cloud. Compose, complete message review, Send/Cancel, client registration and advanced settings use the same terminal. Google OAuth opens its standard provider browser. See [Google setup and commands](GOOGLE-MAIL.md) and [current verification status](PROGRESS.md).
+The current beta includes guided installation/startup, personal feature selection followed by Google consent, bounded Gmail text previews, and an explicit same-account read-to-send feature action. Publisher configuration is included, so ordinary users do not configure Google Cloud. Compose, complete message review, Send/Cancel, client registration and advanced settings use the same terminal. Google OAuth opens its standard provider browser. See [Google setup and commands](GOOGLE-MAIL.md) and [verification status](PROGRESS.md).
 
 | Available | Not yet available |
 | --- | --- |
@@ -58,9 +58,9 @@ mail-hantong-core --help
 
 ## Start and connect
 
-### Current local development build
+### Current beta: guided start
 
-The first-run flow in the working tree is newer than published preview.4. Install a package built from this tree, then run:
+Install the published beta, then run:
 
 ```powershell
 hantong init
@@ -68,15 +68,15 @@ hantong init
 hantong --lang ko init
 ```
 
-An interactive bare `hantong` opens the same flow. It connects to an existing Core or starts the package's verified sibling Core in the background, offers an existing Gmail account or Google connection, and uses the protected Windows approval screens. Opening the inbox is a separate menu choice; connecting an account does not automatically read mail. Select a numbered message to read its text body. Exit the menu to return to the terminal; Core continues running. This is a guided CLI, not a full-screen TUI.
+An interactive bare `hantong` opens the same flow. It connects to an existing Core or starts the verified sibling Core in the background, offers an existing Gmail account or Google connection, and keeps HanTong interaction in the same terminal. Only provider OAuth uses its browser. Opening the inbox is a separate menu choice; connecting an account does not automatically read mail. Select a numbered message to read its text body. Menu option 4 enables composing/sending with any necessary new Google consent; option 5 composes a message. Enabling the feature does not send mail. Exit with option 3; Core continues running. This is a guided CLI, not a full-screen TUI.
 
-The Google flow reuses protected app configuration already stored on this PC or a publisher Desktop configuration included in a release. Users of a provisioned release do not create a Google Cloud project or enter an app credential. Provisioned releases are still pending security review. A package without that configuration is a developer preview and cannot complete first Google connection on a clean PC. The working-tree wizard does not make the published preview or Google verification complete. `init --json`, `init --no-input` and redirected input/output stop before starting Core or opening account setup.
+The Google flow reuses protected app configuration already stored on this PC or the publisher Desktop configuration included in beta.3. Users do not create a Google Cloud project or enter an app credential. Human security review and Google verification remain separate. A custom developer package without configuration needs advanced setup. `init --json`, `init --no-input` and redirected input/output stop before starting Core or opening account setup.
 
 Current builds keep the same Windows data location when launched from a packaged terminal host or a normal terminal. Existing data created under a host application's private AppData is preserved and needs a separate recovery step; do not delete it or repeatedly reconnect accounts to address an authentication error.
 
-### Published preview.4 and advanced commands
+### Advanced commands and optional foreground Core
 
-In terminal 1, run the core in the foreground. Keep this terminal open; Ctrl+C stops it.
+Ordinary users can use the guided start above. For manual diagnostics, Core can instead run in a separate foreground terminal; keep it open, and use Ctrl+C to stop it.
 
 ```powershell
 mail-hantong-core run
@@ -90,7 +90,7 @@ hantong setup imap request --host imap.example.com --port 993 --tls implicit_tls
 hantong setup imap status REQUEST_ID --json
 ```
 
-Replace the example host/login with your server information. Enter the password only in the protected setup window and complete human verification there. A successful setup is not client authorization. After setup reports ready:
+Replace the example host/login with your server information. Review the endpoint in the same terminal and enter the password only through hidden console input. A successful setup is not client authorization. After setup reports ready:
 
 ```powershell
 hantong clients register
@@ -101,9 +101,9 @@ hantong clients refresh
 hantong clients refresh-status REFRESH_ID --json
 ```
 
-Use the IDs returned by the preceding commands. Review the account and tool scopes in the protected confirmation window. Registering when no account exists grants no implicit access to future accounts. `clients refresh` requests a new explicit scope review; it does not automatically approve it.
+Use the IDs returned by the preceding commands. Review the account and tool scopes in the same terminal. Registering when no account exists grants no implicit access to future accounts. `clients refresh` requires explicit terminal review; requesting it does not itself grant the scope.
 
-In preview.3, a fresh refresh explicitly requests body/draft/send scopes as well as display language and diagnostics. An older interrupted refresh keeps its original permissions; finish that request before starting a fresh refresh if these permissions are missing. Installing an update does not grant permissions. Every send still requires its own protected human confirmation.
+A fresh general refresh requests body/draft/send scopes as well as display language and diagnostics. Older interrupted requests retain their recorded permissions and decision channel; they are not silently converted into new terminal grants. A conflicting legacy request must be resolved explicitly. Installing an update does not grant permissions. Every send requires a separate complete-message terminal review and Send/Cancel choice.
 
 ## Browse stored metadata
 
@@ -149,17 +149,17 @@ hantong read --account ACCOUNT --message-id MESSAGE_ID --json
 
 The first request may report pending while Core fetches a bounded body with IMAP `EXAMINE` and `BODY.PEEK[]`. Repeat the same read to inspect the encrypted cache. It does not mark mail read. The output is sanitized plain text, limited to 64KiB; supported MIME text parts are decoded, HTML is reduced to text, remote images/scripts and attachments are not opened. Truncation and unsupported encodings remain explicit.
 
-Set up SMTP for an existing account. Enter its app password only in the protected window:
+Set up SMTP for an existing account. Enter its app password only in the same console's hidden credential input:
 
 ```powershell
 hantong setup smtp request --account ACCOUNT --host smtp.example.com --port 587 --tls starttls_required --login user@example.com
 hantong setup smtp status REQUEST_ID --json
 hantong draft create --account ACCOUNT --to recipient@example.com --subject "Hello" --body-file .\body.txt --operation-id draft_1 --idempotency-key draft_1 --json
-hantong send --account ACCOUNT --draft-id DRAFT_HEX --expected-version 1 --payload-hash HASH_HEX --operation-id send_1 --idempotency-key send_1 --json
+hantong send --account ACCOUNT --draft-id DRAFT_HEX --expected-version 1 --payload-hash HASH_HEX --operation-id send_1 --idempotency-key send_1
 hantong send status --account ACCOUNT --review-id REVIEW_HEX --json
 ```
 
-The body file must be UTF-8 and at most 1MiB. Use IDs and hash returned by the preceding response. SMTP setup currently initializes an absent SMTP endpoint; it does not silently replace an existing one or send a probe email. `send` requests a protected native review of the complete message. Only successful human verification may start one SMTP attempt. `unknown` / `SEND_UNKNOWN` means delivery cannot be determined: it is never automatically retried. Repeating an operation/idempotency key returns its existing result.
+The body file must be UTF-8 and at most 1MiB. Use IDs and hash returned by the preceding response. SMTP setup currently initializes an absent endpoint; it does not silently replace one or send a probe email. Interactive `send` shows the complete stored message in the same terminal and asks Send/Cancel. No separate HanTong window or Windows Hello is required. The selection expresses intent, not OS human-presence proof. Sending requires terminal input/output; JSON and `--no-input` cannot confirm a message. `unknown` / `SEND_UNKNOWN` means delivery cannot be determined and is never automatically retried. Repeating an operation/idempotency key returns its existing result.
 
 ## AI sessions and agent tools
 
@@ -195,10 +195,11 @@ Freeform chat initially has no mail access or automatic mail context. To let an 
 
 ```powershell
 hantong-mcp register
+hantong review --kind registration --request-id REQUEST_ID
 hantong-mcp status REQUEST_ID
 ```
 
-Review the exact accounts, tools and external-AI disclosure in the protected window. Then `/agent on` may connect the packaged server. Other MCP hosts may launch `hantong-mcp` with no arguments over stdio. Tool discovery returns current grants; accounts are discovered through the authorized account-list tool. Every send still requires its own native human review. Generic shell, filesystem and web tools are disabled in the integrated AI session. Revoked or missing account consent blocks mail disclosure.
+Replace REQUEST_ID with the ID printed by `register`. Registration prepares a pending request; the explicit `hantong review` step completes it in the same terminal. Review the accounts and tools before connecting them to external AI: authorized tool results may disclose mail data to the selected provider. Then `/agent on` may connect the packaged server. Other MCP hosts may launch `hantong-mcp` without arguments over stdio. Tool discovery returns current grants; accounts are discovered through the authorized account-list tool. Send requests require separate full-message terminal review; an AI session cannot itself confirm them. Generic shell, filesystem and web tools are disabled in the integrated AI session. Revoked or missing account consent blocks mail disclosure.
 
 ## Update and remove
 
@@ -223,11 +224,11 @@ The package tool builds the terminal distribution and core, records versions and
 
 `hantong`은 터미널에서 사용하는 CLI입니다. `--lang ko`로 한국어를 선택하고 자동화에는 `--json`과 종료 코드를 사용합니다.
 
-현재 개발 미리보기는 Windows x64의 IMAP·SMTP 설정, 등록, 폴더·메타데이터·본문 조회, 초안 작성, 보호된 사람 확인을 거친 발송, AI 대화와 MCP 연동을 제공합니다. 새 `clients refresh`에서 필요한 권한을 검토합니다. 업데이트만으로 권한을 부여하지 않으며 과거 중단 요청의 범위도 바꾸지 않습니다. 첨부·예약·주소록·규칙 자동화와 Mac 제품은 후속입니다.
+현재 beta.3는 Windows x64의 IMAP·SMTP 설정, 등록, 폴더·메타데이터·본문 조회, 초안·첨부 작성, 터미널 전체 검토 후 발송, AI 대화와 MCP 연동을 제공합니다. 새 `clients refresh`에서 필요한 권한을 검토합니다. 업데이트만으로 권한을 부여하지 않으며 과거 중단 요청의 범위도 바꾸지 않습니다. 일반 첨부 다운로드·예약·주소록·규칙 자동화와 Mac 제품은 후속입니다.
 
-위 PowerShell 한 줄로 설치·업데이트할 수 있습니다. 한 터미널에서 `mail-hantong-core run`, 다른 터미널에서 `hantong` 명령을 실행합니다. 비밀번호 입력과 권한 승인은 보호된 Windows 확인 창에서 사람이 수행합니다. 메일 GUI 실행 파일은 필요하지 않습니다.
+위 PowerShell 한 줄로 설치·업데이트한 뒤 `hantong --lang ko init`을 실행하세요. 코어는 필요할 때 자동으로 시작합니다. 계정 연결·기능 선택·숨김 입력·메일 전체 검토·보내기/취소는 같은 터미널에서 진행하며, Google 로그인·동의만 브라우저를 사용합니다. 계정 작업 메뉴 4번은 작성·보내기 활성화, 5번은 메일 작성입니다. AI는 별도 `hantong ai login codex`, `hantong ai chat codex` 명령으로 시작하고 `/provider`, `/model`, `/mode`, `/fast`, `/agent`로 지원 기능을 전환합니다. 자세한 순서는 [홈페이지](https://tz1012.github.io/mail-hantong/)에 있습니다.
 
-서명·새 Windows 설치·실제 제공자 검증과 사람 보안 검토가 남아 있습니다. 진행 상황은 저장소의 `docs/latest/PROGRESS.md`에서 관리합니다.
+실제 Gmail 합성 송수신·본문/첨부 일치와 설치·업데이트는 확인했습니다. 서명·새 Windows 설치 환경·다른 실제 메일 제공자·실제 AI 로그인/유료 추론 검증과 사람 보안 검토는 남아 있습니다. 진행 상황은 `docs/latest/PROGRESS.md`에서 관리합니다.
 
 ## Simple personal Gmail sending
 
