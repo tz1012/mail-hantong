@@ -1606,3 +1606,15 @@ Core 소유 foreground helper와 실제 pipe peer 이미지 검증, 원래 요�
 Core targeted offline integration: 137 passed / 0 failed / 0 ignored; original Core12 restored with identical SHA-256, PID 13604. Empty-base Store regression: 1 passed. Final frozen-source check-all, new-package install, real terminal send and beta publication remain pending.
 
 최종 별도 배포 사본 source_hash `c33ad5e43110d784e0c8a80fd3392461b1979042e8b9abb3814ca67f83d47ce2`에서 check-all exit 0. Rust 1,703개/30 suites/ignored 0, Docs 29개·Build 101개/skip 0, 합계 **1,833개 통과**. fmt·Clippy(-D warnings)·전체 build·요건·아키텍처·추적 검사 통과. Store 484개와 Core 137개를 포함한다. 로그 `target/all-terminal-full-check.log` SHA-256 `0dd90fd618786ffefea835b46c436c296c65ade8485f2e30705ab1be2bace191`. 기존 Core12 동일 SHA-256 복구, PID 65196. 원본 index는 비어 있고 HEAD와 미커밋·새 파일을 유지한다. 이 자동 검사 결과는 실제 계정·네트워크 시험, 새 패키지 설치 또는 베타 게시 완료를 뜻하지 않는다. 다음 단계는 새 preview.13/beta.3 패키징과 보호 백업 후 설치본의 터미널 취소·실제 합성 메일 발송·수신 점검이다. **[사람 보안 검토 필요]**.
+
+## 2026-11-03 설치본 터미널 이용·실제 합성 송수신 확인
+
+검증된 소스 `c33ad5e43110d784e0c8a80fd3392461b1979042e8b9abb3814ca67f83d47ce2`로 preview.13과 beta.3를 각각 새 빌드했다. 두 BUILD-METADATA는 `built_from_current_workspace`, build_performed=true, 승인된 Desktop 설정 포함을 확인했다. preview.13 ZIP SHA-256 `ea1dd02b87e099ecb8f0e547a6c697633b0d67d83df5d7a0c5817ee3594b4e51`, beta.3 ZIP SHA-256 `64cd3747944e8947d9672704557835bcbd1eb3e2bacb7bd713a0d22605397ba1`.
+
+Core12 동일 경로·hash·실행 인자를 대조해 중지하고 기존 데이터 9개 파일을 보호 백업했다. 전후 snapshot SHA-256 `7e2a315cebf757bf78c9c469409c5765affb75c5095318e6233970de2d840469` 일치. 기존 데이터·키·이전 설치 버전을 보존하고 공식 설치기로 preview.13을 적용했다. Core 0개에서 설치된 init만 실행해 자동 기동→기존 계정 선택→작업 메뉴까지 추가 Google 동의·한통 창·Hello 없이 도달했다. 실제 schema23→24 시작과 backup-before-v23 생성, ready Gmail 1개 및 transport/authentication 정상 상태를 확인했다.
+
+실제 계정·네트워크를 사용하는 수동 점검은 자동 시험과 분리했다. 이전에 성공한 시험 메일은 재발송하지 않았다. 새 합성 초안 2개를 각각 본인 주소로 만들고, 터미널 전체 내용·23바이트 첨부 preview에서 하나는 취소해 interrupted/APPROVAL_REQUIRED를 확인했다. 별도의 새 합성 메일은 사용자에게 위임받은 실제 시험 범위에서 보내기를 1회 선택했고 sent exit 0을 확인했다. 표준 Google API 수신 동기화·본문 읽기·첨부 검증으로 수신 1개, 본문·첨부 SHA-256 일치, 자동 재발송 0을 확인했다. 이 선택을 OS 사람 존재 증거나 보안 코드의 사람 검토 증거로 기록하지 않는다.
+
+beta.3 실제 ZIP의 격리 설치·모든 manifest 파일 크기/hash·help/version·삭제·사용자 데이터 sentinel 보존 검사가 통과했다. 이어 실행 중인 실제 preview.13 Core를 공식 beta.3 설치기 스스로 식별·종료하고 새 버전으로 전환하는 경로를 확인했다. Core 0개에서 beta.3 init이 자동 기동하고 기존 계정·작업 메뉴를 유지했다. beta.3에서 이전 취소 receipt가 미발송 상태, sent receipt가 sent, 수신 1개 및 본문·첨부 일치를 다시 확인했으며 새 발송 요청은 만들지 않았다. transport/authentication/accounts 모두 exit 0/ok=true이다.
+
+현재 설치는 `0.1.0-beta.3`이며 이전 버전과 보호 백업을 보존한다. 새 사용자 Google 로그인·동의, 실제 IMAP/SMTP 계정 시험은 이번 수동 점검에 포함하지 않았다. 공급자 표준 브라우저와 Google 앱의 미검증 안내는 한통 터미널 전환과 별개다. 다음 단계는 이 검증된 beta.3와 소스를 GitHub에 게시하고 다운로드 무결성을 확인하는 것이다. **[사람 보안 검토 필요]**.
