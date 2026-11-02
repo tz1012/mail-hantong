@@ -1618,3 +1618,11 @@ Core12 동일 경로·hash·실행 인자를 대조해 중지하고 기존 데�
 beta.3 실제 ZIP의 격리 설치·모든 manifest 파일 크기/hash·help/version·삭제·사용자 데이터 sentinel 보존 검사가 통과했다. 이어 실행 중인 실제 preview.13 Core를 공식 beta.3 설치기 스스로 식별·종료하고 새 버전으로 전환하는 경로를 확인했다. Core 0개에서 beta.3 init이 자동 기동하고 기존 계정·작업 메뉴를 유지했다. beta.3에서 이전 취소 receipt가 미발송 상태, sent receipt가 sent, 수신 1개 및 본문·첨부 일치를 다시 확인했으며 새 발송 요청은 만들지 않았다. transport/authentication/accounts 모두 exit 0/ok=true이다.
 
 현재 설치는 `0.1.0-beta.3`이며 이전 버전과 보호 백업을 보존한다. 새 사용자 Google 로그인·동의, 실제 IMAP/SMTP 계정 시험은 이번 수동 점검에 포함하지 않았다. 공급자 표준 브라우저와 Google 앱의 미검증 안내는 한통 터미널 전환과 별개다. 다음 단계는 이 검증된 beta.3와 소스를 GitHub에 게시하고 다운로드 무결성을 확인하는 것이다. **[사람 보안 검토 필요]**.
+
+## 2026-11-03 beta.3 공개 게시·공개 설치 경로 확인
+
+검증된 구현 소스 커밋 `d65dd6f`와 설치 점검 기록 `0d1ba5c`를 GitHub main에 fast-forward 게시했다. 원본 작업 트리의 HEAD `2852a31d0d8383d3a593a6479c20bb798b0d798e`, 비어 있는 index, 미커밋·새 파일은 유지한다. GitHub prerelease [v0.1.0-beta.3](https://github.com/tz1012/mail-hantong/releases/tag/v0.1.0-beta.3)에 ZIP·SHA256SUMS·BUILD-METADATA.json 3개 자산을 게시했다. draft=false/prerelease=true를 확인했다. 공개 다운로드 ZIP SHA-256 `64cd3747944e8947d9672704557835bcbd1eb3e2bacb7bd713a0d22605397ba1` 및 빌드 정보 checksum이 로컬 검증본과 일치한다.
+
+공개 main의 install.ps1을 직접 다운로드해 검증된 소스와 바이트 일치를 확인하고, 이 공개 스크립트가 GitHub에서 beta.3를 내려받아 별도 경로에 설치하는 전체 절차를 실행했다. 설치본 help/version exit 0, 삭제 시 합성 사용자 데이터 sentinel 보존, 실제 사용 중인 주 설치본 Core와 release-manifest hash 일치를 확인했다. 공개 releases의 기본 latest 선택도 beta.3이다. 이 점검은 실제 사용 설치본·계정·실행 중인 Core를 변경하지 않았다.
+
+결과: 현재 실제 설치 `0.1.0-beta.3`에서 기존 계정·키·발송/취소 이력을 유지하며 CLI 안에서 내용 확인·취소·발송한다. Google 표준 로그인·동의 브라우저는 별개다. 실제 Gmail 합성 송수신·본문/첨부 일치와 전체 1,833개 자동 검사 결과를 위 항목에 누적했다. 신규 Google 로그인 및 다른 실제 공급자 계정의 추가 점검, 보안 코드의 사람 검토는 남아 있다. 공개 베타 배포를 제품 전체의 정식 출시·사람 보안 검토 완료로 표시하지 않는다. **[사람 보안 검토 필요]**.
