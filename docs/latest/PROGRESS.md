@@ -1965,4 +1965,24 @@ Published beta.17: source 02dd4e9af5c9e4103f525619549505b4d17f52c1, canonical so
 
 대상 검증: platform 70, CLI 149, TUI 45, contracts message_body 8, IPC body 3, IPC Google 10, Store Google 원자 캐시 1, Secrets Gmail 2가 통과했다. 별도 소유 숨김 콘솔에서 방향키로 두 번째 값 선택, / 키 직후 Enter 전 명령 표시, 힌트 선택, Esc, 입력/출력 모드 복원을 검증했다(target/command-prompt-console-proof.json). 사용자 창·클립보드·입력은 조작하지 않았다. 검토 중 발견한 이전 계정 본문 혼입과 언어 변경 중 Loading 고착을 수정하고 회귀 시험을 추가했다. 변경 대상 all-target Clippy, 아키텍처 및 문서 검사와 후보 빌드/설치는 최종 확인 중이다. 전체 시험을 반복한 결과로 표시하지 않는다. 실제 발송·휴지통·비밀·ACL 변경은 수행하지 않았으며 보안/계약 변경은 [사람 검토 필요]. beta.18은 이 기록 시점에 아직 공개하지 않았다.
 
-Final beta.18 candidate: affected all-target Clippy and architecture checks passed, docs29 passed, packaged hidden-console TUI keyboard/mouse/unified/restore passed, and actual packaged CLI runtime Korean/English menu switching plus Esc/mode restoration passed. No mail send/Trash/credential/ACL effects. Installation/publication in progress.
+beta.18 최종 확인: 변경 대상 all-target Clippy(-D warnings), 아키텍처·traceability(341)와 문서29 검사가 통과했다. release 패키지와 커밋 archive의 canonical source hash가 c50182f5c90a1fe7cb9a03248e037d0834cef437ff673685fa878b6fa8147458로 일치했다. 추가 숨김 콘솔 검증에서 실제 패키지 CLI와 합성 TUI의 한국어→영어 실행 중 전환·종료·모드 복원이 통과했다. 설치한 beta.18 Core PID56180의 manifest SHA256 fdb9a8c9310358da280f9cf8c343f399b8085daf65a7e6716f4af16602d5f6f0을 확인했고 기존 계정3개가 모두 ready였다. 사용자 기존 창은 종료/입력하지 않았다.
+
+공개 배포 완료: https://github.com/tz1012/mail-hantong/releases/tag/v0.1.0-beta.18 , source 2f6fa93bccb8bd9ed523773a0e93ec66c8e11401. 공개 ZIP 재다운로드 SHA256 dd3ae6c10f872a55904389f01f93d613a4001487ba9170928ad9b899bc40a549(26,523,107 bytes, 261 manifest files)이 일치했다. 사이트05fc79a의 live beta.18 버전·설치 소스 pin·언어 전환 설명·Codex 제한 고지를 확인했다. root HEAD2852a31/index empty를 보존했다. 실제 메일 발송/휴지통·새 비밀 입력·ACL 변경 없이 검증했으며, 새 버전의 실계정 본문 UI 전 과정을 검증했다고 표시하지 않는다. 기존 Windows Codex 제한과 사람 보안/계약 검토 필요 상태를 유지한다.
+
+## 2026-11-04 /ai codex 지원 제한과 오류 코드 보존
+
+사용자가 beta.18 메일 읽기 화면에서 /ai codex 실행 후 CAPABILITY_UNSUPPORTED와 INTERNAL_ERROR가 연속 표시되는 증거를 제공했다. 현재 로컬 codex --version은 여전히 0.163.0이다. 첫 오류는 기존 문서에 기록한 Windows 임시 폴더 한정 named permission profile의 시작 제한이며, 실제 Codex 대화 지원이 완료됐다고 표시하지 않는다. 메일 등록이나 Google 계정 오류로 추정해 재연결/재동의를 요구하지 않는다.
+
+독립적인 표시 결함은 apps/hantong-cli/src/ai.rs::run_terminal_command가 try_run의 모든 비정상 종료 코드를 InternalError로 덮어쓰던 것이었다. 고정된 ErrorCode::ALL 종료 코드 역매핑으로 원래 CAPABILITY_UNSUPPORTED/AuthRequired/Offline 등의 의미를 보존하고, 알려지지 않은 종료 코드만 InternalError로 둔다. 성공0과 모든 계약 종료 코드 및 unknown255 회귀를 추가했다. AI CLI 시험7개와 hantong-cli all-target Clippy(-D warnings), fmt가 통과했다(target/ai-terminal-cli-tests.log, ai-terminal-error-clippy.log). 실제 모델 턴·AI 메일 작업·새 로그인·비밀·파일 접근 확대·Codex 전역 설정 변경은 수행하지 않았다. 이 변경은 로컬 소스에 있으며 설치된 beta.18이나 공개 ZIP이 수정됐다고 표시하지 않는다. 실제 Codex 연결 제한은 남아 있다.
+
+## 2026-11-04 Codex MXC 재검증과 Claude 공식 세션 연결 후보
+
+최신 사용자 지시로 Codex 연결 차단과 Claude를 재확인했다. 기존의 ‘Windows Codex 0.163.0 자체가 제한 프로필을 지원하지 않는다’는 진단은 너무 넓었다. 시작 검사를 분리하니 기존 백엔드(root deny+임시 cwd read)와 :minimal만 추가한 경우는 거부됐지만, 세션 전용 windows.sandbox=mxc와 공식 :minimal runtime read를 함께 사용하면 정확한 hantong_mail_temp 프로필로 시작했다. root deny, 정확히 새로 만든 임시 cwd read, 도구 network=false, shell/web/apps/plugins/MCP 차단을 유지하고 전역 설정·UAC·계정·권한을 수정하지 않는다. 동적 메일 도구는 기존 provider별 기능 설정 범위만 사용한다. 지원하지 않는 호스트는 실패 종료하며 root/workspace read로 폴백하지 않는다.
+
+실제 command-only MXC 합성 canary는 허용한 파일을 읽고 같은 상위 폴더의 비허용 파일은 읽지 못했다(target/codex-mxc-filesystem-proof.json). 모델 호출 없는 3가지 시작 비교는 target/codex-restricted-start-proof.json에 남겼다. 실제 제품 Session 라이브러리의 start→메일 도구 off→합성 질문 ask로 HANTONG_CONNECTION_OK 응답을 확인했다. 메일 내용은 질문에 넣지 않았고 모델 턴 동안 메일 도구는 꺼져 있었다(target/codex-mxc-model-proof.json). 메일 도구 연결 자체는 기존 동의에 결속한 로컬 MCP preflight를 통과했다. 실제 AI 메일 발송/휴지통 시험 결과로 표시하지 않는다. 최초 probe의 임시 폴더 정리는 MXC 핸들 종료 지연으로 오류가 나서 결과를 별도 확인하고, 이후 소유한 빈 임시 폴더의 best-effort 정리로 진단을 재실행했다. 사용자 파일은 삭제/정리하지 않았다.
+
+Claude Code 2.1.306은 설치돼 있고 공식 auth status는 loggedIn=true, authMethod=oauth_token이었다. 한통의 Claude 계정 공유 설정은 headless 상태 확인에서 HUMAN_STEP_REQUIRED라 아직 없다(생성/동의하지 않음). SDK/stream-json에 구독 OAuth를 쓰는 차단은 유지하고, 명시적인 대화형 /ai claude만 같은 터미널의 수정되지 않은 공식 Claude Code에 제어를 넘기는 경로를 추가했다. stdin/out/err 상속, 빈 임시 cwd, strict MCP, built-in 도구/사용자 정의 차단, 세션 저장 off이며 프롬프트 전달·응답 파싱·토큰 추출·자동 도구 승인은 없다. JSON/--no-input/--prompt는 이 경로로 폴백하지 않는다. 기존 provider별 Core 기능 설정과 발송/휴지통 터미널 확인을 유지한다. 처음 쓸 때의 계정 공유 확인과 실제 Claude 응답·MCP 메일 작업은 아직 사용자 단계다. Console/API 방식은 기존 내장 대화 경로를 유지한다.
+
+후보 변경 검증: AI library17, CLI150(추가 라우팅 가드 이전) 및 최종 CLI AI 관련8, AI/CLI all-target Clippy(-D warnings), fmt, architecture, traceability341 통과. fake provider가 root deny/:minimal read/network off/Windows MXC 조건을 확인한다. 고정 종료 코드 보존 수정도 함께 포함한다. docs/contracts/ai-managed-clients.md에 MXC와 native Claude의 경계·검증 한계를 기록했다. 소스·계약은 [사람 보안 검토 필요]. 아직 새 후보의 설치/공개 배포 전이다.
+
+최종 검토 정정(2026-11-04): Claude의 --no-session-persistence는 print 모드 전용이므로 native 대화에서 제거했다. native 시작의 한국어/영어 안내에는 대화 기록이 Claude Code 자체 설정을 따르며 한통은 대화를 수집하지 않음을 명시했다. 앞 단락의 ‘세션 저장 off’는 후보의 잘못된 가정이며 최종 코드의 보장이 아니다. 계약도 실제 경계에 맞췄다. 또한 Codex thread/start의 모든 ProviderFailed→SandboxUnavailable 변환을 제거하고 알려진 Windows/MXC 설정 오류만 분류한다. 인증/모델/네트워크/EOF 실패를 격리 미지원으로 표시하지 않는 회귀를 추가했다. 최초 beta.19 로컬 후보는 미공개·미설치 상태로 보존하고, 최종 후보는 별도 출력 디렉터리에 재생성한다.

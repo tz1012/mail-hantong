@@ -15,7 +15,9 @@ use std::{
 };
 mod agent;
 mod catalog;
+mod claude_interactive;
 pub use catalog::{Model, Preferences, effort_for_mode};
+pub use claude_interactive::run_claude_interactive;
 const MAX_FRAME: usize = 1_048_576;
 const MAX_STREAM: usize = 8 * 1024 * 1024;
 const MAX_PROMPT: usize = 32 * 1024;
@@ -76,6 +78,22 @@ impl AiError {
             Self::HumanStepRequired => "HUMAN_STEP_REQUIRED",
             Self::SandboxUnavailable => "CAPABILITY_UNSUPPORTED",
         }
+    }
+}
+
+fn provider_response_error(error: &Value) -> AiError {
+    let message = error.get("message").and_then(Value::as_str).unwrap_or("");
+    let windows_profile = message.contains("Windows sandbox")
+        && message.contains(":root")
+        && message.contains("read");
+    let unsupported_mxc =
+        message.contains("MXC is not supported") || message.contains("MXC is unavailable");
+    if error.get("code").and_then(Value::as_i64) == Some(-32603)
+        && (windows_profile || unsupported_mxc)
+    {
+        AiError::SandboxUnavailable
+    } else {
+        AiError::ProviderFailed
     }
 }
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -314,8 +332,8 @@ impl Process {
             };
             if value.get("id") == Some(&json!(id)) && value.get("method").is_none() {
                 self.pending = deferred;
-                if value.get("error").is_some() {
-                    return Err(AiError::ProviderFailed);
+                if let Some(error) = value.get("error") {
+                    return Err(provider_response_error(error));
                 }
                 return value.get("result").cloned().ok_or(AiError::Protocol);
             }
@@ -629,7 +647,13 @@ impl Session {
         }
         let mut p = codex()?;
         let cwd = p._cwd.0.to_str().ok_or(AiError::Io)?;
-        let mut params = json!({"cwd":cwd,"ephemeral":true,"approvalPolicy":"on-request","permissions":"hantong_mail_temp","runtimeWorkspaceRoots":[cwd],"serviceTier":"default","config":{"default_permissions":"hantong_mail_temp","permissions":{"hantong_mail_temp":{"filesystem":{":root":"deny",(cwd):"read"},"network":{"enabled":false}}},"features":{"shell_tool":false},"mcp_servers":{},"plugins":{},"apps":{"_default":{"enabled":false}},"web_search":"disabled"}});
+        let mut params = json!({"cwd":cwd,"ephemeral":true,"approvalPolicy":"on-request","permissions":"hantong_mail_temp","runtimeWorkspaceRoots":[cwd],"serviceTier":"default","config":{"default_permissions":"hantong_mail_temp","permissions":{"hantong_mail_temp":{"filesystem":{":root":"deny",":minimal":"read",(cwd):"read"},"network":{"enabled":false}}},"features":{"shell_tool":false},"mcp_servers":{},"plugins":{},"apps":{"_default":{"enabled":false}},"web_search":"disabled"}});
+        // Select the denied-read-capable backend only for this isolated session.
+        // Unsupported hosts fail closed; never replace it with root/workspace read.
+        #[cfg(windows)]
+        {
+            params["config"]["windows"] = json!({"sandbox":"mxc"});
+        }
         if let Some(model) = &self.preferences.model {
             params["model"] = json!(model);
         }
@@ -650,15 +674,7 @@ impl Session {
             params["dynamicTools"] = json!([{"type":"namespace","name":"hantong","description":"Authorized HanTong mail tools","tools":tools}]);
         }
         p.send(&json!({"method":"thread/start","id":4,"params":params}))?;
-        let result = p
-            .wait_result(4, Instant::now() + Duration::from_secs(30))
-            .map_err(|error| {
-                if error == AiError::ProviderFailed {
-                    AiError::SandboxUnavailable
-                } else {
-                    error
-                }
-            })?;
+        let result = p.wait_result(4, Instant::now() + Duration::from_secs(30))?;
         validate_codex_permission_profile(&result)?;
         let id = result["thread"]["id"]
             .as_str()
@@ -850,6 +866,33 @@ pub fn terminal_text(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn ai07_provider_error_does_not_disguise_auth_model_or_network_failures_as_sandbox() {
+        for message in [
+            "Authentication required",
+            "Model unavailable",
+            "Network request failed",
+            "Provider stopped",
+        ] {
+            assert_eq!(
+                provider_response_error(&json!({"code":-32603,"message":message})),
+                AiError::ProviderFailed
+            );
+        }
+        for message in [
+            "Windows sandbox requires effective :root read",
+            "MXC is not supported on this host",
+        ] {
+            assert_eq!(
+                provider_response_error(&json!({"code":-32603,"message":message})),
+                AiError::SandboxUnavailable
+            );
+            assert_eq!(
+                provider_response_error(&json!({"code":-32602,"message":message})),
+                AiError::ProviderFailed
+            );
+        }
+    }
     #[test]
     fn ai07_codex_rejects_missing_or_different_permission_profile_without_fallback() {
         for result in [

@@ -11,17 +11,25 @@ Draft; human security review required. AI-07, CLI-16, SEC-08.
 
 ## Current Windows execution limitation
 
-This contract describes the managed protocol and tool boundary; it does not
-claim that a provider can execute on every host. In the beta17 candidate,
-Codex 0.163.0 named profiles on Windows can reject the required effective
-root-read/temp-read capability even when an elevated backend is already
-configured. HanTong fails closed with localized `CAPABILITY_UNSUPPORTED`,
-preserves the existing registration, checks the exact active permission
-profile, and does not edit UAC/configuration or fall back to a broader legacy
-profile. The on-request enum and namespace tool protocol are implemented, but
-no real Codex model turn or AI mail exchange was performed. A read-only status
-check is not model-turn evidence. Provider authentication and inference remain
-separate environment gates.
+This contract describes the managed protocol and tool boundary. Codex 0.163.0
+on this Windows host rejects root-deny profiles under the previously selected
+legacy backend. The 2026-11-04 candidate selects MXC in request-local thread
+configuration, with root deny, the official `:minimal` runtime read baseline,
+and read access to the exact new empty temporary cwd only. Direct tool network
+access stays disabled, the returned named permission profile must match, and
+shell/MCP/apps/plugins/web remain disabled except the authorized dynamic mail
+tools. It does not modify the global Codex configuration, run setup/UAC, or
+fall back to root/workspace read when MXC is unavailable.
+
+A command-only synthetic probe on this host read the allowed canary and was
+denied the sibling canary; a metadata-only thread started with the exact
+profile. Neither result alone proves a model turn or AI mail exchange. MXC
+support remains host-dependent. Fail closed with CAPABILITY_UNSUPPORTED on an
+unsupported host. Runtime-path exceptions are platform-defined, not a claim
+that only the empty cwd can be opened. Human security review is pending.
+
+Official references: https://developers.openai.com/codex/permissions and
+https://developers.openai.com/codex/windows/windows-sandbox .
 
 AI is initiated only by explicit freeform chat/login commands. Built-in mail
 tools are not attached until the Core-owned provider/account feature setup has
@@ -37,6 +45,31 @@ stable actionable provider-missing result.
 Codex uses the official app-server stdio initialize, managed account/login/start type chatgpt, trusted-HTTPS browser authUrl and managed completion notification. Auth status returns only an authenticated boolean/type. Chat creates a separate empty working directory and a dedicated thread, disables shell, MCP, apps, plugins and web tools, restricts filesystem reads, and refuses all server-initiated tool/approval requests. Only bounded sanitized agentMessage deltas are displayed. Turn IDs/thread IDs must match the active request. No approvalPolicy=never autoapproval or unrestricted filesystem/network tool flags are used.
 
 Claude uses its official native CLI. Browser sign-in uses auth login --console for API usage billing, not claude.ai subscriber OAuth. Headless chat accepts only api_key/api_key_helper/third_party auth modes, refuses subscription or ambiguous auth modes, disables built-in and MCP tools/customizations, and streams sanitized text. The provider owns credential setup; mail-hantong does not extract CLI tokens. Anthropic requires prior approval for third-party products offering claude.ai login or subscriber limits, so that is not advertised as supported.
+
+### User-owned interactive Claude Code session (2026-11-04)
+
+An explicit interactive Claude request may hand the existing terminal to the
+official unmodified Claude Code binary when its existing login uses OAuth.
+This is a native Claude Code session, not embedded HanTong chat. Stdin/stdout/
+stderr are inherited directly; HanTong supplies no prompt, parses no transcript,
+and does not handle any provider credential. No print/stream-JSON/SDK mode,
+automatic tool approval or bypass-permissions option is allowed in this path.
+Noninteractive, JSON and --prompt requests keep the API-authentication boundary.
+
+The native session gets an explicit provider-bound HanTong MCP configuration
+after the same Core-owned account/transfer feature setup. A new empty cwd,
+disabled built-in tools/customizations and strict MCP configuration limit
+accidental context. Conversation history follows Claude Code's own settings;
+HanTong does not capture it or claim that interactive history is disabled.
+The print-only no-session-persistence flag is not used here. The native-session
+notice discloses this before handoff. Existing provider/account consent,
+tool policy and terminal confirmation of sends/Trash remain mandatory. The
+official CLI owns its session and returns control on exit. API-authenticated
+embedded Claude continues to use the existing protocol and validation.
+
+Reference: https://code.claude.com/docs/en/legal-and-compliance and
+https://code.claude.com/docs/en/mcp . Native model replies and real mail mutations
+are not claimed verified by login status or argument tests. Human review pending.
 
 Every child has bounded frames/output, deadlines, kill and reap on error/drop; raw stderr is discarded with a bound. Tests use fake subprocess streams and never launch actual provider auth/inference. External MCP mail use remains a separate explicit registered Core permission flow; it is not silently broadened by built-in AI consent.
 

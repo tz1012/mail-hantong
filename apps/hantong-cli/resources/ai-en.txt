@@ -11,6 +11,7 @@ failed=The AI operation failed.
 sandbox_unavailable=This Codex runtime cannot enforce HanTong's restricted file access on Windows. Mail registration is preserved. Chat is unavailable; no broader file access was enabled.
 login=Sign in to this provider first.
 human=An interactive terminal is required. For scripts, use chat PROVIDER --prompt TEXT after signing in.
+claude_native=Starting official Claude Code in this terminal. Its own conversation-history settings apply; HanTong does not capture the conversation. Review its prompts and type /exit to return to HanTong.
 help_header=AI chat commands:
 help_help=/help — show this command list (no provider call)
 help_status=/status — show the active provider, model, mode, fast, and agent state

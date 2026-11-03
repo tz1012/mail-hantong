@@ -1,6 +1,6 @@
-# mail-hantong CLI — Windows beta.17
+# mail-hantong CLI — Windows beta.19
 
-beta.17 keeps the Windows PowerShell update path, newest-compatible release
+beta.19 keeps the Windows PowerShell update path, newest-compatible release
 selection and automatic downgrade protection. New accounts use the same read,
 body, compose and individually confirmed send flow as existing accounts. Google
 consent is followed by exact scope selection in the same terminal. Generic
@@ -17,7 +17,7 @@ and stable error code. Do not send credentials, database files or mail content.
 
 The command is `hantong`. English is the default; use `--lang ko` for Korean. The companion `mail-hantong-core` process handles encrypted local storage, mail operations and policy. The graphical mail application is not included in the CLI package.
 
-**Candidate: 0.1.0-beta.17 (not published).** The [Korean website guide](https://tz1012.github.io/mail-hantong/) covers installation, mail and AI feature switching. Release downloads include checksums and build metadata. The preceding baseline passed 1,906 full-check test executions; this candidate uses affected-package regression checks and does not claim that old count as a new full-suite result. Earlier affected-package evidence covers Store/Core IMAP Trash, migration, SMTP endpoint, CLI setup and terminal-flow behavior. Real Daum IMAP and SMTP authentication completed in the preceding candidate flow. One synthetic message was sent through the immutable same-terminal preview and its sent status was verified against exactly one matching Gmail message. The Daum IMAP catalog contained 17 mailboxes; two recent pages completed, repeated refresh succeeded, and body reads were verified on both runs. Human security review, clean Windows VM testing and Google publisher verification remain separate open gates. Real AI login, paid inference and real Trash movement were not tested. This candidate migrates local storage to schema 26; do not run an older core against migrated data. macOS mail operations are not available yet. Final console and package verification remain pending.
+**Release: 0.1.0-beta.19.** The [Korean website guide](https://tz1012.github.io/mail-hantong/) covers installation, mail and AI feature switching. Release downloads include checksums and build metadata. The preceding baseline passed 1,906 full-check test executions; this candidate uses affected-package regression checks and does not claim that old count as a new full-suite result. Earlier affected-package evidence covers Store/Core IMAP Trash, migration, SMTP endpoint, CLI setup and terminal-flow behavior. Real Daum IMAP and SMTP authentication completed in the preceding candidate flow. One synthetic message was sent through the immutable same-terminal preview and its sent status was verified against exactly one matching Gmail message. The Daum IMAP catalog contained 17 mailboxes; two recent pages completed, repeated refresh succeeded, and body reads were verified on both runs. Human security review, clean Windows VM testing and Google publisher verification remain separate open gates. A synthetic Codex model reply was verified with mail tools disconnected; Claude login status was verified. Real Claude inference and real Trash movement were not tested. This candidate migrates local storage to schema 26; do not run an older core against migrated data. macOS mail operations are not available yet. Final console and package verification remain pending.
 
 ## What works in this preview
 
@@ -31,7 +31,7 @@ The current beta includes guided installation/startup, Google account selection 
 | Bounded UID metadata collection, reconciliation and recovery | General attachment download and rich HTML display |
 | Local metadata lookup, bounded text body reading and immutable drafts | Scheduled sending, contacts, tag editing and rules |
 | SMTP setup and individually confirmed sending | Unattended sending or automatic resend |
-| Managed AI protocol/tool integration and MCP mail tools (provider execution environment required) | Codex chat on the current Windows named-profile backend; Claude subscription OAuth in third-party products |
+| Managed AI protocol/tool integration and MCP mail tools (provider execution environment required) | Codex on hosts without MXC; Claude subscription OAuth in embedded/programmatic integrations |
 | Core status, diagnostics and stable error/exit codes | Complete background mailbox synchronization |
 
 IMAP/SMTP and advanced Google setup use hidden credential input in the same console. Passwords are never accepted through command arguments or JSON. Core validates the complete pending request before applying the selected operation. Interactive steps require terminal input and output; `--no-input`, redirected output and JSON do not confirm an operation. Terminal confirmation expresses intent and does not provide Windows Hello human-presence verification.
@@ -355,7 +355,7 @@ The package tool builds the terminal distribution and core, records versions and
 
 `hantong`은 터미널에서 사용하는 CLI입니다. `--lang ko`로 한국어를 선택하고 자동화에는 `--json`과 종료 코드를 사용합니다.
 
-현재 beta.17 후보는 `/help`, 내장 AI 메일 도구 자동 연결, Gmail과 일반 IMAP 계정의 메일 조회·본문 읽기·작성·개별 발송 확인, 한 통씩 휴지통 이동을 제공합니다. AI 최초 이용에는 같은 터미널에서 제공자별 계정·도구·외부 전송 범위를 확인하며, 설정 후 수동 MCP 등록이나 필수 `/agent on` 없이 연결합니다. 발송·휴지통 이동은 매번 같은 터미널에서 최종 확인합니다. Gmail 휴지통 이동에는 Google Modify 권한이 필요하며 영구·대량 삭제는 지원하지 않습니다. 업데이트만으로 권한을 부여하지 않으며 과거 중단 요청의 범위도 바꾸지 않습니다. 일반 첨부 다운로드·예약·주소록·규칙 자동화와 Mac 제품은 후속입니다.
+현재 beta.19 후보는 `/help`, 내장 AI 메일 도구 자동 연결, Gmail과 일반 IMAP 계정의 메일 조회·본문 읽기·작성·개별 발송 확인, 한 통씩 휴지통 이동을 제공합니다. AI 최초 이용에는 같은 터미널에서 제공자별 계정·도구·외부 전송 범위를 확인하며, 설정 후 수동 MCP 등록이나 필수 `/agent on` 없이 연결합니다. 발송·휴지통 이동은 매번 같은 터미널에서 최종 확인합니다. Gmail 휴지통 이동에는 Google Modify 권한이 필요하며 영구·대량 삭제는 지원하지 않습니다. 업데이트만으로 권한을 부여하지 않으며 과거 중단 요청의 범위도 바꾸지 않습니다. 일반 첨부 다운로드·예약·주소록·규칙 자동화와 Mac 제품은 후속입니다.
 
 위 PowerShell 한 줄로 설치·업데이트한 뒤 `hantong --lang ko init`을 실행하세요. 코어는 필요할 때 자동으로 시작합니다. 계정 연결·기능 선택·숨김 입력·메일 전체 검토·보내기/취소는 같은 터미널에서 진행하며, Google 로그인·동의만 브라우저를 사용합니다. 계정 작업 메뉴 4번은 작성·보내기 활성화, 5번은 메일 작성입니다. AI는 별도 `hantong ai login codex`, `hantong ai chat codex` 명령으로 시작하고 `/provider`, `/model`, `/mode`, `/fast`, `/agent`로 지원 기능을 전환합니다. 현재 beta17 후보는 Windows Codex 0.163.0 named profile의 유효 root-read/temp-read 기능 거부를 감지하면 기존 등록을 보존한 채 현지화된 `CAPABILITY_UNSUPPORTED`로 종료합니다. UAC·설정 변경이나 넓은 레거시 프로필 대체는 하지 않으며, 실제 모델 turn·AI 메일 교환은 수행하지 않았습니다. 자세한 순서는 [홈페이지](https://tz1012.github.io/mail-hantong/)에 있습니다.
 
@@ -397,3 +397,17 @@ then choose Send or Cancel. This personal path opens no native HanTong window
 and requests no Windows Hello. Headless/JSON sending cannot confirm a message.
 Other registered profiles and protected settings retain their existing identity
 checks. Cancelling does not send; unknown is never automatically retried.
+
+
+### Windows provider connection behavior (beta.19)
+
+Codex selects MXC for the current thread only, with root-deny/minimal-runtime-read
+and exact temporary cwd read; no global configuration or UAC change is made.
+The host must support MXC. A synthetic answer and a denied sibling canary were
+verified on this host. No actual mail content was used in that inference.
+
+Claude subscription/OAuth login uses the official interactive Claude Code CLI
+with explicit HanTong MCP settings in the same terminal. The native CLI owns
+input/output and authentication; `/exit` returns to HanTong. API billing modes
+retain embedded chat. Headless prompt/JSON requests never fall back to OAuth
+interactive mode. Claude model replies and native send/Trash remain unverified.

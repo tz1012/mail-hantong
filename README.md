@@ -2,7 +2,7 @@
 
 A multi-account mail hub for Windows, with a shared core service, the `hantong` CLI, MCP access, and an optional GUI. GUI languages are Korean and English; themes are light, dark, and system. The CLI defaults to English and supports Korean.
 
-**Current Windows CLI release: 0.1.0-beta.18.** Start with the [Korean installation and feature guide](https://tz1012.github.io/mail-hantong/). Account setup, feature selection, composing, Trash review and Send/Cancel use the same terminal without a separate HanTong window or Windows Hello. Google OAuth opens its standard provider browser. See the [CLI usage guide](docs/latest/CLI-LAUNCH.md) for mail, AI sessions, MCP tools and remaining limitations.
+**Current Windows CLI release: 0.1.0-beta.19.** Start with the [Korean installation and feature guide](https://tz1012.github.io/mail-hantong/). Account setup, feature selection, composing, Trash review and Send/Cancel use the same terminal without a separate HanTong window or Windows Hello. Google OAuth opens its standard provider browser. See the [CLI usage guide](docs/latest/CLI-LAUNCH.md) for mail, AI sessions, MCP tools and remaining limitations.
 
 The package contains two terminal experiences over the same Core, account store,
 policy checks and provider operations. `hantong` is the guided, command-style
@@ -42,7 +42,7 @@ remaining width to the body on wide windows. Startup shows a short preparation
 animation while the existing startup work runs, then returns to the normal
 accounts/version/update notice prompt. It never installs an update by itself.
 
-beta.18 keeps the PowerShell update path, newest-compatible release selection
+beta.19 keeps the PowerShell update path, newest-compatible release selection
 and automatic downgrade protection. New accounts can use the same read, body,
 compose and individually confirmed send flow as existing accounts. Google
 account selection requests the required consent and the same terminal confirms
@@ -115,15 +115,22 @@ The candidate includes publisher Google Desktop configuration; ordinary users do
 
 Optional AI sessions use separately installed official Codex CLI or Claude Code: `hantong ai login codex` then `hantong ai chat codex` (use `claude` for Console/API billing). `/help` lists available commands and descriptions. Built-in AI automatically connects provider-specific mail tools after the first same-terminal account and external-transfer setup; manual MCP registration and `/agent on` are not required. `/provider`, `/model`, `/mode`, `/fast on|off` and `/agent on|off` switch supported features. Sending and single-message Gmail trash moves require final terminal confirmation; trash also requires Google Modify permission. Permanent and batch deletion are unsupported. External MCP grants remain separate.
 
-The beta17 candidate does not claim that a Codex model turn works on every
-Windows setup. With Codex 0.163.0, a named profile can reject the required
-effective root-read/temp-read capability even when an elevated backend is
-already configured. HanTong fails closed with localized `CAPABILITY_UNSUPPORTED`,
-preserves the existing registration, checks the exact active permission
-profile, and makes no UAC/configuration edit or broad legacy fallback. The
-on-request enum and namespace tool protocol are implemented, but no real
-Codex model turn or AI mail exchange was performed. Claude authentication and
-inference were not exercised either. Follow the [AI and agent instructions](docs/latest/CLI-LAUNCH.md#ai-sessions-and-agent-tools).
+On supported Windows hosts, Codex uses a request-local MXC sandbox with disk
+reads denied by default, the official minimal runtime-path exception and the
+exact empty temporary working directory. Shell, web, apps/plugins and direct
+tool network access remain disabled. The selected permission profile is checked;
+unsupported hosts fail with CAPABILITY_UNSUPPORTED instead of broader access.
+A synthetic Codex reply and an allowed/denied filesystem canary were verified
+on this host. No mail content was included in that model check.
+
+Claude Console/API modes keep the embedded session. For a subscription/OAuth
+login, an interactive request hands control to the user's official, unmodified
+Claude Code CLI with explicit HanTong MCP settings. HanTong does not forward
+prompts, parse replies or extract tokens in that session. Use Claude Code's
+`/exit` to return. Programmatic `--prompt`/JSON use still requires API-compatible
+authentication. Claude login status was verified; an actual Claude model reply
+and real send/Trash remain separate verification gaps.
+Follow the [AI and agent instructions](docs/latest/CLI-LAUNCH.md#ai-sessions-and-agent-tools).
 
 Windows GUI는 `cargo run -p mail-hantong-gui -- --lang ko --theme system`으로 실행합니다. 영어는 `--lang en`, 테마는 `light`, `dark`, `system`입니다. GUI는 CLI와 별도 등록을 사용하며, 사용자가 연결을 요청하고 보호된 확인 창에서 검토한 계정의 저장된 폴더·메일 메타데이터만 읽습니다. 선택한 폴더에서 전체·읽지 않음·즐겨찾기로 목록을 좁히고 다시 조회할 수 있습니다. 현대적인 메일 화면의 구성과 참조 기준은 [디자인 가이드](docs/latest/DESIGN.md)에 기록합니다. 표시 설정 저장·본문·첨부·작성·발송은 아직 개발 중입니다. 최신 검증 여부는 [진행 기록](docs/latest/PROGRESS.md)을 확인하세요.
 

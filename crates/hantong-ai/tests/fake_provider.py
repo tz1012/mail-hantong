@@ -1,4 +1,4 @@
-import sys,json,time
+import sys,json,time,os
 mode=sys.argv[1]
 def send(value): print(json.dumps(value),flush=True)
 if mode=='oversize':
@@ -32,6 +32,9 @@ for line in sys.stdin:
   assert request['params']['approvalPolicy']=='on-request'
   assert request['params']['permissions']=='hantong_mail_temp' and 'sandbox' not in request['params']
   assert request['params']['config']['permissions']['hantong_mail_temp']['filesystem'][':root']=='deny'
+  assert request['params']['config']['permissions']['hantong_mail_temp']['filesystem'][':minimal']=='read'
+  assert request['params']['config']['permissions']['hantong_mail_temp']['network']['enabled'] is False
+  if os.name=='nt': assert request['params']['config']['windows']['sandbox']=='mxc'
   if 'dynamicTools' in request['params']:
    namespace=request['params']['dynamicTools'][0]
    assert namespace['type']=='namespace' and namespace['name']=='hantong'

@@ -249,6 +249,31 @@ pub(super) fn try_run(
                     }
                     return Some(error.exit_code());
                 }
+                // Claude OAuth belongs to the official interactive Claude Code
+                // process. Keep prompt-bearing/headless requests on the existing
+                // embedded path, where Session::start still rejects OAuth.
+                let interactive = !json_mode
+                    && !no_input
+                    && io::stdin().is_terminal()
+                    && io::stdout().is_terminal();
+                let native_auth = if provider == Provider::Claude && prompt.is_none() && interactive
+                {
+                    hantong_ai::status(provider).ok()
+                } else {
+                    None
+                };
+                if use_native_claude(
+                    provider,
+                    prompt.is_some(),
+                    interactive,
+                    native_auth.as_ref().and_then(|auth| auth.mode.as_deref()),
+                ) {
+                    println!("{}", text(ko, "claude_native"));
+                    return Some(match hantong_ai::run_claude_interactive() {
+                        Ok(()) => 0,
+                        Err(error) => failure(error, ko, false),
+                    });
+                }
                 let mut session = match Session::start(provider) {
                     Ok(v) => v,
                     Err(e) => return Some(failure(e, ko, json_mode)),
@@ -384,11 +409,69 @@ pub(super) fn run_terminal_command(command: &str, lang: crate::Lang) -> Result<(
         provider.name().to_owned(),
     ];
     let code = try_run(&command, ko, false, false).ok_or(ErrorCode::InvalidInput)?;
-    if code == 0 {
-        Ok(())
-    } else {
-        Err(ErrorCode::InternalError)
+    terminal_exit_result(code)
+}
+
+fn use_native_claude(
+    provider: Provider,
+    has_prompt: bool,
+    interactive: bool,
+    mode: Option<&str>,
+) -> bool {
+    provider == Provider::Claude
+        && !has_prompt
+        && interactive
+        && matches!(mode, Some("oauth_token" | "claude.ai"))
+}
+
+#[cfg(test)]
+#[test]
+fn ai07_native_oauth_handoff_never_accepts_headless_or_forwarded_prompts() {
+    for mode in ["oauth_token", "claude.ai"] {
+        assert!(use_native_claude(Provider::Claude, false, true, Some(mode)));
+        assert!(!use_native_claude(Provider::Claude, true, true, Some(mode)));
+        assert!(!use_native_claude(
+            Provider::Claude,
+            false,
+            false,
+            Some(mode)
+        ));
+        assert!(!use_native_claude(Provider::Codex, false, true, Some(mode)));
     }
+    for mode in [
+        None,
+        Some("api_key"),
+        Some("api_key_helper"),
+        Some("third_party"),
+        Some("unknown"),
+    ] {
+        assert!(!use_native_claude(Provider::Claude, false, true, mode));
+    }
+}
+
+fn terminal_exit_result(code: i32) -> Result<(), ErrorCode> {
+    if code == 0 {
+        return Ok(());
+    }
+    Err(ErrorCode::ALL
+        .iter()
+        .copied()
+        .find(|error| error.exit_code() == code)
+        .unwrap_or(ErrorCode::InternalError))
+}
+
+#[cfg(test)]
+#[test]
+fn cli17_ai_terminal_preserves_stable_failure_codes() {
+    assert_eq!(terminal_exit_result(0), Ok(()));
+    for error in ErrorCode::ALL {
+        assert_eq!(terminal_exit_result(error.exit_code()), Err(error));
+    }
+    assert_eq!(terminal_exit_result(255), Err(ErrorCode::InternalError));
+    assert_eq!(
+        terminal_exit_result(ErrorCode::CapabilityUnsupported.exit_code()),
+        Err(ErrorCode::CapabilityUnsupported)
+    );
 }
 enum Slash {
     Continue,
