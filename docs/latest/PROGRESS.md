@@ -1672,3 +1672,17 @@ AI 대화 시작은 설정된 제공자 프로필을 자동 연결한다. 최초
 검증 소스 hash `2ad5e1917e700713f986d92b6a12397e078953549919b88c805f349c640920d7`; 로그 `target/ai-auto-full-check.log` SHA-256 `91ae37002dd4ecbd2fa42a313e59a4646e725ad6875a5f00282dc69c07999942`; 요약 `target/ai-auto-verification.json`. 검사 후 같은 beta.3 실행 파일 SHA-256 `710aeff80153953f8a2625ba041a0ff48f3f434f41c74efb50781c1397f0b80c`와 실행 인자로 서비스를 복구했다(PID 50332). 설치된 beta.3의 `--json core status`는 exit 0/ok=true/transport_ready=true이다. 이 bootstrap 상태의 mail_ready=false/authenticated=false는 실제 계정·메일 도구를 조회하지 않는 기존 상태 응답이며 계정이 끊겼다는 판정으로 쓰지 않는다. 최종 추적표 검사도 동일 source hash/341 criteria/valid=true이다.
 
 사용자가 ‘코어’의 의미를 물었다. 사용자에게는 별도로 관리할 대상이 아니라 한통 실행 시 자동으로 시작되어 실제 메일 처리와 권한 검사를 맡는 백그라운드 프로그램이라고 설명했다. 이 설명을 새로운 GUI·서비스 설치 방식 변경으로 취급하지 않는다. 내부 개발 용어와 사용자 안내 표현은 구분한다.
+
+## 2026-11-03 beta.4 공개 배포와 설치기 호환성 수정
+
+사용자가 최신 버전 배포를 명시적으로 지시했다. 원본 작업트리 HEAD `2852a31d0d8383d3a593a6479c20bb798b0d798e`와 빈 index, 미커밋·새 파일을 보존하고 별도 `release/beta4-20261103` 작업트리에 공개 소스 856개 파일을 복사했다. 로컬 실계정 검증·심사 자료 41개는 복사하지 않고 이미 공개된 문서는 보존했다. 자격증명 형태 검사의 기존 공개 TLS 시험용 키 2개는 원격과 바이트가 동일함을 확인했으며 그 외 탐지 0개였다. 실제 키·프로필·DB는 포함하지 않았다.
+
+`v0.1.0-beta.4`를 소스 `39ce15ea0b17e7fcc38d0b2c5a1785c867dc059c`에 결속한 GitHub 사전 릴리스로 공개했다. Windows x64 ZIP, SHA256SUMS, BUILD-METADATA.json을 게시했고 공개 다운로드를 다시 받아 ZIP SHA-256 `a885b73d476ea88f961bc1a5f1fa05fd34d9a43a74ffe7dfdde01b0379f5e1f3`, 25,003,405 bytes가 로컬과 동일함을 확인했다. manifest 260개 파일의 크기/hash, PE/help/version, 배포자 설정의 기존 승인 beta.3 자산과 동일성, 사용자 DB·프로필 미포함을 검증했다. 빌드 source hash는 기존 전체 **1,856개 검사**의 `2ad5e1917e700713f986d92b6a12397e078953549919b88c805f349c640920d7`와 같다. 초안 생성의 짧은 target SHA는 GitHub 422로 거절되어 전체 SHA로 수정 후 정상 공개했다.
+
+별도 경로의 실제 설치와 `hantong /help`, `hantong ai help`, `hantong ai providers --json`, MCP version, Core/T help 6개 실행이 통과했다. 문서 29개와 패키지 검사 10개도 재실행해 통과했다. 공개 main 설치기의 Windows PowerShell 5.1 실험에서는 Invoke-RestMethod의 JSON 배열을 직접 `@(...)`로 감싸 중첩 배열이 되는 기존 버그를 발견했다. 반환값을 먼저 변수에 할당한 뒤 열거하도록 수정하고 네트워크 없는 native PS 5.1 회귀 시험을 추가했다. 처음 회귀 시험의 mock switch 선언 누락도 바로잡았으며 관련 설치 시험 2개 및 전체 Build **102개 통과**를 확인했다. 후속 설치기 수정은 `d950894ad41b952a71917fd9ef9dc7bb31c34d2a`로 main에 게시했고 릴리스 바이너리·태그·체크섬은 바꾸지 않았다. 후속 추적표 source hash는 `5fa2708797fcec28fe37020e6ee48da9eac7c10294fa396470a74b67a5d092a4`다. 바이너리 전체 검사와 후속 설치기 검사 수를 합산한 새 전체 검사 수치로 주장하지 않는다.
+
+GitHub raw main CDN이 수정 전 설치기를 일시 반환하여 수정 commit의 공개 고정 URL로 bootstrap을 실행했다. 최신 공개 릴리스 자동 선택·ZIP 다운로드·체크섬·별도 경로 설치·설치된 AI 도움말까지 통과했다. 시스템 PATH와 실제 mail-hantong 데이터는 변경하지 않았다. 근거는 `target/beta4-source-snapshot.json`, `target/beta4-package-verification.json`, `target/beta4-smoke-verification.json`, `target/beta4-public-install-verification.json`, `target/beta4-bootstrap-build-tests.log`에 있다.
+
+홈페이지 gh-pages `5318834`는 beta.4 다운로드, `/help`, 표시된 준비 완료 계정 전체 연결/취소, 제공자별 외부 전송 설정, 내장 AI 자동 도구와 외부 MCP 등록의 차이, Gmail 휴지통/Modify/터미널 최종 확인, 영구·대량 삭제 미지원으로 갱신했다. 개인정보·이용 안내도 보완했다. HTML 파싱·로컬 링크·diff 검사, Pages 배포 success와 공개 HTTP의 beta.4/자동 도구/help 문구를 확인했다. beta.3의 실제 설치·Gmail 합성 송수신 검증은 해당 버전의 근거로 구분했다.
+
+공개 주소: https://github.com/tz1012/mail-hantong/releases/tag/v0.1.0-beta.4 및 https://tz1012.github.io/mail-hantong/ . 이번 작업은 공개 배포이며 사용자 PC 기본 설치본 교체나 실제 DB의 schema25 이행은 수행하지 않았다. 실제 AI 로그인·유료 추론·Google 추가 동의·실제 발송/삭제도 실행하지 않았다. 새 버전 최초 실행 시 schema25 이행 후 이전 코어로 되돌리지 않는 제약을 릴리스에 명시했다. **[사람 보안 검토 필요]** 상태는 유지한다.
