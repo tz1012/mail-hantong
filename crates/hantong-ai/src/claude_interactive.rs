@@ -26,10 +26,21 @@ fn native_args(mcp_config: &Value) -> Vec<String> {
         mcp_config.to_string(),
         "--tools".into(),
         "".into(),
-        "--safe-mode".into(),
         "--restricted".into(),
+        "--disable-slash-commands".into(),
         "--setting-sources".into(),
         "".into(),
+        "--permission-mode".into(),
+        "default".into(),
+        "--no-chrome".into(),
+        "--settings".into(),
+        serde_json::json!({
+            "disableAllHooks": true,
+            "autoMemoryEnabled": false,
+            "disableClaudeAiConnectors": true,
+            "disableAutoMode": "disable"
+        })
+        .to_string(),
     ]
 }
 
@@ -55,6 +66,9 @@ pub fn run_claude_interactive() -> Result<(), AiError> {
     let cwd = Directory::new()?;
     let mut child = Command::new(resolve(Provider::Claude)?)
         .args(refs)
+        .env("CLAUDE_CODE_DISABLE_CLAUDE_MDS", "1")
+        .env("CLAUDE_CODE_DISABLE_AUTO_MEMORY", "1")
+        .env("DISABLE_AUTOUPDATER", "1")
         .current_dir(&cwd.0)
         .stdin(Stdio::inherit())
         .stdout(Stdio::inherit())
@@ -105,7 +119,20 @@ mod tests {
             args.windows(2)
                 .any(|w| w[0] == "--setting-sources" && w[1].is_empty())
         );
-        assert!(args.contains(&"--safe-mode".to_owned()));
+        // Safe mode also disables the explicitly configured mail MCP server.
+        assert!(!args.contains(&"--safe-mode".to_owned()));
+        assert!(args.contains(&"--disable-slash-commands".to_owned()));
+        assert!(
+            args.windows(2)
+                .any(|w| w == ["--permission-mode", "default"])
+        );
+        let settings: Value =
+            serde_json::from_str(&args[args.iter().position(|v| v == "--settings").unwrap() + 1])
+                .unwrap();
+        assert_eq!(settings["disableAllHooks"], true);
+        assert_eq!(settings["disableClaudeAiConnectors"], true);
+        assert_eq!(settings["autoMemoryEnabled"], false);
+        assert_eq!(settings["disableAutoMode"], "disable");
         assert!(args.contains(&"--restricted".to_owned()));
         // This flag is print-mode-only; never advertise it for native sessions.
         assert!(!args.contains(&"--no-session-persistence".to_owned()));

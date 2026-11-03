@@ -67,6 +67,17 @@ tool policy and terminal confirmation of sends/Trash remain mandatory. The
 official CLI owns its session and returns control on exit. API-authenticated
 embedded Claude continues to use the existing protocol and validation.
 
+2026-11-04 runtime correction: `--safe-mode` disables explicit MCP too, so it
+is not used. The native process instead uses restricted mode, no built-in tools,
+strict inline MCP, disabled skills/commands, explicit default permission mode,
+and per-session settings disabling hooks, auto memory, claude.ai connectors and
+Auto mode. Process-local environment disables CLAUDE.md discovery, auto memory
+and automatic provider updates. Chrome integration is disabled. Global provider
+settings and credentials are not rewritten; administrator policy still applies.
+Ctrl+C twice returns to HanTong; slash-command availability is not promised.
+Claude auth status is read as one bounded JSON document (1 MiB, 20-second
+deadline), not as a line-framed session message. Normal streams retain framing.
+
 Reference: https://code.claude.com/docs/en/legal-and-compliance and
 https://code.claude.com/docs/en/mcp . Native model replies and real mail mutations
 are not claimed verified by login status or argument tests. Human review pending.

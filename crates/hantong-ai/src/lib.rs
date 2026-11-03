@@ -176,6 +176,12 @@ struct Process {
 }
 impl Process {
     fn spawn(program: &Path, args: &[&str]) -> Result<Self, AiError> {
+        Self::spawn_mode(program, args, false)
+    }
+    fn spawn_document(program: &Path, args: &[&str]) -> Result<Self, AiError> {
+        Self::spawn_mode(program, args, true)
+    }
+    fn spawn_mode(program: &Path, args: &[&str], document: bool) -> Result<Self, AiError> {
         let cwd = Directory::new()?;
         let mut command = Command::new(program);
         command
@@ -201,11 +207,35 @@ impl Process {
             }
         });
         let input = Some(writes);
-        let stdout = child.stdout.take().ok_or(AiError::Io)?;
+        let mut stdout = child.stdout.take().ok_or(AiError::Io)?;
         let stderr = child.stderr.take().ok_or(AiError::Io)?;
         let (tx, rx) = mpsc::sync_channel(16);
         let errors = tx.clone();
         thread::spawn(move || {
+            if document {
+                let mut bytes = Vec::new();
+                let read = Read::take(&mut stdout, (MAX_FRAME + 1) as u64).read_to_end(&mut bytes);
+                match read {
+                    Ok(_) if bytes.len() > MAX_FRAME => {
+                        let _ = tx.send(Frame::Error(AiError::TooLarge));
+                    }
+                    Ok(0) => {
+                        let _ = tx.send(Frame::End);
+                    }
+                    Ok(_) => match serde_json::from_slice(&bytes) {
+                        Ok(v) => {
+                            let _ = tx.send(Frame::Json(v));
+                        }
+                        Err(_) => {
+                            let _ = tx.send(Frame::Error(AiError::Protocol));
+                        }
+                    },
+                    Err(_) => {
+                        let _ = tx.send(Frame::Error(AiError::Io));
+                    }
+                }
+                return;
+            }
             let mut reader = BufReader::new(stdout);
             let mut total = 0;
             loop {
@@ -431,9 +461,10 @@ fn claude_status_process(mut p: Process) -> Result<AuthStatus, AiError> {
 pub fn status(provider: Provider) -> Result<AuthStatus, AiError> {
     match provider {
         Provider::Codex => codex_status(&mut codex()?),
-        Provider::Claude => {
-            claude_status_process(Process::spawn(&resolve(provider)?, &["auth", "status"])?)
-        }
+        Provider::Claude => claude_status_process(Process::spawn_document(
+            &resolve(provider)?,
+            &["auth", "status"],
+        )?),
     }
 }
 pub fn valid_auth_url(url: &str) -> bool {
@@ -1031,8 +1062,13 @@ mod tests {
             .map(PathBuf::from)
             .unwrap_or_else(|| PathBuf::from("python"));
         let file = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fake_provider.py");
-        Process::spawn(&python, &["-u", file.to_str().unwrap(), mode])
-            .expect("Python test runtime (never a real AI provider)")
+        let args = ["-u", file.to_str().unwrap(), mode];
+        if mode.starts_with("claude_status") {
+            Process::spawn_document(&python, &args)
+        } else {
+            Process::spawn(&python, &args)
+        }
+        .expect("Python test runtime (never a real AI provider)")
     }
     #[test]
     fn ai07_managed_browser_login_keeps_racing_completion_and_does_not_expose_tokens() {
@@ -1105,6 +1141,20 @@ mod tests {
         let state = claude_status_process(fake("claude_status")).unwrap();
         assert_eq!(state.mode.as_deref(), Some("api_key"));
         assert!(!format!("{state:?}").contains("do-not-display"));
+    }
+    #[test]
+    fn ai07_claude_status_accepts_bounded_pretty_json_document() {
+        let state = claude_status_process(fake("claude_status_pretty")).unwrap();
+        assert!(state.authenticated);
+        assert_eq!(state.mode.as_deref(), Some("oauth_token"));
+        assert!(!format!("{state:?}").contains("do-not-display"));
+    }
+    #[test]
+    fn sec08_claude_status_document_has_a_total_size_limit() {
+        assert_eq!(
+            claude_status_process(fake("claude_status_oversize")).unwrap_err(),
+            AiError::TooLarge
+        );
     }
     #[test]
     fn sec08_blocked_stdin_is_bounded_and_provider_is_reaped() {

@@ -9,6 +9,10 @@ if mode=='invalid':
  print('secret_test_marker',flush=True);sys.exit()
 if mode=='claude_status':
  send({'loggedIn':True,'authMethod':'api_key','email':'do-not-display@example.test'});sys.exit()
+if mode=='claude_status_pretty':
+ print(json.dumps({'loggedIn':True,'authMethod':'oauth_token','email':'do-not-display@example.test'}, indent=2),flush=True);sys.exit()
+if mode=='claude_status_oversize':
+ sys.stdout.write('x'*(1024*1024+1));sys.stdout.flush();sys.exit()
 for line in sys.stdin:
  request=json.loads(line);method=request.get('method');rid=request.get('id')
  if request.get('type')=='control_request':
