@@ -15,7 +15,7 @@ async fn line<R: tokio::io::AsyncBufRead + Unpin>(reader: &mut R) -> Vec<u8> {
 }
 async fn scenario(outcome: Outcome) -> Result<SmtpSendResult, SmtpSendError> {
     let (_cleanup, store) = fixture();
-    let config=hantong_domain::mail_connection::MailConnectionConfig::from_json(br#"{"schema_version":1,"account_id":"acct","imap":{"settings_version":1,"host":"localhost","port":993,"tls":"implicit_tls","login_name":"synthetic@example.test","authentication":"app_password"},"smtp":{"settings_version":1,"host":"localhost","port":465,"tls":"implicit_tls","login_name":"synthetic@example.test","authentication":"app_password"}}"#).unwrap();
+    let config=hantong_domain::mail_connection::MailConnectionConfig::from_json(br#"{"schema_version":1,"account_id":"acct","imap":{"settings_version":1,"host":"localhost","port":993,"tls":"implicit_tls","login_name":"synthetic@example.test","authentication":"app_password"},"smtp":{"settings_version":1,"host":"localhost","port":465,"tls":"implicit_tls","login_name":"smtp-user","sender_address":"corporate@example.test","authentication":"app_password"}}"#).unwrap();
     let endpoint = config.smtp().unwrap();
     store
         .store_smtp_credential("acct", endpoint, b"synthetic-fixture-password".as_slice())
@@ -41,7 +41,10 @@ async fn scenario(outcome: Outcome) -> Result<SmtpSendResult, SmtpSendError> {
             .await
             .unwrap();
         // The synthetic credential stays inside this crate and is never logged.
-        assert!(line(&mut reader).await.starts_with(b"AUTH PLAIN"));
+        assert_eq!(
+            line(&mut reader).await,
+            b"AUTH PLAIN AHNtdHAtdXNlcgBzeW50aGV0aWMtZml4dHVyZS1wYXNzd29yZA==\r\n"
+        );
         reader
             .get_mut()
             .write_all(b"235 authenticated\r\n")
@@ -50,7 +53,7 @@ async fn scenario(outcome: Outcome) -> Result<SmtpSendResult, SmtpSendError> {
         assert!(
             line(&mut reader)
                 .await
-                .starts_with(b"MAIL FROM:<synthetic@example.test>")
+                .starts_with(b"MAIL FROM:<corporate@example.test>")
         );
         reader
             .get_mut()
@@ -92,6 +95,7 @@ async fn scenario(outcome: Outcome) -> Result<SmtpSendResult, SmtpSendError> {
         }
         let message = String::from_utf8(message).unwrap();
         assert!(message.contains("Content-Transfer-Encoding: base64"));
+        assert!(message.contains("From: <corporate@example.test>\r\n"));
         assert!(message.contains("Subject: =?UTF-8?B?"));
         assert!(!message.contains("synthetic-fixture-password"));
         if matches!(outcome, Outcome::Accepted) {

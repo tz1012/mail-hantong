@@ -200,6 +200,7 @@ mod tests {
         for profile in [
             GoogleLocalProfile::PersonalRead,
             GoogleLocalProfile::PersonalReadSend,
+            GoogleLocalProfile::PersonalManage,
         ] {
             input.local_profile = profile;
             input.access_mode = profile.access_mode().unwrap();

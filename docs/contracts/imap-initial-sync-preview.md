@@ -97,3 +97,8 @@
 - 원래 start의 정확한 replay는 항상 과거 receipt만 반환한다. 같은 Core instance의 미완료 start, 다른 registration의 미완료 start, plan에 속한 active resume은 새 start가 정리하지 않는다. 시작 시 자동 takeover는 없다.
 - 이전 Core instance의 active resume이 남은 plan에 `initial-pause`를 요청하면 `CONFLICT`로 거부하고 plan/원 실행은 보존한다. 이 경우 명시 `initial-resume`만 이전 실행을 정리하고 현재 instance에서 한 페이지를 시작할 수 있다.
 - endpoint 결속과 catalog가 함께 바뀐 실패는 endpoint 불일치를 먼저 판별해 plan을 `stale_binding`으로 저장한다. 실패한 원래 작업의 안정적인 오류 코드는 그대로 보존한다.
+
+
+## Current preview lookup (2026-11-03)
+
+The read-only `mail.sync.page` action `initial-current` takes account_id, wire_hex and encoding. CLI: `sync initial-current --account ID --wire-hex HEX --encoding ENCODING`. The response is `{schema_version:1,ok:true,account_id,wire_hex,encoding,plan:null|plan}` with the existing initial-plan structure. No plan returns null; another registration owner's plan returns NOT_FOUND. Existing permission and exact account/canonical wire/encoding checks apply. This lookup performs no provider I/O, synchronization or grant. Clients use the current generation for initial-start CAS and use 0 only when plan is explicitly null. TUI refresh collects at most two recent pages, using each latest plan version for resume. Human security review remains pending.

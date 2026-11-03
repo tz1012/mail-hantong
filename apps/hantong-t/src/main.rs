@@ -113,6 +113,33 @@ impl Runner {
         }
         Ok(value)
     }
+
+    fn interactive(&self, args: &[&str]) -> Result<(), String> {
+        if args
+            .iter()
+            .any(|arg| arg.bytes().any(|byte| byte == 0 || byte.is_ascii_control()))
+        {
+            return Err("invalid command argument".to_owned());
+        }
+        let status = Command::new(&self.program)
+            .arg("--lang")
+            .arg(self.lang.flag())
+            .args(args)
+            .stdin(Stdio::inherit())
+            .stdout(Stdio::inherit())
+            .stderr(Stdio::inherit())
+            .status()
+            .map_err(|_| "unable to run hantong".to_owned())?;
+        if status.success() {
+            Ok(())
+        } else {
+            Err("hantong command failed".to_owned())
+        }
+    }
+
+    fn interactive_owned(&self, args: &[String]) -> Result<(), String> {
+        self.interactive(&args.iter().map(String::as_str).collect::<Vec<_>>())
+    }
 }
 
 fn read_capped<R: Read>(mut reader: R, max: usize) -> Result<Vec<u8>, String> {
@@ -319,6 +346,66 @@ fn field(item: &Value, name: &str) -> Option<String> {
         .map(ToOwned::to_owned)
 }
 
+fn selected_trash_args(
+    account: &str,
+    gmail: bool,
+    folder: Option<&(String, String)>,
+    page: &Value,
+    item: &Value,
+) -> Result<Vec<String>, String> {
+    if account.is_empty() || account.bytes().any(|b| b.is_ascii_control()) {
+        return Err("selected account is unavailable".to_owned());
+    }
+    if gmail {
+        let message = field(item, "id")
+            .ok_or_else(|| "selected Gmail message has no immutable message identity".to_owned())?;
+        let version = page
+            .get("sync_version")
+            .and_then(Value::as_u64)
+            .or_else(|| item.get("expected_version").and_then(Value::as_u64))
+            .ok_or_else(|| "selected Gmail message has no current version".to_owned())?;
+        return Ok(vec![
+            "change".into(),
+            "trash".into(),
+            "--account".into(),
+            account.into(),
+            "--message-id".into(),
+            message,
+            "--expected-version".into(),
+            version.to_string(),
+        ]);
+    }
+    let (wire, encoding) = folder.ok_or_else(|| "current IMAP folder is unavailable".to_owned())?;
+    let uid = item
+        .get("uid")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| "selected IMAP message has no UID".to_owned())?;
+    let uidvalidity = item
+        .get("uidvalidity")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| "selected IMAP message has no UIDVALIDITY".to_owned())?;
+    let generation = item
+        .get("catalog_generation")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| "selected IMAP message has no folder generation".to_owned())?;
+    Ok(vec![
+        "trash".into(),
+        "move".into(),
+        "--account".into(),
+        account.into(),
+        "--mailbox-wire-hex".into(),
+        wire.clone(),
+        "--mailbox-encoding".into(),
+        encoding.clone(),
+        "--expected-catalog-generation".into(),
+        generation.to_string(),
+        "--uidvalidity".into(),
+        uidvalidity.to_string(),
+        "--uid".into(),
+        uid.to_string(),
+    ])
+}
+
 fn google_login_args(line: &str) -> Result<Option<Vec<String>>, String> {
     if !line.starts_with("login") {
         return Ok(None);
@@ -444,15 +531,296 @@ fn refresh_google_with(
     }
 }
 
+fn refresh_imap_folders_with(
+    account: &str,
+    generation: u64,
+    operation: &str,
+    idempotency_key: &str,
+    call: &mut impl FnMut(&[&str]) -> Result<Value, String>,
+    wait: &mut impl FnMut(Duration),
+) -> Result<(), String> {
+    let deadline = Instant::now() + Duration::from_secs(300);
+    let mut result = call(&[
+        "folders",
+        "refresh",
+        "--account",
+        account,
+        "--expected-generation",
+        &generation.to_string(),
+        "--operation-id",
+        operation,
+        "--idempotency-key",
+        idempotency_key,
+    ])?;
+    loop {
+        if result.get("account_id").and_then(Value::as_str) != Some(account) {
+            return Err("IMAP folder refresh account changed".into());
+        }
+        match result.pointer("/state").and_then(Value::as_str) {
+            Some("succeeded") => return Ok(()),
+            Some("failed") => return Err("IMAP folder refresh failed".into()),
+            Some("unresolved") => {}
+            _ => return Err("invalid IMAP folder refresh status".into()),
+        }
+        let id = result
+            .get("execution_id")
+            .and_then(Value::as_str)
+            .ok_or_else(|| "invalid IMAP folder refresh status".to_owned())?
+            .to_owned();
+        if id.len() != 64 || !id.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return Err("invalid IMAP folder refresh ID".into());
+        }
+        if Instant::now() >= deadline {
+            return Err("IMAP folder refresh timed out; inspect its status before retrying".into());
+        }
+        wait(Duration::from_secs(1));
+        result = call(&[
+            "folders",
+            "refresh-status",
+            "--account",
+            account,
+            "--execution-id",
+            &id,
+        ])?;
+        if result.get("execution_id").and_then(Value::as_str) != Some(id.as_str()) {
+            return Err("IMAP folder refresh execution changed".into());
+        }
+    }
+}
+
+fn poll_imap_initial_with(
+    account: &str,
+    mut value: Value,
+    deadline: Instant,
+    call: &mut impl FnMut(&[&str]) -> Result<Value, String>,
+    wait: &mut impl FnMut(Duration),
+) -> Result<Value, String> {
+    let execution = value
+        .get("execution_id")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "invalid IMAP initial sync status".to_owned())?
+        .to_owned();
+    if execution.len() != 64 || !execution.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Err("invalid IMAP initial sync ID".into());
+    }
+    loop {
+        if value.get("account_id").and_then(Value::as_str) != Some(account) {
+            return Err("IMAP initial sync account changed".into());
+        }
+        match value.get("state").and_then(Value::as_str) {
+            Some("succeeded") => return Ok(value),
+            Some("failed") => return Err("IMAP initial sync failed".into()),
+            Some("admitted" | "running" | "unresolved") => {}
+            _ => return Err("invalid IMAP initial sync status".into()),
+        }
+        if Instant::now() >= deadline {
+            return Err("IMAP initial sync timed out; inspect its status before retrying".into());
+        }
+        wait(Duration::from_secs(1));
+        value = call(&[
+            "sync",
+            "initial-status",
+            "--account",
+            account,
+            "--execution-id",
+            &execution,
+        ])?;
+        if value.get("execution_id").and_then(Value::as_str) != Some(execution.as_str()) {
+            return Err("IMAP initial sync execution changed".into());
+        }
+    }
+}
+
+fn refresh_imap_initial_preview_with(
+    account: &str,
+    wire: &str,
+    encoding: &str,
+    operation_prefix: &str,
+    timeout: Duration,
+    call: &mut impl FnMut(&[&str]) -> Result<Value, String>,
+    wait: &mut impl FnMut(Duration),
+) -> Result<(), String> {
+    let current = call(&[
+        "sync",
+        "initial-current",
+        "--account",
+        account,
+        "--wire-hex",
+        wire,
+        "--encoding",
+        encoding,
+    ])?;
+    if current.get("account_id").and_then(Value::as_str) != Some(account)
+        || current.get("wire_hex").and_then(Value::as_str) != Some(wire)
+        || current.get("encoding").and_then(Value::as_str) != Some(encoding)
+    {
+        return Err("selected IMAP folder identity changed; refresh and retry".into());
+    }
+    let current_plan = current
+        .get("plan")
+        .ok_or_else(|| "IMAP initial sync current response has no plan field".to_owned())?;
+    let expected_preview_generation = if current_plan.is_null() {
+        0
+    } else {
+        let plan = current_plan;
+        if plan.get("account_id").and_then(Value::as_str) != Some(account)
+            || plan.get("wire_hex").and_then(Value::as_str) != Some(wire)
+            || plan.get("encoding").and_then(Value::as_str) != Some(encoding)
+            || plan.get("is_current") != Some(&Value::Bool(true))
+            || plan.get("binding_current") != Some(&Value::Bool(true))
+        {
+            return Err("IMAP initial sync current plan identity changed".to_owned());
+        }
+        plan.get("generation")
+            .and_then(Value::as_u64)
+            .ok_or_else(|| "IMAP initial sync current plan has no generation".to_owned())?
+    };
+    let cursor = call(&[
+        "sync",
+        "cursor",
+        "--account",
+        account,
+        "--wire-hex",
+        wire,
+        "--encoding",
+        encoding,
+    ])?;
+    if cursor.get("account_id").and_then(Value::as_str) != Some(account)
+        || cursor.get("wire_hex").and_then(Value::as_str) != Some(wire)
+        || cursor.get("encoding").and_then(Value::as_str) != Some(encoding)
+    {
+        return Err("selected IMAP folder identity changed; refresh and retry".into());
+    }
+    let generation = cursor
+        .get("catalog_generation")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| "selected IMAP folder has no catalog generation".to_owned())?;
+    let deadline = Instant::now() + timeout;
+    let start_operation = format!("{operation_prefix}_start");
+    let mut result = call(&[
+        "sync",
+        "initial-start",
+        "--account",
+        account,
+        "--wire-hex",
+        wire,
+        "--encoding",
+        encoding,
+        "--expected-catalog-generation",
+        &generation.to_string(),
+        "--expected-preview-generation",
+        &expected_preview_generation.to_string(),
+        "--recent-pages",
+        "2",
+        "--operation-id",
+        &start_operation,
+        "--idempotency-key",
+        &start_operation,
+    ])?;
+    result = poll_imap_initial_with(account, result, deadline, call, wait)?;
+    let plan = result
+        .get("plan")
+        .ok_or_else(|| "IMAP initial sync returned no preview plan".to_owned())?;
+    let plan_id = plan
+        .get("plan_id")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "IMAP initial sync returned no plan ID".to_owned())?
+        .to_owned();
+    let plan_version = plan
+        .get("version")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| "IMAP initial sync returned no plan version".to_owned())?;
+    if plan.get("account_id").and_then(Value::as_str) != Some(account)
+        || plan.get("wire_hex").and_then(Value::as_str) != Some(wire)
+        || plan.get("encoding").and_then(Value::as_str) != Some(encoding)
+        || plan.get("generation").and_then(Value::as_u64)
+            != Some(
+                expected_preview_generation
+                    .checked_add(1)
+                    .ok_or_else(|| "IMAP initial sync preview generation overflow".to_owned())?,
+            )
+    {
+        return Err("IMAP initial sync preview identity changed".into());
+    }
+    let preview_generation = plan.get("generation").and_then(Value::as_u64);
+    let mut remaining = plan
+        .pointer("/progress/remaining_page_count")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| "IMAP initial sync plan has no remaining page count".to_owned())?;
+    let mut version = plan_version;
+    for ordinal in 0..2 {
+        if remaining == 0 {
+            break;
+        }
+        let resume_operation = format!("{operation_prefix}_resume_{ordinal}");
+        result = call(&[
+            "sync",
+            "initial-resume",
+            "--account",
+            account,
+            "--wire-hex",
+            wire,
+            "--encoding",
+            encoding,
+            "--plan-id",
+            &plan_id,
+            "--expected-plan-version",
+            &version.to_string(),
+            "--expected-catalog-generation",
+            &generation.to_string(),
+            "--operation-id",
+            &resume_operation,
+            "--idempotency-key",
+            &resume_operation,
+        ])?;
+        let resumed = poll_imap_initial_with(account, result, deadline, call, wait)?;
+        let resumed_plan = resumed
+            .get("plan")
+            .ok_or_else(|| "IMAP initial sync resume returned no plan".to_owned())?;
+        if resumed_plan.get("plan_id").and_then(Value::as_str) != Some(plan_id.as_str())
+            || resumed_plan.get("account_id").and_then(Value::as_str) != Some(account)
+            || resumed_plan.get("wire_hex").and_then(Value::as_str) != Some(wire)
+            || resumed_plan.get("encoding").and_then(Value::as_str) != Some(encoding)
+            || resumed_plan.get("generation").and_then(Value::as_u64) != preview_generation
+            || resumed_plan.get("version").and_then(Value::as_u64) <= Some(version)
+        {
+            return Err("IMAP initial sync resume plan changed".into());
+        }
+        version = resumed_plan
+            .get("version")
+            .and_then(Value::as_u64)
+            .ok_or_else(|| "IMAP initial sync resume returned no plan version".to_owned())?;
+        remaining = resumed_plan
+            .pointer("/progress/remaining_page_count")
+            .and_then(Value::as_u64)
+            .ok_or_else(|| {
+                "IMAP initial sync resume returned no remaining page count".to_owned()
+            })?;
+    }
+    Ok(())
+}
+
+fn refresh_operation_id(prefix: &str) -> String {
+    let millis = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|value| value.as_millis())
+        .unwrap_or(0);
+    format!("tui_{prefix}_{millis}")
+}
+
 fn print_help(lang: Lang) {
     if lang == Lang::Ko {
-        println!("hantong-t  j/k: 이동  Enter: 열기  h: 뒤로  r: 새로고침  q: 종료");
+        println!(
+            "hantong-t  j/k: 이동  Enter: 열기  c: 작성  t: 휴지통  h: 뒤로  r: 새로고침  q: 종료"
+        );
         println!("AI: ai login codex | ai login claude | ai codex | ai claude");
         println!(
             "Google: login google [--client-id ID] [--name \"이름\"]  Gmail에서 r: 선택 폴더 동기화"
         );
     } else {
-        println!("hantong-t  j/k: move  Enter: open  h: back  r: refresh  q: quit");
+        println!(
+            "hantong-t  j/k: move  Enter: open  c: compose  t: trash  h: back  r: refresh  q: quit"
+        );
         println!("AI: ai login codex | ai login claude | ai codex | ai claude");
         println!(
             "Google: login google [--client-id ID] [--name \"Name\"]  Gmail r: synchronize selected folder"
@@ -481,7 +849,7 @@ fn main() -> io::Result<()> {
         return Ok(());
     }
     if args.len() == 2 && args[1] == "--help" {
-        println!("hantong-t [--lang en|ko]");
+        println!("hantong-t [--lang en|ko] [--account ACCOUNT_ID]");
         print_help(Lang::En);
         return Ok(());
     }
@@ -508,6 +876,10 @@ fn main() -> io::Result<()> {
     let mut account: Option<String> = None;
     let mut folder: Option<(String, String)> = None;
     let mut gmail = false;
+    let mut requested_account = args
+        .windows(2)
+        .find(|pair| pair[0] == "--account")
+        .map(|pair| pair[1].clone());
     loop {
         let page = match (screen, account.as_deref(), folder.as_ref()) {
             (0, _, _) => runner.call(&["accounts", "list"]),
@@ -559,6 +931,23 @@ fn main() -> io::Result<()> {
                 None
             }
         };
+        if screen == 0
+            && let Some(target) = requested_account.take()
+        {
+            let Some(item) = snapshot.as_ref().and_then(|value| {
+                rows(value)
+                    .iter()
+                    .find(|item| field(item, "account_id").as_deref() == Some(target.as_str()))
+            }) else {
+                eprintln!("requested account is not available");
+                break;
+            };
+            account = field(item, "account_id");
+            gmail = item.get("provider").and_then(Value::as_str) == Some("gmail");
+            screen = 1;
+            selected = 0;
+            continue;
+        }
         let Some(command) = read_command() else { break };
         match google_login_args(&command) {
             Ok(Some(arguments)) => {
@@ -657,6 +1046,142 @@ fn main() -> io::Result<()> {
                     ) {
                         eprintln!("{}", sanitize(&error));
                     }
+                } else if !gmail
+                    && screen == 1
+                    && let Some(id) = account.as_deref()
+                {
+                    let generation = snapshot
+                        .as_ref()
+                        .and_then(|value| value.pointer("/metadata/generation"))
+                        .and_then(Value::as_u64)
+                        .unwrap_or(0);
+                    let operation = refresh_operation_id("folders");
+                    println!("Refreshing the selected IMAP account folders.");
+                    if let Err(error) = refresh_imap_folders_with(
+                        id,
+                        generation,
+                        &operation,
+                        &operation,
+                        &mut |args| runner.call(args),
+                        &mut thread::sleep,
+                    ) {
+                        eprintln!("{}", sanitize(&error));
+                    }
+                } else if !gmail
+                    && screen > 1
+                    && let (Some(id), Some((wire, encoding))) =
+                        (account.as_deref(), folder.as_ref())
+                {
+                    let operation = refresh_operation_id("initial");
+                    if let Err(error) = refresh_imap_initial_preview_with(
+                        id,
+                        wire,
+                        encoding,
+                        &operation,
+                        Duration::from_secs(300),
+                        &mut |args| runner.call(args),
+                        &mut thread::sleep,
+                    ) {
+                        eprintln!("{}", sanitize(&error));
+                    }
+                }
+            }
+            "c" | "compose" => {
+                if let Some(id) = account.as_deref() {
+                    if let Err(error) = runner.interactive(&["compose", "--account", id]) {
+                        eprintln!("{}", sanitize(&error));
+                    }
+                } else {
+                    eprintln!("select an account before composing");
+                }
+            }
+            "t" | "trash" => {
+                let Some(id) = account.as_deref() else {
+                    eprintln!("select an account before moving a message to Trash");
+                    continue;
+                };
+                let Some(item) = snapshot
+                    .as_ref()
+                    .and_then(|value| rows(value).get(selected))
+                else {
+                    eprintln!("select a message before moving it to Trash");
+                    continue;
+                };
+                if screen < 2 {
+                    eprintln!("open a message list before moving it to Trash");
+                    continue;
+                }
+                let mut action_item = item.clone();
+                if !gmail {
+                    let Some(internal_id) = field(item, "internal_message_id") else {
+                        eprintln!("selected IMAP message has no immutable message identity");
+                        continue;
+                    };
+                    let Some((wire, encoding)) = folder.as_ref() else {
+                        eprintln!("current IMAP folder is unavailable");
+                        continue;
+                    };
+                    let located =
+                        match runner.call(&["read", "--account", id, "--message-id", &internal_id])
+                        {
+                            Ok(value) => value,
+                            Err(error) => {
+                                eprintln!("{}", sanitize(&error));
+                                continue;
+                            }
+                        };
+                    if located.get("account_id").and_then(Value::as_str) != Some(id)
+                        || located.get("mailbox_wire_hex").and_then(Value::as_str)
+                            != Some(wire.as_str())
+                        || located.get("mailbox_encoding").and_then(Value::as_str)
+                            != Some(encoding.as_str())
+                        || item.get("uid").and_then(Value::as_u64)
+                            != located.get("uid").and_then(Value::as_u64)
+                    {
+                        eprintln!("selected IMAP message identity changed; refresh and retry");
+                        continue;
+                    }
+                    let inspection = match runner.call(&[
+                        "sync",
+                        "inspect",
+                        "--account",
+                        id,
+                        "--wire-hex",
+                        wire,
+                        "--encoding",
+                        encoding,
+                    ]) {
+                        Ok(value) => value,
+                        Err(error) => {
+                            eprintln!("{}", sanitize(&error));
+                            continue;
+                        }
+                    };
+                    if inspection.get("account_id").and_then(Value::as_str) != Some(id)
+                        || inspection.get("wire_hex").and_then(Value::as_str) != Some(wire.as_str())
+                        || inspection.get("encoding").and_then(Value::as_str)
+                            != Some(encoding.as_str())
+                    {
+                        eprintln!("current IMAP folder identity changed; refresh and retry");
+                        continue;
+                    }
+                    action_item["uidvalidity"] = located["uidvalidity"].clone();
+                    action_item["uid"] = located["uid"].clone();
+                    action_item["catalog_generation"] = inspection["catalog_generation"].clone();
+                }
+                match selected_trash_args(
+                    id,
+                    gmail,
+                    folder.as_ref(),
+                    snapshot.as_ref().unwrap(),
+                    &action_item,
+                ) {
+                    Ok(args) => {
+                        if let Err(error) = runner.interactive_owned(&args) {
+                            eprintln!("{}", sanitize(&error));
+                        }
+                    }
+                    Err(error) => eprintln!("{}", sanitize(&error)),
                 }
             }
             "h" | "back" => {
@@ -794,6 +1319,122 @@ mod tests {
     }
 
     #[test]
+    fn tui01_imap_folder_refresh_is_account_qualified_and_polls_once() {
+        let mut calls = Vec::new();
+        let mut step = 0;
+        refresh_imap_folders_with(
+            "imap_account",
+            7,
+            "tui_folders_1",
+            "tui_folders_1",
+            &mut |args| {
+                calls.push(args.iter().map(|value| (*value).to_owned()).collect::<Vec<_>>());
+                step += 1;
+                Ok(if step == 1 {
+                    serde_json::json!({"account_id":"imap_account","execution_id":"a".repeat(64),"state":"unresolved","generation":null,"error_code":null})
+                } else {
+                    serde_json::json!({"account_id":"imap_account","execution_id":"a".repeat(64),"state":"succeeded","generation":8,"error_code":null})
+                })
+            },
+            &mut |_| {},
+        )
+        .unwrap();
+        assert_eq!(calls.len(), 2);
+        assert_eq!(&calls[0][..2], ["folders", "refresh"]);
+        assert!(
+            calls[0]
+                .windows(2)
+                .any(|pair| pair == ["--account", "imap_account"])
+        );
+        assert_eq!(&calls[1][..2], ["folders", "refresh-status"]);
+    }
+
+    #[test]
+    fn tui01_imap_refresh_uses_bounded_recent_preview_plan_and_resume() {
+        let mut calls = Vec::new();
+        let mut step = 0;
+        refresh_imap_initial_preview_with(
+            "imap_account",
+            "494e424f58",
+            "modified_utf7",
+            "tui_initial_1",
+            Duration::from_secs(10),
+            &mut |args| {
+                calls.push(args.iter().map(|value| (*value).to_owned()).collect::<Vec<_>>());
+                step += 1;
+                Ok(match step {
+                    1 => serde_json::json!({"account_id":"imap_account","wire_hex":"494e424f58","encoding":"modified_utf7","plan":{"account_id":"imap_account","wire_hex":"494e424f58","encoding":"modified_utf7","generation":4,"is_current":true,"binding_current":true}}),
+                    2 => serde_json::json!({"account_id":"imap_account","wire_hex":"494e424f58","encoding":"modified_utf7","catalog_generation":3,"cursor_version":0}),
+                    3 => serde_json::json!({"account_id":"imap_account","execution_id":"a".repeat(64),"state":"unresolved"}),
+                    4 => serde_json::json!({"account_id":"imap_account","execution_id":"a".repeat(64),"state":"succeeded","plan":{"plan_id":"c".repeat(64),"account_id":"imap_account","wire_hex":"494e424f58","encoding":"modified_utf7","generation":5,"version":1,"progress":{"remaining_page_count":2}}}),
+                    5 => serde_json::json!({"account_id":"imap_account","execution_id":"b".repeat(64),"state":"unresolved"}),
+                    6 => serde_json::json!({"account_id":"imap_account","execution_id":"b".repeat(64),"state":"succeeded","plan":{"plan_id":"c".repeat(64),"account_id":"imap_account","wire_hex":"494e424f58","encoding":"modified_utf7","generation":5,"version":2,"progress":{"remaining_page_count":1}}}),
+                    7 => serde_json::json!({"account_id":"imap_account","execution_id":"d".repeat(64),"state":"unresolved"}),
+                    _ => serde_json::json!({"account_id":"imap_account","execution_id":"d".repeat(64),"state":"succeeded","plan":{"plan_id":"c".repeat(64),"account_id":"imap_account","wire_hex":"494e424f58","encoding":"modified_utf7","generation":5,"version":3,"progress":{"remaining_page_count":0}}}),
+                })
+            },
+            &mut |_| {},
+        )
+        .unwrap();
+        let plan_id = "c".repeat(64);
+        assert_eq!(calls.len(), 8);
+        assert_eq!(&calls[0][..2], ["sync", "initial-current"]);
+        assert_eq!(&calls[2][..2], ["sync", "initial-start"]);
+        assert!(
+            calls[2]
+                .windows(2)
+                .any(|pair| pair == ["--recent-pages", "2"])
+        );
+        assert!(
+            calls[2]
+                .windows(2)
+                .any(|pair| pair == ["--expected-preview-generation", "4"])
+        );
+        assert_eq!(&calls[4][..2], ["sync", "initial-resume"]);
+        assert!(
+            calls[4]
+                .windows(2)
+                .any(|pair| pair == ["--plan-id", plan_id.as_str()])
+        );
+        assert!(
+            calls[4]
+                .windows(2)
+                .any(|pair| pair == ["--expected-plan-version", "1"])
+        );
+        assert!(
+            calls[4]
+                .windows(2)
+                .any(|pair| pair == ["--expected-catalog-generation", "3"])
+        );
+    }
+
+    #[test]
+    fn tui01_imap_initial_current_identity_mismatch_stops_before_start() {
+        let mut calls = Vec::new();
+        let result = refresh_imap_initial_preview_with(
+            "imap_account",
+            "494e424f58",
+            "modified_utf7",
+            "tui_initial_bad",
+            Duration::from_secs(1),
+            &mut |args| {
+                calls.push(
+                    args.iter()
+                        .map(|value| (*value).to_owned())
+                        .collect::<Vec<_>>(),
+                );
+                Ok(
+                    serde_json::json!({"account_id":"imap_account","wire_hex":"444f4553","encoding":"modified_utf7","plan":null}),
+                )
+            },
+            &mut |_| {},
+        );
+        assert!(result.is_err());
+        assert_eq!(calls.len(), 1);
+        assert_eq!(&calls[0][..2], ["sync", "initial-current"]);
+    }
+
+    #[test]
     fn tui01_google_labels_and_message_ids_keep_native_provider_identity() {
         let labels = google_items(
             serde_json::json!({"provider":"gmail","labels":[{"id":"Label_7","name":"Inbox\u{1b}[31m"}]}),
@@ -841,6 +1482,59 @@ mod tests {
         assert_eq!(
             runner.call(&["search\n--limit"]),
             Err("invalid command argument".into())
+        );
+    }
+
+    #[test]
+    fn tui01_trash_requires_current_version_and_immutable_identity() {
+        let page = serde_json::json!({"sync_version": 7});
+        let item = serde_json::json!({});
+        let account = format!("google_{}", "a".repeat(64));
+        assert!(selected_trash_args(&account, true, None, &page, &item).is_err());
+
+        let page = serde_json::json!({});
+        let item = serde_json::json!({"uid":9});
+        let folder = ("494e424f58".to_owned(), "utf8".to_owned());
+        assert!(selected_trash_args("imap_account", false, Some(&folder), &page, &item).is_err());
+    }
+
+    #[test]
+    fn tui01_trash_args_bind_the_selected_account_and_provider_route() {
+        let page = serde_json::json!({"sync_version": 7});
+        let account = format!("google_{}", "b".repeat(64));
+        let item = serde_json::json!({
+            "id":"message-1",
+            "operation_id":"op-1",
+            "idempotency_key":"key-1",
+            "payload_hash":"00".repeat(32)
+        });
+        let args = selected_trash_args(&account, true, None, &page, &item).unwrap();
+        assert_eq!(
+            &args[0..4],
+            &["change", "trash", "--account", account.as_str()].map(str::to_owned)
+        );
+        assert!(
+            args.windows(2)
+                .any(|pair| pair == ["--message-id", "message-1"])
+        );
+    }
+
+    #[test]
+    fn tui01_imap_trash_args_use_located_uid_and_inspected_generation_fixture() {
+        let page = serde_json::json!({"items": []});
+        let item = serde_json::json!({
+            "internal_message_id":"msg_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "uid":9,
+            "uidvalidity":42,
+            "catalog_generation":3
+        });
+        let folder = ("494e424f58".to_owned(), "utf8".to_owned());
+        let args = selected_trash_args("imap_account", false, Some(&folder), &page, &item).unwrap();
+        assert!(args.windows(2).any(|pair| pair == ["--uid", "9"]));
+        assert!(args.windows(2).any(|pair| pair == ["--uidvalidity", "42"]));
+        assert!(
+            args.windows(2)
+                .any(|pair| pair == ["--expected-catalog-generation", "3"])
         );
     }
 

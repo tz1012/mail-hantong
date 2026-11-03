@@ -77,12 +77,15 @@ residual risk; terminal intent is not proof of human presence.
 
 ## Trash request and execution
 
-`mail.messages.trash.request` provides request/status for one cached Gmail
-message. The request binds account_id, message_id, expected_version,
-operation_id, idempotency_key and canonical payload_hash. Core assigns review_id
-and binds its immutable preview, owner registration/epoch, account/credential
-versions and expiry. Only a Core foreground terminal review may confirm it.
-Creation/status never invokes a provider or schedules an execution job.
+`mail.messages.trash.request` provides request/status for one cached Gmail or
+IMAP message. The built-in AI binding accepts only the provider-specific
+message identity and account selected in the current AI profile. It generates
+fresh operation and idempotency values and computes the canonical payload hash
+locally; model supplied values for any of those fields are rejected. Core
+assigns review_id and binds its immutable preview, owner registration/epoch,
+account/credential versions and expiry. Only a Core foreground terminal review
+may confirm it. Creation/status never invokes a provider or schedules an
+execution job.
 
 Gmail trash requires selected Modify mode and a verified gmail.modify grant.
 ReadOnly/ReadSend do not imply trash authority. Use the exact Gmail messages
@@ -92,12 +95,22 @@ arbitrary URL and IMAP EXPUNGE fallback remain unsupported.
 The endpoint and scope follow Google's
 [users.messages.trash reference](https://developers.google.com/workspace/gmail/api/reference/rest/v1/users.messages/trash).
 
+For IMAP, the request is explicitly provider-discriminated and includes the
+exact account, source mailbox wire identity and encoding, UIDVALIDITY, UID and
+current catalog generation from the cached message row. The Core move path
+uses the selected account's configured trash mailbox and a single MOVE. It
+does not infer an account from a message ID, use sequence numbers, issue
+EXPUNGE, or fall back to a delete command when a safe trash move is
+unavailable. Status requests include `provider: "imap"`, the same account and
+the returned review ID. The terminal review kind is `imap_trash`; there is no
+model confirm or automatic execution.
+
 Confirm rechecks all bindings before provider effects. Cancel/EOF/expiry/tamper
 have no provider effect. Accepted, rejected and uncertain results are durable;
 uncertain actions never auto-retry, including after restart. Success invalidates
 only the affected message cache. Audit/errors/debug contain no message content
-or credential. Other providers advertise no trash support until their complete
-capability and safe operation path exist.
+or credential. Providers without the complete capability and safe operation
+path continue to reject trash requests explicitly.
 
 ## Verification and release
 

@@ -351,3 +351,28 @@ fn sync01_initial_request_wire_contains_only_each_actions_fields() {
         }
     }
 }
+
+#[test]
+fn sync01_initial_current_strict_identity_and_nullable_plan() {
+    let request = UidCursorRequest::new("acct", mailbox()).unwrap();
+    for value in [None, Some(snapshot(InitialSyncState::Ready, 0, 1, 1))] {
+        let raw: Value = serde_json::from_str(&current_json(&request, value.as_ref())).unwrap();
+        let parsed = parse_current(&envelope(&raw), "r", &request).unwrap();
+        assert_eq!(parsed.is_some(), value.is_some());
+        for (key, bad) in [
+            ("account_id", json!("other")),
+            ("wire_hex", json!("414243")),
+            ("encoding", json!("utf8")),
+        ] {
+            let mut changed = raw.clone();
+            changed[key] = bad;
+            assert!(parse_current(&envelope(&changed), "r", &request).is_err());
+        }
+        let mut changed = raw.clone();
+        changed["unexpected"] = json!(true);
+        assert!(parse_current(&envelope(&changed), "r", &request).is_err());
+        let mut changed = raw.clone();
+        changed.as_object_mut().unwrap().remove("plan");
+        assert!(parse_current(&envelope(&changed), "r", &request).is_err());
+    }
+}

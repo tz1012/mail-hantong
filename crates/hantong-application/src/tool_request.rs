@@ -29,6 +29,16 @@ pub enum ToolRequest {
         review_id: Option<[u8; 32]>,
         request_tool: &'static str,
     },
+    ImapTrash {
+        request_id: String,
+        account_ids: Vec<String>,
+        request: hantong_contracts::imap_trash::ImapTrashRequest,
+    },
+    ImapTrashStatus {
+        request_id: String,
+        account_ids: Vec<String>,
+        review_id: [u8; 32],
+    },
     Google {
         request_id: String,
         request: hantong_contracts::google_mail::GoogleMailRequest,
@@ -93,6 +103,7 @@ pub enum FolderRefreshAction {
 }
 #[derive(Clone, Eq, PartialEq)]
 pub enum UidPageAction {
+    InitialCurrent(UidCursorRequest),
     Inspect(UidCursorRequest),
     Cursor(UidCursorRequest),
     Request(UidPageRequest),
@@ -140,6 +151,8 @@ impl fmt::Debug for ToolRequest {
             Self::FoldersRefresh { .. } => f.write_str("ToolRequest::FoldersRefresh(<redacted>)"),
             Self::SyncPage { .. } => f.write_str("ToolRequest::SyncPage(<redacted>)"),
             Self::GoogleMutation { .. } => f.write_str("ToolRequest::GoogleMutation(<redacted>)"),
+            Self::ImapTrash { .. } => f.write_str("ToolRequest::ImapTrash(<redacted>)"),
+            Self::ImapTrashStatus { .. } => f.write_str("ToolRequest::ImapTrashStatus(<redacted>)"),
             Self::DraftCreate { .. } => f.write_str("ToolRequest::DraftCreate(<redacted>)"),
             Self::SendReview { .. } => f.write_str("ToolRequest::SendReview(<redacted>)"),
             Self::SendExecute(_) => f.write_str("ToolRequest::SendExecute(<redacted>)"),
@@ -193,6 +206,26 @@ impl ToolRequest {
                 let mode = string(params.get("mode").ok_or(ErrorCode::InvalidInput)?)?;
                 match mode {
                     "request" | "prepare" => {
+                        if mode == "request"
+                            && request_tool
+                                == hantong_contracts::google_mutation::TRASH_REQUEST_TOOL
+                            && params
+                                .get("request")
+                                .and_then(|value| value.get("kind"))
+                                .and_then(Value::as_str)
+                                == Some("imap_trash")
+                        {
+                            exact_keys(params, &["mode", "request"])?;
+                            let request =
+                                hantong_contracts::imap_trash::ImapTrashRequest::from_json(
+                                    &params["request"],
+                                )?;
+                            return Ok(Self::ImapTrash {
+                                request_id,
+                                account_ids: vec![request.account_id().to_owned()],
+                                request,
+                            });
+                        }
                         let request = if request_tool
                             == hantong_contracts::google_mutation::TRASH_REQUEST_TOOL
                             && !params.contains_key("request")
@@ -243,6 +276,26 @@ impl ToolRequest {
                         })
                     }
                     "status" => {
+                        if request_tool == hantong_contracts::google_mutation::TRASH_REQUEST_TOOL
+                            && params.get("provider").and_then(Value::as_str) == Some("imap")
+                        {
+                            exact_keys(params, &["mode", "provider", "account_id", "review_id"])?;
+                            let account = string(&params["account_id"])?;
+                            hantong_contracts::scope_refresh::ManageAccounts::parse(&[
+                                account.to_owned()
+                            ])?;
+                            let id = hantong_contracts::wire_hex::decode_fixed(string(
+                                &params["review_id"],
+                            )?)?;
+                            if id == [0; 32] {
+                                return Err(ErrorCode::InvalidInput);
+                            }
+                            return Ok(Self::ImapTrashStatus {
+                                request_id,
+                                account_ids: vec![account.to_owned()],
+                                review_id: id,
+                            });
+                        }
                         exact_keys(params, &["mode", "account_id", "review_id"])?;
                         let account = string(&params["account_id"])?;
                         hantong_contracts::google::validate_google_account_id(account)?;
@@ -549,6 +602,8 @@ impl ToolRequest {
             | Self::FoldersRefresh { request_id, .. }
             | Self::SyncPage { request_id, .. } => request_id,
             Self::GoogleMutation { request_id, .. } => request_id,
+            Self::ImapTrash { request_id, .. } => request_id,
+            Self::ImapTrashStatus { request_id, .. } => request_id,
             Self::DraftCreate { request_id, .. } | Self::SendReview { request_id, .. } => {
                 request_id
             }
@@ -562,6 +617,8 @@ impl ToolRequest {
     pub fn tool_name(&self) -> &str {
         match self {
             Self::GoogleMutation { request_tool, .. } => request_tool,
+            Self::ImapTrash { .. } => hantong_contracts::google_mutation::TRASH_REQUEST_TOOL,
+            Self::ImapTrashStatus { .. } => hantong_contracts::google_mutation::TRASH_REQUEST_TOOL,
             _ => self.tool().as_str(),
         }
     }
@@ -576,6 +633,8 @@ impl ToolRequest {
             Self::FoldersRefresh { .. } => AuditTool::FoldersRefresh,
             Self::SyncPage { .. } => AuditTool::SyncPage,
             Self::GoogleMutation { .. } => AuditTool::GoogleMutationRequest,
+            Self::ImapTrash { .. } => AuditTool::TrashRequest,
+            Self::ImapTrashStatus { .. } => AuditTool::TrashRequest,
             Self::DraftCreate { .. } => AuditTool::DraftCreate,
             Self::SendReview { .. } => AuditTool::SendRequest,
             Self::SendExecute(_) => AuditTool::SendExecute,
@@ -595,7 +654,9 @@ impl ToolRequest {
                 FolderRefreshAction::Status(value) => value.account_ids(),
             },
             Self::SyncPage { action, .. } => match action {
-                UidPageAction::Cursor(v) | UidPageAction::Inspect(v) => v.account_ids(),
+                UidPageAction::Cursor(v)
+                | UidPageAction::Inspect(v)
+                | UidPageAction::InitialCurrent(v) => v.account_ids(),
                 UidPageAction::Request(v) => v.account_ids(),
                 UidPageAction::Status(v) => v.account_ids(),
                 UidPageAction::Reconcile(v) => v.account_ids(),
@@ -607,6 +668,8 @@ impl ToolRequest {
                 UidPageAction::InitialPlan(v) => v.account_ids(),
             },
             Self::GoogleMutation { account_ids, .. } => account_ids,
+            Self::ImapTrash { account_ids, .. } => account_ids,
+            Self::ImapTrashStatus { account_ids, .. } => account_ids,
             Self::DraftCreate { request, .. } => request.account_ids(),
             Self::SendReview { action, .. } => match action {
                 SendReviewAction::Request(r) | SendReviewAction::Prepare(r) => r.account_ids(),
@@ -914,6 +977,13 @@ fn parse_uid_page(params: &Map<String, Value>) -> Result<UidPageAction, ErrorCod
                 text("account_id")?,
                 mailbox()?,
                 hantong_contracts::wire_hex::decode_fixed(text("plan_id")?)?,
+            )?))
+        }
+        "initial-current" => {
+            exact_keys(params, &["action", "account_id", "wire_hex", "encoding"])?;
+            Ok(UidPageAction::InitialCurrent(UidCursorRequest::new(
+                text("account_id")?,
+                mailbox()?,
             )?))
         }
         "cursor" | "inspect" => {
@@ -1293,6 +1363,70 @@ mod tests {
         let mut generic = request.clone();
         generic["tool"] = Value::String(hantong_contracts::google_mutation::REQUEST_TOOL.into());
         assert!(ToolRequest::validate(&generic).is_err());
+    }
+
+    #[test]
+    fn ai09_imap_trash_request_is_typed_and_provider_bound() {
+        let account = "imap_account".to_owned();
+        let typed = hantong_contracts::imap_trash::ImapTrashRequest::new(
+            &account,
+            UidMailboxIdentity::new("494e424f58", UidMailboxEncoding::Utf8).unwrap(),
+            3,
+            7,
+            9,
+            "trash-operation",
+            "trash-idempotency",
+            [1; 32],
+        )
+        .unwrap();
+        let value = envelope(
+            hantong_contracts::google_mutation::TRASH_REQUEST_TOOL,
+            serde_json::json!({"mode":"request","request":typed.to_json()}),
+        );
+        let parsed = ToolRequest::validate_method(
+            hantong_contracts::google_mutation::TRASH_REQUEST_TOOL,
+            &value,
+        )
+        .unwrap();
+        let ToolRequest::ImapTrash { request, .. } = &parsed else {
+            panic!()
+        };
+        assert_eq!(request.account_id(), account);
+        assert_eq!(parsed.tool(), AuditTool::TrashRequest);
+        assert_eq!(parsed.account_ids(), &[account]);
+
+        let status = envelope(
+            hantong_contracts::google_mutation::TRASH_REQUEST_TOOL,
+            serde_json::json!({
+                "mode":"status",
+                "provider":"imap",
+                "account_id":"imap_account",
+                "review_id":"01".repeat(32)
+            }),
+        );
+        let status = ToolRequest::validate_method(
+            hantong_contracts::google_mutation::TRASH_REQUEST_TOOL,
+            &status,
+        )
+        .unwrap();
+        let ToolRequest::ImapTrashStatus {
+            account_ids,
+            review_id,
+            ..
+        } = status
+        else {
+            panic!()
+        };
+        assert_eq!(account_ids, vec!["imap_account"]);
+        assert_eq!(review_id, [1; 32]);
+
+        let mut unauthorized = typed.to_json();
+        unauthorized["approved"] = Value::Bool(true);
+        let invalid = envelope(
+            hantong_contracts::google_mutation::TRASH_REQUEST_TOOL,
+            serde_json::json!({"mode":"request","request":unauthorized}),
+        );
+        assert!(ToolRequest::validate(&invalid).is_err());
     }
 
     #[test]

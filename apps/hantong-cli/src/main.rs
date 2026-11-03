@@ -19,6 +19,8 @@ mod diagnostics;
 mod google;
 mod google_mutation;
 mod guided_compose;
+mod guided_mail_setup;
+mod imap_trash;
 mod initial_sync;
 mod mail_send;
 mod message_body;
@@ -691,7 +693,8 @@ fn run_with_mail_actions(
                     return emit_error(ErrorCode::InvalidInput, lang, json);
                 }
             }
-            "--host" | "--port" | "--tls" | "--login" | "--name" | "--color" => {
+            "--host" | "--port" | "--tls" | "--login" | "--sender-address" | "--name"
+            | "--color" => {
                 let Some(value) = it.next() else {
                     return emit_error(ErrorCode::InvalidInput, lang, json);
                 };
@@ -866,8 +869,10 @@ fn run_with_mail_actions(
                     | "read"
                     | "draft"
                     | "send"
+                    | "compose"
                     | "diagnostics"
                     | "change"
+                    | "trash"
             )
         )
     {
@@ -889,6 +894,25 @@ fn run_with_mail_actions(
     if !setup_options.is_empty() {
         return emit_error(ErrorCode::InvalidInput, lang, json);
     }
+    if matches!(command.as_slice(), [action] if action == "compose") {
+        if json || seen_no_input || !terminal {
+            return emit_error(ErrorCode::HumanStepRequired, lang, json);
+        }
+        let mut account = None;
+        for (key, value) in &folder_options {
+            if key != "--account" || account.replace(value.as_str()).is_some() {
+                return emit_error(ErrorCode::InvalidInput, lang, json);
+            }
+        }
+        let Some(account) = account else {
+            return emit_error(ErrorCode::InvalidInput, lang, json);
+        };
+        let mut io = onboarding::Stdio::new();
+        return match guided_compose::run(account, lang, &mut io) {
+            Ok(()) => 0,
+            Err(code) => emit_error(code, lang, false),
+        };
+    }
     if let Some(code) = ai::try_run(&command, matches!(lang, Lang::Ko), json, seen_no_input) {
         return code;
     }
@@ -896,6 +920,9 @@ fn run_with_mail_actions(
         || resolve_display_language(lang, seen_lang, json, &mut display_settings);
     if command.first().is_some_and(|v| v == "change") {
         return google_mutation::run(&command, &folder_options, lang, json, &mut resolve_lang);
+    }
+    if command.first().is_some_and(|v| v == "trash") {
+        return imap_trash::run(&command, &folder_options, lang, json);
     }
     if command.first().is_some_and(|v| v == "diagnostics") {
         return diagnostics::run(&command, &folder_options, lang, json, &mut resolve_lang);
@@ -1860,7 +1887,7 @@ mod tests {
                         panic!("unexpected status or resume")
                     }
                 }
-                Ok(receipt)
+                Ok(receipt.clone())
             },
         );
         assert_eq!(code, 0);
@@ -1874,10 +1901,55 @@ mod tests {
             |_| panic!("account list must not run"),
             |command| {
                 assert!(matches!(command, ImapSetupCommand::Status(id) if id == request_id));
-                Ok(receipt)
+                Ok(receipt.clone())
             },
         );
         assert_eq!(code, 0);
+    }
+
+    #[test]
+    fn setup01_smtp_sender_address_is_forwarded_and_duplicate_is_rejected() {
+        let args = [
+            "--no-input",
+            "setup",
+            "smtp",
+            "request",
+            "--account",
+            "acct",
+            "--host",
+            "smtp.example.test",
+            "--port",
+            "465",
+            "--tls",
+            "implicit_tls",
+            "--login",
+            "auth-user",
+            "--sender-address",
+            "alias@example.test",
+        ];
+        assert_eq!(
+            run_with_boundaries_and_setup(
+                args.map(String::from),
+                |_| panic!("registration must not run"),
+                || panic!("verification must not run"),
+                |_| panic!("account list must not run"),
+                |_| panic!("imap setup must not run"),
+            ),
+            ErrorCode::HumanStepRequired.exit_code()
+        );
+
+        let mut duplicate = args.to_vec();
+        duplicate.extend(["--sender-address", "second@example.test"]);
+        assert_eq!(
+            run_with_boundaries_and_setup(
+                duplicate.into_iter().map(String::from),
+                |_| panic!("registration must not run"),
+                || panic!("verification must not run"),
+                |_| panic!("account list must not run"),
+                |_| panic!("imap setup must not run"),
+            ),
+            ErrorCode::InvalidInput.exit_code()
+        );
     }
 
     #[test]

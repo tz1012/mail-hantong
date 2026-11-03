@@ -103,7 +103,7 @@ fn terminal_safe(value: &str) -> String {
     out
 }
 
-fn interactive_send(
+pub(super) fn interactive_send(
     request: SendReviewRequest,
     lang: Lang,
 ) -> Result<client::ReviewResponse, ErrorCode> {

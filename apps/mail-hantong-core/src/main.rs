@@ -16,6 +16,8 @@ mod google_worker;
 #[cfg(windows)]
 mod identity;
 #[cfg(windows)]
+mod imap_trash;
+#[cfg(windows)]
 mod registration;
 #[cfg(windows)]
 mod scope_refresh;

@@ -1,5 +1,17 @@
 use super::*;
-use crate::uid_reconcile_jobs::tests::{Fixture, append, identity, mailbox, metadata};
+use crate::{
+    imap_catalog::imap_catalog_payload_hash,
+    mail_connection::MailMutation,
+    uid_reconcile_jobs::tests::{Fixture, append, endpoint, identity, mailbox, metadata},
+};
+use hantong_contracts::uid_page::{UidMailboxEncoding, UidMailboxIdentity};
+use hantong_domain::{
+    capabilities::ImapCapabilities,
+    mailboxes::{
+        ImapMailboxDescriptor, ImapMailboxName, ImapMailboxSnapshot, MailboxChildren,
+        MailboxEncoding,
+    },
+};
 
 fn signed(
     build: impl Fn(InitialSyncMutation) -> InitialSyncRequest,
@@ -11,14 +23,165 @@ fn signed(
     build(InitialSyncMutation::new(op, op, &hash).unwrap())
 }
 fn start_request(op: &str, generation: u64, catalog: u64) -> InitialSyncRequest {
+    start_request_for(op, identity(b"INBOX"), generation, catalog)
+}
+fn start_request_for(
+    op: &str,
+    mailbox: UidMailboxIdentity,
+    generation: u64,
+    catalog: u64,
+) -> InitialSyncRequest {
     signed(
         |m| {
-            InitialSyncRequest::new_start("acct", identity(b"INBOX"), m, catalog, generation, 2)
+            InitialSyncRequest::new_start("acct", mailbox.clone(), m, catalog, generation, 2)
                 .unwrap()
         },
         op,
     )
 }
+
+fn replace_catalog_with_mailbox(fixture: &Fixture, wire: &[u8], encoding: MailboxEncoding) {
+    let name = ImapMailboxName::from_wire(wire, encoding).unwrap();
+    let snapshot = ImapMailboxSnapshot::new(
+        "acct",
+        1,
+        ImapCapabilities::from_features([]),
+        vec![
+            ImapMailboxDescriptor::new(
+                name,
+                Some('/'),
+                false,
+                false,
+                MailboxChildren::Unknown,
+                vec![],
+            )
+            .unwrap(),
+        ],
+    )
+    .unwrap();
+    let endpoint = endpoint();
+    let mutation = MailMutation::new(
+        "catalog-case".to_owned(),
+        "catalog-case".to_owned(),
+        1,
+        imap_catalog_payload_hash(2, &endpoint, &snapshot, 1).unwrap(),
+    )
+    .unwrap();
+    fixture
+        .store()
+        .replace_imap_mailbox_snapshot(2, &endpoint, &snapshot, &mutation)
+        .unwrap();
+}
+
+fn uid_identity(wire: &[u8], encoding: UidMailboxEncoding) -> UidMailboxIdentity {
+    UidMailboxIdentity::new(&hantong_contracts::wire_hex::encode(wire), encoding).unwrap()
+}
+
+#[test]
+fn sync01_initial_binding_uses_canonical_inbox_wire_identity() {
+    let f = Fixture::new();
+    replace_catalog_with_mailbox(&f, b"inbox", MailboxEncoding::ModifiedUtf7);
+
+    let admitted = admit(
+        &f,
+        31,
+        &start_request_for(
+            "mixed-case-inbox",
+            uid_identity(b"INBOX", UidMailboxEncoding::ModifiedUtf7),
+            0,
+            2,
+        ),
+        1,
+    );
+    assert_eq!(admitted.state(), InitialSyncJobState::Admitted);
+}
+
+#[test]
+fn sync01_initial_binding_rejects_wrong_mailbox_wire_or_encoding() {
+    for (wire, encoding, expected) in [
+        (
+            b"INBOX-OTHER".as_slice(),
+            UidMailboxEncoding::ModifiedUtf7,
+            "wire",
+        ),
+        (b"INBOX".as_slice(), UidMailboxEncoding::Utf8, "encoding"),
+    ] {
+        let f = Fixture::new();
+        replace_catalog_with_mailbox(&f, b"inbox", MailboxEncoding::ModifiedUtf7);
+        let admitted = admit_result(
+            &f,
+            32,
+            &start_request_for(
+                &format!("wrong-{expected}"),
+                uid_identity(wire, encoding),
+                0,
+                2,
+            ),
+            1,
+        );
+        assert_eq!(
+            admitted,
+            InitialSyncAdmission::Rejected(ErrorCode::NotFound)
+        );
+    }
+}
+
+#[test]
+fn sync01_current_plan_reader_returns_none_without_a_preview() {
+    let f = Fixture::new();
+    let request = UidCursorRequest::new("acct", identity(b"INBOX")).unwrap();
+    assert_eq!(
+        f.store()
+            .load_current_initial_sync_plan([9; 16], &request)
+            .unwrap(),
+        None
+    );
+}
+
+#[test]
+fn sync01_current_plan_reader_returns_same_owner_plan_and_cas_fields() {
+    let f = Fixture::new();
+    let created = create(&f, 33, 7, 200);
+    let request = UidCursorRequest::new("acct", identity(b"INBOX")).unwrap();
+    let current = f
+        .store()
+        .load_current_initial_sync_plan([9; 16], &request)
+        .unwrap()
+        .unwrap();
+    let original = created.plan().unwrap();
+    assert_eq!(current.plan_id(), original.plan_id());
+    assert_eq!(current.generation(), original.generation());
+    assert_eq!(current.version(), original.version());
+    assert!(current.is_current());
+    assert!(current.binding_current());
+}
+
+#[test]
+fn sync01_current_plan_reader_hides_cross_owner_preview() {
+    let f = Fixture::new();
+    create(&f, 34, 7, 200);
+    let request = UidCursorRequest::new("acct", identity(b"INBOX")).unwrap();
+    assert_eq!(
+        f.store().load_current_initial_sync_plan([8; 16], &request),
+        Err(ErrorCode::NotFound)
+    );
+}
+
+#[test]
+fn sync01_current_plan_reader_accepts_mixed_case_inbox_catalog() {
+    let f = Fixture::new();
+    replace_catalog_with_mailbox(&f, b"inbox", MailboxEncoding::ModifiedUtf7);
+    create_with_catalog(&f, 35, 7, 200, 2);
+    let request = UidCursorRequest::new("acct", identity(b"INBOX")).unwrap();
+    let current = f
+        .store()
+        .load_current_initial_sync_plan([9; 16], &request)
+        .unwrap()
+        .unwrap();
+    assert!(current.binding_current());
+    assert_eq!(current.generation(), 1);
+}
+
 fn resume_request(op: &str, plan: u8, version: u64, catalog: u64) -> InitialSyncRequest {
     signed(
         |m| {
@@ -45,15 +208,17 @@ fn pause_request(op: &str, plan: u8, version: u64) -> InitialSyncRequest {
     )
 }
 fn admit(f: &Fixture, id: u8, r: &InitialSyncRequest, instance: u8) -> InitialSyncReceipt {
-    f.begin_for(id, 9);
-    let result = f
-        .store()
-        .admit_initial_sync([id; 32], r, UidQueueAdmission::Reserved, [instance; 32])
-        .unwrap();
+    let result = admit_result(f, id, r, instance);
     let InitialSyncAdmission::Admitted(receipt) = result else {
         panic!("expected admitted: {result:?}")
     };
     receipt
+}
+fn admit_result(f: &Fixture, id: u8, r: &InitialSyncRequest, instance: u8) -> InitialSyncAdmission {
+    f.begin_for(id, 9);
+    f.store()
+        .admit_initial_sync([id; 32], r, UidQueueAdmission::Reserved, [instance; 32])
+        .unwrap()
 }
 fn job(f: &Fixture, id: u8) -> InitialSyncJob {
     let result = f.store().start_initial_sync([id; 32]).unwrap();
@@ -79,7 +244,21 @@ fn status(f: &Fixture, id: u8) -> InitialSyncReceipt {
         .unwrap()
 }
 fn create(f: &Fixture, id: u8, validity: u32, next: u32) -> InitialSyncReceipt {
-    admit(f, id, &start_request(&format!("start-{id}"), 0, 1), 1);
+    create_with_catalog(f, id, validity, next, 1)
+}
+fn create_with_catalog(
+    f: &Fixture,
+    id: u8,
+    validity: u32,
+    next: u32,
+    catalog: u64,
+) -> InitialSyncReceipt {
+    admit(
+        f,
+        id,
+        &start_request_for(&format!("start-{id}"), identity(b"INBOX"), 0, catalog),
+        1,
+    );
     let j = job(f, id);
     let InitialSyncFetch::Observe(request) = j.fetch_request() else {
         panic!("observation required")

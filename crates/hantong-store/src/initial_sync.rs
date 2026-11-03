@@ -1,7 +1,11 @@
 //! Durable explicit preview operations; the base UID cursor is never advanced here.
 use crate::Store;
 pub use crate::uid_page_jobs::UidQueueAdmission;
-use hantong_contracts::{ErrorCode, initial_sync::*, uid_page::UidPageStatusRequest};
+use hantong_contracts::{
+    ErrorCode,
+    initial_sync::*,
+    uid_page::{UidCursorRequest, UidPageStatusRequest},
+};
 use hantong_domain::{
     imap_observation::{ImapUidObservation, ImapUidObservationRequest},
     imap_reconcile::{ImapUidReconcilePage, ImapUidReconcileRequest},
@@ -176,6 +180,21 @@ impl Store {
         #[cfg(windows)]
         {
             storage::plan_snapshot(self, owner, request)
+        }
+        #[cfg(not(windows))]
+        {
+            let _ = (owner, request);
+            Err(ErrorCode::CapabilityUnsupported)
+        }
+    }
+    pub fn load_current_initial_sync_plan(
+        &self,
+        owner: [u8; 16],
+        request: &UidCursorRequest,
+    ) -> Result<Option<InitialSyncPlanSnapshot>, ErrorCode> {
+        #[cfg(windows)]
+        {
+            storage::current_plan_snapshot(self, owner, request)
         }
         #[cfg(not(windows))]
         {

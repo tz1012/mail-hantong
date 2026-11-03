@@ -215,6 +215,46 @@ impl Store {
             })
         }
     }
+    /// Creates the first personal Gmail management grant after a fresh
+    /// Modify-consent permit. The Store rechecks the existing OAuth-origin
+    /// registration and history; callers cannot select another account or
+    /// manufacture a stronger base scope.
+    pub fn create_google_oauth_cli_manage_scope_refresh(
+        &self,
+        refresh_id: [u8; 32],
+        target_scope: RequestedScope,
+        server_pin: [u8; 32],
+    ) -> Result<CliScopeRefresh, ErrorCode> {
+        if refresh_id == [0; 32]
+            || server_pin == [0; 32]
+            || target_scope.accounts().len() != 1
+            || target_scope.tools()
+                != hantong_contracts::auth::default_cli_manage_tools().as_slice()
+        {
+            return Err(ErrorCode::InvalidInput);
+        }
+        #[cfg(not(windows))]
+        {
+            let _ = (refresh_id, target_scope, server_pin);
+            Err(ErrorCode::CapabilityUnsupported)
+        }
+        #[cfg(windows)]
+        {
+            self.mail_transaction(rusqlite::TransactionBehavior::Immediate, |tx| {
+                let channel: String = tx
+                    .query_row(
+                        "SELECT approved_channel FROM client_registrations WHERE client_kind='cli' AND display_label=?1 AND state='active'",
+                        [DEFAULT_CLI_LABEL],
+                        |r| r.get(0),
+                    )
+                    .map_err(|_| ErrorCode::NotFound)?;
+                if channel != "google_oauth" {
+                    return Err(ErrorCode::Conflict);
+                }
+                storage::create_google_manage(tx, refresh_id, target_scope, server_pin)
+            })
+        }
+    }
     /// Creates a default CLI scope refresh confirmed in the foreground
     /// terminal. The terminal provenance is distinct from both OAuth and the
     /// legacy approval helper; it is intent metadata, not OS presence proof.
@@ -228,7 +268,10 @@ impl Store {
             || server_pin == [0; 32]
             || target_scope.accounts().is_empty()
             || target_scope.accounts().len() > 128
-            || !hantong_contracts::auth::is_supported_default_cli_toolset(target_scope.tools())
+            || !(hantong_contracts::auth::is_supported_default_cli_toolset(target_scope.tools())
+                || hantong_contracts::auth::is_supported_default_cli_manage_toolset(
+                    target_scope.tools(),
+                ))
         {
             return Err(ErrorCode::InvalidInput);
         }
@@ -440,4 +483,9 @@ pub(crate) fn validate_history_v21(c: &rusqlite::Connection) -> rusqlite::Result
 #[cfg(windows)]
 pub(crate) fn validate_history_v22(c: &rusqlite::Connection) -> rusqlite::Result<()> {
     storage::validate_history_v22(c)
+}
+
+#[cfg(windows)]
+pub(crate) fn validate_history_v25(c: &rusqlite::Connection) -> rusqlite::Result<()> {
+    storage::validate_history_v25(c)
 }

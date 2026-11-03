@@ -14,17 +14,19 @@ pub enum TerminalReviewKind {
     ImapSetup,
     SmtpSetup,
     GoogleMutation,
+    ImapTrash,
     ProtectedSend,
     PersonalSend,
 }
 impl TerminalReviewKind {
-    pub const ALL: [Self; 8] = [
+    pub const ALL: [Self; 9] = [
         Self::Registration,
         Self::ScopeRefresh,
         Self::GoogleSetup,
         Self::ImapSetup,
         Self::SmtpSetup,
         Self::GoogleMutation,
+        Self::ImapTrash,
         Self::ProtectedSend,
         Self::PersonalSend,
     ];
@@ -36,6 +38,7 @@ impl TerminalReviewKind {
             Self::ImapSetup => "imap_setup",
             Self::SmtpSetup => "smtp_setup",
             Self::GoogleMutation => "google_mutation",
+            Self::ImapTrash => "imap_trash",
             Self::ProtectedSend => "protected_send",
             Self::PersonalSend => "personal_send",
         }

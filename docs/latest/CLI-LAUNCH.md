@@ -1,12 +1,11 @@
-# mail-hantong CLI — Windows beta.8
+# mail-hantong CLI — Windows beta.16
 
-beta.11 fixes Windows PowerShell update paths, selects the newest compatible
-release independently of API order, and prevents automatic downgrades. It gives
-update-specific failure messages and retains beta.8, which fixes adding another sending Gmail account while preserving existing
-account permissions. Google consent is followed by the exact scope selection
-in the same terminal; every message still needs a separate preview and Send.
-The sending-account selection supports up to 128 accounts. This release does
-not complete generic IMAP/SMTP guided onboarding or full trash support.
+beta.16 keeps the Windows PowerShell update path, newest-compatible release
+selection and automatic downgrade protection. New accounts use the same read,
+body, compose and individually confirmed send flow as existing accounts. Google
+consent is followed by exact scope selection in the same terminal. Generic
+IMAP/SMTP accounts use the same CLI/TUI flow. The sending-account selection is
+bounded at 128 accounts.
 
 The beta also creates absent storage directories with explicit user permissions and
 uses minimal ancestor traversal access. Existing storage ACLs, accounts and keys
@@ -18,7 +17,7 @@ and stable error code. Do not send credentials, database files or mail content.
 
 The command is `hantong`. English is the default; use `--lang ko` for Korean. The companion `mail-hantong-core` process handles encrypted local storage, mail operations and policy. The graphical mail application is not included in the CLI package.
 
-**Release: [0.1.0-beta.11](https://github.com/tz1012/mail-hantong/releases/tag/v0.1.0-beta.11).** The [Korean website guide](https://tz1012.github.io/mail-hantong/) covers installation, mail and AI feature switching. Release downloads include checksums and build metadata. The preceding baseline passed 1,906 full-check test executions. This update delta is verified with 10 updater regression tests, 9 release-selection cases, API-limit fallback checks, CLI static checks and package validation; the full suite was not repeated. Earlier beta.3 manual Gmail verification covered account retention, terminal cancellation, one synthetic send/receive and matching body/attachment; it does not validate the new AI or trash path against real services. Human security review, clean Windows VM testing, other real mail providers and Google verification remain separate open gates. Real AI login, paid inference and real trash operations were not tested. This version migrates local storage from schema 24 to 25; do not run an older core against migrated data. macOS mail operations are not available yet.
+**Release: 0.1.0-beta.16.** The [Korean website guide](https://tz1012.github.io/mail-hantong/) covers installation, mail and AI feature switching. Release downloads include checksums and build metadata. The preceding baseline passed 1,906 full-check test executions; this release uses affected-package regression checks and does not claim that old count as a new full-suite result. Store/Core IMAP Trash, migration, SMTP endpoint, CLI setup and terminal-flow checks pass. Real Daum IMAP and SMTP authentication completed. One synthetic message was sent through the immutable same-terminal preview and its sent status was verified against exactly one matching Gmail message. The Daum IMAP catalog contained 17 mailboxes; two recent pages completed, repeated refresh succeeded, and body reads were verified on both runs. Human security review, clean Windows VM testing and Google publisher verification remain separate open gates. Real AI login, paid inference and real Trash movement were not tested. This version migrates local storage to schema 26; do not run an older core against migrated data. macOS mail operations are not available yet.
 
 ## What works in this preview
 
@@ -31,11 +30,57 @@ The current beta includes guided installation/startup, Google account selection 
 | Account and cached folder listing; explicit folder refresh | Automatic background synchronization of every mailbox |
 | Bounded UID metadata collection, reconciliation and recovery | General attachment download and rich HTML display |
 | Local metadata lookup, bounded text body reading and immutable drafts | Scheduled sending, contacts, tag editing and rules |
-| SMTP setup and individually human-approved sending | Unattended sending or automatic resend |
+| SMTP setup and individually confirmed sending | Unattended sending or automatic resend |
 | Managed Codex / Claude Console AI sessions and MCP mail tools | Claude subscription OAuth in third-party products |
 | Core status, diagnostics and stable error/exit codes | Complete background mailbox synchronization |
 
 IMAP/SMTP and advanced Google setup use hidden credential input in the same console. Passwords are never accepted through command arguments or JSON. Core validates the complete pending request before applying the selected operation. Interactive steps require terminal input and output; `--no-input`, redirected output and JSON do not confirm an operation. Terminal confirmation expresses intent and does not provide Windows Hello human-presence verification.
+
+### Generic IMAP/SMTP and Trash
+
+The beta includes ordinary IMAP/SMTP onboarding and a provider-neutral
+one-message Trash flow. Integration checks pass, and real Daum IMAP and SMTP
+authentication completed. One synthetic message was sent through the immutable
+same-terminal preview and its sent status was verified against exactly one
+matching Gmail message. The Daum IMAP catalog contained 17 mailboxes; two
+recent pages completed, repeated refresh succeeded, and body reads were
+verified on both runs. Real Trash movement was not performed.
+
+Use the normal onboarding menus rather than assembling request IDs. At the first
+menu, enter `3` to connect an IMAP/SMTP account. When accounts already exist,
+enter `imap` at the account-selection prompt. After the connection, work-menu
+option `6` starts generic IMAP/SMTP setup. The flow collects the IMAP server,
+port, TLS mode and login, then the SMTP server, port, TLS mode, login and an
+optional distinct sender address. Credentials are collected only through the
+Core-owned protected input in the same terminal.
+
+The `hantong-t` view keeps mailbox actions in the terminal:
+
+| Key | Action |
+| --- | --- |
+| `j` / `k` | Move the selection |
+| Enter | Open the selected account, folder or message |
+| `c` | Compose a message |
+| `t` | Request a one-message move to Trash |
+| `h` | Go back |
+| `r` | Refresh |
+| `q` | Quit |
+
+Setup, compose and Trash requests use the Core-bound preview and terminal
+review before the final choice. IMAP Trash is available only when the server
+advertises `MOVE` and the selected catalog contains exactly one selectable
+mailbox with the `\Trash` special-use role. The client never turns a failed
+move into permanent deletion and never falls back to `COPY`, `STORE`, or
+`EXPUNGE`. SMTP compose currently does not accept attachments. The Google
+sending selection remains bounded at 128 selected accounts; it is not unlimited.
+
+For Daum, the official FAQ lists `imap.daum.net` with SSL port `993` and
+`smtp.daum.net` with SSL port `465`, with `imap.hanmail.net` and
+`smtp.hanmail.net` also available. Daum Smart Work uses the registered Smart
+Work address as the mail address/From value while the login name remains the
+Daum ID. Follow Daum's current password or app-password instructions and enter
+the credential only in protected input. See [Daum IMAP/SMTP settings](https://cs.daum.net/faq/service/43/category/9234/detail/17988)
+and [Daum Smart Work Outlook settings](https://cs.daum.net/faq/service/43/category/13114/detail/24727).
 
 To review an agent-created pending request, use `hantong review --kind <kind> --request-id <id>`. Kinds include `registration`, `scope_refresh`, `google_setup`, `imap_setup`, `smtp_setup`, `google_mutation`, `personal_send` and `protected_send`. The terminal shows Core's complete stored request before offering Confirm/Cancel.
 
@@ -263,11 +308,23 @@ The package tool builds the terminal distribution and core, records versions and
 
 `hantong`은 터미널에서 사용하는 CLI입니다. `--lang ko`로 한국어를 선택하고 자동화에는 `--json`과 종료 코드를 사용합니다.
 
-현재 beta.5는 기존 메일 기능에 `/help`, 내장 AI 메일 도구 자동 연결과 Gmail 단일 메일 휴지통 이동을 추가합니다. AI 최초 이용에는 같은 터미널에서 제공자별 계정·도구·외부 전송 범위를 확인하며, 설정 후 수동 MCP 등록이나 필수 `/agent on` 없이 연결합니다. 발송·휴지통 이동은 매번 같은 터미널에서 최종 확인합니다. 휴지통 이동에는 Google Modify 권한이 필요하며 영구·대량 삭제는 지원하지 않습니다. 업데이트만으로 권한을 부여하지 않으며 과거 중단 요청의 범위도 바꾸지 않습니다. 일반 첨부 다운로드·예약·주소록·규칙 자동화와 Mac 제품은 후속입니다.
+현재 beta.16은 `/help`, 내장 AI 메일 도구 자동 연결, Gmail과 일반 IMAP 계정의 메일 조회·본문 읽기·작성·개별 발송 확인, 한 통씩 휴지통 이동을 제공합니다. AI 최초 이용에는 같은 터미널에서 제공자별 계정·도구·외부 전송 범위를 확인하며, 설정 후 수동 MCP 등록이나 필수 `/agent on` 없이 연결합니다. 발송·휴지통 이동은 매번 같은 터미널에서 최종 확인합니다. Gmail 휴지통 이동에는 Google Modify 권한이 필요하며 영구·대량 삭제는 지원하지 않습니다. 업데이트만으로 권한을 부여하지 않으며 과거 중단 요청의 범위도 바꾸지 않습니다. 일반 첨부 다운로드·예약·주소록·규칙 자동화와 Mac 제품은 후속입니다.
 
 위 PowerShell 한 줄로 설치·업데이트한 뒤 `hantong --lang ko init`을 실행하세요. 코어는 필요할 때 자동으로 시작합니다. 계정 연결·기능 선택·숨김 입력·메일 전체 검토·보내기/취소는 같은 터미널에서 진행하며, Google 로그인·동의만 브라우저를 사용합니다. 계정 작업 메뉴 4번은 작성·보내기 활성화, 5번은 메일 작성입니다. AI는 별도 `hantong ai login codex`, `hantong ai chat codex` 명령으로 시작하고 `/provider`, `/model`, `/mode`, `/fast`, `/agent`로 지원 기능을 전환합니다. 자세한 순서는 [홈페이지](https://tz1012.github.io/mail-hantong/)에 있습니다.
 
-실제 Gmail 합성 송수신·본문/첨부 일치와 설치·업데이트는 확인했습니다. 서명·새 Windows 설치 환경·다른 실제 메일 제공자·실제 AI 로그인/유료 추론 검증과 사람 보안 검토는 남아 있습니다. 진행 상황은 `docs/latest/PROGRESS.md`에서 관리합니다.
+실제 Gmail 합성 송수신·본문/첨부 일치와 설치·업데이트를 확인했고, 실제 Daum IMAP·SMTP 인증과 합성 메일 발송 상태도 확인했습니다. Daum IMAP 카탈로그에서 사서함 17개를 조회했고, 최근 2페이지와 반복 새로고침을 두 번 모두 완료했으며 본문 읽기도 두 실행에서 검증했습니다. 새 Windows 설치 환경·실제 AI 로그인/유료 추론 검증과 사람 보안 검토는 남아 있습니다. 실제 휴지통 이동은 수행하지 않았습니다. 진행 상황은 `docs/latest/PROGRESS.md`에서 관리합니다.
+
+일반 IMAP/SMTP 계정은 첫 메뉴에서 `3`, 기존 계정 메뉴에서는 `imap`, 연결
+후 작업 메뉴에서는 `6`을 선택합니다. SMTP 로그인 주소와 별도의 발신 주소를
+입력할 수 있으며, 비밀번호는 같은 터미널의 보호 입력에서 받습니다.
+`hantong-t`에서는 `j`/`k`로 이동하고 Enter로 열며 `c`로 작성하고 `t`로 한
+통을 휴지통으로 이동합니다. 서버가 `MOVE`와 정확히 하나의 선택 가능한
+`\Trash` 사서함을 제공해야 하며, 영구 삭제로 대체하지 않습니다.
+SMTP 작성의 첨부는 현재 지원하지 않습니다. Google 발송 계정 선택은 최대
+128개로 제한됩니다. Daum의 IMAP/SMTP 주소와 Smart Work 로그인 규칙은 [공식 IMAP/SMTP
+안내](https://cs.daum.net/faq/service/43/category/9234/detail/17988)와
+[공식 Smart Work 안내](https://cs.daum.net/faq/service/43/category/13114/detail/24727)를
+확인하세요.
 
 ## Simple personal Gmail sending
 

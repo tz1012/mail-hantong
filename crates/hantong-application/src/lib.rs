@@ -10,7 +10,9 @@ pub use folders_response::{render_folder_page, render_folder_refresh_receipt};
 mod message_search_response;
 pub use message_search_response::render_imap_metadata_search;
 mod initial_sync_response;
-pub use initial_sync_response::{render_initial_sync_plan, render_initial_sync_receipt};
+pub use initial_sync_response::{
+    render_initial_sync_current, render_initial_sync_plan, render_initial_sync_receipt,
+};
 
 mod diagnostics;
 pub use diagnostics::{DiagnosticEvent, EventKind, LogError, Severity, redact_sensitive};

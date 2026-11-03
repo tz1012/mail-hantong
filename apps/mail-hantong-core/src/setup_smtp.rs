@@ -52,8 +52,15 @@ fn secrets(root: &Path) -> Result<hantong_secrets::SecretStore, ErrorCode> {
     hantong_secrets::SecretStore::open(root).map_err(|_| ErrorCode::InternalError)
 }
 fn endpoint(input: &SmtpSetupInput) -> Result<SmtpEndpointConfig, ErrorCode> {
-    let endpoint = serde_json::json!({"settings_version":1,"host":input.host(),"port":input.port(),"tls":match input.tls(){ImapSetupTls::ImplicitTls=>"implicit_tls",ImapSetupTls::StarttlsRequired=>"starttls_required"},"login_name":input.login_name(),"authentication":"app_password"});
-    let bytes=serde_json::to_vec(&serde_json::json!({"schema_version":1,"account_id":input.account_id(),"imap":endpoint,"smtp":endpoint})).map_err(|_|ErrorCode::InternalError)?;
+    let mut endpoint = serde_json::json!({"settings_version":1,"host":input.host(),"port":input.port(),"tls":match input.tls(){ImapSetupTls::ImplicitTls=>"implicit_tls",ImapSetupTls::StarttlsRequired=>"starttls_required"},"login_name":input.login_name(),"authentication":"app_password"});
+    if let Some(sender) = input.sender_address() {
+        endpoint["sender_address"] = serde_json::Value::String(sender.to_owned());
+    }
+    let mut imap_endpoint = endpoint.clone();
+    if let Some(object) = imap_endpoint.as_object_mut() {
+        object.remove("sender_address");
+    }
+    let bytes=serde_json::to_vec(&serde_json::json!({"schema_version":1,"account_id":input.account_id(),"imap":imap_endpoint,"smtp":endpoint})).map_err(|_|ErrorCode::InternalError)?;
     MailConnectionConfig::from_json(&bytes)
         .map_err(|_| ErrorCode::InvalidInput)?
         .smtp()
@@ -76,6 +83,7 @@ pub(crate) fn request(
             || existing.port() != endpoint.port()
             || existing.tls() != endpoint.tls()
             || existing.login_name() != endpoint.login_name()
+            || existing.sender_address() != endpoint.sender_address()
             || existing.authentication() != endpoint.authentication()
         {
             return Err(ErrorCode::Conflict);
@@ -407,5 +415,34 @@ mod tests {
             status(&sessions, [1; 32], true).unwrap().state,
             SmtpSetupState::Expired
         );
+    }
+
+    #[test]
+    fn ext01_smtp_endpoint_keeps_explicit_sender_on_smtp_only() {
+        let with_sender = SmtpSetupInput::new_with_sender(
+            "acct".into(),
+            "smtp.example".into(),
+            465,
+            ImapSetupTls::ImplicitTls,
+            "auth-user".into(),
+            Some("alias@example.test".into()),
+        )
+        .unwrap();
+        let explicit_endpoint = endpoint(&with_sender).unwrap();
+        assert_eq!(explicit_endpoint.login_name(), "auth-user");
+        assert_eq!(
+            explicit_endpoint.sender_address(),
+            Some("alias@example.test")
+        );
+
+        let without_sender = SmtpSetupInput::new(
+            "acct".into(),
+            "smtp.example".into(),
+            465,
+            ImapSetupTls::ImplicitTls,
+            "auth@example.test".into(),
+        )
+        .unwrap();
+        assert_eq!(endpoint(&without_sender).unwrap().sender_address(), None);
     }
 }

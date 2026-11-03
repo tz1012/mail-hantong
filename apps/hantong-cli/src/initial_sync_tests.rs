@@ -13,6 +13,9 @@ fn options(action: &str) -> Vec<(String, String)> {
         ("--wire-hex".into(), "494e424f58".into()),
         ("--encoding".into(), "modified_utf7".into()),
     ];
+    if action == "initial-current" {
+        return result;
+    }
     if action != "initial-start" {
         result.push(("--plan-id".into(), "ab".repeat(32)));
     }
@@ -65,12 +68,13 @@ fn run(args: Vec<String>, events: &RefCell<Vec<&'static str>>) -> i32 {
         ),
     )
 }
-const ACTIONS: [&str; 5] = [
+const ACTIONS: [&str; 6] = [
     "initial-start",
     "initial-resume",
     "initial-pause",
     "initial-status",
     "initial-plan",
+    "initial-current",
 ];
 
 #[test]
@@ -213,4 +217,30 @@ fn sync01_initial_cli_human_progress_is_localized_and_does_not_claim_message_cou
     assert!(machine.contains("\"remaining_uid_span\":510"));
     assert!(!machine.contains("Stored plan state"));
     assert!(!machine.contains("저장된 계획 상태"));
+}
+
+#[test]
+fn sync01_initial_current_is_read_only_and_returns_absent_plan() {
+    let command = vec!["sync".into(), "initial-current".into()];
+    let opts = options("initial-current");
+    assert_eq!(
+        crate::sync::run(
+            &command,
+            &opts,
+            Lang::En,
+            true,
+            &mut |action| {
+                let Action::InitialCurrent(request) = action else {
+                    panic!("read-only current request expected")
+                };
+                Ok(crate::sync::ResultValue::InitialCurrent(request, None))
+            },
+            &mut || Lang::En
+        ),
+        0
+    );
+    let mut extra = opts.clone();
+    extra.push(("--plan-id".into(), "ab".repeat(32)));
+    assert!(parse(&command, &extra).is_err());
+    assert!(parse(&command, &opts[..2]).is_err());
 }

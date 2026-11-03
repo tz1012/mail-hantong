@@ -52,6 +52,8 @@ fn hash_payload(value: &CliScopeRefresh) -> Result<[u8; 32], ErrorCode> {
         8 => b"mail-hantong.cli-scope-refresh.v8\0".to_vec(),
         9 => b"mail-hantong.cli-scope-refresh.v9\0".to_vec(),
         10 => b"mail-hantong.cli-scope-refresh.v10\0".to_vec(),
+        11 => b"mail-hantong.cli-scope-refresh.v11\0".to_vec(),
+        12 => b"mail-hantong.cli-scope-refresh.v12\0".to_vec(),
         _ => return Err(ErrorCode::InternalError),
     };
     bytes.extend_from_slice(&value.refresh_id);
@@ -168,6 +170,9 @@ fn historical_toolset(tools: &[String], hash_version: u8) -> bool {
             || tools == hantong_contracts::auth::default_cli_send_tools().as_slice()
     } else if hash_version == 10 {
         hantong_contracts::auth::is_supported_default_cli_toolset(tools)
+    } else if hash_version == 11 || hash_version == 12 {
+        hantong_contracts::auth::is_supported_default_cli_toolset(tools)
+            || hantong_contracts::auth::is_supported_default_cli_manage_toolset(tools)
     } else if hash_version == 8 {
         matches!(historical_rank(tools), Some(0 | 5 | 6))
     } else if hash_version == 7 {
@@ -185,6 +190,10 @@ fn historical_transition(old: &[String], target: &[String], hash_version: u8) ->
             && target == hantong_contracts::auth::default_cli_send_tools().as_slice();
     } else if hash_version == 10 {
         return hantong_contracts::auth::is_supported_default_cli_toolset_transition(old, target);
+    } else if hash_version == 11 || hash_version == 12 {
+        return hantong_contracts::auth::is_supported_default_cli_manage_toolset_transition(
+            old, target,
+        );
     } else if hash_version == 8 {
         return historical_rank(old) == Some(0) && matches!(historical_rank(target), Some(5 | 6));
     } else if hash_version == 7 {
@@ -378,10 +387,13 @@ fn read_row(
     let target_tools: Vec<String> = serde_json::from_str(text_column(row, 19, 2048)?)
         .map_err(|_| rusqlite::Error::InvalidQuery)?;
     let decision_channel = text_column(row, 20, 32)?;
-    if ((hash_version == 8 || hash_version == 9) && decision_channel != "google_oauth")
-        || (hash_version == 10 && decision_channel != "terminal_cli")
+    if ((hash_version == 8 || hash_version == 9 || hash_version == 12)
+        && decision_channel != "google_oauth")
+        || ((hash_version == 10 || hash_version == 11) && decision_channel != "terminal_cli")
         || (hash_version != 8
             && hash_version != 9
+            && hash_version != 11
+            && hash_version != 12
             && hash_version != 10
             && decision_channel != "approval_helper")
     {
@@ -417,6 +429,24 @@ fn read_row(
             || !hantong_contracts::auth::is_supported_default_cli_toolset(&target_tools))
     {
         return invalid();
+    }
+    if matches!(hash_version, 11 | 12) {
+        let channel_allowed = if hash_version == 11 {
+            matches!(
+                current.approved_channel.as_str(),
+                "approval_helper" | "google_oauth" | "terminal_cli"
+            )
+        } else {
+            current.approved_channel == "google_oauth"
+        };
+        if !channel_allowed
+            || old.len() > 128
+            || target.is_empty()
+            || target.len() > 128
+            || !hantong_contracts::auth::is_supported_default_cli_manage_toolset(&target_tools)
+        {
+            return invalid();
+        }
     }
     if !(1..=i64::from(maximum_hash_version)).contains(&hash_version)
         || !historical_toolset(&base_tools, hash_version as u8)
@@ -498,7 +528,7 @@ fn read_row(
     Ok(value)
 }
 pub(super) fn context(connection: &Connection) -> Result<Option<Context>, ErrorCode> {
-    context_with_layout(connection, false, 10)
+    context_with_layout(connection, false, 12)
 }
 fn context_with_layout(
     connection: &Connection,
@@ -536,7 +566,12 @@ fn context_with_layout(
         || original.client_kind != ClientKind::Cli
         || original.display_label != DEFAULT_CLI_LABEL
         || !historical_toolset(original.scope.tools(), 1)
-        || !(if maximum_hash_version >= 8 {
+        || !(if maximum_hash_version >= 11 {
+            hantong_contracts::auth::is_supported_default_cli_toolset(registration.scope.tools())
+                || hantong_contracts::auth::is_supported_default_cli_manage_toolset(
+                    registration.scope.tools(),
+                )
+        } else if maximum_hash_version >= 8 {
             hantong_contracts::auth::is_supported_default_cli_toolset(registration.scope.tools())
         } else {
             historical_toolset(registration.scope.tools(), maximum_hash_version)
@@ -864,7 +899,17 @@ pub(super) fn create(
         google_oauth,
         google_send_upgrade,
         false,
+        false,
     )
+}
+
+pub(super) fn create_google_manage(
+    tx: &Transaction<'_>,
+    id: [u8; 32],
+    target_scope: RequestedScope,
+    pin: [u8; 32],
+) -> Result<CliScopeRefresh, ErrorCode> {
+    create_with_provenance(tx, id, target_scope, pin, true, false, false, true)
 }
 
 pub(super) fn create_terminal(
@@ -873,9 +918,10 @@ pub(super) fn create_terminal(
     target_scope: RequestedScope,
     pin: [u8; 32],
 ) -> Result<CliScopeRefresh, ErrorCode> {
-    create_with_provenance(tx, id, target_scope, pin, false, false, true)
+    create_with_provenance(tx, id, target_scope, pin, false, false, true, false)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn create_with_provenance(
     tx: &Transaction<'_>,
     id: [u8; 32],
@@ -884,11 +930,13 @@ fn create_with_provenance(
     google_oauth: bool,
     google_send_upgrade: bool,
     terminal_cli: bool,
+    google_manage: bool,
 ) -> Result<CliScopeRefresh, ErrorCode> {
     let context = context(tx)?.ok_or(ErrorCode::NotFound)?;
     let base = context.registration;
     if google_oauth
         && !google_send_upgrade
+        && !google_manage
         && (base.profile_epoch != 1
             || base.scope.tools() != hantong_contracts::auth::default_cli_legacy_tools().as_slice()
             || !context.rows.is_empty()
@@ -921,14 +969,42 @@ fn create_with_provenance(
             return Err(ErrorCode::Conflict);
         }
     }
+    if google_manage {
+        let legacy = hantong_contracts::auth::default_cli_legacy_tools();
+        let body = hantong_contracts::auth::default_cli_body_tools();
+        let send = hantong_contracts::auth::default_cli_send_tools();
+        if base.client_kind != ClientKind::Cli
+            || base.display_label != DEFAULT_CLI_LABEL
+            || base.approved_channel != "google_oauth"
+            || base.scope.accounts().len() != 1
+            || target_scope.accounts() != base.scope.accounts()
+            || !matches!(base.scope.tools(), t if t == legacy.as_slice() || t == body.as_slice() || t == send.as_slice())
+            || target_scope.tools()
+                != hantong_contracts::auth::default_cli_manage_tools().as_slice()
+            || context.rows.iter().any(|r| {
+                matches!(
+                    r.phase,
+                    ScopeRefreshPhase::Pending | ScopeRefreshPhase::Staged
+                )
+            })
+        {
+            return Err(ErrorCode::Conflict);
+        }
+    }
     if terminal_cli
         && (!matches!(
             base.approved_channel.as_str(),
             "approval_helper" | "google_oauth" | "terminal_cli"
         ) || base.client_kind != ClientKind::Cli
             || base.display_label != DEFAULT_CLI_LABEL
-            || !hantong_contracts::auth::is_supported_default_cli_toolset(base.scope.tools())
-            || !hantong_contracts::auth::is_supported_default_cli_toolset(target_scope.tools())
+            || !(hantong_contracts::auth::is_supported_default_cli_toolset(base.scope.tools())
+                || hantong_contracts::auth::is_supported_default_cli_manage_toolset(
+                    base.scope.tools(),
+                ))
+            || !(hantong_contracts::auth::is_supported_default_cli_toolset(target_scope.tools())
+                || hantong_contracts::auth::is_supported_default_cli_manage_toolset(
+                    target_scope.tools(),
+                ))
             || target_scope.accounts().is_empty()
             || target_scope.accounts().len() > 128)
     {
@@ -937,7 +1013,19 @@ fn create_with_provenance(
     if base.state != RegistrationState::Active
         || (target_scope.accounts() == base.scope.accounts()
             && target_scope.tools() == base.scope.tools())
-        || !is_supported_default_cli_toolset_transition(base.scope.tools(), target_scope.tools())
+        || !(if google_manage
+            || (terminal_cli
+                && hantong_contracts::auth::is_supported_default_cli_manage_toolset(
+                    target_scope.tools(),
+                ))
+        {
+            hantong_contracts::auth::is_supported_default_cli_manage_toolset_transition(
+                base.scope.tools(),
+                target_scope.tools(),
+            )
+        } else {
+            is_supported_default_cli_toolset_transition(base.scope.tools(), target_scope.tools())
+        })
         || base.version > i64::MAX as u64 - 2
         || base.profile_epoch >= i64::MAX as u64
         || context.rows.iter().any(|r| {
@@ -968,7 +1056,15 @@ fn create_with_provenance(
     }
     let mut value = CliScopeRefresh {
         refresh_id: id,
-        hash_version: if terminal_cli {
+        hash_version: if google_manage {
+            12
+        } else if terminal_cli
+            && hantong_contracts::auth::is_supported_default_cli_manage_toolset(
+                target_scope.tools(),
+            )
+        {
+            11
+        } else if terminal_cli {
             10
         } else if google_oauth && google_send_upgrade {
             9
@@ -1039,7 +1135,13 @@ fn create_with_provenance(
             i64::from(value.hash_version),
             old_tools,
             target_tools,
-            if value.hash_version == 10 { "terminal_cli" } else if matches!(value.hash_version, 8 | 9) { "google_oauth" } else { "approval_helper" },
+            if matches!(value.hash_version, 10 | 11) {
+                "terminal_cli"
+            } else if matches!(value.hash_version, 8 | 9 | 12) {
+                "google_oauth"
+            } else {
+                "approval_helper"
+            },
         ],
     ))?;
     load(tx, id)?.ok_or(ErrorCode::InternalError)
@@ -1212,6 +1314,16 @@ pub(super) fn validate_history_v21(c: &Connection) -> rusqlite::Result<()> {
 #[cfg(windows)]
 pub(super) fn validate_history_v22(c: &Connection) -> rusqlite::Result<()> {
     context_with_layout(c, false, 8)
+        .map(|_| ())
+        .map_err(|_| rusqlite::Error::InvalidQuery)
+}
+
+/// Freeze the v25 ledger before the v26 schema widens the scope hash domain.
+/// Hash versions 11 and 12 belong exclusively to v26 and must never be
+/// accepted while validating the v25 on-disk layout.
+#[cfg(windows)]
+pub(super) fn validate_history_v25(c: &Connection) -> rusqlite::Result<()> {
+    context_with_layout(c, false, 10)
         .map(|_| ())
         .map_err(|_| rusqlite::Error::InvalidQuery)
 }

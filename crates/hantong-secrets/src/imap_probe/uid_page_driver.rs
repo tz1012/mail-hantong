@@ -3,7 +3,7 @@ use super::*;
 use crate::imap_probe::uid_page_gate::{Mode, Observation, Reply, UidPageGate};
 use hantong_domain::imap_sync::ImapMessageMetadata;
 use io_imap::{
-    codec::{ResponseCodec, decode::Decoder, encode::Fragment},
+    codec::{CommandCodec, ResponseCodec, decode::Decoder, encode::Fragment},
     types::{core::LiteralMode, fetch::MessageDataItemName, response::Response},
 };
 
@@ -12,6 +12,13 @@ struct Selection {
     validity: Option<u32>,
     next: Option<u32>,
     read_only: bool,
+    read_write: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum UidMoveOutcome {
+    Accepted,
+    Unknown,
 }
 impl Selection {
     fn observe(&mut self, observation: Observation) -> Result<(), MailProbeError> {
@@ -20,6 +27,7 @@ impl Selection {
             Observation::UidValidity(n) if self.validity.is_none() => self.validity = Some(n),
             Observation::UidNext(n) if self.next.is_none() => self.next = Some(n),
             Observation::ReadOnly if !self.read_only => self.read_only = true,
+            Observation::ReadWrite if !self.read_write => self.read_write = true,
             _ => return Err(MailProbeError::Protocol),
         }
         Ok(())
@@ -32,6 +40,13 @@ impl Selection {
             self.validity.ok_or(MailProbeError::Protocol)?,
             self.next.ok_or(MailProbeError::Protocol)?,
         ))
+    }
+
+    fn finish_read_write(self) -> Result<u32, MailProbeError> {
+        if !self.read_write {
+            return Err(MailProbeError::Protocol);
+        }
+        self.validity.ok_or(MailProbeError::Protocol)
     }
 }
 
@@ -238,6 +253,95 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Protocol<S> {
         }
         Err(MailProbeError::Protocol)
     }
+    pub(super) async fn uid_move(
+        &mut self,
+        uid: u32,
+        destination: &ImapMailboxName,
+    ) -> Result<UidMoveOutcome, MailProbeError> {
+        use io_imap::types::{mailbox::Mailbox, sequence::SequenceSet};
+        // The identity's wire bytes are already validated for the selected
+        // encoding. Passing the display string here would re-encode modified
+        // UTF-7 names as UTF-8 and can move to a different mailbox.
+        let mailbox: Mailbox<'static> = destination
+            .wire_name()
+            .to_vec()
+            .try_into()
+            .map_err(|_| MailProbeError::Protocol)?;
+        let command = Command {
+            tag: "h7".try_into().map_err(|_| MailProbeError::Protocol)?,
+            body: CommandBody::Move {
+                sequence_set: SequenceSet::from(
+                    std::num::NonZeroU32::new(uid).ok_or(MailProbeError::Protocol)?,
+                ),
+                mailbox,
+                uid: true,
+            },
+        };
+        for fragment in CommandCodec::new().encode(&command) {
+            match fragment {
+                Fragment::Line { data } => {
+                    if self.write(SensitiveBuffer(data)).await.is_err() {
+                        return Ok(UidMoveOutcome::Unknown);
+                    }
+                }
+                Fragment::Literal { data, mode } => {
+                    if mode == LiteralMode::Sync && self.literal_continuation().await.is_err() {
+                        return Ok(UidMoveOutcome::Unknown);
+                    }
+                    if self.write(SensitiveBuffer(data)).await.is_err() {
+                        return Ok(UidMoveOutcome::Unknown);
+                    }
+                }
+            }
+        }
+        let mut remaining = 32;
+        match self
+            .frame(GateMode::Mutation, Some("h7"), &mut remaining)
+            .await
+        {
+            Ok(ReplyKind::Tagged(StatusKind::Ok)) => Ok(UidMoveOutcome::Accepted),
+            // RFC 6851 permits a server to report NO/BAD after it has
+            // partially applied a MOVE. Once the command was written, the
+            // result is therefore ambiguous and must never be retried.
+            Ok(ReplyKind::Tagged(StatusKind::No | StatusKind::Bad)) | Ok(_) | Err(_) => {
+                Ok(UidMoveOutcome::Unknown)
+            }
+        }
+    }
+    pub(super) async fn select(
+        &mut self,
+        tag: &str,
+        mailbox: &ImapMailboxName,
+    ) -> Result<u32, MailProbeError> {
+        let command = Command {
+            tag: tag.try_into().map_err(|_| MailProbeError::Protocol)?,
+            body: CommandBody::select(mailbox.wire_name()).map_err(|_| MailProbeError::Protocol)?,
+        };
+        for fragment in CommandCodec::new().encode(&command) {
+            match fragment {
+                Fragment::Line { data } => self.write(SensitiveBuffer(data)).await?,
+                Fragment::Literal { data, mode } => {
+                    if mode == LiteralMode::Sync {
+                        self.literal_continuation().await?;
+                    }
+                    self.write(SensitiveBuffer(data)).await?;
+                }
+            }
+        }
+        let mut selection = Selection::default();
+        for count in 0..=128 {
+            match self.uid_frame(Mode::Select, tag).await? {
+                Reply::Tagged(observation) => {
+                    selection.observe(observation)?;
+                    return selection.finish_read_write();
+                }
+                Reply::Status(observation) if count < 128 => selection.observe(observation)?,
+                Reply::Data if count < 128 => {}
+                _ => return Err(MailProbeError::Protocol),
+            }
+        }
+        Err(MailProbeError::Protocol)
+    }
     async fn uid_messages(
         &mut self,
         after: u32,
@@ -386,6 +490,92 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Protocol<S> {
 #[cfg(test)]
 mod body_tests {
     use super::*;
+
+    #[test]
+    fn sec03_move_preserves_modified_utf7_wire_mailbox() {
+        use io_imap::types::{mailbox::Mailbox, sequence::SequenceSet};
+
+        let wire = b"Archive/&U,BTFw-";
+        let mailbox: ImapMailboxName =
+            ImapMailboxName::from_wire(wire, MailboxEncoding::ModifiedUtf7).unwrap();
+        let target: Mailbox<'static> = mailbox.wire_name().to_vec().try_into().unwrap();
+        let command = Command {
+            tag: "h7".try_into().unwrap(),
+            body: CommandBody::Move {
+                sequence_set: SequenceSet::from(std::num::NonZeroU32::new(17).unwrap()),
+                mailbox: target,
+                uid: true,
+            },
+        };
+        let encoded = CommandCodec::new().encode(&command).dump();
+        assert_eq!(encoded, b"h7 UID MOVE 17 Archive/&U,BTFw-\r\n");
+    }
+
+    #[tokio::test]
+    async fn sec03_move_maps_postwrite_no_and_disconnect_to_unknown_without_retry() {
+        for (reply, expected) in [
+            (
+                Some(b"h7 NO destination unavailable\r\n".as_slice()),
+                UidMoveOutcome::Unknown,
+            ),
+            (None, UidMoveOutcome::Unknown),
+        ] {
+            let (client, mut server) = tokio::io::duplex(1024);
+            let task = tokio::spawn(async move {
+                use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+                let mut server = BufReader::new(&mut server);
+                let mut command = Vec::new();
+                server.read_until(b'\n', &mut command).await.unwrap();
+                assert_eq!(command, b"h7 UID MOVE 17 Archive/&U,BTFw-\r\n");
+                if let Some(reply) = reply {
+                    server.get_mut().write_all(reply).await.unwrap();
+                }
+            });
+            let mut protocol = Protocol {
+                io: BufReader::new(client),
+                remaining: 4096,
+                written: 0,
+            };
+            let mailbox =
+                ImapMailboxName::from_wire(b"Archive/&U,BTFw-", MailboxEncoding::ModifiedUtf7)
+                    .unwrap();
+            assert_eq!(protocol.uid_move(17, &mailbox).await.unwrap(), expected);
+            task.await.unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn sec03_select_requires_read_write_and_binds_uidvalidity_before_move() {
+        for (status, expected) in [
+            (
+                b"* OK [UIDVALIDITY 42] selected\r\n* OK [UIDNEXT 9] next\r\nh6 OK [READ-WRITE] selected\r\n".as_slice(),
+                Ok::<u32, MailProbeError>(42),
+            ),
+            (
+                b"* OK [UIDVALIDITY 42] selected\r\n* OK [UIDNEXT 9] next\r\nh6 OK [READ-ONLY] selected\r\n".as_slice(),
+                Err(MailProbeError::Protocol),
+            ),
+        ] {
+            let (client, mut server) = tokio::io::duplex(2048);
+            let task = tokio::spawn(async move {
+                use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+                let mut server = BufReader::new(&mut server);
+                let mut command = Vec::new();
+                server.read_until(b'\n', &mut command).await.unwrap();
+                assert_eq!(command, b"h6 SELECT INBOX\r\n");
+                server.get_mut().write_all(status).await.unwrap();
+            });
+            let mut protocol = Protocol {
+                io: BufReader::new(client),
+                remaining: 4096,
+                written: 0,
+            };
+            let mailbox = ImapMailboxName::from_wire(b"INBOX", MailboxEncoding::Utf8).unwrap();
+            assert_eq!(protocol.select("h6", &mailbox).await, expected);
+            task.await.unwrap();
+        }
+    }
+
     #[tokio::test]
     async fn mail03_body_driver_uses_readonly_examine_and_peek_then_requires_ok() {
         let (client, server) = tokio::io::duplex(4096);

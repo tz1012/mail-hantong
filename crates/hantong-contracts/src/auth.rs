@@ -651,6 +651,22 @@ pub fn default_cli_send_tools() -> Vec<String> {
     tools
 }
 
+/// Exact personal management grant: the send-capable CLI grant plus the
+/// bounded Gmail trash request/execute pair.  Trash is a Gmail mutation and
+/// remains subject to the same terminal confirmation path as other writes.
+pub fn default_cli_manage_tools() -> Vec<String> {
+    let mut tools = default_cli_send_tools();
+    tools.extend(
+        [
+            crate::google_mutation::TRASH_REQUEST_TOOL,
+            crate::google_mutation::TRASH_EXECUTE_TOOL,
+        ]
+        .map(str::to_owned),
+    );
+    tools.sort_unstable();
+    tools
+}
+
 fn default_cli_toolset_rank(tools: &[String]) -> Option<u8> {
     if tools == default_cli_legacy_tools() {
         Some(0)
@@ -680,7 +696,11 @@ pub fn is_supported_default_cli_toolset(tools: &[String]) -> bool {
 
 /// Equal tool sets may accompany an account change; callers reject a full no-op.
 pub fn is_supported_default_cli_toolset_transition(old: &[String], target: &[String]) -> bool {
-    if is_google_change_toolset(old) || is_google_change_toolset(target) {
+    if is_google_change_toolset(old)
+        || is_google_change_toolset(target)
+        || is_google_manage_toolset(old)
+        || is_google_manage_toolset(target)
+    {
         return is_supported_default_cli_toolset(old)
             && is_supported_default_cli_toolset(target)
             && old.iter().all(|tool| target.binary_search(tool).is_ok());
@@ -907,6 +927,43 @@ pub fn is_google_change_toolset(tools: &[String]) -> bool {
         .collect::<Vec<_>>()
         == base
 }
+
+/// Canonical D plus one to four account-qualified Google change grants.
+pub fn is_google_manage_toolset(tools: &[String]) -> bool {
+    if !(14..=17).contains(&tools.len()) || tools.windows(2).any(|p| p[0] >= p[1]) {
+        return false;
+    }
+    let base = default_cli_manage_tools();
+    tools
+        .iter()
+        .filter(|v| crate::google_mutation::grant_account(v).is_none())
+        .cloned()
+        .collect::<Vec<_>>()
+        == base
+}
+
+pub fn is_supported_default_cli_manage_toolset(tools: &[String]) -> bool {
+    tools == default_cli_manage_tools() || is_google_manage_toolset(tools)
+}
+
+pub fn is_supported_default_cli_manage_toolset_transition(
+    old: &[String],
+    target: &[String],
+) -> bool {
+    if !is_supported_default_cli_manage_toolset(target) {
+        return false;
+    }
+    if old == default_cli_legacy_tools()
+        || old == default_cli_body_tools()
+        || old == default_cli_send_tools()
+    {
+        return target == default_cli_manage_tools();
+    }
+    if is_google_change_toolset(old) || is_supported_default_cli_manage_toolset(old) {
+        return old.iter().all(|tool| target.binary_search(tool).is_ok());
+    }
+    false
+}
 #[cfg(test)]
 mod mutation_scope_tests {
     use super::*;
@@ -949,6 +1006,66 @@ mod mutation_scope_tests {
         assert!(!is_supported_default_cli_toolset_transition(
             &a,
             &default_cli_send_tools()
+        ));
+    }
+}
+
+#[cfg(test)]
+mod manage_scope_tests {
+    use super::*;
+
+    #[test]
+    fn ai09_manage_scope_is_canonical_and_monotonic() {
+        let manage = default_cli_manage_tools();
+        assert_eq!(manage.len(), 13);
+        assert!(is_supported_default_cli_manage_toolset(&manage));
+        // Frozen legacy histories cannot acquire the new Manage toolset.
+        assert!(!is_supported_default_cli_toolset_transition(
+            &default_cli_send_tools(),
+            &manage
+        ));
+        assert!(is_supported_default_cli_manage_toolset_transition(
+            &default_cli_send_tools(),
+            &manage
+        ));
+        assert!(is_supported_default_cli_manage_toolset_transition(
+            &default_cli_body_tools(),
+            &manage
+        ));
+        assert!(is_supported_default_cli_manage_toolset_transition(
+            &manage, &manage
+        ));
+        assert!(!is_supported_default_cli_manage_toolset_transition(
+            &manage,
+            &default_cli_send_tools()
+        ));
+        let account = format!("google_{}", "a".repeat(64));
+        let mut qualified = manage.clone();
+        qualified.push(crate::google_mutation::account_grant(&account).unwrap());
+        qualified.sort_unstable();
+        assert!(is_google_manage_toolset(&qualified));
+        assert!(is_supported_default_cli_manage_toolset_transition(
+            &manage, &qualified
+        ));
+        assert!(!is_supported_default_cli_manage_toolset_transition(
+            &qualified, &manage
+        ));
+        let mut changes = default_cli_send_tools();
+        changes.push(crate::google_mutation::account_grant(&account).unwrap());
+        changes.sort_unstable();
+        assert!(is_supported_default_cli_manage_toolset_transition(
+            &changes, &qualified
+        ));
+        let other = format!("google_{}", "b".repeat(64));
+        let mut swapped = manage.clone();
+        swapped.push(crate::google_mutation::account_grant(&other).unwrap());
+        swapped.sort_unstable();
+        assert!(!is_supported_default_cli_manage_toolset_transition(
+            &qualified, &swapped
+        ));
+        assert!(!is_supported_default_cli_manage_toolset_transition(
+            &[],
+            &manage
         ));
     }
 }

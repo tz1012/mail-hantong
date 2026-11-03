@@ -197,7 +197,8 @@ fn progress(
         request.expires_at_utc_ms(),
         state,
         action,
-    )
+    )?
+    .with_account_id(request.intent().draft().account_id().to_owned())
 }
 
 // Only Core's consumed native pending reaches the production implementation.

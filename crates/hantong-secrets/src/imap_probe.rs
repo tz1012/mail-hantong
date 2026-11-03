@@ -16,7 +16,7 @@ mod tests;
 #[cfg(windows)]
 mod uid_page_gate;
 #[cfg(windows)]
-mod windows;
+pub(crate) mod windows;
 
 #[derive(Debug, Eq, PartialEq)]
 pub struct ImapProbeReceipt {

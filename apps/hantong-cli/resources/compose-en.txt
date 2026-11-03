@@ -14,3 +14,4 @@ send_prompt=Send this message? 1) Send  0) Cancel
 review_state=Sending review state
 review_waiting=Sending. Waiting up to 5 minutes for the result.
 cancelled=Cancelled. No message was sent.
+attachments_unsupported=Attachments are not supported for this mail provider; continuing without an attachment.

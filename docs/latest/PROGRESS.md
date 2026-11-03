@@ -100,7 +100,7 @@ Google 다중 계정 로그인·Gmail 읽기 구현(2026-10-30): 브라우저 OA
 | 실행 성능 기준 | 빠른 실행을 추구하면서 상주 메모리 사용도 함께 고려한다. 사용자가 이 절충을 근거로 Rust를 선택했다. 웜 캐시 상태의 기본 메일 목록 사용 가능 목표 **1초 이내**는 유지한다. 현재 기준은 [FEATURES.md](FEATURES.md)의 성능 보완이다. |
 | 런타임 결정 | **코어·CLI Rust 확정** — 2026-10-29 사용자 선택, [ADR-001](../adr/ADR-001-core-runtime.md). 비교 실험에서 .NET은 프로세스 시작, Rust는 메모리에 유리했고 검색은 혼재했다. [실측 보고서](RUNTIME-BENCHMARK.md)는 보존하며 제품의 1초 목표는 아직 검증 전이다. |
 | Mac 지원 방향 | 사용자 승인으로 정식 후속 목표에 포함했다. Windows 우선 출시 후 Mac 코어·CLI·최소 승인 도우미부터 제공하고 전체 GUI를 후속 제공한다. 구체적인 단계·일정·패키지는 미정이며 현재 제품은 미구현이다. |
-| 공개 사용 정책 | **[LICENSE Version 1.0](../../LICENSE) 정식 채택** — 개인·회사 내부 업무용 사용, 수정본 비공개 및 원본·수정본 무료 재배포 허용. 프로그램 판매·유료 제공 금지. 고지 유지·수정 표시·보증과 책임 조항 포함. 저작권자는 **Andrew Cho**, 웹사이트 **https://tzt.kr**, 연락처 **andrew@tzt.kr**이다. [한국어 안내](LICENSING.md), [ADR-016](../adr/ADR-016-license.md). |
+| 공개 사용 정책 | **[LICENSE Version 1.0](../../LICENSE) 정식 채택** — 개인·회사 내부 업무용 사용, 수정본 비공개 및 원본·수정본 무료 재배포 허용. 프로그램 판매·유료 제공 금지. 고지 유지·수정 표시·보증과 책임 조항 포함. 저작권자는 **Andrew Cho**, 웹사이트 **https://tzt.kr**, 연락처 **[private-test-address]**이다. [한국어 안내](LICENSING.md), [ADR-016](../adr/ADR-016-license.md). |
 | 다음 제품 작업 | CLI 배포 기준선을 보존하고 첨부·초안 편집·예약·주소록·규칙 등 남은 P0와 사람 보안 검토·실제 제공자 검증을 이어간다. GUI 디자인·자동 추가 로딩·상단 폴더 선택 제거는 후속 범위다. |
 
 ## CLI preview.4 — Google 다중 계정 브라우저 로그인·Gmail 읽기 (2026-10-30)
@@ -374,7 +374,7 @@ v13 기준선 `5f27187` 다음에는 같은 세 담당자가 [복구 계약](../
 
 ## 2026-10-29 사용자 검토 7 저작권자와 무료 재배포
 
-**사용자 답변:** “Andrew Cho, tzt.kr, andrew@tzt.kr”, 이어 “무료 재배포 허용”.
+**사용자 답변:** “Andrew Cho, tzt.kr, [private-test-address]”, 이어 “무료 재배포 허용”.
 
 **확정 범위:** 저작권자 Andrew Cho와 웹사이트·연락처를 사용한다. 원본·수정본의 무료 재배포를 허용하고 수정본의 소스 공개 의무를 두지 않는다. 개인·회사 내부 업무용 사용 허용과 판매·유료 서비스 제공 금지는 유지한다.
 
@@ -1274,9 +1274,9 @@ Gmail 목록·본문 기능은 암호화 로컬 캐시를 읽으므로 실서버
 
 이 절은 앞선 테스트 사용자 미등록 차단을 대체한다. 사용자 개별 승인 후 같은 프로젝트의 테스트 사용자에 지정 계정을 추가했고, Audience에서 기존 계정과 함께 2명을 확인했다. 운영 모드 전환은 Google의 Publish app disabled 및 Branding 구성 완료 요구로 미실행이며 여전히 Testing이다. 홈페이지·개인정보처리방침·약관 URL은 비어 있고 개별 필드의 정확한 차단 기여는 미확정이다. URL을 임의로 입력하거나 검증 심사를 제출하지 않았다.
 
-이후 사용자가 yopunfun2 계정의 초안/발송/읽음·라벨 변경과 두 계정 사이 각 1통의 합성 첨부 시험을 요청했다. 새 실제 OAuth/권한/메일 단계는 권한 범위 확정을 위해 보류했다. 현재 Gmail 구현은 readonly이며 SMTP 발송 원장만 존재한다. Gmail POST·첨부 승인 결속·첨부 수신 검증·변경 도구와 계정별 선택 grant는 추가 구현 대상이다. 기존 검사 1,645개 통과는 쓰기 기능/실제 송수신 검증이 아니다.
+이후 사용자가 [private-test-identity] 계정의 초안/발송/읽음·라벨 변경과 두 계정 사이 각 1통의 합성 첨부 시험을 요청했다. 새 실제 OAuth/권한/메일 단계는 권한 범위 확정을 위해 보류했다. 현재 Gmail 구현은 readonly이며 SMTP 발송 원장만 존재한다. Gmail POST·첨부 승인 결속·첨부 수신 검증·변경 도구와 계정별 선택 grant는 추가 구현 대상이다. 기존 검사 1,645개 통과는 쓰기 기능/실제 송수신 검증이 아니다.
 
-정확한 최소 OAuth 제안은 yopunfun2: openid/email/gmail.modify, enlearn: openid/email/gmail.readonly/gmail.send이다. modify는 Google 자체에서 휴지통 이동/초안 영구 삭제도 허용하므로 앱의 삭제 차단과 구분해 설명해야 한다. Google 전체 mail scope는 요청하지 않는다. 실제 grant 확대는 새 구체 승인 전 수행하지 않았다. 개발 소스와 합성 시험은 다음 단계이며 현재 제품 코드 변경은 없다.
+정확한 최소 OAuth 제안은 [private-test-identity]: openid/email/gmail.modify, [private-test-identity]: openid/email/gmail.readonly/gmail.send이다. modify는 Google 자체에서 휴지통 이동/초안 영구 삭제도 허용하므로 앱의 삭제 차단과 구분해 설명해야 한다. Google 전체 mail scope는 요청하지 않는다. 실제 grant 확대는 새 구체 승인 전 수행하지 않았다. 개발 소스와 합성 시험은 다음 단계이며 현재 제품 코드 변경은 없다.
 
 기존 코어 PID44160/정확 경로 존재를 Windows 사용자 관측으로 확인했고 실행 파일 SHA-256은 기존 25CDD6E2F1D29FF9C68925678AE3071A7C0E937E1E97F06D4EF6E9B221E68253와 같다. sandbox에서 PID가 보이지 않는 관측을 코어 부재로 해석하지 않았다. 새 UX 실행·OAuth·credential·grant·메일 작업 및 외부 업로드는 이번 단계에서 모두 미실행이다. 상세 구현 공백·권한·23바이트 합성 첨부 시험·남은 차단은 로컬 oauth-deliverables/gmail-write-preflight.md에 기록했다. 보안 코드 **[사람 검토 필요]** 유지.
 
@@ -1866,3 +1866,67 @@ REST/Atom 응답 순서 대신 유효한 호환 패키지의 버전을 비교한
 새 릴리스 선택 합성 시험 9개 통과(15.657초). 기존 API 제한/Atom fallback 시험도 5개 통과했고 이후 변경 없는 해당 경로는 반복하지 않았다. PowerShell parse와 diff check 통과, 좁은 자동 검토에서 구체적 차단 사항 없음. Rust 경로 변경은 앞서 통과한 10개 시험과 CLI Clippy 근거를 재사용하며 전체 검사는 재실행하지 않는다. 계약은 cli-update.md에 선택/하향 방지 규칙을 보충했다. 새 패키지·실제 update의 최종 버전 확인을 이어간다. [사람 보안 검토 필요].
 
 공통 메일 별도 작업 사본의 IMAP 인증→SELECT→단일 UID MOVE 합성 종단 시험 4개가 새 독립 Cargo target에서 통과했다. 실제 서버·계정은 사용하지 않았다. READ-WRITE 응답의 scanner/typed decoder 불일치를 수정했으며, target을 원본 릴리스 검증과 분리해 작업 사본 간 오래된 artifact 혼입을 피한다. 공통 전체 기능 완료나 배포로 표시하지 않는다.
+
+
+### 2026-11-03 사용자 PowerShell에서 실제 업데이트 완료 확인
+
+사용자가 열어 둔 WindowsTerminal의 기존 Windows PowerShell(w-5642630, 빈 PS C:\> 프롬프트)에 agent-desktop으로 `update hantong`을 직접 입력하고 한 번 실행했다. 다운로드·압축 해제·기존 설치 검증 막대를 관찰했고, Installed mail-hantong CLI 0.1.0-beta.11 완료 및 프롬프트 복귀를 확인했다. 같은 창에서 `$LASTEXITCODE; hantong --version`을 실행한 출력은 `0`, `hantong 0.1.0-beta.11`이다. current.txt도 beta.11이며 기존 beta.11 Core PID 53416이 유지됐다. 이번 실행에 Join-Path 오류·구버전 하향은 없었다. 근거: target/beta11-user-terminal-verified.png, target/beta11-verification.json. 앞서 직접 설치로 이미 beta.11인 상태에서 실행한 최신 버전 선택/동일 버전 재설치 검증이며, 이를 구버전 런처에서의 직접 업그레이드 성공으로 확대하지 않는다.
+
+사용자 기존 계정·메일·키·저장소 권한은 이 시험에서 읽거나 변경하지 않았다. 전체 검사는 반복하지 않았다. 설치 준비가 수 분 걸리며 과거 설치 버전 전체 파일을 검사하는 구간의 진행 안내가 부족한 점은 후속 개선 사항이다. 별도 common-mail 작업 사본은 테스트 fixture의 모듈 경로·move 오류를 최소 수정한 뒤 전용 target에서 workspace all-targets check가 29.37초에 통과했다(target/common-mail-check-isolated-complete.log). 이는 컴파일 검사이며 기능 시험/출시 완료는 아니다. 일반 IMAP/SMTP·휴지통 확장은 미출시이며 사람 보안 검토 경계는 유지한다.
+
+
+### 2026-11-03 일반 메일 통합과 SMTP 발신 주소 분리
+
+별도 common-mail 작업 사본에서 일반 SMTP 로그인 아이디와 발신 주소를 분리했다. sender_address가 없는 기존 endpoint의 직렬화와 hash는 유지하고, 명시한 주소는 계약·IPC·Core preview·Secrets credential 결속·MIME From·MAIL FROM에 반영한다. schema26에 선택적 SMTP 발신 주소 테이블을 추가했고, frozen 구버전 validator가 없는 테이블을 조회하던 문제를 테이블 존재 확인 후 legacy fallback으로 수정했다.
+
+IMAP 휴지통은 Store audit begin과 claim/outbox를 하나의 transaction에 묶고 Core에서 새 원자 API를 사용한다. 복원 payload hash 재검사와 다른 등록의 동일 계정 operation/idempotency 충돌 거부를 보강했다. Core의 요청→터미널 Get/Confirm/취소→실행 future 전이 시험을 추가했다. 사용자가 선택한 기존 Google 계정의 개별 기능 활성화는 나중에 통합 범위 확인을 취소해도 유지될 수 있다는 안내도 정확하게 고쳤다.
+
+현재 대상 검증: v25→v26 migration 1개, Store mail_connection 14개, domain mail_connection 10개, Secrets SMTP 21개, CLI 휴지통 5개 및 SMTP 설정/일반 작성 회귀가 통과했다. Store 휴지통 추가 시험은 두 번째 기본 CLI 등록을 만드는 fixture가 기존 singleton 제약에 걸려 수정 중이며 전체 통과로 표시하지 않는다. Core 새 전이 시험은 실행 중이다. 전체 검사를 작은 수정마다 반복하지 않는다. source 통합·배포·실제 한통 계정 연결은 아직 완료 전이다. [사람 보안 검토 필요].
+
+사용자는 Daum/Kakao 계정의 실제 설정 확인·메일 불러오기·지정 Gmail 수신자로 시험 발송을 허용했다. Aside 저장 로그인으로 접속해 IMAP/SMTP가 이미 켜져 있고 로그인 이름과 스마트워크 발신 주소가 다른 것을 읽기 전용 확인했다. 비밀번호/앱 비밀번호는 읽거나 복사·출력하지 않았고, 메일 삭제·실제 발송은 아직 하지 않았다. 실제 계정 정보와 메일 내용은 코드·공개 진행 기록에 넣지 않는다. 앱 비밀번호가 필요하면 한통 Secrets 보호 입력에서 사용자 직접 입력으로 이어간다.
+
+### 2026-11-03 공통 메일 원본 통합과 통합 검사 후속 수정
+
+common-mail 작업 사본의 변경 86개를 원본의 기존 미커밋 변경과 3-way 비교해 충돌 없이 통합했다. 이전 바이트는 target/common-integration-preserved-20261103에 보존했고 원본 HEAD/index는 유지했다. root의 Store 휴지통 12개와 Core 휴지통 전이 5개가 통과했다. 전체 workspace build와 Clippy(-D warnings), 문서 29개 및 아키텍처 검사가 통과했다. 통합 검사에서 발견한 실패는 해당 범위만 재실행하며 전체 검사를 처음부터 반복하지 않는다.
+
+설치 시험의 실제 설치 폴더 의존을 격리했고 해당 2개가 통과했다. Contracts의 잘못된 경계값·모드 변경·구버전 도구 집합 가정은 수정 후 83개 통과, IPC client의 아직 부여하지 않은 계정 범위 가정은 수정 후 167개 통과했다. MCP 시험은 이미 생성된 결속 필드를 다시 요청에 넣어 권한 거부보다 먼저 형식 오류가 나던 fixture를 원본 요청 기반으로 수정했다. 생성 필드 재입력 거부도 따로 검증하며 MCP 14개 통과했다.
+
+IMAP 시험 서버 fixture에서 빈 응답을 연결 종료로 바꿔 기존 timeout 시험이 깨진 회귀는 명시적 disconnect marker로 분리했다. Secrets IMAP probe 117개가 통과했고 실제 서버/계정은 사용하지 않았다. schema26 추가 테이블 3개를 반영하지 못한 현재 스키마 수와 구버전 복원 fixture도 수정했다. terminal manage(hash11) 생성 경로가 허용하는 기존 approval_helper 등록을 재로드 validator도 동일하게 허용하도록 맞췄으며, OAuth 전용 hash12의 출처 제한은 유지했다. Store 관련 4개와 Core scope-refresh 전이 시험 및 독립 코드 검토는 진행 중이다. 배포 후보 패키지와 한통을 통한 실제 Daum 불러오기·발송은 아직 완료 전이다. 기존 beta.11 Core는 검사 후 검증된 동일 바이너리로 복원한다. [사람 보안 검토 필요].
+
+후속 검증에서 Store 4개와 Core scope-refresh 25개가 통과했다(target/common-mail-focused-repairs.log, exit0). 독립 검토가 OAuth hash12의 복구 출처 재검사 차이를 발견해 후보 빌드를 중단했다. hash12 reader는 기존 등록 출처를 google_oauth로만 제한하고, Core startup은 기존 complete_google_oauth_scope의 출처 검사를 거쳐 복구한다. 새 Store 회귀는 원래 요청과 등록의 출처를 일관되게 변조해도 pending 조회/단계 전이가 실패하며 원시 계정·도구·epoch·version·phase가 바뀌지 않는지 확인했다(1 passed, target/common-mail-oauth-source-final.log). 변조 후 typed reader를 정상 조회하려던 시험 가정은 raw SQL 검증으로 바로잡았다. 비원자 claim_imap_trash는 cfg(test) pub(crate)로 축소해 제품에는 begin_and_claim_imap_trash만 노출한다. Core 복구 회귀와 최종 정적 검사·후보 빌드는 이어서 검증한다. 아직 실제 한통 Daum 연결·메일 발송·새 공개 릴리스는 수행하지 않았다. 자동 검토는 사람 보안 검토 완료가 아니다.
+
+Core의 OAuth 복구 출처 회귀 1개가 통과했다(target/common-mail-oauth-recovery-final.log). code-reviewer 재검토에서 해당 차단 사항이 해소됐고 독립 architect의 최종 판정은 CLEAR다. 이는 자동 코드 검토이며 사람 보안 검토는 별도다. 최종 traceability 341개 기준 검사·fmt·workspace all-target Clippy(-D warnings)와 release build가 통과했다. source hash `b26544e519a780f810aa8a29121f8231a6548d85ad119673e8c96f9abda9510f`의 beta.12 로컬 후보 ZIP(25,777,486 bytes, SHA-256 `50798413e4e82db7c93f47f4e442d131c09f76d7ad7cffa382119274c149da04`)을 생성하고 manifest 전 파일·체크섬·승인된 기존 publisher asset 동일성을 검증했다. 사용자 데이터·프로필은 포함하지 않는다. 별도 설치 폴더 설치와 CLI/MCP/Core/TUI 도움말·버전·AI 도움말 및 headless 업데이트 경계 smoke가 통과했다(target/beta12-candidate-verification.json, beta12-candidate-smoke.json). 잘못 붙인 bootstrap 전용 SessionOnly 인자는 설치 시작 전 거부됐으며 실제 package installer 인자로 고쳐 별도 설치를 완료했다. 공개 beta.12 배포는 아직 하지 않았고, 기존 데이터를 보존하는 로컬 후보 설치와 실제 연결 시험을 이어간다. schema26 시작 이후 구버전 Core로 자동 되돌리지 않는다.
+
+동일 후보를 개발 PC의 기존 설치에 적용했다. beta.12 Core가 manifest와 일치하는 SHA로 실행되고(PID 33188), 기존 Gmail 계정이 시작 메뉴에 보존된 것을 사용자 WindowsTerminal에서 확인했다. candidate install exit0이며 기존 데이터 삭제·권한 변경은 하지 않았다(target/beta12-candidate-install-result.json). 같은 PowerShell에서 일반 메일 연결을 선택해 확인한 Daum endpoint 메타데이터를 입력하고 Core의 숨김 자격 증명 입력까지 진행했다. 앱 비밀번호는 읽거나 복사하지 않았고 사용자 직접 입력을 기다린다. 실제 IMAP 인증·메일 불러오기·SMTP 시험 발송은 아직 수행하지 않았다. 보호 입력 화면 이후 자동 키 입력이나 화면 조회를 중단하며, 실제 값은 대화·소스·공개 기록으로 받지 않는다. 공개 배포/웹페이지의 출시 완료 표시는 실제 연결 시험 후 이어간다. 전체 검사 재실행 대신 검증 근거와 실패 수정 로그 해시를 target/common-mail-candidate-evidence.json에 기록했다.
+
+사용자는 Daum 앱 비밀번호의 복사·붙여넣기 이용 가능 여부를 다시 물었다. 비밀번호 값을 도구 응답으로 읽지 않고 UI 복사 버튼을 이용하는 경로를 확인했다. 브라우저 세션이 풀려 저장 로그인 선택으로 재접속했고, IMAP/SMTP 설정의 비밀번호 안내에서 기존 앱 비밀번호 관리 메뉴로 이동했다. 현재 제공자가 추가 본인 인증을 요구하므로 해당 화면을 Aside에 표시하고 사용자 직접 인증을 기다린다. 인증번호 요청·신규 앱 비밀번호 발급·기존 비밀번호 삭제/변경·실제 비밀번호 복사는 수행하지 않았다. 화면에 복사 기능이 제공되는지와 한통 보호 입력 티켓의 유효성을 확인한 뒤에만 후속 전송을 진행하며, 실제 IMAP/SMTP 시험과 공개 배포는 계속 미완료다.
+
+사용자가 Aside로 인증 진행을 요청해 만료된 제공자 인증 단계를 새로 시작하고 등록 이메일 인증번호를 한 번 요청했다. 인증번호를 읽거나 입력하지 않았다. 이어 사용자가 그 이메일은 더 이상 사용할 수 없다고 정정해 이메일 인증을 중단하고 등록 휴대전화 문자 인증 화면으로 전환했다. 문자 요청은 아직 하지 않았으며 등록 휴대전화 이용 가능 여부가 다음 분기다. 연결된 Gmail 탭은 CDP 재연결 시간 초과로 접근하지 못했고 메일 본문·인증번호를 읽지 않았다. 사용자에게 더 이상 사용하지 않는 등록 이메일 접근을 요구하지 않는다. 기존 앱 비밀번호/계정/설정은 변경하지 않았고 신규 발급도 없다.
+
+사용자가 제공자 인증을 완료했다고 알려 앱 비밀번호 관리 화면에 진입한 것을 확인했다. 기존 항목 3개에는 삭제 버튼만 있고 복사/재표시 버튼은 없었다. 한통 전용 신규 항목의 이름만 입력하고 생성 버튼은 누르지 않았다. 기존 값 복사와 신규 지속 인증정보 발급의 범위가 달라 Computer Use의 보안 민감 접근 생성 확인 규칙에 따라 신규 1개 발급 여부를 확인 중이다. 비밀번호 값을 읽거나 출력하지 않았고 실제 IMAP/SMTP 연결·발송·신규 공개 배포는 아직 없다. 후속 보호 입력은 만료된 이전 요청에 붙여 넣지 않도록 유효한 티켓을 새로 확인해야 한다.
+### 2026-11-03 Daum 앱 비밀번호 발급 승인 이후 — 만료 재시도 수정
+
+사용자는 한통 전용 앱 비밀번호 1개 발급을 승인했다. 기존 3개는 보존하며 새 값은 UI 복사와 Secrets 보호 입력으로만 전달한다. 생성 제출에서 제공자가 권한 없음 화면을 반환했고, 보안 메뉴의 기존 항목 수는 3개로 확인되어 신규 발급 성공으로 기록하지 않는다. 비밀번호 값을 읽거나 복사하지 않았다. 제공자가 다시 등록 연락처 인증을 요구하며 실제 IMAP/SMTP 연결·발송은 아직 미완료다.
+
+만료된 IMAP 설정 요청을 재사용하던 Core 경로는 상태를 닫은 뒤 새 pending 요청을 만들도록 수정했다. 살아 있는 요청은 재사용하고 작업 큐는 비워 둔다. CLI는 설정 실패 상태를 안정적 오류 코드로 표시하며, 보호 입력 만료는 취소 정리 실패와 구분해 APPROVAL_EXPIRED를 보존한다. Core 관련 시험 16개와 CLI 상태 매핑 시험 1개 통과(target/imap-setup-retry-checks.log). 시험 모듈 위치에 대한 Clippy 실패를 수정한 뒤 workspace all-target Clippy -D warnings 재실행이 통과했다(target/imap-setup-retry-clippy-fixed.log). 전체 검사는 반복하지 않았다. 좁은 독립 코드 검토에서 차단 사항은 없었으며 사람 보안 검토는 별도다.
+
+beta.13 로컬 후보 빌드와 패키지 검증이 통과했다. source hash 4c227431687e7c5e95956947de87f373f6070f08f4ca2db35441f69a55e3443e, ZIP SHA-256 bf6a57637a3e45586960fe95e00947d3bd8ea869ba415f04fa1206a673447c46, 25,777,998 bytes, manifest 261개 파일이다. 승인된 publisher 자산은 바이트 동일성을 확인했고 사용자 데이터·프로필은 포함하지 않았다. 로컬 후보 설치가 exit0으로 완료됐고 manifest 일치 Core(PID16452)가 정상 실행 중이다(target/beta13-candidate-install-result.json). 사용자 PowerShell의 새 시작 메뉴에서 기존 Gmail 계정을 확인했다. 데이터 삭제·권한 변경은 없고 공개 배포는 아직 하지 않는다. Daum이 다시 요구한 카카오톡 인증 화면을 Aside 전면에 표시하고 인증번호 요청을 한 번 실행했으며, 실제 번호 입력은 사용자에게 넘겼다. 번호·비밀번호 값은 읽지 않는다. [사람 보안 검토 필요].
+### 2026-11-03 Daum 전용 앱 비밀번호 발급·IMAP 실연결 성공, SMTP 수정
+
+사용자가 제공한 일회용 인증번호로 Daum 본인 인증을 완료한 뒤, 승인된 한통 전용 앱 비밀번호 1개를 발급했다. 기존 3개는 보존했다. 비밀값은 읽거나 출력하지 않고 제공자 UI 복사 완료 안내를 확인한 뒤 동일 PC의 Core 소유 숨김 입력으로 붙여 넣었다. beta.13에서 실제 IMAP 인증이 성공하고 guided setup이 SMTP 단계로 진행한 것을 확인했다. 실제 메일 발송·휴지통 이동은 아직 실행하지 않았다.
+
+별도 발신 주소를 사용하는 SMTP 설정이 비밀 입력 전에 INVALID_INPUT을 반환했다. Core setup_smtp의 endpoint 조립이 SMTP 전용 sender_address를 IMAP 구조에도 넣어 domain validator가 거부하는 원인이다. IMAP 메타데이터에서 해당 필드를 제외하고 SMTP에만 유지하는 작은 수정과 합성 회귀 시험을 추가한다. 발급된 값은 재생성하지 않으며 기존 계정·키를 보존한다. 최초 새 시험 컴파일은 지역 변수의 함수명 가림 때문에 실패해 시험 변수명을 고친 후 재실행한다. [사람 보안 검토 필요].
+SMTP 분리 회귀 시험은 수정 후 1개 통과했다(target/smtp-explicit-sender-endpoint-fixed-test.log). Core all-target Clippy -D warnings도 통과했다(target/smtp-explicit-sender-clippy.log). 독립 검토는 기존 SMTP sender 결속·자격 증명 경계가 유지되고 차단 사항이 없음을 확인했으며 사람 검토와는 구분한다. beta.14 빌드·manifest 검증 통과: source hash b80837fff5e10b810d89f6cef57c465b5a455965d64fd49eb923318ea89effad, ZIP SHA-256 25b2b4a4ebc5e858f0e0bebadc5b66dd222de64c88576627472a3ef486c6ae4f, 25,790,286 bytes. 로컬 설치 후 이미 연결된 계정의 SMTP 단계만 재개하며 공개 배포와 실제 발송 성공을 아직 주장하지 않는다.
+beta.14 로컬 설치와 Core 기동은 통과했다(PID23504, target/beta14-candidate-install-result.json). SMTP만 재개하는 보조 명령에서 --sender-address가 최상위 CLI 옵션 목록에 빠져 IPC 전에 INVALID_INPUT이 발생하는 별도 누락을 확인했다. main.rs에 메타데이터 옵션 전달을 추가하고 중복 거부를 유지했다. 실제 인자 경로의 회귀 시험 setup01_smtp_sender_address_is_forwarded_and_duplicate_is_rejected 1개 통과(target/smtp-sender-cli-test.log). IMAP 연결과 기존 앱 비밀번호를 보존하며, 아직 SMTP 연결·실제 메일 발송 성공으로 기록하지 않는다.
+### 2026-11-03 실제 SMTP 송수신 확인·백그라운드 작업 전환
+
+beta.15 로컬 설치와 Core 기동이 통과했다(PID43520). 실제 Daum SMTP 보호 입력 이후 ready를 확인했고, 등록된 기존 Gmail 두 계정과 새 IMAP 계정을 터미널 범위 확인 후 보존했다. 전체 내용을 터미널에서 확인한 합성 메일 1통은 sent 상태가 됐으며 지정 Gmail 수신 측 조회에서 정확히 1통과 합성 본문 표식 일치를 확인했다(target/daum-delivery-verification.json). 비밀값을 읽거나 출력하지 않고 두 보호 입력을 마친 후 제공자 비밀값 표시 화면을 닫고 클립보드를 비웠다. 실제 휴지통 작업은 실행하지 않았다.
+
+실제 IMAP 폴더 카탈로그 17개 조회와 첫 저 UID 페이지 동기화는 성공했으나, 첫 64 UID 구간이 비어 최근 미리보기가 필요했다. 일반 IMAP TUI의 r이 Gmail에만 연결돼 있던 누락을 보완하고 최근 범위 2페이지의 기존 초기 동기화 계약으로 연결한다. 저 UID 페이지가 비었다고 메일함 전체가 비었다고 기록하지 않는다. 실제 서버의 INBOX wire는 정규화되지만 표시 이름 대소문자는 유지되는 점 때문에 초기 동기화의 표시 이름 포함 동등 비교가 NOT_FOUND를 반환하는 원인을 확인했다. 실제 카탈로그의 비공개 원문 대신 정규 표기 일치 여부의 boolean만 출력해 확인했으며 Store 메일함 식별자 결속을 보존하는 수정과 회귀 시험을 진행한다. 실제 IMAP 본문 조회와 공개 배포는 아직 미완료다.
+
+사용자는 컴퓨터를 함께 사용해야 하므로 이후 UI 조작은 Vercel agent-desktop만 사용하라고 정정했다. 전면 창 전환·키보드/마우스 입력과 Aside/CUA 조작을 중단하고, 코드·빌드·공개 제품 CLI의 읽기 전용 검증 등 독립 작업을 백그라운드로 진행한다. 기존 미커밋 변경·계정·키·ACL은 보존한다. [사람 보안 검토 필요].
+Store 초기 동기화의 두 카탈로그 결속 지점은 표시 이름 전체 동등성 대신 정규 wire bytes와 encoding으로 비교하도록 수정했다. 계정·selectable·세대·endpoint·카탈로그 해시 검사는 유지한다. 새 회귀 2개와 관련 initial_sync 시험 전체 16개가 통과했다(target/imap-inbox-identity-tests-fixed.log, imap-initial-sync-regression.log). 최초 새 시험의 String 인자·반환형 오류는 시험 코드에서 수정했으며 최초 실패 로그를 보존한다. Store/Core all-target Clippy -D warnings 통과(target/imap-identity-core-clippy.log). 독립 검토에서 식별자 검사 약화는 발견되지 않았다. 일반 IMAP TUI 최근 미리보기의 반복 갱신 세대 처리 보완은 계속 진행한다. 실제 Daum의 선택 가능한 광고된 Trash는 1개임을 읽기 전용으로 확인했으며 실제 이동·삭제는 하지 않았다.
+
+2026-11-03: Added owner/account/canonical-mailbox-bound read-only initial-current lookup across Store/Application/Core/IPC/CLI. TUI queries authoritative generation on every refresh and resumes up to two recent pages with updated plan versions. Removed unused forward-page TUI helper in favor of the tested recent-preview path. Related tests: Application4, CLI5, IPC6, Store29; final TUI13; docs29. Affected all-target Clippy passed. Initial compile errors were corrected and original failure logs retained. Independent review found no CRITICAL/HIGH blocker. No full 1,906-test repeat. Human security review pending.
+
+Installed beta.16 candidate and preserved accounts/data/keys. Actual Daum folder catalog17, two recent pages, cached messages19 and body read succeeded twice through the public product CLI, including repeated-generation refresh. Only booleans/counts logged. Prior single synthetic SMTP send and one matching Gmail message/body remain verified; no resend or actual Trash move. Proof: target/daum-imap-verification.json and daum-recent-beta16[-repeat]-live.log. Final public package metadata is being refreshed after correcting the contract documentation encoding. Human security review pending.

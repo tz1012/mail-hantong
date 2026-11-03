@@ -5,7 +5,7 @@ use hantong_contracts::{
 };
 use serde_json::{Value, json};
 
-fn plan_value(v: &InitialSyncPlanSnapshot) -> Value {
+pub(crate) fn plan_value(v: &InitialSyncPlanSnapshot) -> Value {
     let p = v.progress();
     json!({"plan_id":hantong_contracts::wire_hex::encode(v.plan_id()),"account_id":v.account_id(),
         "wire_hex":v.mailbox().wire_hex(),"encoding":v.mailbox().encoding().as_str(),"generation":v.generation(),
@@ -14,6 +14,13 @@ fn plan_value(v: &InitialSyncPlanSnapshot) -> Value {
             "completed_page_count":p.completed_page_count(),"state":p.state().as_str(),"model_version":p.model_version(),
             "target_uid_ceiling":p.target_uid_ceiling(),"selected_lower_uid":p.selected_lower_uid(),"selected_page_count":p.selected_page_count(),
             "remaining_page_count":p.remaining_page_count(),"remaining_uid_span":p.remaining_uid_span(),"not_selected_before_uid":p.not_selected_before_uid()}})
+}
+pub fn render_initial_sync_current(
+    account_id: &str,
+    mailbox: &hantong_contracts::uid_page::UidMailboxIdentity,
+    plan: Option<&InitialSyncPlanSnapshot>,
+) -> Value {
+    json!({"schema_version":1,"ok":true,"account_id":account_id,"wire_hex":mailbox.wire_hex(),"encoding":mailbox.encoding().as_str(),"plan":plan.map(plan_value)})
 }
 pub fn render_initial_sync_receipt(v: &InitialSyncReceipt) -> Value {
     json!({"schema_version":1,"ok":true,"account_id":v.account_id(),"execution_id":hantong_contracts::wire_hex::encode(v.execution_id()),

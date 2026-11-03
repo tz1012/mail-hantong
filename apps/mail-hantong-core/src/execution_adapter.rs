@@ -8,8 +8,8 @@ use hantong_application::render_uid_reconcile_receipt;
 use hantong_application::render_uid_recovery_receipt;
 use hantong_application::{
     AccountsListRequest, AuditHandoff, ExecutionContext, ReadResult, ToolRequest,
-    render_account_list, render_folder_page, render_folder_refresh_receipt, render_uid_cursor,
-    render_uid_receipt, validated_uid_mailbox,
+    render_account_list, render_folder_page, render_folder_refresh_receipt,
+    render_initial_sync_current, render_uid_cursor, render_uid_receipt, validated_uid_mailbox,
 };
 use hantong_application::{render_initial_sync_plan, render_initial_sync_receipt};
 use hantong_contracts::initial_sync::{InitialSyncPlanRequest, InitialSyncRequest};
@@ -369,6 +369,18 @@ impl<'a, 'server> ExecutionContext for CoreExecutionAdapter<'a, 'server> {
         let snapshot = self.store.inspect_imap_uid(request)?;
         ReadResult::new(hantong_application::render_uid_inspection(&snapshot), None)
     }
+    fn read_current_initial_sync_plan(
+        &mut self,
+        request: &UidCursorRequest,
+    ) -> Result<ReadResult<Value>, ErrorCode> {
+        let plan = self
+            .store
+            .load_current_initial_sync_plan(*self.connection.registration_id(), request)?;
+        ReadResult::new(
+            render_initial_sync_current(request.account_id(), request.mailbox(), plan.as_ref()),
+            None,
+        )
+    }
     fn read_message_locator(
         &mut self,
         account: &str,
@@ -436,6 +448,38 @@ impl<'a, 'server> ExecutionContext for CoreExecutionAdapter<'a, 'server> {
             _ => return Err(ErrorCode::InvalidInput),
         };
         ReadResult::new(crate::google_mutation::render(&r), None)
+    }
+    fn request_imap_trash(
+        &mut self,
+        request: &hantong_contracts::imap_trash::ImapTrashRequest,
+    ) -> Result<ReadResult<Value>, ErrorCode> {
+        let receipt = self
+            .send_ui
+            .ok_or(ErrorCode::CoreUnavailable)?
+            .request_imap_trash(
+                *self.connection.registration_id(),
+                self.connection.profile_epoch(),
+                request,
+            )?;
+        ReadResult::new(crate::imap_trash::render(&receipt), None)
+    }
+    fn read_imap_trash_status(
+        &mut self,
+        account: &str,
+        review_id: [u8; 32],
+    ) -> Result<ReadResult<Value>, ErrorCode> {
+        let receipt = self
+            .send_ui
+            .ok_or(ErrorCode::CoreUnavailable)?
+            .imap_trash_status(
+                *self.connection.registration_id(),
+                self.connection.profile_epoch(),
+                review_id,
+            )?;
+        if receipt.account_id != account {
+            return Err(ErrorCode::ScopeDenied);
+        }
+        ReadResult::new(crate::imap_trash::render(&receipt), None)
     }
     fn request_draft_create(
         &mut self,

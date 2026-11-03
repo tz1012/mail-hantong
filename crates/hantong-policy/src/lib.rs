@@ -41,7 +41,10 @@ impl ReadPolicy {
             | AuditTool::MessagesGet
             | AuditTool::MessagesSearch
             | AuditTool::SyncPage => Ok(()),
-            AuditTool::DraftCreate | AuditTool::SendRequest | AuditTool::GoogleMutationRequest
+            AuditTool::DraftCreate
+            | AuditTool::SendRequest
+            | AuditTool::GoogleMutationRequest
+            | AuditTool::TrashRequest
                 if !read_only =>
             {
                 Ok(())
@@ -50,7 +53,9 @@ impl ReadPolicy {
             | AuditTool::SendRequest
             | AuditTool::SendExecute
             | AuditTool::GoogleMutationRequest
-            | AuditTool::GoogleMutationExecute => Err(ErrorCode::PolicyBlocked),
+            | AuditTool::GoogleMutationExecute
+            | AuditTool::TrashRequest
+            | AuditTool::TrashExecute => Err(ErrorCode::PolicyBlocked),
         }
     }
     /// Constraints only. The Core native coordinator separately consumes the
@@ -70,6 +75,20 @@ impl ReadPolicy {
         }
     }
     pub fn check_native_google_mutation(
+        &mut self,
+        registration_id: [u8; 16],
+        read_only: bool,
+        requests_per_minute: u32,
+        now: Instant,
+    ) -> Result<(), ErrorCode> {
+        self.charge(registration_id, requests_per_minute, now)?;
+        if read_only {
+            Err(ErrorCode::PolicyBlocked)
+        } else {
+            Ok(())
+        }
+    }
+    pub fn check_native_trash(
         &mut self,
         registration_id: [u8; 16],
         read_only: bool,

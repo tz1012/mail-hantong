@@ -26,3 +26,5 @@ guided_inbox=Loading up to 20 inbox messages for the selected account...
 guided_empty=No messages were returned for this inbox page.
 guided_read_choice=Enter a message number to read it, or 0 to return.
 guided_invalid=Please choose one of the displayed numbers.
+existing_account_feature_change=This existing Google account will gain mail reading, writing, sending, and trash access. Features enabled for this account and Google consent remain in effect if you cancel the later combined account review.
+existing_account_feature_choice=Enable these features for this account? 1) Enable  0) Cancel

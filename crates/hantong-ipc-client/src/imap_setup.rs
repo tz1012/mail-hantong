@@ -66,8 +66,14 @@ pub fn parse_response(
             let state = ImapSetupState::parse(&x.state).map_err(|_| ErrorCode::CoreUnavailable)?;
             let action = ImapSetupNextAction::parse(&x.next_action)
                 .map_err(|_| ErrorCode::CoreUnavailable)?;
-            ImapSetupReceipt::new(request_id, x.expires_at_utc_ms, state, action)
-                .map_err(|_| ErrorCode::CoreUnavailable)?
+            let receipt = ImapSetupReceipt::new(request_id, x.expires_at_utc_ms, state, action)
+                .map_err(|_| ErrorCode::CoreUnavailable)?;
+            match x.account_id {
+                Some(account_id) => receipt
+                    .with_account_id(account_id)
+                    .map_err(|_| ErrorCode::CoreUnavailable)?,
+                None => receipt,
+            }
         }
         Body::Error(c) => return Err(c.code),
     };
@@ -123,6 +129,7 @@ struct Receipt {
     expires_at_utc_ms: i64,
     state: String,
     next_action: String,
+    account_id: Option<String>,
 }
 impl<'de> Deserialize<'de> for Receipt {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
@@ -140,7 +147,8 @@ impl<'de> Deserialize<'de> for Receipt {
                     mut expires_at_utc_ms,
                     mut state,
                     mut next_action,
-                ) = (None, None, None, None, None);
+                    mut account_id,
+                ) = (None, None, None, None, None, None);
                 while let Some(field_name) = fields.next_key::<String>()? {
                     match field_name.as_str() {
                         "protocol_version" if protocol_version.is_none() => {
@@ -156,6 +164,9 @@ impl<'de> Deserialize<'de> for Receipt {
                         "next_action" if next_action.is_none() => {
                             next_action = Some(fields.next_value()?)
                         }
+                        "account_id" if account_id.is_none() => {
+                            account_id = Some(fields.next_value::<String>()?)
+                        }
                         _ => return Err(A::Error::custom("unknown or duplicate result field")),
                     }
                 }
@@ -168,6 +179,7 @@ impl<'de> Deserialize<'de> for Receipt {
                     state: state.ok_or_else(|| A::Error::custom("missing state"))?,
                     next_action: next_action
                         .ok_or_else(|| A::Error::custom("missing next_action"))?,
+                    account_id,
                 })
             }
         }
@@ -349,6 +361,20 @@ mod tests {
                 parse_response(&serde_json::to_vec(&envelope).unwrap(), "x", status()).is_err()
             );
         }
+    }
+
+    #[test]
+    fn response_decoder_accepts_optional_core_account_hint_and_validates_it() {
+        let mut value = result();
+        value["account_id"] = json!("imap_acct-1");
+        let receipt = parse_response(&response(value), "x", status()).unwrap();
+        assert_eq!(receipt.account_id(), Some("imap_acct-1"));
+        let mut invalid = result();
+        invalid["account_id"] = json!("../other");
+        assert_eq!(
+            parse_response(&response(invalid), "x", status()),
+            Err(ErrorCode::CoreUnavailable)
+        );
     }
 
     #[test]

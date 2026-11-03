@@ -26,3 +26,5 @@ guided_inbox=선택한 계정의 받은편지함에서 최대 20건을 불러옵
 guided_empty=이번 받은편지함 조회에서 반환된 메일이 없습니다.
 guided_read_choice=읽을 메일 번호를 입력하세요. 0은 이전 메뉴로 돌아갑니다.
 guided_invalid=표시된 번호 중에서 선택해 주세요.
+existing_account_feature_change=아래 기존 Google 계정에 메일 읽기·작성·발송·휴지통 기능을 추가합니다. 나중에 통합 계정 범위 확인을 취소해도 이 계정에 이미 적용한 기능과 Google 동의는 유지됩니다.
+existing_account_feature_choice=이 계정의 기능을 추가할까요? 1) 추가  0) 취소

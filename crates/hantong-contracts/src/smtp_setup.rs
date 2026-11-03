@@ -7,6 +7,7 @@ use crate::{
 pub struct SmtpSetupInput {
     account: String,
     endpoint: ImapSetupInput,
+    sender_address: Option<String>,
 }
 impl std::fmt::Debug for SmtpSetupInput {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -29,10 +30,28 @@ impl SmtpSetupInput {
         {
             return Err(ErrorCode::InvalidInput);
         }
-        // SMTP submission currently uses the authenticated login as From.
+        Self::new_with_sender(account, host, port, tls, login.clone(), None)
+    }
+    pub fn new_with_sender(
+        account: String,
+        host: String,
+        port: u16,
+        tls: ImapSetupTls,
+        login: String,
+        sender_address: Option<String>,
+    ) -> Result<Self, ErrorCode> {
+        if account.is_empty()
+            || account.len() > 128
+            || !account
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b"_-".contains(&b))
+        {
+            return Err(ErrorCode::InvalidInput);
+        }
+        let from = sender_address.clone().unwrap_or_else(|| login.clone());
         crate::mail_send::DraftCreateRequest::new(
             &account,
-            vec![login.clone()],
+            vec![from],
             String::new(),
             String::new(),
             "smtp-input",
@@ -43,6 +62,7 @@ impl SmtpSetupInput {
         Ok(Self {
             account,
             endpoint: ImapSetupInput::new(None, None, host, port, tls, login)?,
+            sender_address,
         })
     }
     pub fn account_id(&self) -> &str {
@@ -59,6 +79,9 @@ impl SmtpSetupInput {
     }
     pub fn login_name(&self) -> &str {
         self.endpoint.login_name()
+    }
+    pub fn sender_address(&self) -> Option<&str> {
+        self.sender_address.as_deref()
     }
 }
 #[derive(Clone, Debug, Eq, PartialEq)]

@@ -11,7 +11,15 @@ fn parse(command: &[String], options: &[(String, String)]) -> Result<SmtpSetupCo
     }
     let mut fields = std::collections::BTreeMap::new();
     for (k, v) in options {
-        if !["--account", "--host", "--port", "--tls", "--login"].contains(&k.as_str())
+        if ![
+            "--account",
+            "--host",
+            "--port",
+            "--tls",
+            "--login",
+            "--sender-address",
+        ]
+        .contains(&k.as_str())
             || fields.insert(k.as_str(), v.as_str()).is_some()
         {
             return Err(ErrorCode::InvalidInput);
@@ -26,14 +34,14 @@ fn parse(command: &[String], options: &[(String, String)]) -> Result<SmtpSetupCo
                 Ok(SmtpSetupCommand::Status(id))
             }
         }
-        Some("request") if command.len() == 3 && fields.len() == 5 => {
+        Some("request") if command.len() == 3 && (fields.len() == 5 || fields.len() == 6) => {
             let get = |k| fields.get(k).copied().ok_or(ErrorCode::InvalidInput);
             let tls = match get("--tls")? {
                 "implicit_tls" => ImapSetupTls::ImplicitTls,
                 "starttls_required" => ImapSetupTls::StarttlsRequired,
                 _ => return Err(ErrorCode::InvalidInput),
             };
-            Ok(SmtpSetupCommand::Request(SmtpSetupInput::new(
+            Ok(SmtpSetupCommand::Request(SmtpSetupInput::new_with_sender(
                 get("--account")?.into(),
                 get("--host")?.into(),
                 get("--port")?
@@ -41,6 +49,7 @@ fn parse(command: &[String], options: &[(String, String)]) -> Result<SmtpSetupCo
                     .map_err(|_| ErrorCode::InvalidInput)?,
                 tls,
                 get("--login")?.into(),
+                fields.get("--sender-address").map(|v| (*v).to_owned()),
             )?))
         }
         Some("approve" | "complete" | "execute") => Err(ErrorCode::HumanStepRequired),

@@ -51,7 +51,10 @@ impl ProfileSelector {
     }
     fn permits_tools(self, tools: &[String]) -> bool {
         match self {
-            Self::Default => is_supported_default_cli_toolset(tools),
+            Self::Default => {
+                is_supported_default_cli_toolset(tools)
+                    || hantong_contracts::auth::is_supported_default_cli_manage_toolset(tools)
+            }
             Self::Gui => tools == gui_read_tools(),
             Self::Mcp => hantong_contracts::auth::is_supported_mcp_toolset(tools),
             Self::AiCodex | Self::AiClaude => is_supported_ai_mail_toolset(tools),
@@ -327,6 +330,17 @@ impl ParsedClientProfile {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn acc02_default_profile_accepts_exact_manage_scope_without_other_client_expansion() {
+        let tools = hantong_contracts::auth::default_cli_manage_tools();
+        assert!(super::ProfileSelector::Default.permits_tools(&tools));
+        assert!(!super::ProfileSelector::Gui.permits_tools(&tools));
+        assert!(!super::ProfileSelector::Mcp.permits_tools(&tools));
+        let mut unknown = tools;
+        unknown.push("mail.unrestricted.execute".into());
+        unknown.sort();
+        assert!(!super::ProfileSelector::Default.permits_tools(&unknown));
+    }
     use super::*;
     use hantong_contracts::wire_hex;
     use serde_json::{Value, json};

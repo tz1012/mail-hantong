@@ -92,6 +92,19 @@ pub trait ExecutionContext {
     ) -> Result<ReadResult<Self::Output>, ErrorCode> {
         Err(ErrorCode::CapabilityUnsupported)
     }
+    fn request_imap_trash(
+        &mut self,
+        _request: &hantong_contracts::imap_trash::ImapTrashRequest,
+    ) -> Result<ReadResult<Self::Output>, ErrorCode> {
+        Err(ErrorCode::CapabilityUnsupported)
+    }
+    fn read_imap_trash_status(
+        &mut self,
+        _account: &str,
+        _review_id: [u8; 32],
+    ) -> Result<ReadResult<Self::Output>, ErrorCode> {
+        Err(ErrorCode::CapabilityUnsupported)
+    }
     fn request_draft_create(
         &mut self,
         _request: &hantong_contracts::google_write::ComposeSnapshot,
@@ -174,6 +187,12 @@ pub trait ExecutionContext {
         Err(ErrorCode::CapabilityUnsupported)
     }
     fn read_uid_inspection(
+        &mut self,
+        _request: &UidCursorRequest,
+    ) -> Result<ReadResult<Self::Output>, ErrorCode> {
+        Err(ErrorCode::CapabilityUnsupported)
+    }
+    fn read_current_initial_sync_plan(
         &mut self,
         _request: &UidCursorRequest,
     ) -> Result<ReadResult<Self::Output>, ErrorCode> {
@@ -322,6 +341,18 @@ pub fn execute_tool<C: ExecutionContext>(
             let result = context.google_mutation(&account_ids[0], request.as_ref(), review_id);
             finish_local_read(result, context, audit_id)
         }
+        ToolRequest::ImapTrash { request, .. } => {
+            let result = context.request_imap_trash(&request);
+            finish_local_read(result, context, audit_id)
+        }
+        ToolRequest::ImapTrashStatus {
+            account_ids,
+            review_id,
+            ..
+        } => {
+            let result = context.read_imap_trash_status(&account_ids[0], review_id);
+            finish_local_read(result, context, audit_id)
+        }
         ToolRequest::DraftCreate { request, .. } => {
             let result = context.request_draft_create(&request);
             finish_local_read(result, context, audit_id)
@@ -424,6 +455,9 @@ pub fn execute_tool<C: ExecutionContext>(
             other => {
                 let result = match other {
                     UidPageAction::Inspect(request) => context.read_uid_inspection(&request),
+                    UidPageAction::InitialCurrent(request) => {
+                        context.read_current_initial_sync_plan(&request)
+                    }
                     UidPageAction::Cursor(request) => context.read_uid_cursor(&request),
                     UidPageAction::Status(request) => context.read_uid_page_status(&request),
                     UidPageAction::InitialStatus(request) => {

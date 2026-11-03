@@ -18,6 +18,7 @@ const MAX_LITERAL: usize = 8192;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum Mode {
     Examine,
+    Select,
     Fetch,
 }
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -33,6 +34,7 @@ pub(super) enum Observation {
     UidValidity(u32),
     UidNext(u32),
     ReadOnly,
+    ReadWrite,
 }
 #[derive(Debug, Eq, PartialEq)]
 pub(super) enum Reply {
@@ -445,7 +447,7 @@ impl<'a> Scan<'a> {
                     self.take(b' ')?;
                     self.flags()?;
                 }
-                b"READ-ONLY" | b"ALERT" => {}
+                b"READ-ONLY" | b"READ-WRITE" | b"ALERT" => {}
                 _ => return Err(ScanError::Invalid),
             }
             self.take(b']')?;
@@ -480,7 +482,7 @@ fn scan_shape(bytes: &[u8], mode: Mode, tag: &str, boundary: bool) -> ScanResult
         s.take(b' ')?;
         if word == b"OK" {
             s.status()?;
-        } else if word == b"FLAGS" && mode == Mode::Examine {
+        } else if word == b"FLAGS" && matches!(mode, Mode::Examine | Mode::Select) {
             s.flags()?;
         } else {
             s.at = start;
@@ -488,7 +490,7 @@ fn scan_shape(bytes: &[u8], mode: Mode, tag: &str, boundary: bool) -> ScanResult
             s.take(b' ')?;
             let kind = s.word()?.to_ascii_uppercase();
             match kind.as_slice() {
-                b"EXISTS" | b"RECENT" if mode == Mode::Examine => {}
+                b"EXISTS" | b"RECENT" if matches!(mode, Mode::Examine | Mode::Select) => {}
                 b"FETCH" if mode == Mode::Fetch && seq > 0 => {
                     s.take(b' ')?;
                     s.fetch()?;
@@ -514,10 +516,17 @@ fn code(value: Option<Code<'_>>, mode: Mode) -> Result<Observation, GateError> {
     Ok(match value {
         None => Observation::None,
         Some(Code::Alert) => Observation::None,
-        Some(Code::UidValidity(n)) if mode == Mode::Examine => Observation::UidValidity(n.get()),
-        Some(Code::UidNext(n)) if mode == Mode::Examine => Observation::UidNext(n.get()),
+        Some(Code::UidValidity(n)) if matches!(mode, Mode::Examine | Mode::Select) => {
+            Observation::UidValidity(n.get())
+        }
+        Some(Code::UidNext(n)) if matches!(mode, Mode::Examine | Mode::Select) => {
+            Observation::UidNext(n.get())
+        }
         Some(Code::ReadOnly) if mode == Mode::Examine => Observation::ReadOnly,
-        Some(Code::Unseen(_) | Code::PermanentFlags(_)) if mode == Mode::Examine => {
+        Some(Code::ReadWrite) if mode == Mode::Select => Observation::ReadWrite,
+        Some(Code::Unseen(_) | Code::PermanentFlags(_))
+            if matches!(mode, Mode::Examine | Mode::Select) =>
+        {
             Observation::None
         }
         _ => return Err(GateError::Invalid),
@@ -571,7 +580,7 @@ fn decode(frame: &[u8], mode: Mode, tag: &str) -> Result<Reply, GateError> {
             Ok(Reply::Status(code(v.code, mode)?))
         }
         Response::Data(Data::Flags(_) | Data::Exists(_) | Data::Recent(_))
-            if mode == Mode::Examine =>
+            if matches!(mode, Mode::Examine | Mode::Select) =>
         {
             Ok(Reply::Data)
         }

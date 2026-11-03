@@ -34,6 +34,7 @@ enum Job {
     TerminalSend([u8; 32]),
     TerminalProtectedSend([u8; 32]),
     TerminalGoogleMutation([u8; 32]),
+    TerminalImapTrash([u8; 32]),
     TerminalImap([u8; 32]),
     TerminalSmtp([u8; 32]),
 }
@@ -65,6 +66,29 @@ fn registration_terminal_hash(request: &RegistrationRequest) -> Result<[u8; 32],
         "accounts":request.scope.accounts(), "tools":request.scope.tools(),
         "version":request.version, "created":request.created_at_utc_ms, "expires":request.expires_at_utc_ms,
     })).map_err(|_|ErrorCode::InternalError)?;
+    hantong_platform::sha256(&bytes)
+}
+
+fn imap_trash_terminal_hash(
+    pending: &hantong_store::imap_trash::PendingImapTrash,
+) -> Result<[u8; 32], ErrorCode> {
+    let endpoint = serde_json::to_vec(&pending.endpoint).map_err(|_| ErrorCode::InternalError)?;
+    let mut bytes = b"mail-hantong.imap.trash.terminal-review.v1\0".to_vec();
+    for field in [
+        pending.review_id.to_vec(),
+        pending.request.payload_bytes(),
+        pending.owner_registration_id.to_vec(),
+        pending.profile_epoch.to_be_bytes().to_vec(),
+        pending.account_version.to_be_bytes().to_vec(),
+        endpoint,
+        pending.destination.mailbox_wire_hex.as_bytes().to_vec(),
+        pending.destination.mailbox_encoding.as_bytes().to_vec(),
+        pending.created_at_utc_ms.to_be_bytes().to_vec(),
+        pending.expires_at_utc_ms.to_be_bytes().to_vec(),
+    ] {
+        bytes.extend_from_slice(&(field.len() as u32).to_be_bytes());
+        bytes.extend_from_slice(&field);
+    }
     hantong_platform::sha256(&bytes)
 }
 
@@ -329,6 +353,64 @@ impl RegistrationHandle<'_> {
             .map_err(|_| ErrorCode::InternalError)?;
         match command {
             TerminalReviewCommand::Get(request) => {
+                if request.kind == TerminalReviewKind::ImapTrash {
+                    let pending = self.state.store.pending_imap_trash(request.request_id)?;
+                    if request
+                        .account_id
+                        .as_deref()
+                        .is_some_and(|a| a != pending.request.account_id())
+                        || (request.payload_hash != [0; 32]
+                            && request.payload_hash != *pending.request.payload_hash())
+                        || !self.state.store.can_confirm_imap_trash(&pending)?
+                    {
+                        return Err(ErrorCode::PolicyBlocked);
+                    }
+                    let fields = vec![
+                        crate::terminal_review::field(
+                            "account",
+                            pending.request.account_id().into(),
+                        )?,
+                        crate::terminal_review::field("action", "move_to_trash".into())?,
+                        crate::terminal_review::field("mail_login", pending.endpoint.login_name().into())?,
+                        crate::terminal_review::field("mail_server", pending.endpoint.host().into())?,
+                        crate::terminal_review::field(
+                            "source_mailbox",
+                            hantong_application::validated_uid_mailbox(pending.request.mailbox())?.display_name().into(),
+                        )?,
+                        crate::terminal_review::field(
+                            "destination_mailbox",
+                            hantong_application::validated_uid_mailbox(
+                                &hantong_contracts::uid_page::UidMailboxIdentity::new(
+                                    &pending.destination.mailbox_wire_hex,
+                                    match pending.destination.mailbox_encoding.as_str() {
+                                        "utf8" => hantong_contracts::uid_page::UidMailboxEncoding::Utf8,
+                                        "modified_utf7" => hantong_contracts::uid_page::UidMailboxEncoding::ModifiedUtf7,
+                                        _ => return Err(ErrorCode::InternalError),
+                                    },
+                                )?,
+                            )?.display_name().into(),
+                        )?,
+                        crate::terminal_review::field(
+                            "uidvalidity",
+                            pending.request.uidvalidity().to_string(),
+                        )?,
+                        crate::terminal_review::field("uid", pending.request.uid().to_string())?,
+                    ];
+                    return crate::terminal_review::make_entry_ticket(
+                        &mut self.state.terminal_reviews.borrow_mut(),
+                        hantong_platform::random_nonce()?,
+                        request.kind,
+                        pending.review_id,
+                        pending.request.account_id().into(),
+                        imap_trash_terminal_hash(&pending)?,
+                        pending.owner_registration_id,
+                        pending.profile_epoch,
+                        pending.expires_at_utc_ms,
+                        observed_peer.clone(),
+                        now,
+                        fields,
+                    );
+                }
                 if request.kind == TerminalReviewKind::GoogleMutation {
                     let pending = self
                         .state
@@ -806,6 +888,7 @@ impl RegistrationHandle<'_> {
                     matches!(
                         entry.kind,
                         TerminalReviewKind::PersonalSend
+                            | TerminalReviewKind::ImapTrash
                             | TerminalReviewKind::ProtectedSend
                             | TerminalReviewKind::ScopeRefresh
                             | TerminalReviewKind::Registration
@@ -822,6 +905,16 @@ impl RegistrationHandle<'_> {
                     let entries = self.state.terminal_reviews.borrow();
                     let entry = entries.get(&request.ticket).ok_or(ErrorCode::NotFound)?;
                     match entry.kind {
+                        TerminalReviewKind::ImapTrash => {
+                            let current = self.state.store.pending_imap_trash(entry.request_id)?;
+                            if imap_trash_terminal_hash(&current)? != entry.payload_hash
+                                || current.owner_registration_id != entry.owner
+                                || current.profile_epoch != entry.epoch
+                                || !self.state.store.can_confirm_imap_trash(&current)?
+                            {
+                                return Err(ErrorCode::Conflict);
+                            }
+                        }
                         TerminalReviewKind::Registration => {
                             let current = self
                                 .state
@@ -1008,6 +1101,29 @@ impl RegistrationHandle<'_> {
                         fields: Vec::new(),
                     });
                 }
+                if entry.kind == TerminalReviewKind::ImapTrash {
+                    match self.state.scheduled.get() {
+                        Some(Job::TerminalImapTrash(id)) if id == entry.request_id => {}
+                        Some(_) => return Err(ErrorCode::RateLimited),
+                        None => enqueue(
+                            &self.state.scheduled,
+                            &self.sender,
+                            Job::TerminalImapTrash(entry.request_id),
+                        )?,
+                    }
+                    return Ok(hantong_contracts::terminal_review::TerminalReviewReceipt {
+                        secret_ticket_opaque: None,
+                        kind: entry.kind,
+                        request_id: entry.request_id,
+                        ticket: None,
+                        snapshot_hash: entry.payload_hash,
+                        owner_registration_id: entry.owner,
+                        profile_epoch: entry.epoch,
+                        expires_at_utc_ms: entry.expires_at_utc_ms,
+                        state: "queued".into(),
+                        fields: Vec::new(),
+                    });
+                }
                 if entry.kind == TerminalReviewKind::GoogleMutation {
                     return match self.state.scheduled.get() {
                         Some(Job::TerminalGoogleMutation(id)) if id == entry.request_id => {
@@ -1101,6 +1217,7 @@ impl RegistrationHandle<'_> {
                     matches!(
                         entry.kind,
                         TerminalReviewKind::PersonalSend
+                            | TerminalReviewKind::ImapTrash
                             | TerminalReviewKind::ProtectedSend
                             | TerminalReviewKind::ScopeRefresh
                             | TerminalReviewKind::Registration
@@ -1128,6 +1245,23 @@ impl RegistrationHandle<'_> {
                     .borrow_mut()
                     .remove(&request.ticket)
                     .ok_or(ErrorCode::Conflict)?;
+                if entry.kind == TerminalReviewKind::ImapTrash {
+                    self.state
+                        .store
+                        .deny_imap_trash(entry.request_id, ErrorCode::ApprovalDenied)?;
+                    return Ok(hantong_contracts::terminal_review::TerminalReviewReceipt {
+                        secret_ticket_opaque: None,
+                        kind: entry.kind,
+                        request_id: entry.request_id,
+                        ticket: None,
+                        snapshot_hash: entry.payload_hash,
+                        owner_registration_id: entry.owner,
+                        profile_epoch: entry.epoch,
+                        expires_at_utc_ms: entry.expires_at_utc_ms,
+                        state: "denied".into(),
+                        fields: Vec::new(),
+                    });
+                }
                 if entry.kind == TerminalReviewKind::ImapSetup {
                     let current = crate::setup_imap::load(self.state.store, entry.request_id)?;
                     self.state
@@ -1458,6 +1592,29 @@ impl RegistrationHandle<'_> {
         self.setup_command_inner(None, command)
     }
 
+    pub(crate) fn request_imap_trash(
+        &self,
+        registration_id: [u8; 16],
+        profile_epoch: u64,
+        request: &hantong_contracts::imap_trash::ImapTrashRequest,
+    ) -> Result<hantong_store::imap_trash::ImapTrashReceipt, ErrorCode> {
+        // Only terminal Confirm queues a provider operation.
+        self.state
+            .store
+            .request_imap_trash(registration_id, profile_epoch, request)
+    }
+
+    pub(crate) fn imap_trash_status(
+        &self,
+        registration_id: [u8; 16],
+        profile_epoch: u64,
+        review_id: [u8; 32],
+    ) -> Result<hantong_store::imap_trash::ImapTrashReceipt, ErrorCode> {
+        self.state
+            .store
+            .status_imap_trash(registration_id, profile_epoch, review_id)
+    }
+
     pub(crate) fn setup_command_with_context(
         &self,
         context: &hantong_ipc_server::setup_dispatch::SetupRequestContext,
@@ -1597,6 +1754,7 @@ impl RegistrationHandle<'_> {
             }
             SetupCommand::ScopeRefresh(
                 command @ (ScopeRefreshCommand::Request
+                | ScopeRefreshCommand::RequestManage(_)
                 | ScopeRefreshCommand::RequestGoogleReadOnly(_)
                 | ScopeRefreshCommand::AddGoogleReadOnly(_)
                 | ScopeRefreshCommand::RequestGoogleSend(_)
@@ -1606,6 +1764,16 @@ impl RegistrationHandle<'_> {
                     let Job::ScopeRefresh(id) = job else {
                         return Err(ErrorCode::RateLimited);
                     };
+                    if let ScopeRefreshCommand::RequestManage(accounts) = &command {
+                        let pending = self
+                            .state
+                            .store
+                            .load_cli_scope_refresh(id)?
+                            .ok_or(ErrorCode::NotFound)?;
+                        if !crate::scope_refresh::matches_manage(&pending, accounts) {
+                            return Err(ErrorCode::Conflict);
+                        }
+                    }
                     if let ScopeRefreshCommand::RequestGoogleSend(accounts) = &command {
                         let pending = self
                             .state
@@ -1654,6 +1822,13 @@ impl RegistrationHandle<'_> {
                     return Err(ErrorCode::InternalError);
                 }
                 let request = match command {
+                    ScopeRefreshCommand::RequestManage(accounts) => {
+                        crate::scope_refresh::prepare_manage(
+                            self.state.store,
+                            self.state.server,
+                            accounts,
+                        )?
+                    }
                     ScopeRefreshCommand::RequestGoogleSend(accounts) => {
                         crate::scope_refresh::prepare_google_send(
                             self.state.store,
@@ -1789,8 +1964,10 @@ impl RegistrationHandle<'_> {
                     })
                 {
                     let id = *existing.intent().request_id();
-                    return crate::setup_imap::status(self.state.store, id, true)
-                        .map(SetupReceipt::Imap);
+                    let receipt = crate::setup_imap::status(self.state.store, id, true)?;
+                    if receipt.state() != hantong_contracts::imap_setup::ImapSetupState::Expired {
+                        return Ok(SetupReceipt::Imap(receipt));
+                    }
                 }
                 let request = crate::setup_imap::create(self.state.store, &input)?;
                 let id = *request.intent().request_id();
@@ -1897,6 +2074,7 @@ impl RegistrationHandle<'_> {
                         | Job::Google(_)
                         | Job::ScopeRefresh(_)
                         | Job::TerminalGoogleMutation(_)
+                        | Job::TerminalImapTrash(_)
                         | Job::TerminalSend(_) => Err(ErrorCode::RateLimited),
                         Job::TerminalProtectedSend(_) => Err(ErrorCode::RateLimited),
                         Job::TerminalImap(_) | Job::TerminalSmtp(_) => Err(ErrorCode::RateLimited),
@@ -2017,6 +2195,9 @@ pub(crate) fn complete_google_oauth_registration(
         hantong_contracts::google_setup::GoogleLocalProfile::PersonalReadSend => {
             hantong_contracts::auth::default_cli_send_tools()
         }
+        hantong_contracts::google_setup::GoogleLocalProfile::PersonalManage => {
+            hantong_contracts::auth::default_cli_manage_tools()
+        }
         hantong_contracts::google_setup::GoogleLocalProfile::None => {
             return Err(ErrorCode::InvalidInput);
         }
@@ -2032,6 +2213,27 @@ pub(crate) fn complete_google_oauth_registration(
             // OAuth connected this exact account. Keep the existing grant and
             // key unchanged; the foreground CLI must select the additional
             // account through the existing terminal scope workflow.
+            return Ok(());
+        }
+        if profile == hantong_contracts::google_setup::GoogleLocalProfile::PersonalManage
+            && record.client_kind == ClientKind::Cli
+            && record.display_label == DEFAULT_CLI_LABEL
+            && record.state == RegistrationState::Active
+            && !record.scope.accounts().is_empty()
+            && (hantong_contracts::auth::is_supported_default_cli_toolset(record.scope.tools())
+                || hantong_contracts::auth::is_supported_default_cli_manage_toolset(
+                    record.scope.tools(),
+                ))
+            // A fresh Modify permit for another Google account is only the
+            // provider binding.  Even when the existing account already has
+            // a valid B/C personal grant, do not route this through the
+            // single-account OAuth D upgrade; the caller must perform one
+            // explicit provider-neutral RequestManage review for the union.
+            && record.scope.accounts() != [account_id.as_str()]
+        {
+            // The fresh OAuth permit has connected this account, including for
+            // a mixed-provider CLI. It grants no local access here. The exact
+            // existing account/tool union must be selected in terminal review.
             return Ok(());
         }
         if !existing_personal_registration_supported(&record, &account_id, profile) {
@@ -2054,7 +2256,10 @@ pub(crate) fn complete_google_oauth_registration(
     let target = hantong_contracts::auth::RequestedScope::new(vec![account_id], target_tools)?;
     let refresh_id = hantong_platform::random_nonce()?;
     let pin = hantong_platform::sha256(&server.public_key()?)?;
-    let refresh = if permit_profile_is_send_upgrade(&target, store)? {
+    let refresh = if profile == hantong_contracts::google_setup::GoogleLocalProfile::PersonalManage
+    {
+        store.create_google_oauth_cli_manage_scope_refresh(refresh_id, target, pin)?
+    } else if permit_profile_is_send_upgrade(&target, store)? {
         store.create_google_oauth_cli_send_upgrade(refresh_id, target, pin)?
     } else {
         store.create_google_oauth_cli_scope_refresh(refresh_id, target, pin)?
@@ -2074,6 +2279,9 @@ fn needs_terminal_account_access(
             default_cli_send_tools(),
             matches!(record.profile_epoch, 2 | 3),
         ),
+        GoogleLocalProfile::PersonalManage => {
+            (default_cli_manage_tools(), record.profile_epoch >= 2)
+        }
         GoogleLocalProfile::None => return false,
     };
     record.client_kind == ClientKind::Cli
@@ -2108,6 +2316,9 @@ fn existing_personal_registration_is_current(
                 record.scope.tools() == default_cli_send_tools()
                     && matches!(record.profile_epoch, 2 | 3)
             }
+            GoogleLocalProfile::PersonalManage => {
+                record.scope.tools() == default_cli_manage_tools() && record.profile_epoch >= 2
+            }
             GoogleLocalProfile::None => false,
         }
 }
@@ -2126,7 +2337,12 @@ fn existing_personal_registration_supported(
         && ((record.scope.tools() == default_cli_legacy_tools() && record.profile_epoch == 1)
             || (profile == GoogleLocalProfile::PersonalReadSend
                 && record.scope.tools() == default_cli_body_tools()
-                && record.profile_epoch == 2))
+                && record.profile_epoch == 2)
+            || (profile == GoogleLocalProfile::PersonalManage
+                && ((record.scope.tools() == default_cli_body_tools()
+                    && record.profile_epoch == 2)
+                    || (record.scope.tools() == default_cli_send_tools()
+                        && matches!(record.profile_epoch, 2 | 3)))))
 }
 
 fn permit_profile_is_send_upgrade(
@@ -2152,6 +2368,7 @@ impl RegistrationWorker<'_> {
         // Recovery never prompts and never creates a missing key. An individual
         // failure remains provisioning and cannot authenticate or be replaced.
         crate::scope_refresh::recover_startup(self.state.store, self.state.server)?;
+        self.state.store.recover_inflight_imap_trash()?;
         recover_startup(&effects)?;
         self.state.store.recover_mail_sends()?;
         self.state.store.recover_google_mutations()?;
@@ -2206,6 +2423,15 @@ impl RegistrationWorker<'_> {
                         &self.state.policy,
                         id,
                         true,
+                    )
+                    .await
+                }
+                Job::TerminalImapTrash(id) => {
+                    crate::imap_trash::run_job(
+                        self.state.store,
+                        self.state.secrets_root,
+                        &self.state.policy,
+                        id,
                     )
                     .await
                 }

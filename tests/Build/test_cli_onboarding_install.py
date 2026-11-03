@@ -38,7 +38,7 @@ function Invoke-WebRequest {
     $script:SelectedExpectedAsset = $true
     throw 'Download intentionally stopped before network access'
 }
-try { Install-MailHantong -SessionOnly } catch {
+try { Install-MailHantong -SessionOnly -Destination (Join-Path $PSScriptRoot 'installed') } catch {
     if (-not $script:SelectedExpectedAsset) { throw }
 }
 if (-not $script:SelectedExpectedAsset) { throw 'No release selected' }

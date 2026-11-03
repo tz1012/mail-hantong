@@ -1,5 +1,16 @@
 > Latest user correction (2026-11-02): [all-terminal workflows](terminal-workflows.md) supersedes native-window and Windows Hello requirements for every CLI/TUI path. Confirmation happens in the same console; provider OAuth retains its browser. Legacy descriptions below remain historical context. Security code requires human review.
 
+## Terminal manage selection (protocol version 1)
+
+`registration.scope.manage.request` accepts exactly `{"protocol_version":1,"account_ids":[...]}`.
+The client must provide an explicit, non-empty list of 1 to 128 generic account identifiers;
+the identifiers are canonicalized by bytewise sort and duplicates are rejected. An empty list
+never means all accounts. Each identifier is at most 128 UTF-8 bytes and the aggregate identifier
+bytes are limited to 12,288, leaving room for the JSON-RPC envelope under the authenticated 16 KiB
+request frame limit. The request has no caller-supplied tools, grants, approval, or provider secret.
+Core resolves the selected account set to the manage scope and keeps the terminal confirmation and
+account binding checks in the normal scope-refresh flow.
+
 # 기본 CLI 계정·도구 범위 갱신 v3
 
 

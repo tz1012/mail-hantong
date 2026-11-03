@@ -873,7 +873,32 @@ mod tests {
     }
 
     #[cfg(windows)]
+    #[test]
+    fn acc02_second_manage_google_account_preserves_existing_manage_grants() {
+        additional_google_account_case(
+            hantong_contracts::google_setup::GoogleLocalProfile::PersonalManage,
+        );
+    }
+
+    #[cfg(windows)]
     fn additional_google_account_case(
+        profile: hantong_contracts::google_setup::GoogleLocalProfile,
+    ) {
+        additional_google_account_case_with_initial(profile, profile);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn acc02_body_only_google_then_new_manage_permit_preserves_b_until_union_review() {
+        additional_google_account_case_with_initial(
+            hantong_contracts::google_setup::GoogleLocalProfile::PersonalRead,
+            hantong_contracts::google_setup::GoogleLocalProfile::PersonalManage,
+        );
+    }
+
+    #[cfg(windows)]
+    fn additional_google_account_case_with_initial(
+        initial_profile: hantong_contracts::google_setup::GoogleLocalProfile,
         profile: hantong_contracts::google_setup::GoogleLocalProfile,
     ) {
         use hantong_contracts::{
@@ -881,9 +906,17 @@ mod tests {
         };
         use hantong_store::{CliRegistrationStage, ClientKind, DEFAULT_CLI_LABEL};
         let mode = profile.access_mode().unwrap();
+        let initial_mode = initial_profile.access_mode().unwrap();
+        let initial_tools = match initial_profile {
+            GoogleLocalProfile::PersonalRead => default_cli_body_tools(),
+            GoogleLocalProfile::PersonalReadSend => default_cli_send_tools(),
+            GoogleLocalProfile::PersonalManage => default_cli_manage_tools(),
+            GoogleLocalProfile::None => unreachable!(),
+        };
         let tools = match profile {
             GoogleLocalProfile::PersonalRead => default_cli_body_tools(),
             GoogleLocalProfile::PersonalReadSend => default_cli_send_tools(),
+            GoogleLocalProfile::PersonalManage => default_cli_manage_tools(),
             GoogleLocalProfile::None => unreachable!(),
         };
         struct OwnedKey(Option<hantong_platform::ServerSigningKey>);
@@ -907,7 +940,11 @@ mod tests {
         store.stage_server_identity(selector).unwrap();
         store.activate_server_identity(selector, public, 1).unwrap();
         let mut bindings = Vec::new();
-        for subject in ["additional-fixture-first", "additional-fixture-second"] {
+        for (index, subject) in ["additional-fixture-first", "additional-fixture-second"]
+            .into_iter()
+            .enumerate()
+        {
+            let access_mode = if index == 0 { initial_mode } else { mode };
             let identity = hantong_contracts::google::GoogleIdentity {
                 account_id: format!(
                     "google_{}",
@@ -917,8 +954,12 @@ mod tests {
                 ),
                 subject: subject.into(),
                 email: "synthetic@example.test".into(),
-                access_mode: mode,
-                granted_scopes: mode.required_scopes().iter().map(|s| (*s).into()).collect(),
+                access_mode,
+                granted_scopes: access_mode
+                    .required_scopes()
+                    .iter()
+                    .map(|s| (*s).into())
+                    .collect(),
             };
             bindings.push(
                 store
@@ -949,13 +990,20 @@ mod tests {
             )
             .unwrap();
         store.activate_cli_registration(id, 1, pin).unwrap();
-        let initial = store
-            .create_google_oauth_cli_scope_refresh(
+        let initial = if initial_profile == GoogleLocalProfile::PersonalManage {
+            store.create_google_oauth_cli_manage_scope_refresh(
                 [32; 32],
-                RequestedScope::new(vec![first.account_id.clone()], tools.clone()).unwrap(),
+                RequestedScope::new(vec![first.account_id.clone()], initial_tools.clone()).unwrap(),
                 pin,
             )
-            .unwrap();
+        } else {
+            store.create_google_oauth_cli_scope_refresh(
+                [32; 32],
+                RequestedScope::new(vec![first.account_id.clone()], initial_tools.clone()).unwrap(),
+                pin,
+            )
+        }
+        .unwrap();
         let staged = store.stage_cli_scope_refresh(&initial).unwrap();
         store.activate_cli_scope_refresh(&staged).unwrap();
         let before = store.load_default_cli_registration().unwrap().unwrap();
@@ -984,6 +1032,13 @@ mod tests {
             store.google_account_binding(&second.account_id).unwrap(),
             *second
         );
+        if initial_profile == GoogleLocalProfile::PersonalRead
+            && profile == GoogleLocalProfile::PersonalManage
+        {
+            drop(store);
+            std::fs::remove_dir_all(root).unwrap();
+            return;
+        }
         let selection = match profile {
             GoogleLocalProfile::PersonalRead => crate::scope_refresh::prepare_google_readonly_add(
                 &store,
@@ -994,6 +1049,15 @@ mod tests {
                 &store,
                 server,
                 hantong_contracts::scope_refresh::GoogleSendAccounts::parse(&[
+                    first.account_id.clone(),
+                    second.account_id.clone(),
+                ])
+                .unwrap(),
+            ),
+            GoogleLocalProfile::PersonalManage => crate::scope_refresh::prepare_manage(
+                &store,
+                server,
+                hantong_contracts::scope_refresh::ManageAccounts::parse(&[
                     first.account_id.clone(),
                     second.account_id.clone(),
                 ])

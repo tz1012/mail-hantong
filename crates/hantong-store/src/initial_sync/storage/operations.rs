@@ -443,3 +443,40 @@ pub(in crate::initial_sync) fn plan_snapshot(
         .map_err(|_| ErrorCode::InternalError)
     })
 }
+pub(in crate::initial_sync) fn current_plan_snapshot(
+    store: &Store,
+    owner: [u8; 16],
+    request: &UidCursorRequest,
+) -> Result<Option<InitialSyncPlanSnapshot>, ErrorCode> {
+    store.mail_transaction(TransactionBehavior::Deferred, |tx| {
+        let Some(p) = current_preview(tx, request.account_id(), request.mailbox())? else {
+            return Ok(None);
+        };
+        if p.owner != owner
+            || p.snapshot.account_id() != request.account_id()
+            || p.snapshot.mailbox() != request.mailbox()
+        {
+            return Err(ErrorCode::NotFound);
+        }
+        let current = match binding(
+            tx,
+            request.account_id(),
+            request.mailbox(),
+            Some(p.binding.cg),
+        ) {
+            Ok((b, _)) => b == p.binding && p.snapshot.is_current(),
+            Err(ErrorCode::InternalError) => return Err(ErrorCode::InternalError),
+            Err(_) => false,
+        };
+        InitialSyncPlanSnapshot::new(
+            p.snapshot.identity().clone(),
+            p.snapshot.version(),
+            p.progress().clone(),
+            p.snapshot.is_current(),
+            current,
+            p.snapshot.stored_at_utc_ms(),
+        )
+        .map(Some)
+        .map_err(|_| ErrorCode::InternalError)
+    })
+}

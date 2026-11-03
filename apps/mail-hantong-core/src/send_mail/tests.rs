@@ -205,6 +205,30 @@ impl Drop for Fixture {
         std::fs::remove_dir_all(&self.root).unwrap();
     }
 }
+
+#[test]
+fn apr01_smtp_preview_uses_the_persisted_transport_sender() {
+    let f = Fixture::new();
+    let pending = f.prepare();
+    let preview = super::preview(&pending).unwrap();
+    assert_eq!(preview["from"], "sender@example.test");
+    assert_eq!(preview["to"], serde_json::json!(["recipient@example.test"]));
+    assert_eq!(preview["subject"], "Synthetic");
+    assert_eq!(preview["body"], "Complete fake body");
+
+    let alternate = hantong_domain::mail_connection::MailConnectionConfig::from_json(
+        br#"{"schema_version":1,"account_id":"b","imap":{"settings_version":1,"host":"imap.example","port":993,"tls":"implicit_tls","login_name":"imap-login","authentication":"app_password"},"smtp":{"settings_version":1,"host":"smtp.example","port":465,"tls":"implicit_tls","login_name":"other@example.test","authentication":"app_password"}}"#,
+    )
+    .unwrap();
+    let mut second = pending;
+    second.endpoint =
+        hantong_contracts::google_write::MailSendTarget::Smtp(alternate.smtp().unwrap().clone());
+    assert_eq!(
+        super::preview(&second).unwrap()["from"],
+        "other@example.test"
+    );
+}
+
 fn run<F: std::future::Future>(future: F) -> F::Output {
     tokio::runtime::Builder::new_current_thread()
         .enable_time()

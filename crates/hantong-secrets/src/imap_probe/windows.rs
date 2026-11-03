@@ -70,6 +70,29 @@ pub(super) async fn probe(
         _ => Err(MailProbeError::Protocol),
     }
 }
+pub(crate) async fn move_to_trash(
+    store: &SecretStore,
+    request: &hantong_contracts::imap_trash::ImapTrashRequest,
+    endpoint: &ImapEndpointConfig,
+    destination: &hantong_contracts::uid_page::UidMailboxIdentity,
+    cancel: &std::sync::atomic::AtomicBool,
+) -> Result<ImapTrashOutcome, MailProbeError> {
+    match connect(
+        store,
+        request.account_id(),
+        endpoint,
+        ReadOperation::Trash {
+            request,
+            destination,
+            cancel,
+        },
+    )
+    .await?
+    {
+        ReadReceipt::Trash(outcome) => Ok(outcome),
+        _ => Err(MailProbeError::Protocol),
+    }
+}
 #[derive(Clone, Copy)]
 enum ReadOperation<'a> {
     Body(&'a hantong_contracts::message_body::MessageBodyRequest),
@@ -79,6 +102,11 @@ enum ReadOperation<'a> {
     UidPage(&'a ImapUidPageRequest),
     UidReconcile(&'a ImapUidReconcileRequest),
     UidRecovery(&'a ImapUidRecoveryRequest),
+    Trash {
+        request: &'a hantong_contracts::imap_trash::ImapTrashRequest,
+        destination: &'a hantong_contracts::uid_page::UidMailboxIdentity,
+        cancel: &'a std::sync::atomic::AtomicBool,
+    },
 }
 enum ReadReceipt {
     Body(Result<hantong_contracts::message_body::MessageBody, crate::imap_body::ImapBodyError>),
@@ -88,6 +116,14 @@ enum ReadReceipt {
     UidPage(Result<ImapUidPage, ImapUidPageError>),
     UidReconcile(Result<ImapUidReconcilePage, ImapUidPageError>),
     UidRecovery(Result<ImapUidRecoveryPage, ImapUidPageError>),
+    Trash(ImapTrashOutcome),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ImapTrashOutcome {
+    Accepted,
+    Rejected,
+    Unknown,
 }
 async fn connect(
     store: &SecretStore,
@@ -694,7 +730,8 @@ where
         ReadOperation::UidObservation(_)
         | ReadOperation::UidPage(_)
         | ReadOperation::UidReconcile(_)
-        | ReadOperation::UidRecovery(_) => (16 * 1024 * 1024, 8 * 1024 * 1024),
+        | ReadOperation::UidRecovery(_)
+        | ReadOperation::Trash { .. } => (16 * 1024 * 1024, 8 * 1024 * 1024),
     };
     // Prefetch remains BELOW TLS, including bytes following STARTTLS OK.
     let mut plain = Protocol {
@@ -733,6 +770,7 @@ where
                 | ReadOperation::UidPage(_)
                 | ReadOperation::UidReconcile(_)
                 | ReadOperation::UidRecovery(_)
+                | ReadOperation::Trash { .. }
         ) {
             plaintext_limit.saturating_sub(plain_consumed)
         } else {
@@ -837,10 +875,95 @@ where
             }
             (ReadReceipt::UidRecovery(page), "h9")
         }
+        ReadOperation::Trash {
+            request,
+            destination,
+            cancel,
+        } => {
+            use hantong_contracts::{uid_page::UidMailboxEncoding, wire_hex};
+            if cancel.load(std::sync::atomic::Ordering::Relaxed)
+                || request.account_id() != source.account
+                || !capabilities.move_messages()
+                || destination.encoding() != request.mailbox().encoding()
+            {
+                (ReadReceipt::Trash(ImapTrashOutcome::Rejected), "h8")
+            } else {
+                let encoding = match request.mailbox().encoding() {
+                    UidMailboxEncoding::Utf8 => MailboxEncoding::Utf8,
+                    UidMailboxEncoding::ModifiedUtf7 => MailboxEncoding::ModifiedUtf7,
+                };
+                let source_wire = wire_hex::decode_bounded(request.mailbox().wire_hex(), 1024)
+                    .map_err(|_| MailProbeError::Protocol)?;
+                let destination_wire = wire_hex::decode_bounded(destination.wire_hex(), 1024)
+                    .map_err(|_| MailProbeError::Protocol)?;
+                let source_name = ImapMailboxName::from_wire(&source_wire, encoding)
+                    .map_err(|_| MailProbeError::Protocol)?;
+                let destination_name = ImapMailboxName::from_wire(&destination_wire, encoding)
+                    .map_err(|_| MailProbeError::Protocol)?;
+                let validity = verified.select("h6", &source_name).await?;
+                if validity != request.uidvalidity()
+                    || cancel.load(std::sync::atomic::Ordering::Relaxed)
+                {
+                    (ReadReceipt::Trash(ImapTrashOutcome::Rejected), "h8")
+                } else {
+                    let outcome = match verified.uid_move(request.uid(), &destination_name).await {
+                        Ok(uid_page_driver::UidMoveOutcome::Accepted) => ImapTrashOutcome::Accepted,
+                        Ok(uid_page_driver::UidMoveOutcome::Unknown) | Err(_) => {
+                            ImapTrashOutcome::Unknown
+                        }
+                    };
+                    (ReadReceipt::Trash(outcome), "h8")
+                }
+            }
+        }
     };
+    // MOVE has a durable, single-attempt outcome once its tagged response is
+    // observed. Drop this one-use connection rather than letting logout I/O
+    // replace that outcome or prolong an ambiguous write.
+    if matches!(&receipt, ReadReceipt::Trash(_)) {
+        return Ok(receipt);
+    }
     verified.command(logout_tag, CommandBody::Logout).await?;
     verified
         .finish(GateMode::Logout, logout_tag, &mut 32)
         .await?;
     Ok(receipt)
+}
+
+#[cfg(test)]
+#[allow(clippy::too_many_arguments)]
+pub(super) async fn run_test_trash<S>(
+    store: &SecretStore,
+    account: &str,
+    endpoint: &ImapEndpointConfig,
+    stream: S,
+    tls: Arc<ClientConfig>,
+    request: &hantong_contracts::imap_trash::ImapTrashRequest,
+    destination: &hantong_contracts::uid_page::UidMailboxIdentity,
+    cancel: &std::sync::atomic::AtomicBool,
+    accesses: Option<&std::sync::atomic::AtomicUsize>,
+) -> Result<ImapTrashOutcome, MailProbeError>
+where
+    S: AsyncRead + AsyncWrite + Send + Unpin + 'static,
+{
+    match run_operation(
+        Source {
+            store,
+            account,
+            endpoint,
+            accesses,
+        },
+        stream,
+        tls,
+        ReadOperation::Trash {
+            request,
+            destination,
+            cancel,
+        },
+    )
+    .await?
+    {
+        ReadReceipt::Trash(outcome) => Ok(outcome),
+        _ => Err(MailProbeError::Protocol),
+    }
 }

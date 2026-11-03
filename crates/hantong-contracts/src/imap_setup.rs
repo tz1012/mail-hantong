@@ -49,12 +49,13 @@ pub enum ImapSetupNextAction {
     ResumeRequired,
     NewRequestRequired,
 }
-#[derive(Clone, Copy, Eq, PartialEq)]
+#[derive(Clone, Eq, PartialEq)]
 pub struct ImapSetupReceipt {
     request_id: [u8; 32],
     expires_at_utc_ms: i64,
     state: ImapSetupState,
     next_action: ImapSetupNextAction,
+    account_id: Option<String>,
 }
 
 fn text(value: &str, max: usize, allow_space: bool) -> bool {
@@ -194,7 +195,15 @@ impl ImapSetupReceipt {
             expires_at_utc_ms,
             state,
             next_action,
+            account_id: None,
         })
+    }
+    pub fn with_account_id(mut self, account_id: String) -> Result<Self, ErrorCode> {
+        if !valid_account_id(&account_id) {
+            return Err(ErrorCode::InvalidInput);
+        }
+        self.account_id = Some(account_id);
+        Ok(self)
     }
     pub fn request_id(&self) -> &[u8; 32] {
         &self.request_id
@@ -208,6 +217,16 @@ impl ImapSetupReceipt {
     pub fn next_action(&self) -> ImapSetupNextAction {
         self.next_action
     }
+    pub fn account_id(&self) -> Option<&str> {
+        self.account_id.as_deref()
+    }
+}
+fn valid_account_id(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 128
+        && value
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-'))
 }
 fn valid_action(s: ImapSetupState, a: ImapSetupNextAction) -> bool {
     match s {
@@ -271,6 +290,23 @@ mod tests {
         assert!(input("imap.example", "   ").is_err());
         assert!(input("imap.example", "u\u{0000}ser").is_err());
         assert!(input("imap.example", "사용자").is_ok());
+    }
+
+    #[test]
+    fn setup_receipt_account_hint_is_optional_and_strictly_bounded() {
+        let receipt = ImapSetupReceipt::new(
+            [1; 32],
+            1,
+            ImapSetupState::Pending,
+            ImapSetupNextAction::HelperRequired,
+        )
+        .unwrap();
+        assert_eq!(receipt.account_id(), None);
+        let receipt = receipt.with_account_id("imap_acct-1".into()).unwrap();
+        assert_eq!(receipt.account_id(), Some("imap_acct-1"));
+        for value in ["", "../other", "account/name", &"a".repeat(129)] {
+            assert!(receipt.clone().with_account_id(value.to_owned()).is_err());
+        }
     }
 
     #[test]

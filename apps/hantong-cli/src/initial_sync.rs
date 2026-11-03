@@ -2,7 +2,7 @@
 use crate::{ErrorCode, Lang, resource, sync::Action};
 use hantong_contracts::{
     initial_sync::*,
-    uid_page::{UidMailboxEncoding, UidMailboxIdentity, UidPageStatusRequest},
+    uid_page::{UidCursorRequest, UidMailboxEncoding, UidMailboxIdentity, UidPageStatusRequest},
     wire_hex,
 };
 
@@ -56,6 +56,7 @@ pub(super) fn parse(command: &[String], options: &[(String, String)]) -> Result<
             "--expected-plan-version",
         ],
         "initial-status" => &["--account", "--execution-id"],
+        "initial-current" => &["--account", "--wire-hex", "--encoding"],
         "initial-plan" => &["--account", "--wire-hex", "--encoding", "--plan-id"],
         _ => return Err(ErrorCode::InvalidInput),
     };
@@ -72,6 +73,9 @@ pub(super) fn parse(command: &[String], options: &[(String, String)]) -> Result<
         get("--wire-hex")?,
         UidMailboxEncoding::parse(get("--encoding")?)?,
     )?;
+    if command[1] == "initial-current" {
+        return UidCursorRequest::new(account, mailbox).map(Action::InitialCurrent);
+    }
     if command[1] == "initial-plan" {
         return InitialSyncPlanRequest::new(
             account,

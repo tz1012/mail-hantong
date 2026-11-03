@@ -26,6 +26,7 @@ struct Binding<'a> {
     tls: TlsMode,
     login: &'a str,
     auth: Authentication,
+    sender: Option<&'a str>,
 }
 impl<'a> From<&'a ImapEndpointConfig> for Binding<'a> {
     fn from(e: &'a ImapEndpointConfig) -> Self {
@@ -37,6 +38,7 @@ impl<'a> From<&'a ImapEndpointConfig> for Binding<'a> {
             tls: e.tls(),
             login: e.login_name(),
             auth: e.authentication(),
+            sender: None,
         }
     }
 }
@@ -50,6 +52,7 @@ impl<'a> From<&'a SmtpEndpointConfig> for Binding<'a> {
             tls: e.tls(),
             login: e.login_name(),
             auth: e.authentication(),
+            sender: e.sender_address(),
         }
     }
 }
@@ -100,6 +103,10 @@ impl Binding<'_> {
             Authentication::AppPassword => 0,
             Authentication::Oauth2 => 1,
         });
+        if let Some(sender) = self.sender {
+            bytes.push(1);
+            push(&mut bytes, sender);
+        }
         Ok(bytes)
     }
 }

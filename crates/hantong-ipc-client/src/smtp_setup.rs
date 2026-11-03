@@ -34,10 +34,13 @@ pub fn request(id: &str, command: &SmtpSetupCommand) -> Result<Vec<u8>, ErrorCod
                 serde_json::json!({"protocol_version":1,"request_id":wire_hex::encode(r)}),
             )
         }
-        SmtpSetupCommand::Request(i) => (
-            "setup.smtp.request",
-            serde_json::json!({"protocol_version":1,"account_id":i.account_id(),"host":i.host(),"port":i.port(),"tls":match i.tls(){ImapSetupTls::ImplicitTls=>"implicit_tls",ImapSetupTls::StarttlsRequired=>"starttls_required"},"login_name":i.login_name()}),
-        ),
+        SmtpSetupCommand::Request(i) => {
+            let mut params = serde_json::json!({"protocol_version":1,"account_id":i.account_id(),"host":i.host(),"port":i.port(),"tls":match i.tls(){ImapSetupTls::ImplicitTls=>"implicit_tls",ImapSetupTls::StarttlsRequired=>"starttls_required"},"login_name":i.login_name()});
+            if let Some(sender) = i.sender_address() {
+                params["sender_address"] = serde_json::Value::String(sender.to_owned());
+            }
+            ("setup.smtp.request", params)
+        }
     };
     serde_json::to_vec(
         &serde_json::json!({"jsonrpc":"2.0","id":id,"method":method,"params":params}),

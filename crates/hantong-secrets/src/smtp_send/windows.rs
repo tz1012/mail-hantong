@@ -75,7 +75,7 @@ where
         .duration_since(std::time::UNIX_EPOCH)
         .map_err(|_| SmtpSendError::Protocol)?;
     let message = encode_message(
-        endpoint.login_name(),
+        endpoint.sender_address().unwrap_or(endpoint.login_name()),
         envelope,
         now.as_secs(),
         now.subsec_nanos(),
@@ -106,8 +106,8 @@ where
     if !auth.has_code(235) {
         return Err(SmtpSendError::Authentication);
     }
-    let sender =
-        Address::from_str(endpoint.login_name()).map_err(|_| SmtpSendError::InvalidRecipient)?;
+    let sender = Address::from_str(endpoint.sender_address().unwrap_or(endpoint.login_name()))
+        .map_err(|_| SmtpSendError::InvalidRecipient)?;
     let mail = match connection.command(Mail::new(Some(sender), vec![])).await {
         Ok(reply) => reply,
         Err(error) if error.status().is_some() => return Ok(SmtpSendResult::Rejected),

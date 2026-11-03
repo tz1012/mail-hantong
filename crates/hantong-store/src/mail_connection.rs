@@ -121,6 +121,7 @@ struct Endpoint<'a> {
     tls: TlsMode,
     login: &'a str,
     auth: Authentication,
+    sender: Option<&'a str>,
 }
 impl<'a> From<&'a ImapEndpointConfig> for Endpoint<'a> {
     fn from(e: &'a ImapEndpointConfig) -> Self {
@@ -132,6 +133,7 @@ impl<'a> From<&'a ImapEndpointConfig> for Endpoint<'a> {
             tls: e.tls(),
             login: e.login_name(),
             auth: e.authentication(),
+            sender: None,
         }
     }
 }
@@ -145,6 +147,7 @@ impl<'a> From<&'a SmtpEndpointConfig> for Endpoint<'a> {
             tls: e.tls(),
             login: e.login_name(),
             auth: e.authentication(),
+            sender: e.sender_address(),
         }
     }
 }
@@ -188,6 +191,10 @@ fn payload_hash(account: &str, e: Endpoint<'_>, expected: u64) -> Result<[u8; 32
         Authentication::AppPassword => 0,
         Authentication::Oauth2 => 1,
     });
+    if let Some(sender) = e.sender {
+        bytes.push(1);
+        push(&mut bytes, sender);
+    }
     #[cfg(windows)]
     {
         hantong_platform::sha256(&bytes).map_err(|_| ErrorCode::InternalError)
@@ -389,6 +396,13 @@ impl Store {
                     db(tx.execute("UPDATE mail_connection_settings SET settings_version=?3,host=?4,port=?5,tls=?6,login_name=?7,authentication=?8,updated_at_utc_ms=?9 WHERE account_id=?1 AND endpoint_kind=?2 AND settings_version=?10",params![account,e.kind.as_str(),e.version as i64,e.host,e.port,tls,e.login,auth,now,m.expected_version as i64]))?
                 };
                 if changed!=1 { return Err(ErrorCode::Conflict); }
+                if e.kind == MailEndpointKind::Smtp {
+                    if let Some(sender) = e.sender {
+                        db(tx.execute("INSERT INTO smtp_sender_addresses(account_id,sender_address,updated_at_utc_ms) VALUES(?1,?2,?3) ON CONFLICT(account_id) DO UPDATE SET sender_address=excluded.sender_address,updated_at_utc_ms=excluded.updated_at_utc_ms", params![account, sender, now]))?;
+                    } else {
+                        db(tx.execute("DELETE FROM smtp_sender_addresses WHERE account_id=?1", [account]))?;
+                    }
+                }
                 db(tx.execute("DELETE FROM mail_connection_observations WHERE account_id=?1 AND endpoint_kind=?2",params![account,e.kind.as_str()]))?;
                 db(tx.execute("INSERT INTO mail_connection_operations(operation_id,account_id,idempotency_key,endpoint_kind,payload_hash,expected_version,result_version,completed_at_utc_ms) VALUES(?1,?2,?3,?4,?5,?6,?7,?8)",params![m.operation_id,account,m.idempotency_key,e.kind.as_str(),m.payload_hash.as_slice(),m.expected_version as i64,e.version as i64,now]))?;
                 Ok(e.version)
@@ -452,20 +466,72 @@ pub(super) fn read_endpoint(
     account: &str,
     kind: MailEndpointKind,
 ) -> Result<Option<StoredEndpoint>, ErrorCode> {
-    let row=db(tx.query_row("SELECT settings_version,host,port,tls,login_name,authentication,updated_at_utc_ms FROM mail_connection_settings WHERE account_id=?1 AND endpoint_kind=?2",params![account,kind.as_str()],|r| {
-        Ok((serde_json::json!({"settings_version":r.get::<_,i64>(0)?,"host":text(r,1,253)?,"port":r.get::<_,i64>(2)?,"tls":text(r,3,32)?,"login_name":text(r,4,1280)?,"authentication":text(r,5,32)?}),r.get::<_,i64>(6)?))
-    }).optional())?;
-    let Some((json, updated)) = row else {
+    // Frozen schemas before v26 do not contain the optional sender table. Read
+    // the endpoint row first and probe the table only when it exists, keeping
+    // legacy JSON and payload hashes byte-for-byte unchanged.
+    let has_sender_table = db(tx
+        .query_row(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='smtp_sender_addresses'",
+            [],
+            |r| r.get::<_, i64>(0),
+        )
+        .optional())?
+    .is_some();
+    let row = db(tx
+        .query_row(
+            "SELECT settings_version,host,port,tls,login_name,authentication,updated_at_utc_ms FROM mail_connection_settings WHERE account_id=?1 AND endpoint_kind=?2",
+            params![account, kind.as_str()],
+            |r| {
+                let json = serde_json::json!({
+                    "settings_version": r.get::<_, i64>(0)?,
+                    "host": text(r, 1, 253)?,
+                    "port": r.get::<_, i64>(2)?,
+                    "tls": text(r, 3, 32)?,
+                    "login_name": text(r, 4, 1280)?,
+                    "authentication": text(r, 5, 32)?,
+                });
+                Ok((json, r.get::<_, i64>(6)?))
+            },
+        )
+        .optional())?;
+    let Some((mut json, updated)) = row else {
         return Ok(None);
     };
+    if has_sender_table && kind == MailEndpointKind::Smtp {
+        let sender = db(tx
+            .query_row(
+                "SELECT sender_address FROM smtp_sender_addresses WHERE account_id=?1",
+                [account],
+                |r| text(r, 0, 320),
+            )
+            .optional())?;
+        if let Some(sender) = sender {
+            json["sender_address"] = serde_json::Value::String(sender);
+        }
+    }
     if updated <= 0 {
         return Err(ErrorCode::InternalError);
     }
     // Both endpoint roles have identical field validation. Do not normalize corrupt storage.
-    let wrapped = serde_json::json!({"schema_version":1,"account_id":account,"imap":json});
+    let wrapped = if kind == MailEndpointKind::Smtp {
+        let mut imap_json = json.clone();
+        if let Some(object) = imap_json.as_object_mut() {
+            object.remove("sender_address");
+        }
+        serde_json::json!({"schema_version":1,"account_id":account,"imap":imap_json,"smtp":json.clone()})
+    } else {
+        serde_json::json!({"schema_version":1,"account_id":account,"imap":json.clone()})
+    };
     let bytes = serde_json::to_vec(&wrapped).map_err(|_| ErrorCode::InternalError)?;
     let valid = MailConnectionConfig::from_json(&bytes).map_err(|_| ErrorCode::InternalError)?;
-    if serde_json::to_value(valid.imap()).map_err(|_| ErrorCode::InternalError)? != json {
+    let stored = match kind {
+        MailEndpointKind::Imap => serde_json::to_value(valid.imap()),
+        MailEndpointKind::Smtp => {
+            serde_json::to_value(valid.smtp().ok_or(ErrorCode::InternalError)?)
+        }
+    }
+    .map_err(|_| ErrorCode::InternalError)?;
+    if stored != json {
         return Err(ErrorCode::InternalError);
     }
     Ok(Some(StoredEndpoint {

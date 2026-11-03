@@ -12,6 +12,7 @@ pub(super) enum Action {
     InitialMutation(hantong_contracts::initial_sync::InitialSyncRequest),
     InitialStatus(UidPageStatusRequest),
     InitialPlan(hantong_contracts::initial_sync::InitialSyncPlanRequest),
+    InitialCurrent(UidCursorRequest),
     Inspect(UidCursorRequest),
     Cursor(UidCursorRequest),
     Page(UidPageRequest),
@@ -24,6 +25,10 @@ pub(super) enum Action {
 pub(super) enum ResultValue {
     InitialReceipt(hantong_contracts::initial_sync::InitialSyncReceipt),
     InitialPlan(hantong_contracts::initial_sync::InitialSyncPlanSnapshot),
+    InitialCurrent(
+        UidCursorRequest,
+        Option<hantong_contracts::initial_sync::InitialSyncPlanSnapshot>,
+    ),
     Inspection(UidInspectionSnapshot),
     Cursor(UidCursorSnapshot),
     Receipt(UidPageReceipt),
@@ -40,6 +45,10 @@ pub(super) fn real_action(action: Action) -> Result<ResultValue, ErrorCode> {
             .map(ResultValue::InitialReceipt),
         Action::InitialPlan(request) => {
             hantong_ipc_client::initial_sync::plan_default(request).map(ResultValue::InitialPlan)
+        }
+        Action::InitialCurrent(request) => {
+            let value = hantong_ipc_client::initial_sync::current_default(request.clone())?;
+            Ok(ResultValue::InitialCurrent(request, value))
         }
         Action::Inspect(request) => {
             inspection_client::inspect_default(request).map(ResultValue::Inspection)
@@ -207,6 +216,7 @@ pub(super) fn run(
         Action::InitialMutation(_) | Action::InitialStatus(_)
     );
     let initial_plan = matches!(&request, Action::InitialPlan(_));
+    let initial_current = matches!(&request, Action::InitialCurrent(_));
     let cursor = matches!(&request, Action::Cursor(_));
     let inspection = matches!(&request, Action::Inspect(_));
     let reconcile = matches!(&request, Action::Reconcile(_) | Action::ReconcileStatus(_));
@@ -228,6 +238,19 @@ pub(super) fn run(
             }
             0
         }
+        Ok(ResultValue::InitialCurrent(request, value)) if initial_current => {
+            if json {
+                println!(
+                    "{}",
+                    hantong_ipc_client::initial_sync::current_json(&request, value.as_ref())
+                );
+            } else if let Some(value) = value {
+                print!("{}", crate::initial_sync::plan_human(&value, lang));
+            } else {
+                println!("{}", resource(lang, "initial_none"));
+            }
+            0
+        }
         Ok(ResultValue::Inspection(value)) if inspection => {
             if json {
                 println!("{}", inspection_client::inspection_json(&value))
@@ -245,7 +268,13 @@ pub(super) fn run(
             0
         }
         Ok(ResultValue::Receipt(value))
-            if !cursor && !inspection && !reconcile && !recovery && !initial && !initial_plan =>
+            if !cursor
+                && !inspection
+                && !reconcile
+                && !recovery
+                && !initial
+                && !initial_plan
+                && !initial_current =>
         {
             if json {
                 println!("{}", client::receipt_json(&value))

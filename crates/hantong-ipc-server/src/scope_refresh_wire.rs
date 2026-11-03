@@ -44,6 +44,29 @@ pub fn parse(request: &RpcRequest) -> Result<ScopeRefreshCommand, ErrorCode> {
             },
         );
     }
+    if request.method == "registration.scope.manage.request" {
+        let p = request.params.as_object().ok_or(ErrorCode::InvalidInput)?;
+        if p.len() != 2 {
+            return Err(ErrorCode::InvalidInput);
+        }
+        if p.get("protocol_version").and_then(Value::as_u64) != Some(1) {
+            return Err(ErrorCode::VersionMismatch);
+        }
+        let values = p
+            .get("account_ids")
+            .and_then(Value::as_array)
+            .ok_or(ErrorCode::InvalidInput)?;
+        if values.len() > 128 {
+            return Err(ErrorCode::InvalidInput);
+        }
+        let values = values
+            .iter()
+            .map(|v| v.as_str().map(str::to_owned).ok_or(ErrorCode::InvalidInput))
+            .collect::<Result<Vec<_>, _>>()?;
+        return Ok(ScopeRefreshCommand::RequestManage(
+            hantong_contracts::scope_refresh::ManageAccounts::parse(&values)?,
+        ));
+    }
     if matches!(
         request.method.as_str(),
         "registration.scope.google_readonly.request" | "registration.scope.google_readonly.add"
@@ -154,6 +177,36 @@ mod tests {
                     Err(ErrorCode::InvalidInput)
                 );
             }
+        }
+    }
+    #[test]
+    fn manage_scope_wire_requires_explicit_generic_accounts_without_tools() {
+        let id = "imap_account";
+        assert_eq!(
+            parse(&request(
+                "registration.scope.manage.request",
+                json!({"protocol_version":1,"account_ids":[id]})
+            )),
+            Ok(ScopeRefreshCommand::RequestManage(
+                hantong_contracts::scope_refresh::ManageAccounts::parse(&[id.into()]).unwrap()
+            ))
+        );
+        for params in [
+            json!({"protocol_version":1,"account_ids":[]}),
+            json!({"protocol_version":1,"account_ids":[id,id]}),
+            json!({"protocol_version":1,"account_ids":[id],"tools":[]}),
+            json!({"protocol_version":1,"account_ids":[id],"approved":true}),
+            json!({"protocol_version":2,"account_ids":[id]}),
+        ] {
+            let expected = if params.get("protocol_version") == Some(&json!(2)) {
+                ErrorCode::VersionMismatch
+            } else {
+                ErrorCode::InvalidInput
+            };
+            assert_eq!(
+                parse(&request("registration.scope.manage.request", params)),
+                Err(expected)
+            );
         }
     }
     fn request(method: &str, params: Value) -> RpcRequest {

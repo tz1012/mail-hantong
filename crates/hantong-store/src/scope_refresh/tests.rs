@@ -1220,10 +1220,12 @@ fn cli15_v8_real_legacy_history_migrates_without_rehash_or_scope_change() {
 fn restore_v8_scope_schema(f: &Fixture) {
     f.store().with_connection(|c| {
             let tx=rusqlite::Transaction::new_unchecked(c,rusqlite::TransactionBehavior::Immediate)?;
-            assert_eq!(tx.query_row("SELECT count(*) FROM ai_consents", [], |r| r.get::<_, i64>(0))?, 0);
-            tx.execute_batch("DROP TABLE ai_consents;")?;
+            for table in ["ai_consents", "smtp_sender_addresses"] {
+                assert_eq!(tx.query_row(&format!("SELECT count(*) FROM {table}"), [], |r| r.get::<_, i64>(0))?, 0);
+                tx.execute_batch(&format!("DROP TABLE {table};"))?;
+            }
             assert_eq!(tx.query_row("SELECT (SELECT count(*) FROM mcp_registration_replacements)+(SELECT count(*) FROM mail_outbox)+(SELECT count(*) FROM mail_send_reviews)+(SELECT count(*) FROM mail_drafts)+(SELECT count(*) FROM mcp_ai_consents)+(SELECT count(*) FROM imap_body_cache)",[],|r|r.get::<_,i64>(0))?,0);
-            tx.execute_batch("DROP TABLE google_mutation_requests;DROP TABLE mcp_registration_replacements;DROP TABLE mail_outbox;DROP TABLE mail_send_reviews;DROP TABLE mail_draft_attachments;DROP TABLE mail_drafts;DROP TABLE mcp_ai_consents;DROP TABLE imap_body_cache;")?;
+            tx.execute_batch("DROP TABLE google_mutation_requests;DROP TABLE imap_trash_outbox;DROP TABLE imap_trash_reviews;DROP TABLE mcp_registration_replacements;DROP TABLE mail_outbox;DROP TABLE mail_send_reviews;DROP TABLE mail_draft_attachments;DROP TABLE mail_drafts;DROP TABLE mcp_ai_consents;DROP TABLE imap_body_cache;")?;
             for table in ["google_sync_requests","google_sync_state","google_messages","google_labels","google_connections"] {
                 assert_eq!(tx.query_row(&format!("SELECT count(*) FROM {table}"),[],|r|r.get::<_,i64>(0))?,0);
                 tx.execute_batch(&format!("DROP TABLE {table};"))?;

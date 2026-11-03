@@ -23,6 +23,7 @@ pub(crate) enum GateMode {
     Capability,
     StartTls,
     Authentication,
+    Mutation,
     Logout,
 }
 

@@ -18,6 +18,21 @@ fn apr01_native_send_constraints_share_rpc_bucket_without_enabling_rpc_send() {
         Err(ErrorCode::RateLimited)
     );
 }
+
+#[test]
+fn ai09_native_trash_constraints_are_writable_only_and_rate_limited() {
+    let now = Instant::now();
+    let mut policy = ReadPolicy::new();
+    assert_eq!(
+        policy.check_native_trash([3; 16], true, 2, now),
+        Err(ErrorCode::PolicyBlocked)
+    );
+    assert_eq!(policy.check_native_trash([3; 16], false, 2, now), Ok(()));
+    assert_eq!(
+        policy.check_native_trash([3; 16], false, 2, now),
+        Err(ErrorCode::RateLimited)
+    );
+}
 #[test]
 fn mail03_metadata_search_shares_rate_bucket_and_cannot_enable_send() {
     let now = Instant::now();

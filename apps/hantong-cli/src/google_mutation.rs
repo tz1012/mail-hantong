@@ -8,6 +8,16 @@ enum Command {
     Request(MutationPayload),
     Status(String, [u8; 32]),
 }
+fn generated_id() -> Result<String, ErrorCode> {
+    #[cfg(windows)]
+    {
+        Ok(wire_hex::encode(&hantong_platform::random_nonce()?))
+    }
+    #[cfg(not(windows))]
+    {
+        Err(ErrorCode::CapabilityUnsupported)
+    }
+}
 fn parse(command: &[String], options: &[(String, String)]) -> Result<Command, ErrorCode> {
     let action = match command {
         [a, b] if a == "change" => b.as_str(),
@@ -31,6 +41,14 @@ fn parse(command: &[String], options: &[(String, String)]) -> Result<Command, Er
             "--operation-id",
             "--idempotency-key",
         ],
+        "trash" => vec![
+            "--account",
+            "--message-id",
+            "--expected-version",
+            "--operation-id",
+            "--idempotency-key",
+            "--payload-hash",
+        ],
         "status" => vec!["--account", "--review-id"],
         _ => return Err(ErrorCode::InvalidInput),
     };
@@ -53,18 +71,29 @@ fn parse(command: &[String], options: &[(String, String)]) -> Result<Command, Er
     let version = get("--expected-version")?
         .parse()
         .map_err(|_| ErrorCode::InvalidInput)?;
-    let op = get("--operation-id")?;
-    let key = get("--idempotency-key")?;
+    let op = match fields.get("--operation-id") {
+        Some(value) => (*value).to_owned(),
+        None if action == "trash" => generated_id()?,
+        None => return Err(ErrorCode::InvalidInput),
+    };
+    let key = match fields.get("--idempotency-key") {
+        Some(value) => (*value).to_owned(),
+        None if action == "trash" => generated_id()?,
+        None => return Err(ErrorCode::InvalidInput),
+    };
+    if op == key {
+        return Err(ErrorCode::Conflict);
+    }
     let r = if action == "draft-save" {
         MutationPayload::SaveDraft(SendReviewRequest::new(
             account,
             wire_hex::decode_fixed(get("--draft-id")?)?,
             version,
-            op,
-            key,
+            &op,
+            &key,
             wire_hex::decode_fixed(get("--payload-hash")?)?,
         )?)
-    } else {
+    } else if action == "labels" {
         let list = |key| {
             fields
                 .get(key)
@@ -81,8 +110,34 @@ fn parse(command: &[String], options: &[(String, String)]) -> Result<Command, Er
         MutationPayload::Labels {
             change,
             expected_version: version,
-            operation_id: op.into(),
-            idempotency_key: key.into(),
+            operation_id: op,
+            idempotency_key: key,
+            payload_hash: hash,
+        }
+    } else {
+        let message_id = get("--message-id")?;
+        let account_id = account.to_owned();
+        let message_id = message_id.to_owned();
+        let payload = MutationPayload::Trash {
+            account_id: account_id.clone(),
+            message_id: message_id.clone(),
+            expected_version: version,
+            operation_id: op.clone(),
+            idempotency_key: key.clone(),
+            payload_hash: [0; 32],
+        };
+        let hash = hantong_platform::sha256_storage_payload(&payload.canonical_payload())?;
+        if let Some(caller_hash) = fields.get("--payload-hash")
+            && wire_hex::decode_fixed::<32>(caller_hash)? != hash
+        {
+            return Err(ErrorCode::InvalidInput);
+        }
+        MutationPayload::Trash {
+            account_id,
+            message_id,
+            expected_version: version,
+            operation_id: op,
+            idempotency_key: key,
             payload_hash: hash,
         }
     };
@@ -196,7 +251,7 @@ mod tests {
     }
     #[test]
     fn sec03_change_cli_rejects_send_delete_and_caller_approval() {
-        for action in ["delete", "trash", "send", "batch"] {
+        for action in ["delete", "send", "batch"] {
             assert!(parse(&["change".into(), action.into()], &[]).is_err());
         }
         let opts = vec![
@@ -204,5 +259,28 @@ mod tests {
             ("--approved".into(), "true".into()),
         ];
         assert!(parse(&["change".into(), "labels".into()], &opts).is_err());
+    }
+    #[cfg(windows)]
+    #[test]
+    fn apr01_trash_change_generates_missing_intent_fields_and_hash() {
+        let account = format!("google_{}", "a".repeat(64));
+        let options = vec![
+            ("--account".into(), account.clone()),
+            ("--message-id".into(), "message-1".into()),
+            ("--expected-version".into(), "7".into()),
+        ];
+        let Command::Request(MutationPayload::Trash {
+            operation_id,
+            idempotency_key,
+            payload_hash,
+            ..
+        }) = parse(&["change".into(), "trash".into()], &options).unwrap()
+        else {
+            panic!("expected trash request")
+        };
+        assert!(!operation_id.is_empty());
+        assert!(!idempotency_key.is_empty());
+        assert_ne!(operation_id, idempotency_key);
+        assert_ne!(payload_hash, [0; 32]);
     }
 }

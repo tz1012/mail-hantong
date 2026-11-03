@@ -25,6 +25,7 @@ pub mod display_settings;
 pub mod folders;
 pub mod google_mutation;
 pub mod imap_setup;
+pub mod imap_trash;
 pub mod initial_sync;
 pub mod mail_send;
 pub mod message_body;

@@ -1,4 +1,70 @@
 use super::*;
+
+#[test]
+fn apr01_imap_trash_terminal_snapshot_binds_destination_owner_epoch_and_expiry() {
+    use hantong_contracts::{
+        imap_trash::ImapTrashRequest,
+        uid_page::{UidMailboxEncoding, UidMailboxIdentity},
+    };
+    use hantong_store::imap_trash::{ImapTrashDestination, PendingImapTrash};
+    let config = hantong_domain::mail_connection::MailConnectionConfig::from_json(
+        br#"{"schema_version":1,"account_id":"synthetic_imap","imap":{"settings_version":1,"host":"imap.example.test","port":993,"tls":"implicit_tls","login_name":"synthetic@example.test","authentication":"app_password"}}"#,
+    ).unwrap();
+    let pending = PendingImapTrash {
+        review_id: [7; 32],
+        owner_registration_id: [8; 16],
+        profile_epoch: 2,
+        account_version: 1,
+        endpoint: config.imap().clone(),
+        request: ImapTrashRequest::new(
+            "synthetic_imap",
+            UidMailboxIdentity::new("494e424f58", UidMailboxEncoding::Utf8).unwrap(),
+            1,
+            77,
+            12,
+            "op",
+            "idem",
+            [9; 32],
+        )
+        .unwrap(),
+        destination: ImapTrashDestination {
+            mailbox_wire_hex: "5472617368".into(),
+            mailbox_encoding: "utf8".into(),
+        },
+        created_at_utc_ms: 1000,
+        expires_at_utc_ms: 301000,
+    };
+    let expected = imap_trash_terminal_hash(&pending).unwrap();
+    for changed in [
+        {
+            let mut p = pending.clone();
+            p.destination.mailbox_wire_hex = "4f74686572".into();
+            p
+        },
+        {
+            let mut p = pending.clone();
+            p.owner_registration_id = [6; 16];
+            p
+        },
+        {
+            let mut p = pending.clone();
+            p.profile_epoch += 1;
+            p
+        },
+        {
+            let mut p = pending.clone();
+            p.expires_at_utc_ms += 1;
+            p
+        },
+        {
+            let mut p = pending.clone();
+            p.account_version += 1;
+            p
+        },
+    ] {
+        assert_ne!(imap_trash_terminal_hash(&changed).unwrap(), expected);
+    }
+}
 use std::cell::RefCell;
 
 fn public() -> [u8; 72] {
@@ -1492,6 +1558,90 @@ fn setup01_registration_and_imap_share_one_gate_and_status_never_schedules() {
         handle.setup_command(resume()),
         Err(ErrorCode::RateLimited)
     ));
+}
+
+#[cfg(windows)]
+#[test]
+fn setup01_expired_matching_imap_request_is_replaced_without_job() {
+    use hantong_contracts::imap_setup::{ImapSetupInput, ImapSetupState, ImapSetupTls};
+    struct Key(Option<ServerSigningKey>);
+    impl Drop for Key {
+        fn drop(&mut self) {
+            self.0.take().unwrap().delete().unwrap();
+        }
+    }
+    struct Directory(std::path::PathBuf);
+    impl Drop for Directory {
+        fn drop(&mut self) {
+            std::fs::remove_dir_all(&self.0).unwrap();
+        }
+    }
+
+    let key = Key(Some(
+        ServerSigningKey::create(hantong_platform::random_nonce().unwrap()).unwrap(),
+    ));
+    let root = Directory(std::env::temp_dir().join(format!(
+        "hantong-core-imap-expired-{}",
+        hantong_contracts::wire_hex::encode(&hantong_platform::random_nonce().unwrap())
+    )));
+    std::fs::create_dir(&root.0).unwrap();
+    let store = Store::open(root.0.join("data"), root.0.join("keys")).unwrap();
+    let secrets = root.0.join("keys");
+    let (handle, mut worker) = coordinator(&store, key.0.as_ref().unwrap(), &secrets);
+    let input = ImapSetupInput::new(
+        None,
+        None,
+        "IMAP.EXAMPLE".into(),
+        993,
+        ImapSetupTls::ImplicitTls,
+        "user".into(),
+    )
+    .unwrap();
+    let request = || SetupCommand::Imap(ImapSetupCommand::Request(input.clone()));
+
+    let SetupReceipt::Imap(first) = handle.setup_command(request()).unwrap() else {
+        panic!("wrong family");
+    };
+    let first_id = *first.request_id();
+    assert_eq!(first.state(), ImapSetupState::Pending);
+    assert!(worker.receiver.try_recv().is_err());
+
+    drop(worker);
+    drop(handle);
+    drop(store);
+    let keyed =
+        hantong_secrets::KeyedConnection::open(root.0.join("data"), root.0.join("keys")).unwrap();
+    keyed
+        .with_connection(|c| {
+            c.execute(
+                "UPDATE imap_setup_requests SET created_at_utc_ms=created_at_utc_ms-3600000, expires_at_utc_ms=expires_at_utc_ms-3600000, updated_at_utc_ms=updated_at_utc_ms-3600000",
+                [],
+            )?;
+            c.execute(
+                "UPDATE imap_setup_events SET occurred_at_utc_ms=occurred_at_utc_ms-3600000",
+                [],
+            )?;
+            Ok(())
+        })
+        .unwrap();
+    drop(keyed);
+    let store = Store::open(root.0.join("data"), root.0.join("keys")).unwrap();
+    let (handle, mut worker) = coordinator(&store, key.0.as_ref().unwrap(), &secrets);
+
+    let SetupReceipt::Imap(replacement) = handle.setup_command(request()).unwrap() else {
+        panic!("wrong family");
+    };
+    assert_eq!(replacement.state(), ImapSetupState::Pending);
+    assert_ne!(replacement.request_id(), &first_id);
+    assert!(worker.receiver.try_recv().is_err());
+    assert_eq!(store.list_imap_setup_requests().unwrap().len(), 2);
+    let SetupReceipt::Imap(expired) = handle
+        .setup_command(SetupCommand::Imap(ImapSetupCommand::Status(first_id)))
+        .unwrap()
+    else {
+        panic!("wrong family");
+    };
+    assert_eq!(expired.state(), ImapSetupState::Expired);
 }
 
 #[test]

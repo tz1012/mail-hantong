@@ -30,6 +30,37 @@
           "additionalProperties": false,
           "required": [
             "mode",
+            "provider",
+            "account_id",
+            "review_id"
+          ],
+          "properties": {
+            "mode": {
+              "const": "status"
+            },
+            "provider": {
+              "const": "imap"
+            },
+            "account_id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[A-Za-z0-9_-]+$"
+            },
+            "review_id": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$",
+              "not": {
+                "const": "0000000000000000000000000000000000000000000000000000000000000000"
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "mode",
             "account_id",
             "message_id",
             "operation_id",
@@ -71,6 +102,86 @@
             "payload_hash": {
               "type": "string",
               "pattern": "^[0-9a-f]{64}$"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "mode",
+            "request"
+          ],
+          "properties": {
+            "mode": {
+              "const": "request"
+            },
+            "request": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "kind",
+                "account_id",
+                "mailbox_wire_hex",
+                "mailbox_encoding",
+                "expected_catalog_generation",
+                "uidvalidity",
+                "uid",
+                "operation_id",
+                "idempotency_key",
+                "payload_hash"
+              ],
+              "properties": {
+                "kind": {
+                  "const": "imap_trash"
+                },
+                "account_id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128,
+                  "pattern": "^[A-Za-z0-9_-]+$"
+                },
+                "mailbox_wire_hex": {
+                  "type": "string",
+                  "minLength": 2,
+                  "maxLength": 2048,
+                  "pattern": "^[0-9a-fA-F]+$"
+                },
+                "mailbox_encoding": {
+                  "enum": ["utf8", "modified_utf7"]
+                },
+                "expected_catalog_generation": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 9223372036854775807
+                },
+                "uidvalidity": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 4294967295
+                },
+                "uid": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 4294967295
+                },
+                "operation_id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128,
+                  "pattern": "^[A-Za-z0-9_-]+$"
+                },
+                "idempotency_key": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128,
+                  "pattern": "^[A-Za-z0-9_-]+$"
+                },
+                "payload_hash": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                }
+              }
             }
           }
         },

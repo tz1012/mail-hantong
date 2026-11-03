@@ -23,6 +23,8 @@ pub enum AuditTool {
     SendRequest,
     GoogleMutationRequest,
     GoogleMutationExecute,
+    TrashRequest,
+    TrashExecute,
 }
 impl AuditTool {
     pub const fn as_str(self) -> &'static str {
@@ -40,6 +42,8 @@ impl AuditTool {
             Self::SendRequest => "mail.send.request",
             Self::GoogleMutationRequest => crate::google_mutation::REQUEST_TOOL,
             Self::GoogleMutationExecute => crate::google_mutation::EXECUTE_TOOL,
+            Self::TrashRequest => crate::google_mutation::TRASH_REQUEST_TOOL,
+            Self::TrashExecute => crate::google_mutation::TRASH_EXECUTE_TOOL,
         }
     }
     pub fn parse(value: &str) -> Result<Self, ErrorCode> {
@@ -57,6 +61,8 @@ impl AuditTool {
             "mail.send.request" => Ok(Self::SendRequest),
             crate::google_mutation::REQUEST_TOOL => Ok(Self::GoogleMutationRequest),
             crate::google_mutation::EXECUTE_TOOL => Ok(Self::GoogleMutationExecute),
+            crate::google_mutation::TRASH_REQUEST_TOOL => Ok(Self::TrashRequest),
+            crate::google_mutation::TRASH_EXECUTE_TOOL => Ok(Self::TrashExecute),
             _ => Err(ErrorCode::InvalidInput),
         }
     }

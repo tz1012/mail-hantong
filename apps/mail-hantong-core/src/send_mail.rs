@@ -17,9 +17,10 @@ pub(crate) fn render(r: &SendReceipt) -> serde_json::Value {
 pub(crate) fn preview(p: &PendingSend) -> Result<serde_json::Value, ErrorCode> {
     let sender = match &p.endpoint {
         hantong_contracts::google_write::MailSendTarget::Gmail { sender, .. } => sender.clone(),
-        hantong_contracts::google_write::MailSendTarget::Smtp(_) => {
-            return Err(ErrorCode::PolicyBlocked);
-        }
+        hantong_contracts::google_write::MailSendTarget::Smtp(endpoint) => endpoint
+            .sender_address()
+            .unwrap_or(endpoint.login_name())
+            .to_owned(),
     };
     let attachments = p
         .draft

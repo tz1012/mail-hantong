@@ -15,6 +15,7 @@ pub mod google;
 pub use google::{GoogleAuthorization, PendingGoogleCredential, begin_google_authorization};
 pub mod imap_body;
 mod imap_probe;
+pub mod imap_trash;
 mod mail_credentials;
 #[cfg(windows)]
 mod mail_transport;
@@ -24,6 +25,7 @@ mod smtp_send;
 mod terminal_secret;
 pub use database::{DatabaseError, KeyedConnection};
 pub use imap_probe::{ImapCapabilities, ImapProbeReceipt, ImapUidPageError};
+pub use imap_trash::ImapTrashOutcome;
 pub use protected_input::{
     ImapPasswordCapturePlan, PasswordInput, PendingImapCredential, SmtpPasswordCapturePlan,
 };

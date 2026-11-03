@@ -10,6 +10,7 @@ pub enum GoogleLocalProfile {
     None,
     PersonalRead,
     PersonalReadSend,
+    PersonalManage,
 }
 impl GoogleLocalProfile {
     pub fn as_str(self) -> &'static str {
@@ -17,6 +18,7 @@ impl GoogleLocalProfile {
             Self::None => "none",
             Self::PersonalRead => "personal_read",
             Self::PersonalReadSend => "personal_read_send",
+            Self::PersonalManage => "personal_manage",
         }
     }
     pub fn parse(value: &str) -> Result<Self, ErrorCode> {
@@ -24,6 +26,7 @@ impl GoogleLocalProfile {
             "none" => Ok(Self::None),
             "personal_read" => Ok(Self::PersonalRead),
             "personal_read_send" => Ok(Self::PersonalReadSend),
+            "personal_manage" => Ok(Self::PersonalManage),
             _ => Err(ErrorCode::InvalidInput),
         }
     }
@@ -32,6 +35,7 @@ impl GoogleLocalProfile {
             Self::None => None,
             Self::PersonalRead => Some(crate::google_write::GoogleAccessMode::ReadOnly),
             Self::PersonalReadSend => Some(crate::google_write::GoogleAccessMode::ReadSend),
+            Self::PersonalManage => Some(crate::google_write::GoogleAccessMode::Modify),
         }
     }
 }
@@ -54,7 +58,10 @@ impl GoogleSetupInput {
         if let Some(mode) = self.local_profile.access_mode()
             && (self.access_mode != mode
                 || (self.reauthorize_account.is_some()
-                    && self.local_profile != GoogleLocalProfile::PersonalReadSend))
+                    && !matches!(
+                        self.local_profile,
+                        GoogleLocalProfile::PersonalReadSend | GoogleLocalProfile::PersonalManage
+                    )))
         {
             return Err(ErrorCode::InvalidInput);
         }
@@ -157,6 +164,7 @@ mod tests {
                 GoogleLocalProfile::PersonalReadSend,
                 GoogleAccessMode::ReadSend,
             ),
+            (GoogleLocalProfile::PersonalManage, GoogleAccessMode::Modify),
         ] {
             let mut input = GoogleSetupInput {
                 local_profile: profile,
@@ -167,13 +175,20 @@ mod tests {
                 force_consent: false,
             };
             assert_eq!(input.validate(), Ok(()));
-            input.access_mode = GoogleAccessMode::Modify;
+            input.access_mode = if mode == GoogleAccessMode::Modify {
+                GoogleAccessMode::ReadOnly
+            } else {
+                GoogleAccessMode::Modify
+            };
             assert_eq!(input.validate(), Err(ErrorCode::InvalidInput));
             input.access_mode = mode;
             input.reauthorize_account = Some(format!("google_{}", "a".repeat(64)));
             assert_eq!(
                 input.validate(),
-                if profile == GoogleLocalProfile::PersonalReadSend {
+                if matches!(
+                    profile,
+                    GoogleLocalProfile::PersonalReadSend | GoogleLocalProfile::PersonalManage
+                ) {
                     Ok(())
                 } else {
                     Err(ErrorCode::InvalidInput)

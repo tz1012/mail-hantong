@@ -7,6 +7,11 @@ const V19_NEW_TABLES: [&str; 5] = [
     "google_sync_state",
     "google_sync_requests",
 ];
+const V26_NEW_TABLES: [&str; 3] = [
+    "smtp_sender_addresses",
+    "imap_trash_reviews",
+    "imap_trash_outbox",
+];
 fn assert_v19_tables_empty(c: &rusqlite::Connection) -> rusqlite::Result<()> {
     for table in V19_NEW_TABLES {
         assert_eq!(
@@ -14,6 +19,17 @@ fn assert_v19_tables_empty(c: &rusqlite::Connection) -> rusqlite::Result<()> {
                 .get::<_, i64>(0))?,
             0,
             "migration must not create Google identities, jobs, or data: {table}"
+        );
+    }
+    Ok(())
+}
+fn assert_v26_tables_empty(c: &rusqlite::Connection) -> rusqlite::Result<()> {
+    for table in V26_NEW_TABLES {
+        assert_eq!(
+            c.query_row(&format!("SELECT count(*) FROM {table}"), [], |r| r
+                .get::<_, i64>(0))?,
+            0,
+            "fresh schema must not contain data in the v26 table: {table}"
         );
     }
     Ok(())
@@ -63,7 +79,7 @@ fn acc01_sync02_v18_to_v19_preserves_every_frozen_table_highwater_and_no_consent
     store
         .with_connection(|c| {
             assert_eq!(before, v18_product_rows(c)?);
-            assert_eq!(product_table_names(c)?.len(), 49);
+            assert_eq!(product_table_names(c)?.len(), 52);
             assert_eq!(
                 c.query_row(
                     "SELECT seq FROM sqlite_sequence WHERE name='audit_starts'",
@@ -73,6 +89,7 @@ fn acc01_sync02_v18_to_v19_preserves_every_frozen_table_highwater_and_no_consent
                 1900
             );
             assert_v19_tables_empty(c)?;
+            assert_v26_tables_empty(c)?;
             assert_v18_tables_empty(c)?;
             validate_schema(c, SCHEMA, CURRENT_SCHEMA_VERSION)
         })

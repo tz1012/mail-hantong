@@ -55,7 +55,7 @@ const TOOLS: &[(&str, &str, &str)] = &[
     ),
     (
         "mail.messages.trash.request",
-        "Request terminal review to move one Gmail message to trash, or inspect status; requires Modify access; cannot permanently delete or confirm",
+        "Request terminal review to move one cached Gmail or IMAP message to trash, or inspect status; requires Modify access; cannot permanently delete or confirm",
         include_str!("../../../docs/contracts/tools/mail.messages.trash.request.schema.json"),
     ),
 ];
@@ -98,10 +98,7 @@ impl Backend for Native {
         )?;
         #[cfg(windows)]
         {
-            let account = arguments
-                .get("account_id")
-                .and_then(Value::as_str)
-                .map(str::to_owned);
+            let account = trash_account(&arguments);
             let requested = arguments.get("mode").and_then(Value::as_str) == Some("request");
             let mut value = runtime()?.block_on(async {
                 match self.provider {
@@ -129,8 +126,11 @@ impl Backend for Native {
             {
                 let account = account.ok_or(ErrorCode::InvalidInput)?;
                 review_in_console(name, &value, &account)?;
-                let status =
+                let mut status =
                     json!({"mode":"status","account_id":account,"review_id":value["review_id"]});
+                if value["provider"] == "imap" {
+                    status["provider"] = json!("imap");
+                }
                 value = runtime()?.block_on(async {
                     exchange_profile(
                         hantong_ipc_client::authenticate_ai(provider).await?,
@@ -183,7 +183,7 @@ fn review_in_console(name: &str, receipt: &Value, account: &str) -> Result<(), E
     let id = receipt["review_id"]
         .as_str()
         .ok_or(ErrorCode::InvalidInput)?;
-    let args = terminal_review_args(name, id, account)?;
+    let args = terminal_review_args(name, id, account, receipt["provider"].as_str())?;
     // The bridge's stdio is reserved for MCP. Use its existing console for
     // the installed CLI/Core foreground helper; never open a second window.
     let input = OpenOptions::new()
@@ -222,10 +222,19 @@ fn review_in_console(name: &str, receipt: &Value, account: &str) -> Result<(), E
     }
 }
 #[cfg(any(windows, test))]
-fn terminal_review_args(name: &str, id: &str, account: &str) -> Result<Vec<String>, ErrorCode> {
+fn terminal_review_args(
+    name: &str,
+    id: &str,
+    account: &str,
+    provider: Option<&str>,
+) -> Result<Vec<String>, ErrorCode> {
     let kind = match name {
         "mail.send.request" => "protected_send",
-        "mail.messages.trash.request" => "google_mutation",
+        "mail.messages.trash.request" => match provider {
+            Some("imap") => "imap_trash",
+            Some("gmail") | None => "google_mutation",
+            _ => return Err(ErrorCode::InvalidInput),
+        },
         _ => return Err(ErrorCode::InvalidInput),
     };
     wire_hex::decode_fixed::<32>(id)?;
@@ -404,8 +413,7 @@ impl<B: Backend> Server<B> {
      if *name=="mail.messages.trash.request"
          && let Some(variants) = schema["oneOf"].as_array_mut() {
              for variant in variants {
-                 if let Some(properties) = variant["properties"].as_object_mut() { properties.remove("payload_hash"); }
-                 if let Some(required) = variant["required"].as_array_mut() { required.retain(|v| v != "payload_hash"); }
+                 remove_generated_trash_fields(variant);
              }
      }
      let definitions:Value=serde_json::from_str(include_str!("../../../docs/contracts/tools/common.schema.json")).expect("compiled common schema");
@@ -448,7 +456,7 @@ impl<B: Backend> Server<B> {
 #[cfg(any(windows, test))]
 fn bound_arguments(name: &str, arguments: Value, accounts: &[String]) -> Result<Value, ErrorCode> {
     if name == "mail.messages.trash.request" && arguments["mode"] == "request" {
-        return trash_arguments(arguments);
+        return trash_arguments(arguments, accounts);
     }
     if name == "mail.drafts.create" {
         return compose_arguments(arguments);
@@ -472,33 +480,121 @@ fn bound_arguments(name: &str, arguments: Value, accounts: &[String]) -> Result<
 }
 
 #[cfg(windows)]
-fn trash_arguments(mut value: Value) -> Result<Value, ErrorCode> {
+fn trash_arguments(mut value: Value, accounts: &[String]) -> Result<Value, ErrorCode> {
     let map = value.as_object().ok_or(ErrorCode::InvalidInput)?;
-    let fields = [
-        "mode",
-        "account_id",
-        "message_id",
-        "expected_version",
-        "operation_id",
-        "idempotency_key",
-    ];
+    let operation_id = wire_hex::encode(&hantong_platform::random_nonce()?);
+    let idempotency_key = wire_hex::encode(&hantong_platform::random_nonce()?);
+    if map.contains_key("request") {
+        if map.len() != 2 || map["mode"] != "request" {
+            return Err(ErrorCode::InvalidInput);
+        }
+        let request = map["request"].as_object().ok_or(ErrorCode::InvalidInput)?;
+        let fields = [
+            "kind",
+            "account_id",
+            "mailbox_wire_hex",
+            "mailbox_encoding",
+            "expected_catalog_generation",
+            "uidvalidity",
+            "uid",
+        ];
+        if request.len() != fields.len() || fields.iter().any(|key| !request.contains_key(*key)) {
+            return Err(ErrorCode::InvalidInput);
+        }
+        let account = request["account_id"]
+            .as_str()
+            .ok_or(ErrorCode::InvalidInput)?;
+        if !accounts.iter().any(|candidate| candidate == account) {
+            return Err(ErrorCode::ScopeDenied);
+        }
+        let mut typed = request.clone();
+        typed.insert("operation_id".into(), json!(operation_id));
+        typed.insert("idempotency_key".into(), json!(idempotency_key));
+        typed.insert("payload_hash".into(), json!("00".repeat(32)));
+        let request =
+            hantong_contracts::imap_trash::ImapTrashRequest::from_json(&Value::Object(typed))?;
+        let hash = hantong_platform::sha256_storage_payload(&request.payload_bytes())?;
+        let object = value.as_object_mut().ok_or(ErrorCode::InvalidInput)?;
+        let request = object["request"]
+            .as_object_mut()
+            .ok_or(ErrorCode::InvalidInput)?;
+        request.insert("operation_id".into(), json!(operation_id));
+        request.insert("idempotency_key".into(), json!(idempotency_key));
+        request.insert("payload_hash".into(), json!(wire_hex::encode(&hash)));
+        return Ok(value);
+    }
+    let fields = ["mode", "account_id", "message_id", "expected_version"];
     if map.len() != fields.len() || fields.iter().any(|key| !map.contains_key(*key)) {
         return Err(ErrorCode::InvalidInput);
     }
-    let mut payload = value.clone();
-    let object = payload.as_object_mut().ok_or(ErrorCode::InvalidInput)?;
-    object.remove("mode");
-    object.insert("kind".into(), json!("trash"));
-    object.insert("payload_hash".into(), json!("01".repeat(32)));
-    let payload = hantong_contracts::google_mutation::MutationPayload::from_json(&payload)?;
-    value["payload_hash"] = json!(wire_hex::encode(&hantong_platform::sha256_storage_payload(
-        &payload.canonical_payload()
-    )?));
+    let account = map["account_id"].as_str().ok_or(ErrorCode::InvalidInput)?;
+    if !accounts.iter().any(|candidate| candidate == account) {
+        return Err(ErrorCode::ScopeDenied);
+    }
+    let mut payload_value = value.clone();
+    let payload_object = payload_value
+        .as_object_mut()
+        .ok_or(ErrorCode::InvalidInput)?;
+    payload_object.insert("operation_id".into(), json!(operation_id));
+    payload_object.insert("idempotency_key".into(), json!(idempotency_key));
+    payload_object.insert("payload_hash".into(), json!("00".repeat(32)));
+    payload_object.remove("mode");
+    payload_object.insert("kind".into(), json!("trash"));
+    let payload = hantong_contracts::google_mutation::MutationPayload::from_json(&payload_value)?;
+    let hash = hantong_platform::sha256_storage_payload(&payload.canonical_payload())?;
+    let object = value.as_object_mut().ok_or(ErrorCode::InvalidInput)?;
+    object.insert("operation_id".into(), json!(operation_id));
+    object.insert("idempotency_key".into(), json!(idempotency_key));
+    object.insert("mode".into(), json!("request"));
+    object.remove("kind");
+    object.insert("payload_hash".into(), json!(wire_hex::encode(&hash)));
     Ok(value)
 }
 #[cfg(all(test, not(windows)))]
-fn trash_arguments(_: Value) -> Result<Value, ErrorCode> {
+fn trash_arguments(_: Value, _: &[String]) -> Result<Value, ErrorCode> {
     Err(ErrorCode::CapabilityUnsupported)
+}
+
+fn trash_account(arguments: &Value) -> Option<String> {
+    arguments
+        .get("account_id")
+        .and_then(Value::as_str)
+        .or_else(|| {
+            arguments
+                .get("request")
+                .and_then(|request| request["account_id"].as_str())
+        })
+        .map(str::to_owned)
+}
+
+fn remove_generated_trash_fields(variant: &mut Value) {
+    match variant {
+        Value::Object(map) => {
+            if let Some(properties) = map.get_mut("properties") {
+                remove_generated_trash_fields(properties);
+            }
+            if let Some(required) = map.get_mut("required").and_then(Value::as_array_mut) {
+                required.retain(|v| {
+                    !matches!(
+                        v.as_str(),
+                        Some("payload_hash" | "operation_id" | "idempotency_key")
+                    )
+                });
+            }
+            for key in ["payload_hash", "operation_id", "idempotency_key"] {
+                map.remove(key);
+            }
+            for child in map.values_mut() {
+                remove_generated_trash_fields(child);
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                remove_generated_trash_fields(item);
+            }
+        }
+        _ => {}
+    }
 }
 
 #[cfg(windows)]
@@ -815,9 +911,20 @@ mod tests {
             .find(|tool| tool["name"] == "mail.messages.trash.request")
             .unwrap();
         assert_eq!(trash["annotations"]["destructiveHint"], true);
-        let request = &trash["inputSchema"]["oneOf"][0];
+        let request = trash["inputSchema"]["oneOf"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|variant| variant["properties"]["mode"]["const"] == "request")
+            .unwrap();
         assert!(request["properties"].get("payload_hash").is_none());
-        assert_eq!(request["properties"]["mode"]["const"], "request");
+        assert!(request["properties"].get("operation_id").is_none());
+        assert!(request["properties"].get("idempotency_key").is_none());
+        assert!(
+            request["properties"]["request"]["properties"]
+                .get("payload_hash")
+                .is_none()
+        );
     }
     #[test]
     fn ai09_only_pending_review_receipts_can_open_terminal() {
@@ -842,8 +949,13 @@ mod tests {
             }
         }
         assert_eq!(
-            terminal_review_args("mail.send.request", &"01".repeat(32), "synthetic-account")
-                .unwrap(),
+            terminal_review_args(
+                "mail.send.request",
+                &"01".repeat(32),
+                "synthetic-account",
+                None
+            )
+            .unwrap(),
             vec![
                 "review",
                 "--kind",
@@ -868,12 +980,28 @@ mod tests {
             "mail.send.request",
             &json!({"state":"pending","review_id":"../../other"})
         ));
+        assert_eq!(
+            terminal_review_args(
+                "mail.messages.trash.request",
+                &"01".repeat(32),
+                "imap-account",
+                Some("imap")
+            )
+            .unwrap()[2],
+            "imap_trash"
+        );
     }
     #[cfg(windows)]
     #[test]
     fn ai09_trash_binding_computes_hash_and_rejects_caller_override() {
-        let raw = json!({"mode":"request","account_id":format!("google_{}", "a".repeat(64)),"message_id":"abc123","expected_version":1,"operation_id":"op","idempotency_key":"key"});
-        let bound = bound_arguments("mail.messages.trash.request", raw.clone(), &[]).unwrap();
+        let raw = json!({"mode":"request","account_id":format!("google_{}", "a".repeat(64)),"message_id":"abc123","expected_version":1});
+        let account = raw["account_id"].as_str().unwrap().to_owned();
+        let bound = bound_arguments(
+            "mail.messages.trash.request",
+            raw.clone(),
+            std::slice::from_ref(&account),
+        )
+        .unwrap();
         assert_eq!(bound["payload_hash"].as_str().unwrap().len(), 64);
         let mut payload = bound.clone();
         payload.as_object_mut().unwrap().remove("mode");
@@ -884,10 +1012,60 @@ mod tests {
             wire_hex::decode_fixed::<32>(bound["payload_hash"].as_str().unwrap()).unwrap(),
             hantong_platform::sha256_storage_payload(&request.canonical_payload()).unwrap()
         );
-        assert_eq!(trash_arguments(bound), Err(ErrorCode::InvalidInput));
+        assert_eq!(
+            trash_arguments(bound, &[account]),
+            Err(ErrorCode::InvalidInput)
+        );
         let mut extra = raw;
         extra["approved"] = json!(true);
-        assert_eq!(trash_arguments(extra), Err(ErrorCode::InvalidInput));
+        assert_eq!(trash_arguments(extra, &[]), Err(ErrorCode::InvalidInput));
+    }
+    #[cfg(windows)]
+    #[test]
+    fn ai09_imap_trash_binding_is_account_bound_and_hashes_exact_uid_identity() {
+        let raw = json!({
+            "mode":"request",
+            "request": {
+                "kind":"imap_trash",
+                "account_id":"imap_account",
+                "mailbox_wire_hex":"494e424f58",
+                "mailbox_encoding":"utf8",
+                "expected_catalog_generation":9,
+                "uidvalidity":7,
+                "uid":42
+            }
+        });
+        let bound = bound_arguments(
+            "mail.messages.trash.request",
+            raw.clone(),
+            &["imap_account".into()],
+        )
+        .unwrap();
+        let request =
+            hantong_contracts::imap_trash::ImapTrashRequest::from_json(&bound["request"]).unwrap();
+        assert_ne!(request.operation_id(), "caller-operation");
+        assert_eq!(
+            request.payload_hash(),
+            &hantong_platform::sha256_storage_payload(&request.payload_bytes()).unwrap()
+        );
+        assert_eq!(
+            bound_arguments(
+                "mail.messages.trash.request",
+                bound,
+                &["imap_account".into()]
+            ),
+            Err(ErrorCode::InvalidInput)
+        );
+        let mut wrong_account = raw;
+        wrong_account["request"]["account_id"] = json!("other");
+        assert_eq!(
+            bound_arguments(
+                "mail.messages.trash.request",
+                wrong_account,
+                &["imap_account".into()]
+            ),
+            Err(ErrorCode::ScopeDenied)
+        );
     }
     #[test]
     fn mcp03_full_mail_discovery_advertises_eight_real_tools_and_never_direct_execution() {

@@ -14,3 +14,4 @@ send_prompt=이 메일을 보낼까요? 1) 보내기  0) 취소
 review_state=발송 상태
 review_waiting=발송 중입니다. 결과를 최대 5분 동안 기다립니다.
 cancelled=취소했습니다. 메일을 보내지 않았습니다.
+attachments_unsupported=이 메일 제공자는 첨부파일을 지원하지 않아 첨부 없이 작성합니다.

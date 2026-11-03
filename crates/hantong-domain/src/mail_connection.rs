@@ -28,6 +28,7 @@ struct CommonEndpointConfig {
     tls: TlsMode,
     login_name: String,
     authentication: Authentication,
+    sender_address: Option<String>,
 }
 
 #[derive(Clone, Eq, PartialEq)]
@@ -72,6 +73,8 @@ struct EndpointWire<'a> {
     tls: TlsMode,
     login_name: &'a str,
     authentication: Authentication,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    sender_address: Option<&'a str>,
 }
 
 impl Serialize for ImapEndpointConfig {
@@ -93,6 +96,7 @@ impl<'a> From<&'a CommonEndpointConfig> for EndpointWire<'a> {
             tls: value.tls,
             login_name: &value.login_name,
             authentication: value.authentication,
+            sender_address: value.sender_address.as_deref(),
         }
     }
 }
@@ -125,6 +129,8 @@ struct EndpointWireIn {
     tls: TlsMode,
     login_name: String,
     authentication: Authentication,
+    #[serde(default)]
+    sender_address: Option<String>,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -162,12 +168,14 @@ impl MailConnectionConfig {
         if wire.schema_version != 1 || !valid_account_id(&wire.account_id) {
             return Err(MailConnectionError::Invalid);
         }
+        let imap = validate_endpoint(wire.imap)?;
+        if imap.sender_address.is_some() {
+            return Err(MailConnectionError::Invalid);
+        }
         Ok(Self {
             schema_version: wire.schema_version,
             account_id: wire.account_id,
-            imap: ImapEndpointConfig {
-                common: validate_endpoint(wire.imap)?,
-            },
+            imap: ImapEndpointConfig { common: imap },
             smtp: wire
                 .smtp
                 .map(validate_endpoint)
@@ -211,6 +219,9 @@ macro_rules! endpoint_getters {
             pub fn authentication(&self) -> Authentication {
                 self.common.authentication
             }
+            pub fn sender_address(&self) -> Option<&str> {
+                self.common.sender_address.as_deref()
+            }
         }
     };
 }
@@ -225,6 +236,11 @@ fn validate_endpoint(value: EndpointWireIn) -> Result<CommonEndpointConfig, Mail
     if !valid_login(&value.login_name) {
         return Err(MailConnectionError::Invalid);
     }
+    if let Some(sender) = &value.sender_address
+        && !valid_mail_address(sender)
+    {
+        return Err(MailConnectionError::Invalid);
+    }
     Ok(CommonEndpointConfig {
         settings_version: value.settings_version,
         host,
@@ -232,7 +248,20 @@ fn validate_endpoint(value: EndpointWireIn) -> Result<CommonEndpointConfig, Mail
         tls: value.tls,
         login_name: value.login_name,
         authentication: value.authentication,
+        sender_address: value.sender_address,
     })
+}
+
+fn valid_mail_address(value: &str) -> bool {
+    value.len() <= 320
+        && value.is_ascii()
+        && value.matches('@').count() == 1
+        && !value.is_empty()
+        && !value.starts_with('@')
+        && !value.ends_with('@')
+        && !value
+            .bytes()
+            .any(|b| b <= 32 || b >= 127 || b"<>(),;\\\"".contains(&b))
 }
 
 fn valid_account_id(value: &str) -> bool {

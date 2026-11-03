@@ -1,5 +1,5 @@
 use super::{
-    windows::{Source, run_connected},
+    windows::{ImapTrashOutcome, Source, run_connected},
     *,
 };
 use hantong_domain::mail_connection::MailConnectionConfig;
@@ -80,6 +80,7 @@ enum Mode {
     Rev2,
     DualRevision,
     OauthInitial,
+    Trash,
 }
 type Transcript = Arc<Mutex<Vec<Vec<u8>>>>;
 fn configs(trusted: bool) -> (Arc<ClientConfig>, TlsAcceptor) {
@@ -158,7 +159,9 @@ async fn cap_reply<S: AsyncRead + AsyncWrite + Unpin>(
         Mode::DualRevision => "IMAP4rev1 IMAP4rev2",
         _ => "IMAP4rev1",
     };
-    let features = if matches!(mode, Mode::Rev2 | Mode::DualRevision)
+    let features = if mode == Mode::Trash {
+        " IDLE UIDPLUS MOVE"
+    } else if matches!(mode, Mode::Rev2 | Mode::DualRevision)
         || mode == Mode::ChangedCapabilities && tag == "h5"
     {
         ""
@@ -166,6 +169,190 @@ async fn cap_reply<S: AsyncRead + AsyncWrite + Unpin>(
         " IDLE UIDPLUS"
     };
     io.get_mut().write_all(format!("* CAPABILITY {revision} {auth}{initial}{starttls}{features}\r\n{tag} OK capabilities\r\n").as_bytes()).await
+}
+
+fn trash_request(
+    uidvalidity: u32,
+    uid: u32,
+) -> (
+    hantong_contracts::imap_trash::ImapTrashRequest,
+    hantong_contracts::uid_page::UidMailboxIdentity,
+) {
+    use hantong_contracts::{
+        imap_trash::ImapTrashRequest,
+        uid_page::{UidMailboxEncoding, UidMailboxIdentity},
+    };
+    let source = UidMailboxIdentity::new("494e424f58", UidMailboxEncoding::Utf8).unwrap();
+    let destination = UidMailboxIdentity::new("5472617368", UidMailboxEncoding::Utf8).unwrap();
+    let request = ImapTrashRequest::new(
+        "acct",
+        source,
+        7,
+        uidvalidity,
+        uid,
+        "trash-operation",
+        "trash-idempotency",
+        [7; 32],
+    )
+    .unwrap();
+    (request, destination)
+}
+
+async fn run_trash_script(
+    request: &hantong_contracts::imap_trash::ImapTrashRequest,
+    destination: &hantong_contracts::uid_page::UidMailboxIdentity,
+    script: Script,
+) -> (Result<ImapTrashOutcome, Failure>, Vec<Vec<u8>>) {
+    let (_cleanup, store) = fixture();
+    let config = endpoint(true, "localhost", "app_password", 7);
+    store
+        .store_imap_credential("acct", &config, &b"secret"[..])
+        .unwrap();
+    let (left, right) = tokio::io::duplex(8192);
+    let log = Arc::new(Mutex::new(Vec::new()));
+    let accesses = AtomicUsize::new(0);
+    let mut task = tokio::spawn(server_with_operations(
+        right,
+        true,
+        Mode::Trash,
+        log.clone(),
+        None,
+        Some(script),
+    ));
+    let result = timeout(
+        Duration::from_secs(3),
+        super::windows::run_test_trash(
+            &store,
+            "acct",
+            &config,
+            left,
+            configs(true).0,
+            request,
+            destination,
+            &std::sync::atomic::AtomicBool::new(false),
+            Some(&accesses),
+        ),
+    )
+    .await
+    .unwrap_or(Err(Failure::Timeout));
+    let joined = timeout(Duration::from_millis(300), &mut task).await;
+    match joined {
+        Ok(joined) => {
+            let joined = joined.expect("IMAP trash fixture must not panic");
+            if let Err(error) = joined {
+                assert_eq!(error.kind(), io::ErrorKind::UnexpectedEof);
+            }
+        }
+        Err(_) => {
+            task.abort();
+            let _ = task.await;
+            panic!("IMAP trash fixture timed out");
+        }
+    }
+    assert_eq!(accesses.load(Ordering::SeqCst), 1);
+    (result, log.lock().unwrap().clone())
+}
+
+fn trash_script(uidvalidity: u32, move_reply: &[u8]) -> Script {
+    vec![
+        (
+            b"h6 SELECT INBOX\r\n".to_vec(),
+            format!(
+                "* OK [UIDVALIDITY {uidvalidity}] selected\r\n* OK [UIDNEXT 99] next\r\nh6 OK [READ-WRITE] selected\r\n"
+            )
+            .into_bytes(),
+        ),
+        (
+            b"h7 UID MOVE 17 Trash\r\n".to_vec(),
+            move_reply.to_vec(),
+        ),
+    ]
+}
+
+fn assert_no_legacy_mutation_commands(transcript: &[Vec<u8>]) {
+    for line in transcript {
+        for token in ["COPY", "STORE", "EXPUNGE", "CLOSE"] {
+            assert!(
+                !line
+                    .windows(token.len())
+                    .any(|window| window == token.as_bytes()),
+                "unexpected legacy mutation command in transcript: {:?}",
+                line
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn sec03_authenticated_imap_trash_pipeline_accepts_one_uid_move() {
+    let (request, destination) = trash_request(42, 17);
+    let (result, transcript) = run_trash_script(
+        &request,
+        &destination,
+        trash_script(42, b"h7 OK [COPYUID 7 17 99] moved\r\n"),
+    )
+    .await;
+    assert_eq!(result, Ok(ImapTrashOutcome::Accepted));
+    assert_no_legacy_mutation_commands(&transcript);
+}
+
+#[tokio::test]
+async fn sec03_authenticated_imap_trash_pipeline_rejects_uidvalidity_before_move() {
+    let (request, destination) = trash_request(42, 17);
+    let (result, transcript) = run_trash_script(
+        &request,
+        &destination,
+        vec![
+            (
+                b"h6 SELECT INBOX\r\n".to_vec(),
+                b"* OK [UIDVALIDITY 43] selected\r\n* OK [UIDNEXT 99] next\r\nh6 OK [READ-WRITE] selected\r\n".to_vec(),
+            ),
+        ],
+    )
+    .await;
+    assert_eq!(result, Ok(ImapTrashOutcome::Rejected));
+    assert!(
+        !transcript
+            .iter()
+            .any(|line| line.starts_with(b"h7 UID MOVE"))
+    );
+    assert_no_legacy_mutation_commands(&transcript);
+}
+
+#[tokio::test]
+async fn sec03_authenticated_imap_trash_pipeline_maps_postwrite_no_to_unknown() {
+    let (request, destination) = trash_request(42, 17);
+    let (result, transcript) = run_trash_script(
+        &request,
+        &destination,
+        trash_script(42, b"h7 NO [TRYCREATE] not moved\r\n"),
+    )
+    .await;
+    assert_eq!(result, Ok(ImapTrashOutcome::Unknown));
+    assert_eq!(
+        transcript
+            .iter()
+            .filter(|line| line.starts_with(b"h7 UID MOVE"))
+            .count(),
+        1
+    );
+    assert_no_legacy_mutation_commands(&transcript);
+}
+
+#[tokio::test]
+async fn sec03_authenticated_imap_trash_pipeline_maps_postwrite_disconnect_to_unknown() {
+    let (request, destination) = trash_request(42, 17);
+    let (result, transcript) =
+        run_trash_script(&request, &destination, trash_script(42, TEST_DISCONNECT)).await;
+    assert_eq!(result, Ok(ImapTrashOutcome::Unknown));
+    assert_eq!(
+        transcript
+            .iter()
+            .filter(|line| line.starts_with(b"h7 UID MOVE"))
+            .count(),
+        1
+    );
+    assert_no_legacy_mutation_commands(&transcript);
 }
 async fn server(
     stream: DuplexStream,
@@ -185,6 +372,7 @@ async fn server_with_list(
     server_with_operations(stream, implicit, mode, log, list, None).await
 }
 type Script = Vec<(Vec<u8>, Vec<u8>)>;
+const TEST_DISCONNECT: &[u8] = b"\0hantong-test-disconnect\0";
 async fn server_with_operations(
     mut stream: DuplexStream,
     implicit: bool,
@@ -328,8 +516,19 @@ async fn server_with_operations(
                 return Ok(());
             }
             assert_eq!(command, expected);
+            if reply == TEST_DISCONNECT {
+                // A post-write disconnect is represented by an explicit
+                // test-only marker. Empty replies retain their legacy meaning
+                // of withholding a response so timeout tests remain valid.
+                return Ok(());
+            }
             wire.get_mut().write_all(&reply).await?;
-            wire.get_mut().flush().await?;
+            if let Err(error) = wire.get_mut().flush().await {
+                if error.kind() == io::ErrorKind::UnexpectedEof {
+                    return Ok(());
+                }
+                return Err(error);
+            }
         }
         assert!(read_command(&mut wire, &log).await?.is_empty());
         return Ok(());

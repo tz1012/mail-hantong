@@ -6,7 +6,7 @@ use crate::{
 use hantong_contracts::{
     ErrorCode,
     initial_sync::*,
-    uid_page::{UidMailboxEncoding, UidMailboxIdentity, UidPageStatusRequest},
+    uid_page::{UidCursorRequest, UidMailboxEncoding, UidMailboxIdentity, UidPageStatusRequest},
     wire_hex,
 };
 use serde::Deserialize;
@@ -60,6 +60,16 @@ struct PlanResponse {
     schema_version: u32,
     ok: bool,
     plan: Object<PlanWire>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CurrentResponse {
+    schema_version: u32,
+    ok: bool,
+    account_id: String,
+    wire_hex: String,
+    encoding: String,
+    plan: Nullable<Object<PlanWire>>,
 }
 fn fixed_id(value: &str) -> Result<[u8; 32], ErrorCode> {
     let decoded = wire_hex::decode_fixed(value)?;
@@ -239,6 +249,51 @@ pub fn receipt_json(v: &InitialSyncReceipt) -> String {
 }
 pub fn plan_json(v: &InitialSyncPlanSnapshot) -> String {
     json!({"schema_version":1,"ok":true,"plan":plan_value(v)}).to_string()
+}
+pub fn current_json(request: &UidCursorRequest, plan: Option<&InitialSyncPlanSnapshot>) -> String {
+    json!({"schema_version":1,"ok":true,"account_id":request.account_id(),"wire_hex":request.mailbox().wire_hex(),"encoding":request.mailbox().encoding().as_str(),"plan":plan.map(plan_value)}).to_string()
+}
+pub fn parse_current(
+    bytes: &[u8],
+    id: &str,
+    request: &UidCursorRequest,
+) -> Result<Option<InitialSyncPlanSnapshot>, ErrorCode> {
+    let raw: CurrentResponse = crate::uid_page::decode(bytes, id)?;
+    let mailbox =
+        UidMailboxIdentity::new(&raw.wire_hex, UidMailboxEncoding::parse(&raw.encoding)?)?;
+    if raw.schema_version != 1
+        || !raw.ok
+        || raw.account_id != request.account_id()
+        || mailbox != *request.mailbox()
+    {
+        return Err(ErrorCode::InvalidInput);
+    }
+    let plan = raw.plan.into_option().map(|v| plan(v.0)).transpose()?;
+    if plan
+        .as_ref()
+        .is_some_and(|p| p.account_id() != request.account_id() || p.mailbox() != request.mailbox())
+    {
+        return Err(ErrorCode::InvalidInput);
+    }
+    Ok(plan)
+}
+pub fn current_default(
+    request: UidCursorRequest,
+) -> Result<Option<InitialSyncPlanSnapshot>, ErrorCode> {
+    #[cfg(windows)]
+    {
+        let params = json!({"action":"initial-current","account_id":request.account_id(),"wire_hex":request.mailbox().wire_hex(),"encoding":request.mailbox().encoding().as_str()});
+        parse_current(
+            &crate::uid_page::exchange(params, request.account_id())?,
+            "uid-page-1",
+            &request,
+        )
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = request;
+        Err(ErrorCode::CapabilityUnsupported)
+    }
 }
 
 pub fn prepare_request(request: InitialSyncRequest) -> Result<InitialSyncRequest, ErrorCode> {

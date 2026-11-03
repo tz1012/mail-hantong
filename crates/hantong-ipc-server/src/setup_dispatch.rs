@@ -89,7 +89,8 @@ where
             | ScopeRefreshCommand::RequestGoogleReadOnly(_)
             | ScopeRefreshCommand::AddGoogleReadOnly(_)
             | ScopeRefreshCommand::RequestGoogleSend(_)
-            | ScopeRefreshCommand::RequestGoogleChanges(_) => None,
+            | ScopeRefreshCommand::RequestGoogleChanges(_)
+            | ScopeRefreshCommand::RequestManage(_) => None,
             ScopeRefreshCommand::Status(id) => Some(*id),
         };
         let SetupReceipt::ScopeRefresh(receipt) = callback(SetupCommand::ScopeRefresh(command))?

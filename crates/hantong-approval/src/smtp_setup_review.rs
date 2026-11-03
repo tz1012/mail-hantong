@@ -28,6 +28,7 @@ impl SmtpSetupReview {
             || mirror.port() != endpoint.port()
             || mirror.tls() != endpoint.tls()
             || mirror.login_name() != endpoint.login_name()
+            || mirror.sender_address() != endpoint.sender_address()
             || mirror.authentication() != endpoint.authentication()
         {
             return Err(ErrorCode::InvalidInput);
@@ -68,7 +69,7 @@ impl SmtpSetupReview {
     pub fn summary(&self, language: Language) -> String {
         let text = |key| text(language, key);
         format!(
-            "{}\r\n\r\n{}: {}\r\n{}: {}\r\n{}: {}\r\n{}: {}\r\nTLS: {:?}\r\n{}: {}\r\n\r\n{}",
+            "{}\r\n\r\n{}: {}\r\n{}: {}\r\n{}: {}\r\n{}: {}\r\nTLS: {:?}\r\n{}: {}\r\nFrom: {}\r\n\r\n{}",
             text("intro"),
             text("account"),
             self.account_id(),
@@ -81,6 +82,9 @@ impl SmtpSetupReview {
             self.endpoint.tls(),
             text("login"),
             self.endpoint.login_name(),
+            self.endpoint
+                .sender_address()
+                .unwrap_or(self.endpoint.login_name()),
             text("footer")
         )
     }

@@ -251,3 +251,48 @@ fn ext01_m201_rejects_oversized_unicode_and_redacts_debug() {
     assert!(!debug.contains("acct_1"));
     assert!(!debug.contains("in"));
 }
+
+#[test]
+fn ext01_m201_smtp_auth_login_and_sender_address_are_independent() {
+    let value = br#"{"schema_version":1,"account_id":"acct_1","imap":{"settings_version":1,"host":"imap.example","port":993,"tls":"implicit_tls","login_name":"imap-user","authentication":"app_password"},"smtp":{"settings_version":2,"host":"smtp.example","port":465,"tls":"implicit_tls","login_name":"smtp-user","sender_address":"alias@example.test","authentication":"app_password"}}"#;
+    let config = MailConnectionConfig::from_json(value).unwrap();
+    let smtp = config.smtp().unwrap();
+    assert_eq!(smtp.login_name(), "smtp-user");
+    assert_eq!(smtp.sender_address(), Some("alias@example.test"));
+    let roundtrip = serde_json::to_vec(&config).unwrap();
+    assert!(
+        std::str::from_utf8(&roundtrip)
+            .unwrap()
+            .contains("sender_address")
+    );
+}
+
+#[test]
+fn ext01_m201_legacy_smtp_json_omits_optional_sender_and_invalid_sender_is_rejected() {
+    let legacy = json("imap.example", Some("smtp.example"));
+    let config = MailConnectionConfig::from_json(&legacy).unwrap();
+    let roundtrip = serde_json::to_vec(&config).unwrap();
+    assert!(
+        !std::str::from_utf8(&roundtrip)
+            .unwrap()
+            .contains("sender_address")
+    );
+    for sender in [
+        "",
+        "alias",
+        "@example.test",
+        "alias@example.test\r\nBcc:x",
+        "a@@example.test",
+        "a b@example.test",
+        "alias@example.test;drop",
+        "보낸이@example.test",
+    ] {
+        let value = format!(
+            r#"{{"schema_version":1,"account_id":"acct_1","imap":{{"settings_version":1,"host":"imap.example","port":993,"tls":"implicit_tls","login_name":"in","authentication":"app_password"}},"smtp":{{"settings_version":2,"host":"smtp.example","port":465,"tls":"implicit_tls","login_name":"smtp-user","sender_address":{sender:?},"authentication":"app_password"}}}}"#
+        );
+        assert_eq!(
+            MailConnectionConfig::from_json(value.as_bytes()),
+            Err(MailConnectionError::Invalid)
+        );
+    }
+}

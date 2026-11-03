@@ -104,6 +104,50 @@ fn ext01_imap_smtp_put_load_reopen_and_hash_vector() {
     );
 }
 
+#[test]
+fn ext01_legacy_schema_without_sender_table_loads_smtp_endpoint() {
+    let fixture = Fixture::new();
+    let (imap, smtp) = endpoints(1, Some(1));
+    let smtp = smtp.unwrap();
+    fixture
+        .store
+        .put_imap_connection(
+            "acct_1",
+            &imap,
+            &mutation(
+                "legacy-imap",
+                "legacy-imap",
+                0,
+                imap_payload_hash("acct_1", &imap, 0).unwrap(),
+            ),
+        )
+        .unwrap();
+    fixture
+        .store
+        .put_smtp_connection(
+            "acct_1",
+            &smtp,
+            &mutation(
+                "legacy-smtp",
+                "legacy-smtp",
+                0,
+                smtp_payload_hash("acct_1", &smtp, 0).unwrap(),
+            ),
+        )
+        .unwrap();
+    fixture
+        .store
+        .with_connection(|c| c.execute_batch("DROP TABLE smtp_sender_addresses"))
+        .unwrap();
+    let loaded = fixture
+        .store
+        .load_mail_connection("acct_1")
+        .unwrap()
+        .unwrap();
+    assert_eq!(loaded.smtp().unwrap().login_name(), "out");
+    assert_eq!(loaded.smtp().unwrap().sender_address(), None);
+}
+
 #[cfg(windows)]
 #[test]
 fn ext01_exact_replay_does_not_revert_later_settings_and_conflicts_on_payload() {

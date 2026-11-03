@@ -15,6 +15,7 @@ const KO: &str = include_str!("../resources/onboarding-ko.txt");
 pub(super) struct AccountChoice {
     id: String,
     label: String,
+    provider: String,
 }
 
 pub(super) trait Io {
@@ -31,18 +32,24 @@ pub(super) trait Effects {
         lang: Lang,
         profile: GoogleLocalProfile,
     ) -> Result<String, ErrorCode>;
-    fn continue_existing(&mut self, account: &str, lang: Lang) -> Result<(), ErrorCode>;
+    fn connect_imap(&mut self, lang: Lang, io: &mut dyn Io) -> Result<String, ErrorCode>;
+    fn continue_existing(
+        &mut self,
+        account: &str,
+        provider: &str,
+        lang: Lang,
+    ) -> Result<(), ErrorCode>;
     fn enable_send(&mut self, account: &str, lang: Lang) -> Result<(), ErrorCode>;
     fn compose(&mut self, account: &str, lang: Lang, io: &mut dyn Io) -> Result<(), ErrorCode>;
-    fn inbox(&mut self, account: &str, lang: Lang) -> Result<(), ErrorCode>;
+    fn inbox(&mut self, account: &str, provider: &str, lang: Lang) -> Result<(), ErrorCode>;
 }
 
-struct Stdio {
+pub(super) struct Stdio {
     output: io::Stdout,
 }
 
 impl Stdio {
-    fn new() -> Self {
+    pub(super) fn new() -> Self {
         Self {
             output: io::stdout(),
         }
@@ -118,24 +125,43 @@ impl Effects for RealEffects {
         super::google::connect_guided(lang, profile)
     }
 
-    fn continue_existing(&mut self, account: &str, lang: Lang) -> Result<(), ErrorCode> {
+    fn continue_existing(
+        &mut self,
+        account: &str,
+        provider: &str,
+        lang: Lang,
+    ) -> Result<(), ErrorCode> {
+        if provider == "imap" {
+            return super::guided_mail_setup::verify_existing();
+        }
         super::google::continue_guided(account, lang)
     }
 
+    fn connect_imap(&mut self, lang: Lang, io: &mut dyn Io) -> Result<String, ErrorCode> {
+        super::guided_mail_setup::run(lang, io)
+    }
+
     fn enable_send(&mut self, account: &str, lang: Lang) -> Result<(), ErrorCode> {
-        super::google::enable_send_guided(account, lang)
+        if account.starts_with("google_") {
+            super::google::enable_send_guided(account, lang)
+        } else {
+            super::guided_mail_setup::ensure_default_scope(account, lang)
+        }
     }
 
     fn compose(&mut self, account: &str, lang: Lang, io: &mut dyn Io) -> Result<(), ErrorCode> {
         super::guided_compose::run(account, lang, io)
     }
 
-    fn inbox(&mut self, account: &str, lang: Lang) -> Result<(), ErrorCode> {
+    fn inbox(&mut self, account: &str, provider: &str, lang: Lang) -> Result<(), ErrorCode> {
+        if provider == "imap" {
+            return super::guided_mail_setup::open_inbox(account, lang);
+        }
         super::google::inbox_guided(account, lang)
     }
 }
 
-fn resource(lang: Lang, key: &str) -> &'static str {
+pub(super) fn resource(lang: Lang, key: &str) -> &'static str {
     let source = match lang {
         Lang::En => EN,
         Lang::Ko => KO,
@@ -146,7 +172,7 @@ fn resource(lang: Lang, key: &str) -> &'static str {
         .expect("validated onboarding resource key")
 }
 
-fn say(io: &mut impl Io, lang: Lang, key: &str) -> Result<(), ErrorCode> {
+pub(super) fn say<T: Io + ?Sized>(io: &mut T, lang: Lang, key: &str) -> Result<(), ErrorCode> {
     io.write(resource(lang, key))?;
     io.write("\n")
 }
@@ -174,19 +200,32 @@ fn connect_account(
     effects: &mut impl Effects,
 ) -> Result<String, ErrorCode> {
     say(io, lang, "connecting")?;
-    let account = effects.connect_google(lang, GoogleLocalProfile::PersonalReadSend)?;
+    let account = effects.connect_google(lang, GoogleLocalProfile::PersonalManage)?;
     say(io, lang, "connected")?;
     say(io, lang, "features_after_connection")?;
+    Ok(account)
+}
+
+fn connect_imap(
+    lang: Lang,
+    io: &mut impl Io,
+    effects: &mut impl Effects,
+) -> Result<String, ErrorCode> {
+    say(io, lang, "imap_connecting")?;
+    let account = effects.connect_imap(lang, io)?;
+    say(io, lang, "imap_connected")?;
     Ok(account)
 }
 
 fn work_menu(
     lang: Lang,
     account: &str,
+    provider: &str,
     io: &mut impl Io,
     effects: &mut impl Effects,
 ) -> Result<(), ErrorCode> {
     let mut current_account = account.to_owned();
+    let mut current_provider = provider.to_owned();
     loop {
         say(io, lang, "work_menu")?;
         match choose(
@@ -198,17 +237,23 @@ fn work_menu(
                 "help_work_exit",
                 "help_work_enable_send",
                 "help_work_compose",
+                "help_work_imap",
             ],
         )?
         .as_deref()
         {
             None | Some("3") => return Ok(()),
-            Some("1") => effects.inbox(&current_account, lang)?,
+            Some("1") => effects.inbox(&current_account, &current_provider, lang)?,
             Some("2") => {
                 current_account = connect_account(lang, io, effects)?;
+                current_provider = "gmail".to_owned();
             }
             Some("4") => effects.enable_send(&current_account, lang)?,
             Some("5") => effects.compose(&current_account, lang, io)?,
+            Some("6") => {
+                current_account = connect_imap(lang, io, effects)?;
+                current_provider = "imap".to_owned();
+            }
             Some(_) => {
                 say(io, lang, "invalid_choice")?;
                 continue;
@@ -225,10 +270,20 @@ fn connect_prompt(
     say(io, lang, "no_accounts")?;
     loop {
         say(io, lang, "connect_or_exit")?;
-        match choose(io, lang, &["help_connect", "help_exit"])?.as_deref() {
+        match choose(
+            io,
+            lang,
+            &["help_connect", "help_connect_imap", "help_exit"],
+        )?
+        .as_deref()
+        {
             Some("1") => {
                 let account = connect_account(lang, io, effects)?;
-                return work_menu(lang, &account, io, effects);
+                return work_menu(lang, &account, "gmail", io, effects);
+            }
+            Some("3" | "imap") => {
+                let account = connect_imap(lang, io, effects)?;
+                return work_menu(lang, &account, "imap", io, effects);
             }
             None | Some("2") => return Ok(()),
             Some(_) => {
@@ -260,6 +315,7 @@ fn select_existing(
             &[
                 "help_account_number",
                 "help_account_add",
+                "help_account_imap",
                 "help_account_exit",
             ],
         )?
@@ -268,7 +324,11 @@ fn select_existing(
             None | Some("0") => return Ok(()),
             Some("add") => {
                 let account = connect_account(lang, io, effects)?;
-                return work_menu(lang, &account, io, effects);
+                return work_menu(lang, &account, "gmail", io, effects);
+            }
+            Some("imap") => {
+                let account = connect_imap(lang, io, effects)?;
+                return work_menu(lang, &account, "imap", io, effects);
             }
             Some(value) => {
                 let Ok(index) = value.parse::<usize>() else {
@@ -281,8 +341,11 @@ fn select_existing(
                     continue;
                 };
                 // Verify the existing read grant without starting OAuth here.
-                effects.continue_existing(&account.id, lang)?;
-                return work_menu(lang, &account.id, io, effects);
+                if account.provider == "gmail" {
+                    effects.continue_existing(&account.id, &account.provider, lang)?;
+                }
+                let provider = account.provider.clone();
+                return work_menu(lang, &account.id, &provider, io, effects);
             }
         }
     }
@@ -293,14 +356,15 @@ pub(super) fn run(lang: Lang) -> Result<(), ErrorCode> {
         Ok(response) => response
             .items()
             .iter()
-            .filter(|item| item.provider() == "gmail" && item.status() == "ready")
+            .filter(|item| matches!(item.provider(), "gmail" | "imap") && item.status() == "ready")
             .map(|item| AccountChoice {
                 id: item.account_id().to_owned(),
                 label: super::safe_human(
                     item.display_name()
                         .or(item.primary_address())
-                        .unwrap_or("Gmail account"),
+                        .unwrap_or(resource(lang, "account")),
                 ),
+                provider: item.provider().to_owned(),
             })
             .collect::<Vec<_>>(),
         Err(ErrorCode::ClientNotRegistered) => Vec::new(),
@@ -373,7 +437,10 @@ mod tests {
             self.profiles.push(profile);
             self.connected.clone()
         }
-        fn continue_existing(&mut self, _: &str, _: Lang) -> Result<(), ErrorCode> {
+        fn connect_imap(&mut self, _: Lang, _: &mut dyn Io) -> Result<String, ErrorCode> {
+            Ok("imap_new".into())
+        }
+        fn continue_existing(&mut self, _: &str, _: &str, _: Lang) -> Result<(), ErrorCode> {
             self.continue_calls += 1;
             Ok(())
         }
@@ -385,7 +452,7 @@ mod tests {
             self.compose_calls += 1;
             Ok(())
         }
-        fn inbox(&mut self, _: &str, _: Lang) -> Result<(), ErrorCode> {
+        fn inbox(&mut self, _: &str, _: &str, _: Lang) -> Result<(), ErrorCode> {
             self.inbox_calls += 1;
             Ok(())
         }
@@ -395,6 +462,7 @@ mod tests {
         AccountChoice {
             id: "google_fixture".into(),
             label: "person@example.test".into(),
+            provider: "gmail".into(),
         }
     }
 
@@ -447,7 +515,7 @@ mod tests {
             profiles: Vec::new(),
         };
         assert_eq!(run_flow(Lang::En, &[], &mut io, &mut effects), Ok(()));
-        assert_eq!(effects.profiles, vec![GoogleLocalProfile::PersonalReadSend]);
+        assert_eq!(effects.profiles, vec![GoogleLocalProfile::PersonalManage]);
         assert_eq!(effects.enable_send_calls, 0);
         assert_eq!(effects.connect_calls, 1);
         let connected = io.output.find(resource(Lang::En, "connected")).unwrap();
@@ -477,7 +545,7 @@ mod tests {
                 run_flow(Lang::En, &[account()], &mut io, &mut effects),
                 Ok(())
             );
-            assert_eq!(effects.profiles, vec![GoogleLocalProfile::PersonalReadSend]);
+            assert_eq!(effects.profiles, vec![GoogleLocalProfile::PersonalManage]);
             assert_eq!(effects.connect_calls, 1);
             assert_eq!(effects.enable_send_calls, 0);
             assert_eq!(effects.inbox_calls, 0);
@@ -644,7 +712,7 @@ mod tests {
         };
         assert_eq!(run_flow(Lang::En, &[], &mut io, &mut effects), Ok(()));
         assert_eq!(effects.connect_calls, 1);
-        assert_eq!(effects.profiles, vec![GoogleLocalProfile::PersonalReadSend]);
+        assert_eq!(effects.profiles, vec![GoogleLocalProfile::PersonalManage]);
         assert!(io.output.contains("Available choices:"));
         assert!(io.output.contains("4) Enable composing and sending"));
     }

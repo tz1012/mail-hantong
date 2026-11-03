@@ -69,17 +69,19 @@ pub fn run(args: &[OsString], korean: bool) -> Result<(), ErrorCode> {
             .map_err(|_| ErrorCode::CapabilityUnsupported)?;
         let secret_ticket = match terminal_secret_input::ticket_from_opaque(&secret_ticket_opaque) {
             Ok(value) => value,
-            Err(_) => {
-                cancel(request, Some(ticket), korean)?;
-                return Err(ErrorCode::ScopeDenied);
+            Err(error) => {
+                return Err(secret_capture_failure(error, || {
+                    cancel(request, Some(ticket), korean)
+                }));
             }
         };
         println!("{}", resource(korean, "secret_prompt"));
         let handle = match terminal_secret_input::capture(&secrets, &secret_ticket) {
             Ok(value) => value,
-            Err(_) => {
-                cancel(request, Some(ticket), korean)?;
-                return Err(ErrorCode::ScopeDenied);
+            Err(error) => {
+                return Err(secret_capture_failure(error, || {
+                    cancel(request, Some(ticket), korean)
+                }));
             }
         };
         let staged_handle = terminal_secret_input::opaque_handle(&handle);
@@ -280,6 +282,18 @@ fn confirm(korean: bool) -> Result<bool, ErrorCode> {
     parse_confirmation(text)
 }
 
+fn secret_capture_failure(
+    error: hantong_secrets::SecretError,
+    cleanup: impl FnOnce() -> Result<(), ErrorCode>,
+) -> ErrorCode {
+    let cleanup = cleanup();
+    if error == hantong_secrets::SecretError::InputExpired {
+        ErrorCode::ApprovalExpired
+    } else {
+        cleanup.err().unwrap_or(ErrorCode::ScopeDenied)
+    }
+}
+
 fn cancel(
     request: TerminalReviewGet,
     ticket: Option<[u8; 32]>,
@@ -332,6 +346,35 @@ fn parse_confirmation(value: &str) -> Result<bool, ErrorCode> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn setup01_expired_secret_capture_reports_expiry_even_when_cancel_ticket_has_expired() {
+        for cleanup in [
+            Ok(()),
+            Err(ErrorCode::PolicyBlocked),
+            Err(ErrorCode::CoreUnavailable),
+        ] {
+            let calls = std::cell::Cell::new(0);
+            assert_eq!(
+                secret_capture_failure(hantong_secrets::SecretError::InputExpired, || {
+                    calls.set(calls.get() + 1);
+                    cleanup
+                }),
+                ErrorCode::ApprovalExpired
+            );
+            assert_eq!(calls.get(), 1);
+        }
+        assert_eq!(
+            secret_capture_failure(hantong_secrets::SecretError::EmptySecret, || Ok(())),
+            ErrorCode::ScopeDenied
+        );
+        assert_eq!(
+            secret_capture_failure(hantong_secrets::SecretError::CredentialMismatch, || Err(
+                ErrorCode::PolicyBlocked
+            )),
+            ErrorCode::PolicyBlocked
+        );
+    }
 
     fn args(values: &[&str]) -> Vec<OsString> {
         values.iter().map(OsString::from).collect()

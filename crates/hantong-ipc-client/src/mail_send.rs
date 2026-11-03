@@ -453,6 +453,36 @@ pub fn create_compose_default(
         Err(ErrorCode::CapabilityUnsupported)
     }
 }
+
+/// Authenticates the default CLI profile and checks the selected account's
+/// persisted effective draft/send tools. This is only an eligibility probe;
+/// it does not create a draft, request a send, or widen the scope.
+pub fn verify_default_send(account: &str) -> Result<bool, ErrorCode> {
+    #[cfg(windows)]
+    {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_io()
+            .enable_time()
+            .build()
+            .map_err(|_| ErrorCode::CoreUnavailable)?
+            .block_on(async {
+                let profile = crate::authenticate_default().await?;
+                Ok([
+                    "mail.drafts.create",
+                    "mail.send.request",
+                    "mail.send.execute",
+                ]
+                .into_iter()
+                .all(|tool| profile.scope().permits_account(account, tool)))
+            })
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = account;
+        Err(ErrorCode::CapabilityUnsupported)
+    }
+}
+
 pub fn request_default(request: &SendReviewRequest) -> Result<ReviewResponse, ErrorCode> {
     #[cfg(windows)]
     {

@@ -9,7 +9,7 @@ use crate::{
 };
 use hantong_contracts::{
     audit::{AuditRecord, AuditTerminal, AuditTool},
-    uid_page::{UidMailboxEncoding, UidMailboxIdentity},
+    uid_page::{UidCursorRequest, UidMailboxEncoding, UidMailboxIdentity},
 };
 use hantong_domain::initial_sync_plan::{
     InitialSyncPlan, InitialSyncState as ModelState, InitialSyncStep,
@@ -18,7 +18,9 @@ use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, 
 mod codec;
 mod operations;
 mod pages;
-pub(super) use operations::{admit, check, fail, observe, page, plan_snapshot, receipt, start};
+pub(super) use operations::{
+    admit, check, current_plan_snapshot, fail, observe, page, plan_snapshot, receipt, start,
+};
 pub(crate) use pages::{PreviewSource, preview_source, read_preview_page};
 fn db<T>(r: rusqlite::Result<T>) -> Result<T, ErrorCode> {
     r.map_err(|_| ErrorCode::InternalError)
@@ -165,11 +167,11 @@ impl PreviewPlan {
             || catalog.generation() != self.binding.cg
             || catalog.account_version() != self.binding.av
             || catalog.endpoint_version() != self.binding.ev
-            || !catalog
-                .snapshot()
-                .mailboxes()
-                .iter()
-                .any(|m| m.selectable() && m.name() == &name)
+            || !catalog.snapshot().mailboxes().iter().any(|m| {
+                m.selectable()
+                    && m.name().wire_name() == name.wire_name()
+                    && m.name().encoding() == name.encoding()
+            })
             || hash(
                 &catalog
                     .snapshot()
@@ -526,12 +528,11 @@ fn binding(
     {
         return Err(ErrorCode::Conflict);
     }
-    if !catalog
-        .snapshot()
-        .mailboxes()
-        .iter()
-        .any(|m| m.selectable() && m.name() == &name)
-    {
+    if !catalog.snapshot().mailboxes().iter().any(|m| {
+        m.selectable()
+            && m.name().wire_name() == name.wire_name()
+            && m.name().encoding() == name.encoding()
+    }) {
         return Err(ErrorCode::NotFound);
     }
     let endpoint = current_endpoint(c, account)?.ok_or(ErrorCode::Conflict)?;

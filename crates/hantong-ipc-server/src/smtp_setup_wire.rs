@@ -27,7 +27,7 @@ pub fn parse(request: &RpcRequest) -> Result<SmtpSetupCommand, ErrorCode> {
             Ok(SmtpSetupCommand::Status(id))
         }
         "setup.smtp.request" => {
-            if p.len() != 6 {
+            if !(p.len() == 6 || (p.len() == 7 && p.contains_key("sender_address"))) {
                 return Err(ErrorCode::InvalidInput);
             }
             let text = |k| {
@@ -47,12 +47,17 @@ pub fn parse(request: &RpcRequest) -> Result<SmtpSetupCommand, ErrorCode> {
                     .ok_or(ErrorCode::InvalidInput)?,
             )
             .map_err(|_| ErrorCode::InvalidInput)?;
-            Ok(SmtpSetupCommand::Request(SmtpSetupInput::new(
+            let sender = match p.get("sender_address") {
+                None | Some(Value::Null) => None,
+                Some(value) => Some(value.as_str().ok_or(ErrorCode::InvalidInput)?.to_owned()),
+            };
+            Ok(SmtpSetupCommand::Request(SmtpSetupInput::new_with_sender(
                 text("account_id")?,
                 text("host")?,
                 port,
                 tls,
                 text("login_name")?,
+                sender,
             )?))
         }
         "setup.smtp.approve" | "setup.smtp.execute" | "setup.smtp.complete" => {

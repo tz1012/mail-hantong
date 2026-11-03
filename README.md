@@ -2,16 +2,50 @@
 
 A multi-account mail hub for Windows, with a shared core service, the `hantong` CLI, MCP access, and an optional GUI. GUI languages are Korean and English; themes are light, dark, and system. The CLI defaults to English and supports Korean.
 
-**Current release: [Windows CLI 0.1.0-beta.11](https://github.com/tz1012/mail-hantong/releases/tag/v0.1.0-beta.11).** Start with the [Korean installation and feature guide](https://tz1012.github.io/mail-hantong/). Account setup, feature selection, composing and Send/Cancel use the same terminal without a separate HanTong window or Windows Hello. Google OAuth opens its standard provider browser. See the [CLI usage guide](docs/latest/CLI-LAUNCH.md) for mail, AI sessions, MCP tools and remaining limitations.
+**Current release: Windows CLI 0.1.0-beta.16.** Start with the [Korean installation and feature guide](https://tz1012.github.io/mail-hantong/). Account setup, feature selection, composing, Trash review and Send/Cancel use the same terminal without a separate HanTong window or Windows Hello. Google OAuth opens its standard provider browser. See the [CLI usage guide](docs/latest/CLI-LAUNCH.md) for mail, AI sessions, MCP tools and remaining limitations.
 
-beta.11 fixes Windows PowerShell update paths, selects the newest compatible
-release independently of API order, and prevents automatic downgrades. Update
-failures have their own message. It retains beta.8, which fixes adding sending Gmail accounts without removing existing account
-permissions. New accounts request Google's read/write/send consent, then the
-same terminal confirms the exact account scope. Sending still requires a
-separate preview and Send/Cancel for each message. Up to 128 selected sending
-accounts are supported; generic IMAP/SMTP onboarding and full trash support are
-still in progress and are not included in this fix.
+beta.16 keeps the PowerShell update path, newest-compatible release selection
+and automatic downgrade protection. New accounts can use the same read, body,
+compose and individually confirmed send flow as existing accounts. Google
+account selection requests the required consent and the same terminal confirms
+the exact account scope. Generic IMAP/SMTP accounts use the same CLI/TUI flow.
+The selected sending-account scope is bounded at 128 accounts.
+
+## Generic IMAP/SMTP and Trash
+
+The beta includes ordinary IMAP/SMTP onboarding and one-message Trash moves in
+the CLI and `hantong-t` view. Integration checks pass, and a real Daum IMAP
+authentication and SMTP authentication have been completed. One synthetic
+message was sent through the immutable same-terminal preview and its sent
+status was verified against exactly one matching Gmail message. The Daum IMAP
+catalog contained 17 mailboxes; two recent pages completed, repeated refresh
+succeeded, and body reads were verified on both runs.
+
+In the normal `hantong` flow, enter `3` at the first account menu or `imap` in
+the existing-account menu to add a generic account. After the account is
+connected, work-menu option `6` starts the same IMAP/SMTP setup. The prompts ask
+for the IMAP server, port, TLS mode and login, then the SMTP server, port, TLS
+mode, login and an optional distinct From address. Passwords and other
+credentials are entered through the Core-owned protected input; they do not go
+in command arguments, JSON or ordinary logs.
+
+The companion `hantong-t` terminal view uses `j`/`k` to move, Enter to open an
+account, folder or message, `c` to compose, and `t` to request a one-message
+move to Trash. Setup, compose and Trash requests show the Core-bound preview in
+the same terminal before the final choice. IMAP Trash requires server `MOVE`
+support and exactly one selectable mailbox advertised with the `\Trash`
+special-use role. It never substitutes permanent deletion or a
+`COPY`/`STORE`/`EXPUNGE` fallback. SMTP compose currently omits attachments.
+The Google sending scope supports up to 128 selected accounts; this is a
+bounded limit, not unlimited account support.
+
+For Daum, the current official FAQ lists `imap.daum.net` with SSL port `993`
+and `smtp.daum.net` with SSL port `465` (the `hanmail.net` hostnames are also
+listed). For Daum Smart Work, the From address is the registered Smart Work
+address while the login name remains the Daum ID. Follow the provider's current
+password or app-password instructions and enter the value only in HanTong's
+protected input: [Daum IMAP/SMTP settings](https://cs.daum.net/faq/service/43/category/9234/detail/17988),
+[Daum Smart Work Outlook settings](https://cs.daum.net/faq/service/43/category/13114/detail/24727).
 
 The beta also creates absent storage directories with explicit user permissions and
 opens storage ancestors without requesting directory-list access. Existing
@@ -26,7 +60,7 @@ Install or update from PowerShell on Windows x64:
 irm https://raw.githubusercontent.com/tz1012/mail-hantong/main/install.ps1 | iex
 ```
 
-Then run `hantong --lang ko init` (or `hantong` for English). The existing account menu offers inbox reading, enabling composing/sending with option 4, and composing with option 5. Core starts automatically when needed. The installer verifies release checksums and adds the current user's launcher directory to PATH.
+Then run `hantong --lang ko init` (or `hantong` for English). The existing account menu offers inbox reading, enabling composing/sending with option 4, composing with option 5, and generic IMAP/SMTP setup with option 6. Core starts automatically when needed. The installer verifies release checksums and adds the current user's launcher directory to PATH.
 
 From beta.5, run `update hantong` or `hantong update` in the terminal to install
 the latest version. Older installations need the installation command above once
@@ -34,7 +68,7 @@ to add these commands. Installation displays phase progress and percentages.
 Choosing Connect Google account opens the browser directly for account selection
 and Google read/write/send consent; confirm the selected account scope in the terminal.
 
-The beta includes publisher Google Desktop configuration; ordinary users do not configure Google Cloud. The preceding baseline passed 1,906 full-check test executions. This update delta is verified with 10 updater regression tests, 9 release-selection cases, API-limit fallback checks, CLI static checks and package validation; the full suite was not repeated. Earlier beta.3 manual Gmail checks covered account retention, terminal cancellation, one synthetic self-addressed send/receive and attachment matching. New AI connections and trash operations have synthetic coverage only. This unsigned beta still needs human security review, clean Windows VM testing and additional provider verification. Schema 25 migration preserves existing data; do not downgrade after migration. Google publisher verification is separate. See [Google commands](docs/latest/GOOGLE-MAIL.md) and [PROGRESS.md](docs/latest/PROGRESS.md).
+The beta includes publisher Google Desktop configuration; ordinary users do not configure Google Cloud. The preceding baseline passed 1,906 full-check test executions; the current beta uses affected-package regression checks and does not claim that old count as a new full-suite result. Store/Core IMAP Trash, migration, SMTP endpoint, CLI setup and terminal-flow checks pass. This unsigned beta still needs human security review, clean Windows VM testing and Google publisher verification. Real Trash movement was not performed. Schema 26 migration preserves existing data; do not downgrade after migration. See [Google commands](docs/latest/GOOGLE-MAIL.md) and [PROGRESS.md](docs/latest/PROGRESS.md).
 
 Optional AI sessions use separately installed official Codex CLI or Claude Code: `hantong ai login codex` then `hantong ai chat codex` (use `claude` for Console/API billing). `/help` lists available commands and descriptions. Built-in AI automatically connects provider-specific mail tools after the first same-terminal account and external-transfer setup; manual MCP registration and `/agent on` are not required. `/provider`, `/model`, `/mode`, `/fast on|off` and `/agent on|off` switch supported features. Sending and single-message Gmail trash moves require final terminal confirmation; trash also requires Google Modify permission. Permanent and batch deletion are unsupported. External MCP grants remain separate. Real AI login, paid inference and real trash operations were not exercised. Follow the [AI and agent instructions](docs/latest/CLI-LAUNCH.md#ai-sessions-and-agent-tools).
 

@@ -84,7 +84,11 @@ fn opt_string(p: &serde_json::Map<String, Value>, key: &str) -> Result<Option<St
     }
 }
 pub fn result(receipt: &ImapSetupReceipt) -> Value {
-    json!({"protocol_version":1,"request_id":wire_hex::encode(receipt.request_id()),"expires_at_utc_ms":receipt.expires_at_utc_ms(),"state":receipt.state().as_str(),"next_action":receipt.next_action().as_str()})
+    let mut value = json!({"protocol_version":1,"request_id":wire_hex::encode(receipt.request_id()),"expires_at_utc_ms":receipt.expires_at_utc_ms(),"state":receipt.state().as_str(),"next_action":receipt.next_action().as_str()});
+    if let Some(account_id) = receipt.account_id() {
+        value["account_id"] = json!(account_id);
+    }
+    value
 }
 
 #[cfg(test)]
@@ -150,6 +154,21 @@ mod tests {
         .unwrap();
         assert_eq!(result(&r).as_object().unwrap().len(), 5);
         assert!(!format!("{r:?}").contains("01".repeat(32).as_str()));
+    }
+
+    #[test]
+    fn receipt_result_includes_core_owned_account_hint_only_when_present() {
+        let r = ImapSetupReceipt::new(
+            [1; 32],
+            1,
+            ImapSetupState::Pending,
+            ImapSetupNextAction::HelperRequired,
+        )
+        .unwrap()
+        .with_account_id("imap_acct".into())
+        .unwrap();
+        assert_eq!(result(&r)["account_id"], "imap_acct");
+        assert_eq!(result(&r).as_object().unwrap().len(), 6);
     }
 
     #[test]

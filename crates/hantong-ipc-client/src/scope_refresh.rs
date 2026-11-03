@@ -21,6 +21,10 @@ pub fn request(id: &str, command: ScopeRefreshCommand) -> Result<Vec<u8>, ErrorC
         return Err(ErrorCode::InvalidInput);
     }
     let (method, params) = match &command {
+        ScopeRefreshCommand::RequestManage(accounts) => (
+            "registration.scope.manage.request",
+            json!({"protocol_version":1,"account_ids":accounts.accounts()}),
+        ),
         ScopeRefreshCommand::RequestGoogleSend(accounts) => (
             "registration.scope.google_send.request",
             json!({"protocol_version":1,"account_ids":accounts.accounts()}),
@@ -51,8 +55,13 @@ pub fn request(id: &str, command: ScopeRefreshCommand) -> Result<Vec<u8>, ErrorC
             )
         }
     };
-    serde_json::to_vec(&json!({"jsonrpc":"2.0","id":id,"method":method,"params":params}))
-        .map_err(|_| ErrorCode::InternalError)
+    let bytes =
+        serde_json::to_vec(&json!({"jsonrpc":"2.0","id":id,"method":method,"params":params}))
+            .map_err(|_| ErrorCode::InternalError)?;
+    if bytes.len() > MAX_FRAME {
+        return Err(ErrorCode::InvalidInput);
+    }
+    Ok(bytes)
 }
 
 pub fn parse_response(
@@ -296,6 +305,23 @@ mod tests {
             value,
             json!({"jsonrpc":"2.0","id":"r","method":"registration.scope.google_readonly.request","params":{"protocol_version":1,"account_id":id}})
         );
+    }
+    #[test]
+    fn manage_scope_client_sends_only_explicit_generic_accounts() {
+        let accounts = hantong_contracts::scope_refresh::ManageAccounts::parse(&[
+            "smtp_account".into(),
+            "imap_account".into(),
+        ])
+        .unwrap();
+        let value: Value = serde_json::from_slice(
+            &request("r", ScopeRefreshCommand::RequestManage(accounts)).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            value,
+            json!({"jsonrpc":"2.0","id":"r","method":"registration.scope.manage.request","params":{"protocol_version":1,"account_ids":["imap_account","smtp_account"]}})
+        );
+        assert!(value["params"].get("tools").is_none());
     }
     #[test]
     fn cli15_scope_refresh_requests_only_fixed_request_or_opaque_status() {

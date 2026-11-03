@@ -72,6 +72,67 @@ fn gmail_write_scope_selects_exact_accounts_and_never_grants_before_native_appro
         Err(ErrorCode::Conflict)
     ));
 }
+#[test]
+fn acc02_manage_selection_requires_modify_and_keeps_grants_pending_until_confirmation() {
+    use hantong_contracts::{google_write::GoogleAccessMode, scope_refresh::ManageAccounts};
+    let f = GoogleFixture::new();
+    f.register_one();
+    let ids = f
+        .accounts
+        .iter()
+        .map(|a| a.account_id())
+        .collect::<Vec<_>>();
+    let selected = ManageAccounts::parse(&ids).unwrap();
+    let base = f.store.load_default_cli_registration().unwrap().unwrap();
+    assert!(matches!(
+        prepare_manage_for_pin(&f.store, f.pin(), selected.clone()),
+        Err(ErrorCode::ScopeDenied)
+    ));
+    assert!(f.store.load_pending_cli_scope_refresh().unwrap().is_none());
+    for account in &ids {
+        let binding = f.store.google_account_binding(account).unwrap();
+        f.store
+            .activate_google_account(
+                &hantong_contracts::google::GoogleIdentity {
+                    account_id: account.clone(),
+                    subject: binding.subject,
+                    email: "synthetic@example.test".into(),
+                    access_mode: GoogleAccessMode::Modify,
+                    granted_scopes: GoogleAccessMode::Modify
+                        .required_scopes()
+                        .iter()
+                        .map(|s| (*s).into())
+                        .collect(),
+                },
+                &binding.client_id,
+                binding.credential_version,
+                None,
+            )
+            .unwrap();
+    }
+    let pending = prepare_manage_for_pin(&f.store, f.pin(), selected.clone()).unwrap();
+    assert!(matches_manage(&pending, &selected));
+    assert_eq!(pending.decision_channel(), "terminal_cli");
+    assert_eq!(
+        f.store.load_default_cli_registration().unwrap().unwrap(),
+        base
+    );
+    assert_eq!(
+        prepare_manage_for_pin(&f.store, f.pin(), selected)
+            .unwrap()
+            .refresh_id(),
+        pending.refresh_id()
+    );
+    assert!(matches!(
+        prepare_manage_for_pin(
+            &f.store,
+            f.pin(),
+            ManageAccounts::parse(&[ids[1].clone()]).unwrap()
+        ),
+        Err(ErrorCode::Conflict)
+    ));
+}
+
 struct GoogleFixture {
     store: Store,
     key: ReadOnlyKey,
@@ -667,6 +728,30 @@ fn acc02_personal_google_send_upgrade_v9_preserves_b_until_recovery() {
     );
     drop(store);
     drop(cleanup);
+}
+
+#[test]
+fn acc02_google_oauth_recovery_rejects_non_oauth_base_without_side_effects() {
+    let fixture = Fixture::new();
+    let pending =
+        fixture.terminal_pending_with_scope(hantong_contracts::auth::default_cli_manage_tools());
+    let effects = Fake::new(&fixture.store);
+
+    assert_eq!(
+        complete_google_oauth_scope(&effects, *pending.refresh_id()),
+        Err(ErrorCode::Conflict)
+    );
+    assert!(!effects.events.borrow().contains(&"stage"));
+    assert!(effects.published.borrow().is_none());
+    assert_eq!(
+        fixture
+            .store
+            .load_cli_scope_refresh(*pending.refresh_id())
+            .unwrap()
+            .unwrap()
+            .phase(),
+        ScopeRefreshPhase::Pending
+    );
 }
 
 impl Drop for Publication {

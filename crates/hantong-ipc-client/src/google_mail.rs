@@ -442,6 +442,49 @@ pub fn default_google_account_union(account: &str) -> Result<Vec<String>, ErrorC
             account_union(connection.scope(), account)
         })
 }
+
+/// Returns the bounded union of every account in the authenticated default
+/// profile and the selected Google account. The account list is explicit and
+/// provider-neutral; it is only an input to the terminal manage review.
+pub fn default_registered_account_union(account: &str) -> Result<Vec<String>, ErrorCode> {
+    hantong_contracts::scope_refresh::ManageAccounts::parse(&[account.to_owned()])?;
+    #[cfg(not(windows))]
+    {
+        Err(ErrorCode::CapabilityUnsupported)
+    }
+    #[cfg(windows)]
+    tokio::runtime::Builder::new_current_thread()
+        .enable_io()
+        .enable_time()
+        .build()
+        .map_err(|_| ErrorCode::CoreUnavailable)?
+        .block_on(async {
+            let connection = crate::authenticate_default().await?;
+            generic_account_union(connection.scope(), account)
+        })
+}
+
+/// Verifies the exact provider-neutral manage toolset over the explicit
+/// current registered-account union. Account and source checks remain owned by
+/// Core; this is only a post-review scope probe.
+pub fn verify_default_manage_accounts(account: &str) -> Result<bool, ErrorCode> {
+    hantong_contracts::scope_refresh::ManageAccounts::parse(&[account.to_owned()])?;
+    #[cfg(not(windows))]
+    {
+        Err(ErrorCode::CapabilityUnsupported)
+    }
+    #[cfg(windows)]
+    tokio::runtime::Builder::new_current_thread()
+        .enable_io()
+        .enable_time()
+        .build()
+        .map_err(|_| ErrorCode::CoreUnavailable)?
+        .block_on(async {
+            let connection = crate::authenticate_default().await?;
+            let accounts = generic_account_union(connection.scope(), account)?;
+            Ok(manage_scope(connection.scope(), &accounts))
+        })
+}
 /// Verifies the exact send toolset over the bounded current-account union.
 pub fn verify_default_personal_accounts(account: &str) -> Result<bool, ErrorCode> {
     validate_google_account_id(account)?;
@@ -457,8 +500,13 @@ pub fn verify_default_personal_accounts(account: &str) -> Result<bool, ErrorCode
         .map_err(|_| ErrorCode::CoreUnavailable)?
         .block_on(async {
             let connection = crate::authenticate_default().await?;
-            let accounts = account_union(connection.scope(), account)?;
-            Ok(send_scope(connection.scope(), &accounts))
+            // A valid authenticated session may contain non-Google accounts
+            // registered in the same default profile. It cannot satisfy the
+            // Google-only personal fast path, so return false and let the
+            // provider-neutral protected terminal path enforce registration
+            // and effective send tools. Authentication and malformed selected
+            // Google identities remain hard errors above.
+            personal_send_eligible(connection.scope(), account)
         })
 }
 #[cfg(any(windows, test))]
@@ -471,6 +519,7 @@ fn personal_scope(
     let tools = match profile {
         GoogleLocalProfile::PersonalRead => default_cli_body_tools(),
         GoogleLocalProfile::PersonalReadSend => default_cli_send_tools(),
+        GoogleLocalProfile::PersonalManage => default_cli_manage_tools(),
         GoogleLocalProfile::None => return false,
     };
     scope.accounts() == [account] && scope.tools() == tools
@@ -493,9 +542,47 @@ fn account_union(
     Ok(accounts.into_iter().collect())
 }
 #[cfg(any(windows, test))]
+fn generic_account_union(
+    scope: &hantong_contracts::auth::RequestedScope,
+    selected: &str,
+) -> Result<Vec<String>, ErrorCode> {
+    hantong_contracts::scope_refresh::ManageAccounts::parse(&[selected.to_owned()])?;
+    let mut accounts = BTreeSet::new();
+    accounts.extend(scope.accounts().iter().cloned());
+    accounts.insert(selected.to_owned());
+    if accounts.len() > 128 {
+        return Err(ErrorCode::InvalidInput);
+    }
+    hantong_contracts::scope_refresh::ManageAccounts::parse(
+        &accounts.into_iter().collect::<Vec<_>>(),
+    )
+    .map(|accounts| accounts.accounts())
+}
+#[cfg(any(windows, test))]
+fn manage_scope(scope: &hantong_contracts::auth::RequestedScope, accounts: &[String]) -> bool {
+    scope.accounts() == accounts
+        && hantong_contracts::auth::is_supported_default_cli_manage_toolset(scope.tools())
+}
+#[cfg(any(windows, test))]
 fn send_scope(scope: &hantong_contracts::auth::RequestedScope, accounts: &[String]) -> bool {
     scope.accounts() == accounts
-        && scope.tools() == hantong_contracts::auth::default_cli_send_tools()
+        && (scope.tools() == hantong_contracts::auth::default_cli_send_tools()
+            || scope.tools() == hantong_contracts::auth::default_cli_manage_tools())
+}
+#[cfg(any(windows, test))]
+fn personal_send_eligible(
+    scope: &hantong_contracts::auth::RequestedScope,
+    selected: &str,
+) -> Result<bool, ErrorCode> {
+    if scope
+        .accounts()
+        .iter()
+        .any(|candidate| !candidate.starts_with("google_"))
+    {
+        return Ok(false);
+    }
+    let accounts = account_union(scope, selected)?;
+    Ok(send_scope(scope, &accounts))
 }
 #[cfg(any(windows, test))]
 fn readonly_scope(scope: &hantong_contracts::auth::RequestedScope, account: &str) -> bool {
@@ -515,6 +602,7 @@ mod onboarding_tests {
         for (tools, profile, other) in [
             (default_cli_body_tools(), PersonalRead, PersonalReadSend),
             (default_cli_send_tools(), PersonalReadSend, PersonalRead),
+            (default_cli_manage_tools(), PersonalManage, PersonalReadSend),
         ] {
             let scope = RequestedScope::new(vec![account.clone()], tools).unwrap();
             assert!(personal_scope(&scope, &account, profile));
@@ -579,5 +667,55 @@ mod onboarding_tests {
             account_union(&scope, &accounts[128]),
             Err(ErrorCode::InvalidInput)
         );
+    }
+    #[test]
+    fn ai09_manage_probe_keeps_generic_registered_accounts_and_selected_google_account() {
+        let google = format!("google_{}", "a".repeat(64));
+        let scope = RequestedScope::new(
+            vec![google.clone(), "imap_account".into()],
+            default_cli_manage_tools(),
+        )
+        .unwrap();
+        let accounts = generic_account_union(&scope, &google).unwrap();
+        assert_eq!(
+            accounts,
+            vec![
+                "google_".to_owned() + &"a".repeat(64),
+                "imap_account".into()
+            ]
+        );
+        assert!(manage_scope(&scope, &accounts));
+    }
+    #[test]
+    fn ai09_manage_probe_requires_selected_generic_account_in_current_scope() {
+        let google = format!("google_{}", "c".repeat(64));
+        let selected = "imap_account".to_owned();
+        let scope = RequestedScope::new(vec![google.clone()], default_cli_manage_tools()).unwrap();
+        let accounts = generic_account_union(&scope, &selected).unwrap();
+        assert_eq!(accounts, vec![google, selected]);
+        // A proposed union does not itself grant the newly selected account.
+        assert!(!manage_scope(&scope, &accounts));
+        let granted = RequestedScope::new(accounts.clone(), default_cli_manage_tools()).unwrap();
+        assert!(manage_scope(&granted, &accounts));
+    }
+    #[test]
+    fn ai09_manage_probe_accepts_google_account_qualified_manage_grants() {
+        let google = format!("google_{}", "b".repeat(64));
+        let mut tools = default_cli_manage_tools();
+        tools.push(hantong_contracts::google_mutation::account_grant(&google).unwrap());
+        tools.sort();
+        let scope = RequestedScope::new(vec![google.clone()], tools).unwrap();
+        assert!(manage_scope(&scope, &[google]));
+    }
+    #[test]
+    fn acc02_mixed_provider_scope_uses_generic_terminal_path() {
+        let google = format!("google_{}", "a".repeat(64));
+        let mixed = RequestedScope::new(
+            vec![google.clone(), "smtp_account".into()],
+            default_cli_send_tools(),
+        )
+        .unwrap();
+        assert_eq!(personal_send_eligible(&mixed, &google), Ok(false));
+        assert_eq!(account_union(&mixed, &google), Err(ErrorCode::InvalidInput));
     }
 }

@@ -4,6 +4,7 @@ use crate::ErrorCode;
 #[derive(Clone, PartialEq, Eq)]
 pub enum ScopeRefreshCommand {
     Request,
+    RequestManage(ManageAccounts),
     RequestGoogleSend(GoogleSendAccounts),
     RequestGoogleChanges(GoogleSendAccounts),
     RequestGoogleReadOnly(crate::registration::GoogleReadAccount),
@@ -14,6 +15,7 @@ pub enum ScopeRefreshCommand {
 impl std::fmt::Debug for ScopeRefreshCommand {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(match self {
+            Self::RequestManage(_) => "ScopeRefreshCommand::RequestManage(<redacted>)",
             Self::RequestGoogleChanges(_) => {
                 "ScopeRefreshCommand::RequestGoogleChanges(<redacted>)"
             }
@@ -25,6 +27,49 @@ impl std::fmt::Debug for ScopeRefreshCommand {
             Self::AddGoogleReadOnly(_) => "ScopeRefreshCommand::AddGoogleReadOnly(<redacted>)",
             Self::Status(_) => "ScopeRefreshCommand::Status(<redacted>)",
         })
+    }
+}
+
+/// Maximum aggregate UTF-8 bytes for an explicit manage-account selection.
+/// This leaves room for the JSON-RPC envelope while keeping the request below
+/// the authenticated 16 KiB frame limit.
+pub const MAX_MANAGE_ACCOUNT_BYTES: usize = 12_288;
+
+/// Explicit, canonical selection of generic account identifiers for terminal
+/// manage scope. Empty input is rejected and never means "all accounts".
+#[derive(Clone, PartialEq, Eq)]
+pub struct ManageAccounts {
+    ids: Vec<String>,
+}
+
+impl std::fmt::Debug for ManageAccounts {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("ManageAccounts(<redacted>)")
+    }
+}
+
+impl ManageAccounts {
+    pub fn parse(values: &[String]) -> Result<Self, ErrorCode> {
+        if values.is_empty() || values.len() > 128 {
+            return Err(ErrorCode::InvalidInput);
+        }
+        values.iter().try_fold(0usize, |total, value| {
+            total
+                .checked_add(value.len())
+                .filter(|bytes| *bytes <= MAX_MANAGE_ACCOUNT_BYTES)
+                .ok_or(ErrorCode::InvalidInput)
+        })?;
+        let scope = crate::auth::RequestedScope::new(values.to_vec(), Vec::new())?;
+        if scope.accounts().is_empty() {
+            return Err(ErrorCode::InvalidInput);
+        }
+        Ok(Self {
+            ids: scope.accounts().to_vec(),
+        })
+    }
+
+    pub fn accounts(&self) -> Vec<String> {
+        self.ids.clone()
     }
 }
 
@@ -153,6 +198,54 @@ mod google_send_selection_tests {
         );
         for values in [vec![], vec![a.clone(), a], vec!["imap-account".into()]] {
             assert!(GoogleSendAccounts::parse(&values).is_err());
+        }
+    }
+}
+
+#[cfg(test)]
+mod manage_selection_tests {
+    use super::*;
+
+    #[test]
+    fn manage_selection_is_explicit_canonical_and_generic() {
+        let values = vec!["smtp_account".into(), "imap_account".into()];
+        let selected = ManageAccounts::parse(&values).unwrap();
+        assert_eq!(selected.accounts(), vec!["imap_account", "smtp_account"]);
+        assert!(!format!("{selected:?}").contains("imap_account"));
+    }
+
+    #[test]
+    fn manage_selection_rejects_empty_duplicates_and_unbounded_total() {
+        assert_eq!(ManageAccounts::parse(&[]), Err(ErrorCode::InvalidInput));
+        let duplicate = vec!["imap_account".into(), "imap_account".into()];
+        assert_eq!(
+            ManageAccounts::parse(&duplicate),
+            Err(ErrorCode::InvalidInput)
+        );
+        let oversized: Vec<String> = (0..97)
+            .map(|index| format!("{}{:02}", "a".repeat(125), index))
+            .collect();
+        assert_eq!(
+            ManageAccounts::parse(&oversized),
+            Err(ErrorCode::InvalidInput)
+        );
+    }
+
+    #[test]
+    fn manage_selection_accepts_per_identifier_limit_but_rejects_invalid_ids() {
+        let value = "a".repeat(128);
+        assert_eq!(
+            ManageAccounts::parse(std::slice::from_ref(&value))
+                .unwrap()
+                .accounts(),
+            vec![value]
+        );
+        for values in [
+            vec![String::new()],
+            vec!["bad.id".into()],
+            vec!["a".repeat(129)],
+        ] {
+            assert_eq!(ManageAccounts::parse(&values), Err(ErrorCode::InvalidInput));
         }
     }
 }

@@ -30,6 +30,10 @@ fn cancel(value: Option<String>) -> Option<String> {
     value.filter(|value| value != "0")
 }
 
+fn provider_supports_attachments(account: &str) -> bool {
+    account.starts_with("google_")
+}
+
 fn recipients(value: &str) -> Result<Vec<String>, ErrorCode> {
     let values = value
         .split(',')
@@ -138,6 +142,9 @@ fn show_preview(
 }
 
 trait Effects {
+    fn attachments_supported(&self) -> bool {
+        true
+    }
     fn verify(&mut self, account: &str) -> Result<bool, ErrorCode>;
     fn create(
         &mut self,
@@ -164,11 +171,31 @@ trait Effects {
     fn wait(&mut self);
 }
 
-struct RealEffects;
+struct RealEffects {
+    lang: Lang,
+    personal: bool,
+    google_provider: bool,
+}
 
 impl Effects for RealEffects {
+    fn attachments_supported(&self) -> bool {
+        self.google_provider
+    }
+
     fn verify(&mut self, account: &str) -> Result<bool, ErrorCode> {
-        google_mail::verify_default_personal_accounts(account)
+        // Google has a provider-specific fast path for the exact personal
+        // scope. Other registered providers use the generic Core policy and
+        // terminal review; their registration and effective tools are still
+        // checked by create/prepare below.
+        self.google_provider = provider_supports_attachments(account);
+        if self.google_provider {
+            self.personal = google_mail::verify_default_personal_accounts(account)?;
+            if self.personal {
+                return Ok(true);
+            }
+        }
+        self.personal = false;
+        client::verify_default_send(account)
     }
 
     fn create(
@@ -182,7 +209,14 @@ impl Effects for RealEffects {
         &mut self,
         request: &SendReviewRequest,
     ) -> Result<client::PersonalPrepareResponse, ErrorCode> {
-        client::prepare_default(request)
+        if self.personal {
+            return client::prepare_default(request);
+        }
+        let receipt = super::mail_send::interactive_send(request.clone(), self.lang)?;
+        Ok(client::PersonalPrepareResponse {
+            receipt,
+            preview: None,
+        })
     }
     fn confirm(
         &mut self,
@@ -218,7 +252,11 @@ impl Effects for RealEffects {
 }
 
 pub(super) fn run(account: &str, lang: Lang, io: &mut dyn Io) -> Result<(), ErrorCode> {
-    let mut effects = RealEffects;
+    let mut effects = RealEffects {
+        lang,
+        personal: false,
+        google_provider: false,
+    };
     run_with_effects(account, lang, io, &mut effects)
 }
 
@@ -244,23 +282,28 @@ fn run_with_effects(
         say(io, lang, "cancelled")?;
         return Ok(());
     };
-    let Some(attachment_path) = ask(io, lang, "attachment_prompt")? else {
-        say(io, lang, "cancelled")?;
-        return Ok(());
-    };
-    let attachment = match attachment_path.trim() {
-        "" | "0" => None,
-        path => {
-            let Some(media_type) = ask(io, lang, "attachment_type_prompt")? else {
-                say(io, lang, "cancelled")?;
-                return Ok(());
-            };
-            let media_type = match media_type.trim() {
-                "" | "0" => "application/octet-stream",
-                value => value,
-            };
-            Some(super::mail_send::attachment_file(path, media_type)?)
+    let attachment = if effects.attachments_supported() {
+        let Some(attachment_path) = ask(io, lang, "attachment_prompt")? else {
+            say(io, lang, "cancelled")?;
+            return Ok(());
+        };
+        match attachment_path.trim() {
+            "" | "0" => None,
+            path => {
+                let Some(media_type) = ask(io, lang, "attachment_type_prompt")? else {
+                    say(io, lang, "cancelled")?;
+                    return Ok(());
+                };
+                let media_type = match media_type.trim() {
+                    "" | "0" => "application/octet-stream",
+                    value => value,
+                };
+                Some(super::mail_send::attachment_file(path, media_type)?)
+            }
         }
+    } else {
+        say(io, lang, "attachments_unsupported")?;
+        None
     };
     let operation = wire_hex::encode(&hantong_platform::random_nonce()?);
     let idempotency = wire_hex::encode(&hantong_platform::random_nonce()?);
@@ -346,6 +389,8 @@ mod tests {
 
     struct TestEffects {
         verified: bool,
+        attachments_supported: bool,
+        created_attachments: usize,
         create_calls: usize,
         request_calls: usize,
         confirm_calls: usize,
@@ -355,15 +400,20 @@ mod tests {
     }
 
     impl Effects for TestEffects {
+        fn attachments_supported(&self) -> bool {
+            self.attachments_supported
+        }
+
         fn verify(&mut self, _: &str) -> Result<bool, ErrorCode> {
             Ok(self.verified)
         }
 
         fn create(
             &mut self,
-            _: &hantong_contracts::google_write::ComposeSnapshot,
+            request: &hantong_contracts::google_write::ComposeSnapshot,
         ) -> Result<client::DraftResponse, ErrorCode> {
             self.create_calls += 1;
+            self.created_attachments = request.attachments().len();
             Ok(client::DraftResponse {
                 account_id: "google_fixture".into(),
                 draft_id: [1; 32],
@@ -441,11 +491,22 @@ mod tests {
     }
 
     #[test]
+    fn compose_google_manage_keeps_attachments_while_smtp_omits_them() {
+        assert!(provider_supports_attachments(&format!(
+            "google_{}",
+            "a".repeat(64)
+        )));
+        assert!(!provider_supports_attachments("smtp_account"));
+    }
+
+    #[test]
     fn compose_scope_denial_has_no_prompt_or_effect() {
         let account = format!("google_{}", "a".repeat(64));
         let mut io = TestIo::new(&[]);
         let mut effects = TestEffects {
             verified: false,
+            attachments_supported: true,
+            created_attachments: 0,
             create_calls: 0,
             request_calls: 0,
             confirm_calls: 0,
@@ -468,6 +529,8 @@ mod tests {
         let mut eof = TestIo::new(&[]);
         let mut effects = TestEffects {
             verified: true,
+            attachments_supported: true,
+            created_attachments: 0,
             create_calls: 0,
             request_calls: 0,
             confirm_calls: 0,
@@ -489,6 +552,7 @@ mod tests {
         );
         assert_eq!(effects.create_calls, 1);
         assert_eq!(effects.request_calls, 1);
+        assert_eq!(effects.created_attachments, 0);
         assert_eq!(effects.cancel_calls, 1);
     }
 
@@ -498,6 +562,8 @@ mod tests {
         let mut io = TestIo::new(&["to@example.test", "subject", "body", ".", "", "1"]);
         let mut effects = TestEffects {
             verified: true,
+            attachments_supported: true,
+            created_attachments: 0,
             create_calls: 0,
             request_calls: 0,
             confirm_calls: 0,
@@ -517,12 +583,36 @@ mod tests {
     }
 
     #[test]
+    fn compose_smtp_skips_attachment_input_before_creating_draft() {
+        let mut io = TestIo::new(&["to@example.test", "subject", "body", ".", "1"]);
+        let mut effects = TestEffects {
+            verified: true,
+            attachments_supported: false,
+            created_attachments: 0,
+            create_calls: 0,
+            request_calls: 0,
+            confirm_calls: 0,
+            cancel_calls: 0,
+            status_calls: 0,
+            terminal_state: "sent",
+        };
+        run_with_effects("smtp_account", Lang::En, &mut io, &mut effects).unwrap();
+        assert_eq!(effects.create_calls, 1);
+        assert_eq!(effects.request_calls, 1);
+        assert_eq!(effects.created_attachments, 0);
+        assert!(!io.output.contains("Attachment path"));
+        assert!(io.output.contains("Attachments are not supported"));
+    }
+
+    #[test]
     fn sync07_compose_unknown_and_poll_timeout_never_resubmit() {
         let account = format!("google_{}", "a".repeat(64));
         for terminal_state in ["unknown", "pending"] {
             let mut io = TestIo::new(&["to@example.test", "subject", "body", ".", "", "1"]);
             let mut effects = TestEffects {
                 verified: true,
+                attachments_supported: true,
+                created_attachments: 0,
                 create_calls: 0,
                 request_calls: 0,
                 confirm_calls: 0,
@@ -551,6 +641,8 @@ mod tests {
             let mut io = TestIo::new(&input);
             let mut effects = TestEffects {
                 verified: true,
+                attachments_supported: true,
+                created_attachments: 0,
                 create_calls: 0,
                 request_calls: 0,
                 confirm_calls: 0,

@@ -5,7 +5,9 @@ use hantong_contracts::{
     google_mail::GoogleMailRequest,
     google_setup::{GoogleLocalProfile, GoogleSetupCommand, GoogleSetupInput},
     registration::{GoogleReadAccount, RegistrationCommand, RegistrationProgress},
-    scope_refresh::{GoogleSendAccounts, ScopeRefreshCommand, ScopeRefreshProgress},
+    scope_refresh::{
+        GoogleSendAccounts, ManageAccounts, ScopeRefreshCommand, ScopeRefreshProgress,
+    },
     wire_hex,
 };
 use serde_json::{Value, json};
@@ -26,6 +28,7 @@ enum Action {
 enum LoginFlow {
     Advanced,
     Personal(GoogleLocalProfile),
+    ConnectOnly(GoogleLocalProfile),
 }
 fn words(c: &[String], expected: &[&str]) -> bool {
     c.iter().map(String::as_str).eq(expected.iter().copied())
@@ -400,6 +403,50 @@ fn wait_google_send(account: GoogleReadAccount, lang: Lang) -> Result<Value, Err
     }
 }
 
+fn wait_google_manage(account: GoogleReadAccount, lang: Lang) -> Result<Value, ErrorCode> {
+    println!("{}", resource(lang, "refresh"));
+    let accounts =
+        hantong_ipc_client::google_mail::default_registered_account_union(&account.account_id())?;
+    let existing_google = accounts
+        .iter()
+        .filter(|id| id.starts_with("google_") && *id != &account.account_id())
+        .cloned()
+        .collect::<Vec<_>>();
+    ensure_manage_google_accounts(&existing_google, lang)?;
+    let accounts = ManageAccounts::parse(&accounts)?;
+    let mut r =
+        super::terminal_workflows::scope(ScopeRefreshCommand::RequestManage(accounts), lang)?;
+    show_deadline(lang, r.expires_at_utc_ms())?;
+    let until = Instant::now() + Duration::from_secs(300);
+    loop {
+        match r.state() {
+            ScopeRefreshProgress::Ready => {
+                if !hantong_ipc_client::google_mail::verify_default_manage_accounts(
+                    &account.account_id(),
+                )? {
+                    return Err(ErrorCode::ScopeDenied);
+                }
+                println!("{}", resource(lang, "guided_ready"));
+                return Ok(json!({
+                    "state":"ready",
+                    "account_id":account.account_id()
+                }));
+            }
+            ScopeRefreshProgress::Denied => return Err(ErrorCode::ApprovalDenied),
+            ScopeRefreshProgress::Expired => return Err(ErrorCode::ApprovalExpired),
+            ScopeRefreshProgress::Interrupted => return Err(ErrorCode::AuthRequired),
+            _ => {}
+        }
+        if Instant::now() >= until {
+            return Err(ErrorCode::ApprovalExpired);
+        }
+        std::thread::sleep(Duration::from_secs(1));
+        r = hantong_ipc_client::scope_refresh::exchange(ScopeRefreshCommand::Status(
+            *r.refresh_id(),
+        ))?;
+    }
+}
+
 // Each effect stays behind its existing authenticated/native approval boundary.
 fn ensure_access(
     account: GoogleReadAccount,
@@ -470,7 +517,9 @@ fn finish_personal_login(
     }
     if matches!(
         profile,
-        GoogleLocalProfile::PersonalRead | GoogleLocalProfile::PersonalReadSend
+        GoogleLocalProfile::PersonalRead
+            | GoogleLocalProfile::PersonalReadSend
+            | GoogleLocalProfile::PersonalManage
     ) {
         return fallback(account, lang, details);
     }
@@ -489,6 +538,12 @@ fn resume_flow(
             Ok(flow)
         }
         LoginFlow::Personal(_) => Err(ErrorCode::Conflict),
+        LoginFlow::ConnectOnly(expected)
+            if receipt_profile == GoogleLocalProfile::None || receipt_profile == expected =>
+        {
+            Ok(flow)
+        }
+        LoginFlow::ConnectOnly(_) => Err(ErrorCode::Conflict),
     }
 }
 fn login(command: GoogleSetupCommand, lang: Lang) -> Result<Value, ErrorCode> {
@@ -550,6 +605,9 @@ fn login_inner(
     }
     let account = GoogleReadAccount::parse(&receipt.account_id.ok_or(ErrorCode::InternalError)?)?;
     let flow = resume_flow(flow, receipt.local_profile)?;
+    if let LoginFlow::ConnectOnly(_) = flow {
+        return Ok(json!({"state":"ready","account_id":account.account_id()}));
+    }
     if let LoginFlow::Personal(profile) = flow {
         return finish_personal_login(
             account,
@@ -559,6 +617,8 @@ fn login_inner(
             &mut |account, profile| {
                 if profile == GoogleLocalProfile::PersonalReadSend {
                     hantong_ipc_client::google_mail::verify_default_personal_accounts(account)
+                } else if profile == GoogleLocalProfile::PersonalManage {
+                    hantong_ipc_client::google_mail::verify_default_manage_accounts(account)
                 } else {
                     hantong_ipc_client::google_mail::verify_default_personal(account, profile)
                 }
@@ -566,8 +626,12 @@ fn login_inner(
             &mut |account, lang, details| {
                 if profile == GoogleLocalProfile::PersonalRead {
                     continue_account_inner(account, lang, details)
-                } else {
+                } else if profile == GoogleLocalProfile::PersonalReadSend {
                     wait_google_send(account, lang)
+                } else if profile == GoogleLocalProfile::PersonalManage {
+                    wait_google_manage(account, lang)
+                } else {
+                    Err(ErrorCode::ScopeDenied)
                 }
             },
         );
@@ -630,13 +694,13 @@ pub(super) fn continue_guided(account: &str, lang: Lang) -> Result<(), ErrorCode
 
 pub(super) fn enable_send_guided(account: &str, lang: Lang) -> Result<(), ErrorCode> {
     let account = GoogleReadAccount::parse(account)?;
-    if hantong_ipc_client::google_mail::verify_default_personal_accounts(&account.account_id())? {
+    if hantong_ipc_client::google_mail::verify_default_manage_accounts(&account.account_id())? {
         println!("{}", resource(lang, "guided_ready"));
         return Ok(());
     }
     let input = GoogleSetupInput {
-        access_mode: hantong_contracts::google_write::GoogleAccessMode::ReadSend,
-        local_profile: GoogleLocalProfile::PersonalReadSend,
+        access_mode: hantong_contracts::google_write::GoogleAccessMode::Modify,
+        local_profile: GoogleLocalProfile::PersonalManage,
         client_id: None,
         display_name: None,
         reauthorize_account: Some(account.account_id().to_owned()),
@@ -646,13 +710,96 @@ pub(super) fn enable_send_guided(account: &str, lang: Lang) -> Result<(), ErrorC
         GoogleSetupCommand::Request(input),
         lang,
         false,
-        LoginFlow::Personal(GoogleLocalProfile::PersonalReadSend),
+        LoginFlow::Personal(GoogleLocalProfile::PersonalManage),
     )?;
     let connected = value["account_id"]
         .as_str()
         .ok_or(ErrorCode::InternalError)?;
     if connected != account.account_id() {
         return Err(ErrorCode::ScopeDenied);
+    }
+    Ok(())
+}
+
+fn reauthorize_manage_google(account: &str, lang: Lang) -> Result<(), ErrorCode> {
+    let account = GoogleReadAccount::parse(account)?;
+    let input = GoogleSetupInput {
+        access_mode: hantong_contracts::google_write::GoogleAccessMode::Modify,
+        local_profile: GoogleLocalProfile::PersonalManage,
+        client_id: None,
+        display_name: None,
+        reauthorize_account: Some(account.account_id().to_owned()),
+        force_consent: true,
+    };
+    let value = login_inner(
+        GoogleSetupCommand::Request(input),
+        lang,
+        false,
+        LoginFlow::ConnectOnly(GoogleLocalProfile::PersonalManage),
+    )?;
+    if value["account_id"].as_str() != Some(&account.account_id()) {
+        return Err(ErrorCode::ScopeDenied);
+    }
+    Ok(())
+}
+
+/// Reauthorize only the existing Google accounts that still need Modify.
+/// Each account's explicit feature choice and OAuth step can activate its own
+/// features. The caller subsequently reviews the combined account scope with
+/// RequestManage; cancelling that review does not undo earlier feature choices.
+pub(super) fn ensure_manage_google_accounts(
+    accounts: &[String],
+    lang: Lang,
+) -> Result<(), ErrorCode> {
+    if !std::io::stdin().is_terminal() || !std::io::stdout().is_terminal() {
+        return Err(ErrorCode::HumanStepRequired);
+    }
+    let mut io = super::onboarding::Stdio::new();
+    ensure_manage_google_accounts_with_io(accounts, lang, &mut io)
+}
+
+fn ensure_manage_google_accounts_with_io(
+    accounts: &[String],
+    lang: Lang,
+    io: &mut dyn super::onboarding::Io,
+) -> Result<(), ErrorCode> {
+    ensure_manage_google_accounts_flow(
+        accounts,
+        lang,
+        io,
+        &mut |account| hantong_ipc_client::google_mail::verify_default_manage_accounts(account),
+        &mut |account, lang| reauthorize_manage_google(account, lang),
+    )
+}
+
+fn ensure_manage_google_accounts_flow(
+    accounts: &[String],
+    lang: Lang,
+    io: &mut dyn super::onboarding::Io,
+    verify: &mut impl FnMut(&str) -> Result<bool, ErrorCode>,
+    reauthorize: &mut impl FnMut(&str, Lang) -> Result<(), ErrorCode>,
+) -> Result<(), ErrorCode> {
+    let mut seen = std::collections::BTreeSet::new();
+    for account in accounts {
+        let account = GoogleReadAccount::parse(account)?;
+        if !seen.insert(account.account_id().to_owned()) {
+            continue;
+        }
+        if verify(&account.account_id())? {
+            continue;
+        }
+        io.write(resource(lang, "existing_account_feature_change"))?;
+        io.write("\n")?;
+        io.write(&account.account_id())?;
+        io.write("\n")?;
+        io.write(resource(lang, "existing_account_feature_choice"))?;
+        io.write("\n")?;
+        match io.read_line()? {
+            Some(choice) if choice == "1" => reauthorize(&account.account_id(), lang)?,
+            Some(choice) if choice == "0" => return Err(ErrorCode::ApprovalDenied),
+            None => return Err(ErrorCode::ApprovalDenied),
+            Some(_) => return Err(ErrorCode::InvalidInput),
+        }
     }
     Ok(())
 }
@@ -956,6 +1103,13 @@ mod tests {
             resume_flow(LoginFlow::Advanced, GoogleLocalProfile::None),
             Ok(LoginFlow::Advanced)
         );
+        assert_eq!(
+            resume_flow(
+                LoginFlow::ConnectOnly(GoogleLocalProfile::PersonalManage),
+                GoogleLocalProfile::PersonalManage
+            ),
+            Ok(LoginFlow::ConnectOnly(GoogleLocalProfile::PersonalManage))
+        );
     }
     #[test]
     fn acc02_personal_read_missing_exact_scope_hands_off_to_readonly_access_once() {
@@ -1012,6 +1166,28 @@ mod tests {
         .unwrap();
         assert_eq!(fallback_calls, 1);
         assert_eq!(value["state"], "ready");
+    }
+    #[test]
+    fn ai09_personal_manage_missing_scope_uses_manage_scope_fallback() {
+        let account = GoogleReadAccount::parse(&format!("google_{}", "a".repeat(64))).unwrap();
+        let mut fallback_calls = 0;
+        let value = finish_personal_login(
+            account,
+            GoogleLocalProfile::PersonalManage,
+            Lang::En,
+            false,
+            &mut |_, profile| {
+                assert_eq!(profile, GoogleLocalProfile::PersonalManage);
+                Ok(false)
+            },
+            &mut |selected, _, _| {
+                fallback_calls += 1;
+                Ok(json!({"state":"ready","account_id":selected.account_id()}))
+            },
+        )
+        .unwrap();
+        assert_eq!(value["state"], "ready");
+        assert_eq!(fallback_calls, 1);
     }
     #[test]
     fn acc02_personal_login_auth_error_does_not_handoff() {
@@ -1292,6 +1468,85 @@ mod onboarding_tests {
             );
             options.push(("--force-consent".into(), "true".into()));
             assert!(parse(&cmd, &options).is_err());
+        }
+    }
+
+    struct FeatureChoiceIo {
+        input: Vec<Option<String>>,
+        output: String,
+    }
+
+    impl FeatureChoiceIo {
+        fn new(input: &[&str]) -> Self {
+            Self {
+                input: input
+                    .iter()
+                    .map(|value| Some((*value).to_owned()))
+                    .collect(),
+                output: String::new(),
+            }
+        }
+    }
+
+    impl crate::onboarding::Io for FeatureChoiceIo {
+        fn write(&mut self, text: &str) -> Result<(), ErrorCode> {
+            self.output.push_str(text);
+            Ok(())
+        }
+
+        fn read_line(&mut self) -> Result<Option<String>, ErrorCode> {
+            Ok(self.input.pop().flatten())
+        }
+    }
+
+    #[test]
+    fn acc02_existing_google_feature_cancel_and_eof_never_reauthorize() {
+        let account = format!("google_{}", "a".repeat(64));
+        for input in [&["0"][..], &[][..]] {
+            let mut io = FeatureChoiceIo::new(input);
+            let mut reauth = 0;
+            let result = ensure_manage_google_accounts_flow(
+                std::slice::from_ref(&account),
+                Lang::En,
+                &mut io,
+                &mut |_| Ok(false),
+                &mut |_, _| {
+                    reauth += 1;
+                    Ok(())
+                },
+            );
+            assert_eq!(result, Err(ErrorCode::ApprovalDenied));
+            assert_eq!(reauth, 0);
+        }
+    }
+
+    #[test]
+    fn acc02_existing_google_feature_choice_reauthorizes_exact_account_once() {
+        let account = format!("google_{}", "b".repeat(64));
+        let mut io = FeatureChoiceIo::new(&["1"]);
+        let mut reauthorized = Vec::new();
+        ensure_manage_google_accounts_flow(
+            std::slice::from_ref(&account),
+            Lang::En,
+            &mut io,
+            &mut |_| Ok(false),
+            &mut |id, _| {
+                reauthorized.push(id.to_owned());
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert_eq!(reauthorized, vec![account]);
+    }
+
+    #[test]
+    fn acc02_existing_google_feature_headless_guard_has_no_effects() {
+        let account = format!("google_{}", "c".repeat(64));
+        if !std::io::stdin().is_terminal() || !std::io::stdout().is_terminal() {
+            assert_eq!(
+                ensure_manage_google_accounts(&[account], Lang::En),
+                Err(ErrorCode::HumanStepRequired)
+            );
         }
     }
 }
