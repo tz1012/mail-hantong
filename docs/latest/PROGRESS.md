@@ -1816,3 +1816,13 @@ GitHub Actions [관리자 Windows 시험 41575717730](https://github.com/tz1012/
 `python -X utf8 scripts/check_all.py` 최종 exit 0: Rust 1,763개/31 suites, Docs 29개, Build 113개, 합계 1,905개. 실패·ignored 0. fmt·Clippy(-D warnings)·전체 build/test·요건/아키텍처/추적표 검사가 통과했다. source hash e6009aca2acdb04eb9efa733a069ed3e4ea7d9d016bbbfa1ce2772355fcf7619, 전체 로그 SHA-256 1c520f5ba1db69803d6d0d8d182c37ea0f53a4151059afa110367e6a526c2ce7, 근거 target/beta8-verification.json. 기존 설치 beta.7 Core를 같은 경로·인자·실행 파일 SHA로 복원했다(PID 27348). 검증 중 실제 계정·메일·키 내용을 읽거나 변경하지 않았다.
 
 새 source hash 기준 beta.8 release build와 패키지를 재생성했다. ZIP SHA-256 cb5e9c94b5d3168da4325004c48f551e8cc51cfd501e33c0e6ed56eb04b6a667, 25,143,465 bytes, manifest 파일 261개를 검증했다. 승인된 beta.3 publisher 자산과 동일하며 계정 DB/profile은 포함하지 않는다. 최초 미게시 패키지는 target/beta8-initial-package에 보존했다. 별도 설치·스모크·공개 배포는 이어서 검증한다. 일반 IMAP/SMTP 관리·휴지통 확장(schema26)은 별도 공통 worktree이며 이 패키지에 포함하지 않았다. [사람 보안 검토 필요].
+
+### beta.8 공개·안내 페이지·현재 PC 설치 확인
+
+소스 f351d17948b283affa8c304ce3028982314833b2를 main에 게시하고 v0.1.0-beta.8 prerelease를 공개했다. 업로드한 ZIP/BUILD-METADATA/SHA256SUMS 세 자산의 size/digest를 검증한 후 공개했고, 공개 ZIP 재다운로드 SHA-256 cb5e9c94b5d3168da4325004c48f551e8cc51cfd501e33c0e6ed56eb04b6a667과 25,143,465 bytes를 다시 확인했다. 별도 설치 경로의 도움말·AI 도움말·공급자 목록(추론 없음)·바이너리 도움말/버전·update shim headless guard가 통과했다.
+
+안내 페이지 gh-pages ce4b684680d79454a05d14c7afc3d79ab52f2d36은 Pages built 및 공개 HTTP에서 beta.8/1,905/고정 installer 소스를 확인했다. 새 Google 연결을 읽기 전용으로 설명하던 문구를 읽기·작성·발송으로 수정하고, 일반 IMAP/SMTP 기본 메뉴·휴지통 확장은 이번 ZIP에 포함되지 않았음을 분리했다.
+
+현재 PC의 설치본을 beta.7에서 beta.8로 갱신하고 manifest가 검증한 새 Core가 실행 중임을 확인했다(PID 64632). 기존 버전·계정 DB·보호 키를 삭제하지 않았고 명시적인 계정/메일 작업이나 실제 Google 동의는 수행하지 않았다. 근거 target/beta8-current-install-result.json. 원본 HEAD 2852a31d0d8383d3a593a6479c20bb798b0d798e/index는 보존한다.
+
+일반 메일 확장 공통 worktree는 모든 workspace/all-targets Cargo check를 통과했다. 이후 실제 Store 회귀 시험에서 관리 scope hash11이 잘못된 decision_channel로 저장되는 결함을 발견해 terminal_cli로 수정하고 재검증 중이다. 컴파일 통과와 기능 완료를 동일하게 기록하지 않는다. [사람 보안 검토 필요].
