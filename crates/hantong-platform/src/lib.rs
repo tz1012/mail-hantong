@@ -8,7 +8,12 @@ pub mod google_browser;
 mod paths;
 mod profile_file;
 mod selection;
+#[cfg(windows)]
+mod terminal;
+pub mod ui_preferences;
 pub use selection::{Selection, SelectionKey, interactive_select};
+#[cfg(windows)]
+pub use terminal::{MouseKind, TerminalEvent, TerminalKey, TerminalSession};
 #[cfg(windows)]
 mod windows_autostart;
 #[cfg(windows)]

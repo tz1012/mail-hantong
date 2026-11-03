@@ -27,6 +27,7 @@ mod message_body;
 mod onboarding;
 mod search;
 mod smtp_setup;
+mod startup;
 mod sync;
 mod terminal_workflows;
 mod update;
@@ -803,7 +804,10 @@ fn run_with_mail_actions(
         if json || seen_no_input || !terminal {
             return emit_error(ErrorCode::HumanStepRequired, lang, json);
         }
-        return match core_start::ensure_started().and_then(|()| onboarding::run(lang)) {
+        let update_fetch = startup::begin_update_fetch();
+        return match startup::with_animation(lang, core_start::ensure_started)
+            .and_then(|()| onboarding::run(lang, update_fetch))
+        {
             Ok(()) => 0,
             Err(code) => emit_error(code, lang, false),
         };

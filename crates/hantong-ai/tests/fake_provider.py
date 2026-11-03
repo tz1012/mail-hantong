@@ -28,14 +28,22 @@ for line in sys.stdin:
   send({'method':'account/login/completed','params':{'loginId':'fake-login','success':True}})
   send({'id':rid,'result':{'type':'chatgpt','loginId':'fake-login','authUrl':'https://chatgpt.com/fake?state=synthetic'}})
  elif method=='model/list':send({'id':rid,'result':{'data':[{'model':'fake-model','displayName':'Fake model','supportedReasoningEfforts':[{'reasoningEffort':'low'},{'reasoningEffort':'high'},{'reasoningEffort':'xhigh'}],'serviceTiers':[{'id':'priority'}],'isDefault':True},{'model':'limited-model','displayName':'Limited','supportedReasoningEfforts':[],'serviceTiers':[]}],'nextCursor':None}})
- elif method=='thread/start':send({'id':rid,'result':{'thread':{'id':'T'}}})
+ elif method=='thread/start':
+  assert request['params']['approvalPolicy']=='on-request'
+  assert request['params']['permissions']=='hantong_mail_temp' and 'sandbox' not in request['params']
+  assert request['params']['config']['permissions']['hantong_mail_temp']['filesystem'][':root']=='deny'
+  if 'dynamicTools' in request['params']:
+   namespace=request['params']['dynamicTools'][0]
+   assert namespace['type']=='namespace' and namespace['name']=='hantong'
+   assert all(tool['type']=='function' and 'namespace' not in tool for tool in namespace['tools'])
+  send({'id':rid,'result':{'thread':{'id':'T'},'activePermissionProfile':{'id':'hantong_mail_temp'}}})
  elif method=='turn/start':
-  assert request['params']['approvalPolicy']=='onRequest'
+  assert request['params']['approvalPolicy']=='on-request'
   if mode=='settings':
    assert request['params']['model']=='fake-model' and request['params']['effort']=='high' and request['params']['serviceTier']=='priority'
   if mode=='agent':
    send({'id':78,'method':'item/tool/call','params':{'threadId':'T','turnId':'Q','namespace':'hantong','tool':'mail_accounts_list','arguments':{}}})
-  assert request['params']['sandboxPolicy']['access']['type']=='restricted'
+  assert request['params']['permissions']=='hantong_mail_temp' and 'sandboxPolicy' not in request['params']
   send({'id':77,'method':'item/commandExecution/requestApproval','params':{'command':'not-executed'}})
   denied=json.loads(sys.stdin.readline());assert denied['id']==77 and 'error' in denied
   send({'method':'item/agentMessage/delta','params':{'threadId':'T','turnId':'Q','delta':'hello '}})

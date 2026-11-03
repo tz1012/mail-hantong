@@ -636,6 +636,22 @@ impl RegistrationHandle<'_> {
                     {
                         return Err(ErrorCode::PolicyBlocked);
                     }
+                    let account_labels = self
+                        .state
+                        .store
+                        .list_account_summaries(registration.scope.accounts(), false)?
+                        .items
+                        .into_iter()
+                        .enumerate()
+                        .map(|(index, account)| {
+                            account
+                                .primary_address
+                                .filter(|v| !v.is_empty())
+                                .or(account.display_name.filter(|v| !v.is_empty()))
+                                .unwrap_or_else(|| format!("Account {}", index + 1))
+                        })
+                        .collect::<Vec<_>>()
+                        .join(", ");
                     let mut fields = vec![
                         crate::terminal_review::field("client", registration.display_label.clone())?,
                         if registration.client_kind == ClientKind::Ai {
@@ -652,7 +668,7 @@ impl RegistrationHandle<'_> {
                         },
                         crate::terminal_review::field(
                             "accounts",
-                            registration.scope.accounts().join(", "),
+                            account_labels,
                         )?,
                         crate::terminal_review::field(
                             "tools",

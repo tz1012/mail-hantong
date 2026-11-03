@@ -34,7 +34,7 @@ ALLOWED = {
     "hantong-adapters": {"hantong-domain"},
     "hantong-cli": {"hantong-contracts", "hantong-ipc-client", "hantong-ai", "hantong-platform"},
     "hantong-ai": set(),
-    "hantong-t": set(),
+    "hantong-t": {"hantong-platform"},
     "hantong-mcp": {"hantong-contracts", "hantong-ipc-client", "hantong-platform"},
     "hantong-desktop": {"hantong-contracts"},
     "mail-hantong-gui": {"hantong-contracts", "hantong-ipc-client", "hantong-desktop"},

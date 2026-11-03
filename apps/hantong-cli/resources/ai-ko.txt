@@ -8,6 +8,7 @@ ready=로그인했습니다.
 missing=공식 제공자 CLI를 설치한 뒤 다시 실행하세요. Codex: https://developers.openai.com/codex/cli ; Claude: https://code.claude.com/docs/en/setup
 subscription=Claude 앱 내 대화에는 Console/API 결제가 필요합니다. 이 앱은 claude.ai 구독 OAuth를 제공하지 않습니다. 공식 Claude CLI를 별도로 실행하거나 Console로 로그인하세요.
 failed=AI 작업이 실패했습니다.
+sandbox_unavailable=현재 Codex는 Windows에서 한통의 제한된 파일 접근을 지원하지 않습니다. 메일 도구 등록은 보존했으며, 파일 접근 범위를 넓히지 않고 대화를 중단했습니다.
 login=먼저 이 제공자에 로그인하세요.
 human=대화형 터미널이 필요합니다. 스크립트에서는 로그인 후 chat PROVIDER --prompt 내용을 사용하세요.
 help_header=AI 대화 명령어:

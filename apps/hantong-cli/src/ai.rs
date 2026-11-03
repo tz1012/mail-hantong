@@ -117,6 +117,7 @@ fn failure(e: AiError, ko: bool, json_mode: bool) -> i32 {
         AiError::ProviderMissing
         | AiError::SubscriptionUnsupported
         | AiError::Unsupported
+        | AiError::SandboxUnavailable
         | AiError::AgentUnavailable => ErrorCode::CapabilityUnsupported,
         AiError::LoginRequired => ErrorCode::AuthRequired,
         AiError::Timeout => ErrorCode::Offline,
@@ -131,6 +132,7 @@ fn failure(e: AiError, ko: bool, json_mode: bool) -> i32 {
     } else {
         let key = match e {
             AiError::ProviderMissing => "missing",
+            AiError::SandboxUnavailable => "sandbox_unavailable",
             AiError::SubscriptionUnsupported => "subscription",
             AiError::LoginRequired => "login",
             AiError::InvalidInput => "usage",

@@ -8,6 +8,7 @@ ready=Signed in.
 missing=Install the official provider CLI, then retry. Codex: https://developers.openai.com/codex/cli ; Claude: https://code.claude.com/docs/en/setup
 subscription=Claude inline chat requires Console/API billing. Consumer claude.ai subscription OAuth is not offered by this application. Run the official Claude CLI separately or sign in with Console.
 failed=The AI operation failed.
+sandbox_unavailable=This Codex runtime cannot enforce HanTong's restricted file access on Windows. Mail registration is preserved. Chat is unavailable; no broader file access was enabled.
 login=Sign in to this provider first.
 human=An interactive terminal is required. For scripts, use chat PROVIDER --prompt TEXT after signing in.
 help_header=AI chat commands:

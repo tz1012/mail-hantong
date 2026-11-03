@@ -298,7 +298,9 @@ fn select_existing(
     accounts: &[AccountChoice],
     io: &mut impl Io,
     effects: &mut impl Effects,
+    update: Option<&str>,
 ) -> Result<(), ErrorCode> {
+    let mut showed_ready_header = false;
     loop {
         for (index, account) in accounts.iter().enumerate() {
             io.write(&format!(
@@ -307,6 +309,10 @@ fn select_existing(
                 index + 1,
                 account.label
             ))?;
+        }
+        if !showed_ready_header {
+            super::startup::write_ready_header(io, lang, update)?;
+            showed_ready_header = true;
         }
         say(io, lang, "add_or_exit")?;
         match choose(
@@ -351,7 +357,7 @@ fn select_existing(
     }
 }
 
-pub(super) fn run(lang: Lang) -> Result<(), ErrorCode> {
+pub(super) fn run(lang: Lang, update_fetch: super::startup::UpdateFetch) -> Result<(), ErrorCode> {
     let accounts = match hantong_ipc_client::accounts::list_default_accounts(false) {
         Ok(response) => response
             .items()
@@ -372,20 +378,38 @@ pub(super) fn run(lang: Lang) -> Result<(), ErrorCode> {
     };
     let mut io = Stdio::new();
     let mut effects = RealEffects;
-    run_flow(lang, &accounts, &mut io, &mut effects)
+    run_flow_with_update(
+        lang,
+        &accounts,
+        &mut io,
+        &mut effects,
+        update_fetch.finish(),
+    )
 }
 
+#[cfg(test)]
 pub(super) fn run_flow(
     lang: Lang,
     accounts: &[AccountChoice],
     io: &mut impl Io,
     effects: &mut impl Effects,
 ) -> Result<(), ErrorCode> {
+    run_flow_with_update(lang, accounts, io, effects, None)
+}
+
+fn run_flow_with_update(
+    lang: Lang,
+    accounts: &[AccountChoice],
+    io: &mut impl Io,
+    effects: &mut impl Effects,
+    update: Option<String>,
+) -> Result<(), ErrorCode> {
     say(io, lang, "title")?;
     if accounts.is_empty() {
+        super::startup::write_ready_header(io, lang, update.as_deref())?;
         return connect_prompt(lang, io, effects);
     }
-    select_existing(lang, accounts, io, effects)
+    select_existing(lang, accounts, io, effects, update.as_deref())
 }
 
 #[cfg(test)]
@@ -464,6 +488,44 @@ mod tests {
             label: "person@example.test".into(),
             provider: "gmail".into(),
         }
+    }
+
+    #[test]
+    fn cli16_ready_accounts_version_and_update_notice_precede_prompt() {
+        let mut io = TestIo::new(&["0"]);
+        let mut effects = TestEffects {
+            connected: Ok("unused".into()),
+            inbox_calls: 0,
+            enable_send_calls: 0,
+            compose_calls: 0,
+            connect_calls: 0,
+            continue_calls: 0,
+            profiles: Vec::new(),
+        };
+        run_flow_with_update(
+            Lang::En,
+            &[account()],
+            &mut io,
+            &mut effects,
+            Some("0.1.0-beta.999999".into()),
+        )
+        .unwrap();
+        let account = io.output.find("person@example.test").unwrap();
+        let version = io
+            .output
+            .find(&format!(
+                "HanTong {}",
+                super::super::startup::release_version()
+            ))
+            .unwrap();
+        let notice = io.output.find("0.1.0-beta.999999").unwrap();
+        let update = io.output.find("update hantong").unwrap();
+        let prompt = io.output.find(resource(Lang::En, "add_or_exit")).unwrap();
+        assert!(account < version && version < notice && notice < update && update < prompt);
+        assert_eq!(
+            effects.connect_calls + effects.inbox_calls + effects.compose_calls,
+            0
+        );
     }
 
     #[test]

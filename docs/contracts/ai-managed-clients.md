@@ -9,6 +9,20 @@
 
 Draft; human security review required. AI-07, CLI-16, SEC-08.
 
+## Current Windows execution limitation
+
+This contract describes the managed protocol and tool boundary; it does not
+claim that a provider can execute on every host. In the beta17 candidate,
+Codex 0.163.0 named profiles on Windows can reject the required effective
+root-read/temp-read capability even when an elevated backend is already
+configured. HanTong fails closed with localized `CAPABILITY_UNSUPPORTED`,
+preserves the existing registration, checks the exact active permission
+profile, and does not edit UAC/configuration or fall back to a broader legacy
+profile. The on-request enum and namespace tool protocol are implemented, but
+no real Codex model turn or AI mail exchange was performed. A read-only status
+check is not model-turn evidence. Provider authentication and inference remain
+separate environment gates.
+
 AI is initiated only by explicit freeform chat/login commands. Built-in mail
 tools are not attached until the Core-owned provider/account feature setup has
 completed; after that setup, supported tool definitions are discovered and

@@ -32,7 +32,14 @@ impl AuthStage {
     }
 }
 fn diagnostic_step<T>(stage: AuthStage, result: Result<T, ErrorCode>) -> Result<T, ErrorCode> {
-    result.inspect_err(|_| eprintln!("{}", stage.failure_line()))
+    result.inspect_err(|error| {
+        if !matches!(
+            (stage, error),
+            (AuthStage::ProfileLoad, ErrorCode::ClientNotRegistered)
+        ) {
+            eprintln!("{}", stage.failure_line());
+        }
+    })
 }
 
 /// One mutually authenticated connection. The pinned file/ancestor handles stay

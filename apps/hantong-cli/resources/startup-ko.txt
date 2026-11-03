@@ -1,0 +1,4 @@
+ready=준비되었습니다.
+preparing=준비 중
+update_available=새 버전이 있습니다: {version}
+update_command=업데이트하려면 `update hantong`을 실행하세요.

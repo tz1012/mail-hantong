@@ -55,6 +55,7 @@ pub enum AiError {
     Unsupported,
     AgentUnavailable,
     HumanStepRequired,
+    SandboxUnavailable,
 }
 impl AiError {
     pub fn code(self) -> &'static str {
@@ -73,6 +74,7 @@ impl AiError {
             Self::Unsupported => "AI_SETTING_UNSUPPORTED",
             Self::AgentUnavailable => "AI_AGENT_NOT_REGISTERED_OR_CONSENT_MISSING",
             Self::HumanStepRequired => "HUMAN_STEP_REQUIRED",
+            Self::SandboxUnavailable => "CAPABILITY_UNSUPPORTED",
         }
     }
 }
@@ -108,6 +110,16 @@ fn resolve(p: Provider) -> Result<PathBuf, AiError> {
         }
     }
     Err(AiError::ProviderMissing)
+}
+fn validate_codex_permission_profile(result: &Value) -> Result<(), AiError> {
+    if result
+        .pointer("/activePermissionProfile/id")
+        .and_then(Value::as_str)
+        != Some("hantong_mail_temp")
+    {
+        return Err(AiError::SandboxUnavailable);
+    }
+    Ok(())
 }
 struct Directory(PathBuf);
 impl Directory {
@@ -617,15 +629,37 @@ impl Session {
         }
         let mut p = codex()?;
         let cwd = p._cwd.0.to_str().ok_or(AiError::Io)?;
-        let mut params = json!({"cwd":cwd,"ephemeral":true,"approvalPolicy":"onRequest","sandbox":"readOnly","serviceTier":"default","config":{"features":{"shell_tool":false},"mcp_servers":{},"plugins":{},"apps":{"_default":{"enabled":false}},"web_search":"disabled"}});
+        let mut params = json!({"cwd":cwd,"ephemeral":true,"approvalPolicy":"on-request","permissions":"hantong_mail_temp","runtimeWorkspaceRoots":[cwd],"serviceTier":"default","config":{"default_permissions":"hantong_mail_temp","permissions":{"hantong_mail_temp":{"filesystem":{":root":"deny",(cwd):"read"},"network":{"enabled":false}}},"features":{"shell_tool":false},"mcp_servers":{},"plugins":{},"apps":{"_default":{"enabled":false}},"web_search":"disabled"}});
         if let Some(model) = &self.preferences.model {
             params["model"] = json!(model);
         }
         if let Some(agent) = &self.agent {
-            params["dynamicTools"] = json!(agent.tools);
+            let tools: Vec<Value> = agent
+                .tools
+                .iter()
+                .map(|tool| {
+                    let mut function = tool.clone();
+                    function
+                        .as_object_mut()
+                        .expect("validated function tool")
+                        .remove("namespace");
+                    function["type"] = json!("function");
+                    function
+                })
+                .collect();
+            params["dynamicTools"] = json!([{"type":"namespace","name":"hantong","description":"Authorized HanTong mail tools","tools":tools}]);
         }
         p.send(&json!({"method":"thread/start","id":4,"params":params}))?;
-        let result = p.wait_result(4, Instant::now() + Duration::from_secs(30))?;
+        let result = p
+            .wait_result(4, Instant::now() + Duration::from_secs(30))
+            .map_err(|error| {
+                if error == AiError::ProviderFailed {
+                    AiError::SandboxUnavailable
+                } else {
+                    error
+                }
+            })?;
+        validate_codex_permission_profile(&result)?;
         let id = result["thread"]["id"]
             .as_str()
             .filter(|s| !s.is_empty() && s.len() <= 256)
@@ -644,7 +678,7 @@ impl Session {
                 let thread_id = self.thread_id.as_ref().ok_or(AiError::Protocol)?;
                 let request = self.next;
                 self.next += 1;
-                let mut params = json!({"threadId":thread_id,"input":[{"type":"text","text":prompt}],"approvalPolicy":"onRequest","serviceTier":if self.preferences.fast{"priority"}else{"default"},"sandboxPolicy":{"type":"readOnly","access":{"type":"restricted","includePlatformDefaults":false,"readableRoots":[p._cwd.0]}}});
+                let mut params = json!({"threadId":thread_id,"input":[{"type":"text","text":prompt}],"approvalPolicy":"on-request","serviceTier":if self.preferences.fast{"priority"}else{"default"},"permissions":"hantong_mail_temp","runtimeWorkspaceRoots":[p._cwd.0]});
                 if let Some(model) = &self.preferences.model {
                     params["model"] = json!(model);
                 }
@@ -816,6 +850,24 @@ pub fn terminal_text(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn ai07_codex_rejects_missing_or_different_permission_profile_without_fallback() {
+        for result in [
+            json!({}),
+            json!({"activePermissionProfile":{"id":":read-only"}}),
+        ] {
+            assert_eq!(
+                validate_codex_permission_profile(&result),
+                Err(AiError::SandboxUnavailable)
+            );
+        }
+        assert_eq!(
+            validate_codex_permission_profile(
+                &json!({"activePermissionProfile":{"id":"hantong_mail_temp"}})
+            ),
+            Ok(())
+        );
+    }
     #[test]
     fn ai07_claude_agent_requires_exact_connected_runtime_mcp_server() {
         let mut good = fake("claude_models");

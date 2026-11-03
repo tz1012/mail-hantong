@@ -1,6 +1,6 @@
-# mail-hantong CLI — Windows beta.16
+# mail-hantong CLI — Windows beta.17 candidate
 
-beta.16 keeps the Windows PowerShell update path, newest-compatible release
+beta.17 keeps the Windows PowerShell update path, newest-compatible release
 selection and automatic downgrade protection. New accounts use the same read,
 body, compose and individually confirmed send flow as existing accounts. Google
 consent is followed by exact scope selection in the same terminal. Generic
@@ -17,7 +17,7 @@ and stable error code. Do not send credentials, database files or mail content.
 
 The command is `hantong`. English is the default; use `--lang ko` for Korean. The companion `mail-hantong-core` process handles encrypted local storage, mail operations and policy. The graphical mail application is not included in the CLI package.
 
-**Release: 0.1.0-beta.16.** The [Korean website guide](https://tz1012.github.io/mail-hantong/) covers installation, mail and AI feature switching. Release downloads include checksums and build metadata. The preceding baseline passed 1,906 full-check test executions; this release uses affected-package regression checks and does not claim that old count as a new full-suite result. Store/Core IMAP Trash, migration, SMTP endpoint, CLI setup and terminal-flow checks pass. Real Daum IMAP and SMTP authentication completed. One synthetic message was sent through the immutable same-terminal preview and its sent status was verified against exactly one matching Gmail message. The Daum IMAP catalog contained 17 mailboxes; two recent pages completed, repeated refresh succeeded, and body reads were verified on both runs. Human security review, clean Windows VM testing and Google publisher verification remain separate open gates. Real AI login, paid inference and real Trash movement were not tested. This version migrates local storage to schema 26; do not run an older core against migrated data. macOS mail operations are not available yet.
+**Candidate: 0.1.0-beta.17 (not published).** The [Korean website guide](https://tz1012.github.io/mail-hantong/) covers installation, mail and AI feature switching. Release downloads include checksums and build metadata. The preceding baseline passed 1,906 full-check test executions; this candidate uses affected-package regression checks and does not claim that old count as a new full-suite result. Earlier affected-package evidence covers Store/Core IMAP Trash, migration, SMTP endpoint, CLI setup and terminal-flow behavior. Real Daum IMAP and SMTP authentication completed in the preceding candidate flow. One synthetic message was sent through the immutable same-terminal preview and its sent status was verified against exactly one matching Gmail message. The Daum IMAP catalog contained 17 mailboxes; two recent pages completed, repeated refresh succeeded, and body reads were verified on both runs. Human security review, clean Windows VM testing and Google publisher verification remain separate open gates. Real AI login, paid inference and real Trash movement were not tested. This candidate migrates local storage to schema 26; do not run an older core against migrated data. macOS mail operations are not available yet. Final console and package verification remain pending.
 
 ## What works in this preview
 
@@ -31,7 +31,7 @@ The current beta includes guided installation/startup, Google account selection 
 | Bounded UID metadata collection, reconciliation and recovery | General attachment download and rich HTML display |
 | Local metadata lookup, bounded text body reading and immutable drafts | Scheduled sending, contacts, tag editing and rules |
 | SMTP setup and individually confirmed sending | Unattended sending or automatic resend |
-| Managed Codex / Claude Console AI sessions and MCP mail tools | Claude subscription OAuth in third-party products |
+| Managed AI protocol/tool integration and MCP mail tools (provider execution environment required) | Codex chat on the current Windows named-profile backend; Claude subscription OAuth in third-party products |
 | Core status, diagnostics and stable error/exit codes | Complete background mailbox synchronization |
 
 IMAP/SMTP and advanced Google setup use hidden credential input in the same console. Passwords are never accepted through command arguments or JSON. Core validates the complete pending request before applying the selected operation. Interactive steps require terminal input and output; `--no-input`, redirected output and JSON do not confirm an operation. Terminal confirmation expresses intent and does not provide Windows Hello human-presence verification.
@@ -65,6 +65,43 @@ The `hantong-t` view keeps mailbox actions in the terminal:
 | `h` | Go back |
 | `r` | Refresh |
 | `q` | Quit |
+
+`hantong` and `hantong-t` are separate terminal clients over the same Core,
+account store, policy checks and provider operations. `hantong` remains the
+guided command-style CLI for setup and explicit workflows. `hantong-t` is the
+full-screen communications-style terminal client: it keeps accounts, folders,
+messages and the body in fixed panes and supports keyboard-first navigation
+with mouse selection. Press `u` to combine cached Inbox pages from every ready
+account into one list with account tags. Press `v` to expand the focused body.
+The package shares the build and runtime safety boundary; the presentation and
+interaction loop are separate.
+
+Start the full-screen client with:
+
+```powershell
+hantong-t [--lang en|ko] [--account ACCOUNT_ID] [--theme blue|green|amber|mono|bbs8|bbs16] [--demo] [--plain]
+```
+
+Blue is the default communications-style theme. `F` cycles blue, green, amber,
+mono, bbs8 and bbs16 for the current run; the choice is not persisted yet.
+The bbs8 and bbs16 palettes provide the ANSI eight-color and sixteen-color
+communications-terminal styles. Arrow keys and
+`j`/`k` move, Enter opens, Tab changes pane, Esc goes back, PageUp/PageDown
+scroll the body, and `?` opens help. A mouse click selects, a double-click
+opens, and the wheel scrolls. `c` enters compose and `t` starts the one-message
+Trash review. `:` restores the cooked console, accepts an AI or login command,
+and returns to the full-screen client afterward. `--demo` loads only synthetic
+data and disables account effects. `--plain` selects the compatibility text
+view. Account aliases can be changed from the terminal view and persist as
+display-only labels; they do not alter From/authentication, account scope or
+provider data. Setup, compose, AI/login and Trash review continue through the
+same Core and terminal confirmation path.
+
+On wide windows, the body receives about 60% of the remaining width after the
+navigation area. On a narrow window, the list and body stack. Startup shows a
+short preparation animation while the existing startup work runs, then returns
+to the normal accounts/version/update notice prompt. The update notice is
+informational; startup never installs an update automatically.
 
 Setup, compose and Trash requests use the Core-bound preview and terminal
 review before the final choice. IMAP Trash is available only when the server
@@ -238,6 +275,16 @@ hantong ai chat claude
 
 Provider tools manage browser login and credentials. mail-hantong does not read their token files. Claude connects through Console/API billing; third-party use of a Claude subscription login is not supported. Provider authentication and paid inference were not exercised in development tests.
 
+The beta17 candidate does not claim that `hantong ai chat codex` is usable on
+the current Windows provider environment. Codex 0.163.0 named profiles can
+reject the required effective root-read/temp-read capability even when an
+elevated backend is already configured. HanTong returns localized
+`CAPABILITY_UNSUPPORTED`, preserves the existing registration, checks the
+exact active permission profile, and does not edit UAC/configuration or fall
+back to a broader legacy profile. The on-request enum and namespace tool
+protocol are implemented, but no real model turn or AI mail exchange was
+performed. A read-only status check was not treated as model-turn evidence.
+
 Inside an interactive AI session:
 
 | Command | Behavior |
@@ -253,7 +300,7 @@ Inside an interactive AI session:
 
 Typed arguments such as `/provider claude`, `/model MODEL_ID`, `/mode high` also work. Unsupported model settings return an error and preserve the previous state. Redirected input, JSON and `--no-input` do not open selection menus. Fast mode is not a promise of latency or lower cost.
 
-Built-in AI chat automatically connects mail tools after its first provider-specific setup. The same terminal shows all ready accounts, permitted tools and external mail-data transfer before you choose Connect or Cancel. Codex and Claude use separate registrations and consent. No manual registration command, request-ID copying or required `/agent on` is needed for this built-in flow. Startup does not upload the inbox; scoped tool results can be sent to the selected AI provider when used. `/agent off` disconnects tools and clears session context. Existing registrations are not silently expanded when new accounts are added.
+Built-in AI chat automatically connects mail tools after its first provider-specific setup when the provider execution environment is available. The same terminal shows all ready accounts, permitted tools and external mail-data transfer before you choose Connect or Cancel. Codex and Claude use separate registrations and consent. No manual registration command, request-ID copying or required `/agent on` is needed for this built-in flow. Startup does not upload the inbox; scoped tool results can be sent to the selected AI provider when used. `/agent off` disconnects tools and clears session context. Existing registrations are not silently expanded when new accounts are added.
 
 For an independent external MCP host, registration remains a separate workflow:
 
@@ -308,18 +355,34 @@ The package tool builds the terminal distribution and core, records versions and
 
 `hantong`은 터미널에서 사용하는 CLI입니다. `--lang ko`로 한국어를 선택하고 자동화에는 `--json`과 종료 코드를 사용합니다.
 
-현재 beta.16은 `/help`, 내장 AI 메일 도구 자동 연결, Gmail과 일반 IMAP 계정의 메일 조회·본문 읽기·작성·개별 발송 확인, 한 통씩 휴지통 이동을 제공합니다. AI 최초 이용에는 같은 터미널에서 제공자별 계정·도구·외부 전송 범위를 확인하며, 설정 후 수동 MCP 등록이나 필수 `/agent on` 없이 연결합니다. 발송·휴지통 이동은 매번 같은 터미널에서 최종 확인합니다. Gmail 휴지통 이동에는 Google Modify 권한이 필요하며 영구·대량 삭제는 지원하지 않습니다. 업데이트만으로 권한을 부여하지 않으며 과거 중단 요청의 범위도 바꾸지 않습니다. 일반 첨부 다운로드·예약·주소록·규칙 자동화와 Mac 제품은 후속입니다.
+현재 beta.17 후보는 `/help`, 내장 AI 메일 도구 자동 연결, Gmail과 일반 IMAP 계정의 메일 조회·본문 읽기·작성·개별 발송 확인, 한 통씩 휴지통 이동을 제공합니다. AI 최초 이용에는 같은 터미널에서 제공자별 계정·도구·외부 전송 범위를 확인하며, 설정 후 수동 MCP 등록이나 필수 `/agent on` 없이 연결합니다. 발송·휴지통 이동은 매번 같은 터미널에서 최종 확인합니다. Gmail 휴지통 이동에는 Google Modify 권한이 필요하며 영구·대량 삭제는 지원하지 않습니다. 업데이트만으로 권한을 부여하지 않으며 과거 중단 요청의 범위도 바꾸지 않습니다. 일반 첨부 다운로드·예약·주소록·규칙 자동화와 Mac 제품은 후속입니다.
 
-위 PowerShell 한 줄로 설치·업데이트한 뒤 `hantong --lang ko init`을 실행하세요. 코어는 필요할 때 자동으로 시작합니다. 계정 연결·기능 선택·숨김 입력·메일 전체 검토·보내기/취소는 같은 터미널에서 진행하며, Google 로그인·동의만 브라우저를 사용합니다. 계정 작업 메뉴 4번은 작성·보내기 활성화, 5번은 메일 작성입니다. AI는 별도 `hantong ai login codex`, `hantong ai chat codex` 명령으로 시작하고 `/provider`, `/model`, `/mode`, `/fast`, `/agent`로 지원 기능을 전환합니다. 자세한 순서는 [홈페이지](https://tz1012.github.io/mail-hantong/)에 있습니다.
+위 PowerShell 한 줄로 설치·업데이트한 뒤 `hantong --lang ko init`을 실행하세요. 코어는 필요할 때 자동으로 시작합니다. 계정 연결·기능 선택·숨김 입력·메일 전체 검토·보내기/취소는 같은 터미널에서 진행하며, Google 로그인·동의만 브라우저를 사용합니다. 계정 작업 메뉴 4번은 작성·보내기 활성화, 5번은 메일 작성입니다. AI는 별도 `hantong ai login codex`, `hantong ai chat codex` 명령으로 시작하고 `/provider`, `/model`, `/mode`, `/fast`, `/agent`로 지원 기능을 전환합니다. 현재 beta17 후보는 Windows Codex 0.163.0 named profile의 유효 root-read/temp-read 기능 거부를 감지하면 기존 등록을 보존한 채 현지화된 `CAPABILITY_UNSUPPORTED`로 종료합니다. UAC·설정 변경이나 넓은 레거시 프로필 대체는 하지 않으며, 실제 모델 turn·AI 메일 교환은 수행하지 않았습니다. 자세한 순서는 [홈페이지](https://tz1012.github.io/mail-hantong/)에 있습니다.
 
 실제 Gmail 합성 송수신·본문/첨부 일치와 설치·업데이트를 확인했고, 실제 Daum IMAP·SMTP 인증과 합성 메일 발송 상태도 확인했습니다. Daum IMAP 카탈로그에서 사서함 17개를 조회했고, 최근 2페이지와 반복 새로고침을 두 번 모두 완료했으며 본문 읽기도 두 실행에서 검증했습니다. 새 Windows 설치 환경·실제 AI 로그인/유료 추론 검증과 사람 보안 검토는 남아 있습니다. 실제 휴지통 이동은 수행하지 않았습니다. 진행 상황은 `docs/latest/PROGRESS.md`에서 관리합니다.
 
 일반 IMAP/SMTP 계정은 첫 메뉴에서 `3`, 기존 계정 메뉴에서는 `imap`, 연결
 후 작업 메뉴에서는 `6`을 선택합니다. SMTP 로그인 주소와 별도의 발신 주소를
 입력할 수 있으며, 비밀번호는 같은 터미널의 보호 입력에서 받습니다.
-`hantong-t`에서는 `j`/`k`로 이동하고 Enter로 열며 `c`로 작성하고 `t`로 한
-통을 휴지통으로 이동합니다. 서버가 `MOVE`와 정확히 하나의 선택 가능한
-`\Trash` 사서함을 제공해야 하며, 영구 삭제로 대체하지 않습니다.
+`hantong`과 `hantong-t`는 같은 Core·저장소·정책·공급자 작업을 공유하는
+별도 터미널 클라이언트입니다. `hantong`은 설정과 명시적 작업을 안내하는
+명령형 CLI이고, `hantong-t`는 계정·폴더·목록·본문을 고정 영역에 표시하는
+모뎀 통신풍 전체 화면 터미널입니다. `hantong-t`에서는 방향키와 `j`/`k`로
+이동하고 Enter로 열며 Tab으로 영역을 바꾸고 Esc로 돌아갑니다. 마우스
+클릭은 선택, 더블클릭은 열기, 휠은 스크롤입니다. `c`로 작성하고 `t`로
+한 통을 휴지통으로 이동합니다. `--theme blue|green|amber|mono|bbs8|bbs16`로
+시작 테마를 고르고 `F`로 실행 중 전환할 수 있으며, 아직 저장하지 않습니다.
+`bbs8`과 `bbs16`은 ANSI 8색·16색 통신 터미널 팔레트입니다. `u`는 준비된
+모든 계정의 캐시 받은편지함을 계정 태그와 함께 합쳐 표시하고, `v`는
+현재 본문을 넓혀 표시합니다. 계정 별칭은 표시용으로만 저장되며 발신자·
+인증·계정 범위·공급자 데이터는 바꾸지 않습니다.
+`--demo`는 합성 데이터만 사용하고 계정 작업을 실행하지 않습니다.
+`--plain`은 호환용 텍스트 화면입니다. 서버가 `MOVE`와 정확히 하나의
+선택 가능한 `\Trash` 사서함을 제공해야 하며, 영구 삭제로 대체하지 않습니다.
+넓은 창에서는 남은 공간의 약 60%를 본문에 배정하고, 좁은 창에서는 목록과
+본문을 쌓습니다. 시작 준비 중에는 짧은 캐릭터 애니메이션을 표시한 뒤
+계정·버전·업데이트 알림 안내로 돌아옵니다. 업데이트 알림은 안내일 뿐이며
+시작 시 자동 설치하지 않습니다.
 SMTP 작성의 첨부는 현재 지원하지 않습니다. Google 발송 계정 선택은 최대
 128개로 제한됩니다. Daum의 IMAP/SMTP 주소와 Smart Work 로그인 규칙은 [공식 IMAP/SMTP
 안내](https://cs.daum.net/faq/service/43/category/9234/detail/17988)와

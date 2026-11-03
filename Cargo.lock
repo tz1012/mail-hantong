@@ -454,6 +454,7 @@ name = "hantong-platform"
 version = "0.1.0"
 dependencies = [
  "hantong-contracts",
+ "serde_json",
  "tokio",
  "windows-sys 0.61.2",
 ]
@@ -500,6 +501,7 @@ dependencies = [
 name = "hantong-t"
 version = "0.1.0"
 dependencies = [
+ "hantong-platform",
  "serde_json",
 ]
 

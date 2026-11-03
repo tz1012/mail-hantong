@@ -308,6 +308,50 @@ fn ai09_request_is_pending_only_and_never_enqueues_a_background_job() {
         .unwrap()
         .unwrap();
     assert_eq!(stored.scope.accounts(), ["a"]);
+    let peer =
+        hantong_contracts::auth::PeerContext::new("S-1-5-21-1-2-3-4", "S-1-5-5-1-2").unwrap();
+    let preview = handle
+        .terminal_review_command(
+            hantong_contracts::terminal_review::TerminalReviewCommand::Get(
+                hantong_contracts::terminal_review::TerminalReviewGet::new(
+                    hantong_contracts::terminal_review::TerminalReviewKind::Registration,
+                    *receipt.request_id(),
+                    None,
+                    [0; 32],
+                )
+                .unwrap(),
+            ),
+            &peer,
+        )
+        .unwrap();
+    let expected = fixture
+        .store()
+        .list_account_summaries(stored.scope.accounts(), false)
+        .unwrap()
+        .items
+        .remove(0);
+    let label = expected
+        .primary_address
+        .or(expected.display_name)
+        .unwrap_or_else(|| "Account 1".into());
+    assert_eq!(
+        preview
+            .fields
+            .iter()
+            .find(|field| field.label == "accounts")
+            .unwrap()
+            .value,
+        label
+    );
+    assert_eq!(
+        fixture
+            .store()
+            .get_registration_request(*receipt.request_id())
+            .unwrap()
+            .unwrap()
+            .scope,
+        stored.scope
+    );
     assert!(matches!(
         handle.command(RegistrationCommand::AiStatus(
             AiProvider::Claude,

@@ -1,0 +1,4 @@
+ready=Ready.
+preparing=Preparing
+update_available=An update is available: {version}
+update_command=Run `update hantong` to update.

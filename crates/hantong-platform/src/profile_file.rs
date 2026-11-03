@@ -201,7 +201,11 @@ mod windows {
             .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
             .open(profiles.join(selected.name()))
             .map_err(open_error)
-            .inspect_err(|_| eprintln!("hantong_profile stage=file_open outcome=failed"))?;
+            .inspect_err(|error| {
+                if *error != ErrorCode::ClientNotRegistered {
+                    eprintln!("hantong_profile stage=file_open outcome=failed");
+                }
+            })?;
         check_type(&file, false)
             .inspect_err(|_| eprintln!("hantong_profile stage=file_type outcome=failed"))?;
         check_security(&file, user.user_sid(), true)

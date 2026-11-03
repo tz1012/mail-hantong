@@ -1,5 +1,10 @@
 #![forbid(unsafe_code)]
 
+#[cfg(windows)]
+mod terminal_app;
+mod terminal_view;
+mod unified;
+
 use serde_json::Value;
 use std::env;
 use std::io::{self, BufRead, Read, Write};
@@ -202,13 +207,18 @@ fn sanitize_single_line(input: &str) -> String {
 }
 
 fn item_label(item: &Value) -> String {
-    if let Some(name) = item
-        .get("name")
-        .or_else(|| item.get("display_name"))
-        .and_then(Value::as_str)
-        .or_else(|| item.get("account_id").and_then(Value::as_str))
+    if let Some(name) = ["primary_address", "address", "name", "display_name"]
+        .iter()
+        .find_map(|key| {
+            item.get(key)
+                .and_then(Value::as_str)
+                .filter(|v| !v.is_empty())
+        })
     {
         return sanitize_single_line(name);
+    }
+    if item.get("account_id").is_some() && item.get("provider").is_some() {
+        return "Account".into();
     }
     let subject = item
         .get("subject")
@@ -310,6 +320,22 @@ fn google_items(mut value: Value) -> Value {
         .cloned()
         .unwrap_or_else(|| Value::Array(vec![]));
     value["items"] = items;
+    value
+}
+
+fn inbox_first(mut value: Value, gmail: bool) -> Value {
+    if let Some(items) = value.get_mut("items").and_then(Value::as_array_mut) {
+        items.sort_by_key(|item| {
+            let inbox = if gmail {
+                item.get("id").and_then(Value::as_str) == Some("INBOX")
+            } else {
+                item.get("wire_hex")
+                    .and_then(Value::as_str)
+                    .is_some_and(|wire| wire.eq_ignore_ascii_case("494e424f58"))
+            };
+            !inbox
+        });
+    }
     value
 }
 
@@ -808,10 +834,27 @@ fn refresh_operation_id(prefix: &str) -> String {
     format!("tui_{prefix}_{millis}")
 }
 
+/// Resolve a displayed one-based number without clamping to another item.
+fn numbered_selection(command: &str, count: usize) -> Result<Option<usize>, ()> {
+    let value = command.trim();
+    if value.is_empty() || !value.bytes().all(|c| c.is_ascii_digit()) {
+        return Ok(None);
+    }
+    let index = value
+        .parse::<usize>()
+        .map_err(|_| ())?
+        .checked_sub(1)
+        .ok_or(())?;
+    if index >= count {
+        return Err(());
+    }
+    Ok(Some(index))
+}
+
 fn print_help(lang: Lang) {
     if lang == Lang::Ko {
         println!(
-            "hantong-t  j/k: 이동  Enter: 열기  c: 작성  t: 휴지통  h: 뒤로  r: 새로고침  q: 종료"
+            "hantong-t  번호: 바로 열기  j/k: 이동  Enter: 열기  c: 작성  t: 휴지통  h: 뒤로  r: 새로고침  q: 종료"
         );
         println!("AI: ai login codex | ai login claude | ai codex | ai claude");
         println!(
@@ -819,7 +862,7 @@ fn print_help(lang: Lang) {
         );
     } else {
         println!(
-            "hantong-t  j/k: move  Enter: open  c: compose  t: trash  h: back  r: refresh  q: quit"
+            "hantong-t  Number: open item  j/k: move  Enter: open  c: compose  t: trash  h: back  r: refresh  q: quit"
         );
         println!("AI: ai login codex | ai login claude | ai codex | ai claude");
         println!(
@@ -842,10 +885,13 @@ fn bounded_command(reader: impl BufRead) -> Option<String> {
     Some(line.trim().to_owned())
 }
 
-fn main() -> io::Result<()> {
+fn line_main() -> io::Result<()> {
     let args: Vec<String> = env::args().collect();
     if args.len() == 2 && args[1] == "--version" {
-        println!("hantong-t {}", env!("CARGO_PKG_VERSION"));
+        println!(
+            "hantong-t {}",
+            option_env!("HANTONG_RELEASE_VERSION").unwrap_or(env!("CARGO_PKG_VERSION"))
+        );
         return Ok(());
     }
     if args.len() == 2 && args[1] == "--help" {
@@ -914,6 +960,11 @@ fn main() -> io::Result<()> {
         };
         let snapshot = match page {
             Ok(value) => {
+                let value = if screen == 1 {
+                    inbox_first(value, gmail)
+                } else {
+                    value
+                };
                 selected = selected.min(rows(&value).len().saturating_sub(1));
                 let title = match (screen, lang) {
                     (0, Lang::En) => "Accounts",
@@ -948,7 +999,27 @@ fn main() -> io::Result<()> {
             selected = 0;
             continue;
         }
-        let Some(command) = read_command() else { break };
+        let Some(mut command) = read_command() else {
+            break;
+        };
+        match numbered_selection(&command, snapshot.as_ref().map_or(0, |v| rows(v).len())) {
+            Ok(Some(index)) => {
+                selected = index;
+                command.clear(); // Use the same account-bound open path as Enter.
+            }
+            Ok(None) => {}
+            Err(()) => {
+                println!(
+                    "{}",
+                    if lang == Lang::Ko {
+                        "목록에 표시된 번호를 입력하세요."
+                    } else {
+                        "Enter a number shown in the list."
+                    }
+                );
+                continue;
+            }
+        }
         match google_login_args(&command) {
             Ok(Some(arguments)) => {
                 let outcome = Command::new(&runner.program)
@@ -1282,9 +1353,89 @@ fn main() -> io::Result<()> {
     Ok(())
 }
 
+fn main() -> io::Result<()> {
+    let args: Vec<String> = env::args().collect();
+    if args
+        .iter()
+        .any(|arg| matches!(arg.as_str(), "--version" | "--plain"))
+    {
+        return line_main();
+    }
+    if args.iter().any(|arg| arg == "--help") {
+        println!(
+            "hantong-t [--lang en|ko] [--account ID] [--theme blue|green|amber|mono|bbs8|bbs16] [--demo] [--plain]"
+        );
+        println!(
+            "Arrows/j/k: navigate  Enter: open  Tab: pane  PgUp/PgDn: body  F: theme  ?: help  q: quit"
+        );
+        println!("Mouse: click selects, double-click opens, wheel scrolls. CLI: hantong --help");
+        return Ok(());
+    }
+    #[cfg(windows)]
+    {
+        terminal_app::run(&args)
+    }
+    #[cfg(not(windows))]
+    {
+        eprintln!(
+            "The full-screen terminal currently requires Windows. Use --plain for the text view."
+        );
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn tui01_numbered_selection_opens_displayed_folder_without_clamping() {
+        assert_eq!(numbered_selection("15", 17), Ok(Some(14)));
+        assert_eq!(numbered_selection(" 1 ", 17), Ok(Some(0)));
+        for input in ["0", "18", "999999999999999999999999999999"] {
+            assert_eq!(numbered_selection(input, 17), Err(()));
+        }
+        assert_eq!(numbered_selection("1", 0), Err(()));
+        for input in ["", "j", "help", "login google", "15x"] {
+            assert_eq!(numbered_selection(input, 17), Ok(None));
+        }
+    }
+    #[test]
+    fn tui01_account_display_prefers_address_and_skips_null_fields() {
+        assert_eq!(
+            item_label(
+                &serde_json::json!({"provider":"gmail","account_id":"opaque_id","primary_address":"reader@example.invalid","display_name":"opaque_id"})
+            ),
+            "reader@example.invalid"
+        );
+        assert_eq!(
+            item_label(
+                &serde_json::json!({"provider":"imap","account_id":"opaque_id","primary_address":null,"display_name":"Work"})
+            ),
+            "Work"
+        );
+        assert_eq!(
+            item_label(&serde_json::json!({"provider":"gmail","account_id":"opaque_id"})),
+            "Account"
+        );
+    }
+    #[test]
+    fn tui01_inbox_is_first_without_reordering_other_folders_or_changing_identity() {
+        for gmail in [true, false] {
+            let inbox = if gmail {
+                serde_json::json!({"id":"INBOX","name":"Inbox"})
+            } else {
+                serde_json::json!({"wire_hex":"494e424f58","encoding":"utf8","name":"Inbox"})
+            };
+            let first = serde_json::json!({"id":"custom","name":"Inbox copy"});
+            let last = serde_json::json!({"id":"sent","name":"Sent"});
+            let result = inbox_first(
+                serde_json::json!({"items":[first,inbox,last],"metadata":{"generation":4}}),
+                gmail,
+            );
+            assert_eq!(rows(&result), &[inbox, first, last]);
+            assert_eq!(result["metadata"]["generation"], 4);
+        }
+    }
     #[test]
     fn tui01_google_login_passes_only_bounded_explicit_arguments_without_shell() {
         let args = google_login_args(

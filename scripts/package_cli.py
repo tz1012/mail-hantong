@@ -392,7 +392,7 @@ def package(root: Path = ROOT, *, version: str = DEFAULT_VERSION, output_dir: Pa
                 output = smoke.stdout.decode("utf-8", "strict")
                 if smoke.stderr or len(smoke.stdout) > 131072 or binary not in output:
                     raise PackageError(f"{binary} {flag} smoke validation failed")
-                expected_version = version if binary == "hantong" else roots[name]["version"]
+                expected_version = version if binary in {"hantong", "hantong-t"} else roots[name]["version"]
                 if flag == "--version" and output.strip() != f"{binary} {expected_version}":
                     raise PackageError(f"{binary} binary version does not match Cargo metadata")
             if executable.read_bytes() != data:

@@ -2,9 +2,36 @@
 
 A multi-account mail hub for Windows, with a shared core service, the `hantong` CLI, MCP access, and an optional GUI. GUI languages are Korean and English; themes are light, dark, and system. The CLI defaults to English and supports Korean.
 
-**Current release: Windows CLI 0.1.0-beta.16.** Start with the [Korean installation and feature guide](https://tz1012.github.io/mail-hantong/). Account setup, feature selection, composing, Trash review and Send/Cancel use the same terminal without a separate HanTong window or Windows Hello. Google OAuth opens its standard provider browser. See the [CLI usage guide](docs/latest/CLI-LAUNCH.md) for mail, AI sessions, MCP tools and remaining limitations.
+**Windows CLI 0.1.0-beta.17.** Start with the [Korean installation and feature guide](https://tz1012.github.io/mail-hantong/). Account setup, feature selection, composing, Trash review and Send/Cancel use the same terminal without a separate HanTong window or Windows Hello. Google OAuth opens its standard provider browser. See the [CLI usage guide](docs/latest/CLI-LAUNCH.md) for mail, AI sessions, MCP tools and remaining limitations.
 
-beta.16 keeps the PowerShell update path, newest-compatible release selection
+The package contains two terminal experiences over the same Core, account store,
+policy checks and provider operations. `hantong` is the guided, command-style
+CLI for setup and explicit workflows. `hantong-t` is a separate full-screen
+terminal client with a fixed account/folder/message/body layout and a
+communications-era terminal theme. They are separate client entry points, not
+two modes of the same screen, but they share the same build package and safety
+boundaries.
+
+Run `hantong-t` for the full-screen view. The default theme is blue; choose
+`--theme green`, `--theme amber`, `--theme mono`, `--theme bbs8` or
+`--theme bbs16` at startup. `F` cycles themes for the current run and does not
+persist a setting yet. Arrows and `j`/`k`
+move, Enter opens, Tab changes pane, Esc goes back, PageUp/PageDown scroll the
+body, and `?` shows help. Mouse clicks select, double-clicks open, and the
+wheel scrolls. `c` opens compose, `t` starts the one-message Trash review, and
+`:` temporarily returns to the same cooked console for AI/login commands before
+returning to the full-screen client. `--demo` uses synthetic data and disables
+account effects; `--plain` keeps the text compatibility view.
+
+The terminal view can combine cached Inbox pages from every ready account into
+one tagged list with `u`. Account aliases are persistent display labels only;
+they do not change From/authentication, account scope, or provider data. `v`
+expands the focused body, and the default layout leaves about 60% of the
+remaining width to the body on wide windows. Startup shows a short preparation
+animation while the existing startup work runs, then returns to the normal
+accounts/version/update notice prompt. It never installs an update by itself.
+
+beta.17 keeps the PowerShell update path, newest-compatible release selection
 and automatic downgrade protection. New accounts can use the same read, body,
 compose and individually confirmed send flow as existing accounts. Google
 account selection requests the required consent and the same terminal confirms
@@ -13,7 +40,7 @@ The selected sending-account scope is bounded at 128 accounts.
 
 ## Generic IMAP/SMTP and Trash
 
-The beta includes ordinary IMAP/SMTP onboarding and one-message Trash moves in
+The candidate includes ordinary IMAP/SMTP onboarding and one-message Trash moves in
 the CLI and `hantong-t` view. Integration checks pass, and a real Daum IMAP
 authentication and SMTP authentication have been completed. One synthetic
 message was sent through the immutable same-terminal preview and its sent
@@ -29,10 +56,15 @@ mode, login and an optional distinct From address. Passwords and other
 credentials are entered through the Core-owned protected input; they do not go
 in command arguments, JSON or ordinary logs.
 
-The companion `hantong-t` terminal view uses `j`/`k` to move, Enter to open an
-account, folder or message, `c` to compose, and `t` to request a one-message
-move to Trash. Setup, compose and Trash requests show the Core-bound preview in
-the same terminal before the final choice. IMAP Trash requires server `MOVE`
+The companion `hantong-t` terminal view uses the communications-style fixed
+screen described above. Its first combined view is the cached Inbox from all
+ready accounts, with an account tag on each row. It uses `j`/`k` to move,
+`u` to reopen that unified Inbox, and `v` to expand the focused body. In the
+plain CLI, numbered messages open with their number; in the full-screen view,
+arrow keys and PageUp/PageDown keep long lists usable. It uses Enter to open an account,
+folder or message, `c` to compose, and `t` to request a one-message move to
+Trash. Setup, compose and Trash requests show the Core-bound preview in the
+same terminal before the final choice. IMAP Trash requires server `MOVE`
 support and exactly one selectable mailbox advertised with the `\Trash`
 special-use role. It never substitutes permanent deletion or a
 `COPY`/`STORE`/`EXPUNGE` fallback. SMTP compose currently omits attachments.
@@ -68,9 +100,19 @@ to add these commands. Installation displays phase progress and percentages.
 Choosing Connect Google account opens the browser directly for account selection
 and Google read/write/send consent; confirm the selected account scope in the terminal.
 
-The beta includes publisher Google Desktop configuration; ordinary users do not configure Google Cloud. The preceding baseline passed 1,906 full-check test executions; the current beta uses affected-package regression checks and does not claim that old count as a new full-suite result. Store/Core IMAP Trash, migration, SMTP endpoint, CLI setup and terminal-flow checks pass. This unsigned beta still needs human security review, clean Windows VM testing and Google publisher verification. Real Trash movement was not performed. Schema 26 migration preserves existing data; do not downgrade after migration. See [Google commands](docs/latest/GOOGLE-MAIL.md) and [PROGRESS.md](docs/latest/PROGRESS.md).
+The candidate includes publisher Google Desktop configuration; ordinary users do not configure Google Cloud. The preceding baseline passed 1,906 full-check test executions; the current candidate uses affected-package regression checks and does not claim that old count as a new full-suite result. Earlier affected-package evidence covers Store/Core IMAP Trash, migration, SMTP endpoint, CLI setup and terminal-flow behavior. This unsigned candidate still needs final package verification, human security review, clean Windows VM testing and Google publisher verification. Real Trash movement was not performed. Schema 26 migration preserves existing data; do not downgrade after migration. See [Google commands](docs/latest/GOOGLE-MAIL.md) and [PROGRESS.md](docs/latest/PROGRESS.md).
 
-Optional AI sessions use separately installed official Codex CLI or Claude Code: `hantong ai login codex` then `hantong ai chat codex` (use `claude` for Console/API billing). `/help` lists available commands and descriptions. Built-in AI automatically connects provider-specific mail tools after the first same-terminal account and external-transfer setup; manual MCP registration and `/agent on` are not required. `/provider`, `/model`, `/mode`, `/fast on|off` and `/agent on|off` switch supported features. Sending and single-message Gmail trash moves require final terminal confirmation; trash also requires Google Modify permission. Permanent and batch deletion are unsupported. External MCP grants remain separate. Real AI login, paid inference and real trash operations were not exercised. Follow the [AI and agent instructions](docs/latest/CLI-LAUNCH.md#ai-sessions-and-agent-tools).
+Optional AI sessions use separately installed official Codex CLI or Claude Code: `hantong ai login codex` then `hantong ai chat codex` (use `claude` for Console/API billing). `/help` lists available commands and descriptions. Built-in AI automatically connects provider-specific mail tools after the first same-terminal account and external-transfer setup; manual MCP registration and `/agent on` are not required. `/provider`, `/model`, `/mode`, `/fast on|off` and `/agent on|off` switch supported features. Sending and single-message Gmail trash moves require final terminal confirmation; trash also requires Google Modify permission. Permanent and batch deletion are unsupported. External MCP grants remain separate.
+
+The beta17 candidate does not claim that a Codex model turn works on every
+Windows setup. With Codex 0.163.0, a named profile can reject the required
+effective root-read/temp-read capability even when an elevated backend is
+already configured. HanTong fails closed with localized `CAPABILITY_UNSUPPORTED`,
+preserves the existing registration, checks the exact active permission
+profile, and makes no UAC/configuration edit or broad legacy fallback. The
+on-request enum and namespace tool protocol are implemented, but no real
+Codex model turn or AI mail exchange was performed. Claude authentication and
+inference were not exercised either. Follow the [AI and agent instructions](docs/latest/CLI-LAUNCH.md#ai-sessions-and-agent-tools).
 
 Windows GUI는 `cargo run -p mail-hantong-gui -- --lang ko --theme system`으로 실행합니다. 영어는 `--lang en`, 테마는 `light`, `dark`, `system`입니다. GUI는 CLI와 별도 등록을 사용하며, 사용자가 연결을 요청하고 보호된 확인 창에서 검토한 계정의 저장된 폴더·메일 메타데이터만 읽습니다. 선택한 폴더에서 전체·읽지 않음·즐겨찾기로 목록을 좁히고 다시 조회할 수 있습니다. 현대적인 메일 화면의 구성과 참조 기준은 [디자인 가이드](docs/latest/DESIGN.md)에 기록합니다. 표시 설정 저장·본문·첨부·작성·발송은 아직 개발 중입니다. 최신 검증 여부는 [진행 기록](docs/latest/PROGRESS.md)을 확인하세요.
 

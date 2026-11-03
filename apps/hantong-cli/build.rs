@@ -24,6 +24,11 @@ fn main() {
         keys(Path::new("resources/onboarding-ko.txt")),
         "English and Korean onboarding resource keys must match"
     );
+    assert_eq!(
+        keys(Path::new("resources/startup-en.txt")),
+        keys(Path::new("resources/startup-ko.txt")),
+        "English and Korean startup resource keys must match"
+    );
     for key in [
         "usage",
         "commands",
@@ -90,5 +95,7 @@ fn main() {
     println!("cargo:rerun-if-changed=resources/ko.txt");
     println!("cargo:rerun-if-changed=resources/onboarding-en.txt");
     println!("cargo:rerun-if-changed=resources/onboarding-ko.txt");
+    println!("cargo:rerun-if-changed=resources/startup-en.txt");
+    println!("cargo:rerun-if-changed=resources/startup-ko.txt");
     println!("cargo:rerun-if-env-changed=HANTONG_RELEASE_VERSION");
 }

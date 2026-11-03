@@ -99,7 +99,7 @@ class PackageCliTests(unittest.TestCase):
             binary = Path(command[0]).stem
             self.assertEqual(kwargs["stdin"], package.subprocess.DEVNULL)
             if command[1] == "--version":
-                version = kwargs["env"].get("HANTONG_RELEASE_VERSION", "0.1.0") if binary == "hantong" else "0.1.0"
+                version = kwargs["env"].get("HANTONG_RELEASE_VERSION", "0.1.0") if binary in {"hantong", "hantong-t"} else "0.1.0"
                 output = f"{binary} {'9.0.0' if self.bad_version else version}\n".encode()
             else:
                 output = b"" if self.bad_help else f"{binary}\nUsage: --help\n".encode()
