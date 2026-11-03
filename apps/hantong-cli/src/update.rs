@@ -37,6 +37,10 @@ pub(super) fn run(
     {
         Some(match run_installed_updater() {
             Ok(()) => 0,
+            Err(ErrorCode::InternalError) => {
+                eprintln!("INTERNAL_ERROR: {}", super::resource(lang, "update_failed"));
+                ErrorCode::InternalError.exit_code()
+            }
             Err(code) => super::emit_error(code, lang, false),
         })
     }
@@ -59,11 +63,11 @@ fn run_installed_updater() -> Result<(), ErrorCode> {
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit())
         .status()
-        .map_err(|_| ErrorCode::CoreUnavailable)?;
+        .map_err(|_| ErrorCode::InternalError)?;
     if status.success() {
         Ok(())
     } else {
-        Err(ErrorCode::CoreUnavailable)
+        Err(ErrorCode::InternalError)
     }
 }
 

@@ -1826,3 +1826,17 @@ GitHub Actions [관리자 Windows 시험 41575717730](https://github.com/tz1012/
 현재 PC의 설치본을 beta.7에서 beta.8로 갱신하고 manifest가 검증한 새 Core가 실행 중임을 확인했다(PID 64632). 기존 버전·계정 DB·보호 키를 삭제하지 않았고 명시적인 계정/메일 작업이나 실제 Google 동의는 수행하지 않았다. 근거 target/beta8-current-install-result.json. 원본 HEAD 2852a31d0d8383d3a593a6479c20bb798b0d798e/index는 보존한다.
 
 일반 메일 확장 공통 worktree는 모든 workspace/all-targets Cargo check를 통과했다. 이후 실제 Store 회귀 시험에서 관리 scope hash11이 잘못된 decision_channel로 저장되는 결함을 발견해 terminal_cli로 수정하고 재검증 중이다. 컴파일 통과와 기능 완료를 동일하게 기록하지 않는다. [사람 보안 검토 필요].
+
+### 업데이트 실제 오류 확인·재현 검사 추가 진행
+
+사용자가 띄워 둔 Windows Terminal 화면에서 `update hantong` 실행 후 package-common.ps1의 Get-ChildPath/Join-Path에 기준 경로가 전달되지 않는 오류와 뒤이은 CORE_UNAVAILABLE 출력을 확인했다. 화면에는 기존 계정 정보가 있어 캡처는 target 아래에만 두고 공개하지 않는다. 기존 직접 설치/도움말 스모크와 bootstrap 내부 함수→ScriptBlock→공통 함수 호출의 실제 업데이트 경로를 구분해 합성 패키지로 재현 중이다. 실제 계정·메일·키 내용은 열지 않았다.
+
+CLI의 PowerShell 실행/종료 실패는 기존 INTERNAL_ERROR 코드와 한국어·영어 업데이트 전용 안내로 구분하도록 수정했다. 설치본 manifest/소유권 검증 오류 경계는 유지했다. 설치 경로 전달 결함과 회귀 검사는 검증 중이며 아직 수정 완료·배포 완료로 표시하지 않는다. 기존 beta.8과 공통 메일 schema26 확장은 분리하며 원본 HEAD/index·미커밋·새 파일을 보존한다.
+
+Assert-FileRecords가 주변 `$script:InstallBase`에 의존하던 경계를 명시적 Base 인자로 변경했다. 설치기의 두 호출은 `$root`, Read-InstallState는 이미 검증 중인 `$Root`를 전달한다. 중첩 설치/재실행과 ambient 변수가 없는 상태 조회 회귀 시험을 추가했다. Windows 설치 시험 19개 통과를 확인했다. 실제 현재 bootstrap 경로는 기존 코드에서도 성공해 원래 화면의 경로 값 소실 원인을 완전히 재현한 것은 아니다. ambient 값을 제거한 합성 조건에서 같은 Get-ChildPath 오류 사슬을 재현하고 해당 의존성을 제거한 것으로 구분한다. 전체 검사와 공개 패키지의 실제 업데이트 확인은 진행 중이다.
+
+별도 자동 코드 검토에서 새 한국어 오류 안내의 인코딩 손상을 발견해 UTF-8로 수정하고 원본·릴리스 작업 사본·공통 작업 사본에 반영했다. 검토 결과를 사람 보안 검토 완료로 취급하지 않는다.
+
+### beta.9 업데이트 수정본 전체 검사 통과
+
+`scripts/check_all.py` exit 0: Rust 1,763개/31 suites, Docs 29개, Build 114개, 합계 1,906개. 실패·ignored 0이며 fmt·Clippy(-D warnings)·전체 build/test·추적표·아키텍처 검사가 통과했다. source hash `7af056c36a952792933283676ebc1e3556a1820590e7fa11e7f54e41eedcf4c9`, 로그 SHA-256 `ecbc811994863a68623b547e8359e4fd373d292c695a733dbbe426c776c5d2ac`, 근거 `target/beta9-verification.json`. 검사 동안 잠시 중지한 기존 beta.8 Core는 같은 실행 파일 SHA·경로·인자로 복원했다(PID 48244). 실제 계정/메일 작업과 폴더 권한 변경은 수행하지 않았다. 패키지 생성과 공개 후 실제 업데이트 확인을 이어간다. [사람 보안 검토 필요].

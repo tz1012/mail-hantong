@@ -192,6 +192,34 @@ foreach ($case in $cases) {{ if ((Test-CoreCommandLine $case.line $path) -ne $ca
             self.assertEqual(result.returncode, 0, result.stderr.decode("utf-8", "replace"))
             self.assertEqual((root / "install/current.txt").read_text(), "0.1.0")
             self.assertEqual((root / "install/versions/0.1.0/bin/hantong.exe").read_bytes(), b"cli")
+    def test_inst01_nested_scriptblock_install_update_passes_explicit_state_root(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            source = self.bundle(root / "source", "1.0.0")
+            shutil.copy2(INSTALL, source / "install.ps1")
+            shutil.copy2(INSTALL.parent / "package-common.ps1", source / "package-common.ps1")
+            harness = root / "nested.ps1"
+            harness.write_text(f"""
+$ErrorActionPreference = 'Stop'
+$source = '{source.as_posix()}'
+$install = '{(root / 'install').as_posix()}'
+$installerText = [IO.File]::ReadAllText((Join-Path $source 'install.ps1'))
+function Invoke-NestedInstaller {{
+    & ([ScriptBlock]::Create($installerText)) -PackageRoot $source -Source $source -InstallRoot $install
+}}
+Invoke-NestedInstaller
+Invoke-NestedInstaller
+if (-not (Test-Path -LiteralPath (Join-Path $install 'install-manifest.json'))) {{ throw 'nested update did not preserve state' }}
+$commonText = [IO.File]::ReadAllText((Join-Path $source 'package-common.ps1'))
+function Invoke-NestedStateValidation {{
+    $script:InstallBase = $null
+    & ([ScriptBlock]::Create($commonText + "`nRead-InstallState '$install' | Out-Null"))
+}}
+Invoke-NestedStateValidation
+""", encoding="utf-8")
+            result = ps(harness)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual((root / "install/current.txt").read_text(), "1.0.0")
     def test_install_is_idempotent_and_uninstall_preserves_data(self):
         with tempfile.TemporaryDirectory() as td:
             root, install_root = Path(td), Path(td) / "install"; src = self.bundle(root)

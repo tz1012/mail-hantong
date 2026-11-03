@@ -1,6 +1,7 @@
 # mail-hantong CLI — Windows beta.8
 
-beta.8 fixes adding another sending Gmail account while preserving existing
+beta.9 fixes update installation path handling and gives update-specific failure
+messages. It retains beta.8, which fixes adding another sending Gmail account while preserving existing
 account permissions. Google consent is followed by the exact scope selection
 in the same terminal; every message still needs a separate preview and Send.
 The sending-account selection supports up to 128 accounts. This release does
@@ -9,18 +10,18 @@ not complete generic IMAP/SMTP guided onboarding or full trash support.
 The beta also creates absent storage directories with explicit user permissions and
 uses minimal ancestor traversal access. Existing storage ACLs, accounts and keys
 are preserved. GitHub API rate limiting falls back to the public release feed.
-Another PC's existing data/secrets directories still deny access; this release
-does not automatically repair their permissions or establish recovery success.
+An affected PC recovered access through a separately approved targeted repair;
+this update does not automatically repair existing folder permissions.
 If startup still fails after updating, report the fixed `hantong_startup stage`
 and stable error code. Do not send credentials, database files or mail content.
 
 The command is `hantong`. English is the default; use `--lang ko` for Korean. The companion `mail-hantong-core` process handles encrypted local storage, mail operations and policy. The graphical mail application is not included in the CLI package.
 
-**Release: [0.1.0-beta.8](https://github.com/tz1012/mail-hantong/releases/tag/v0.1.0-beta.8).** The [Korean website guide](https://tz1012.github.io/mail-hantong/) covers installation, mail and AI feature switching. Release downloads include checksums and build metadata. Full checks passed 1,905 test executions (including nested harness checks). Earlier beta.3 manual Gmail verification covered account retention, terminal cancellation, one synthetic send/receive and matching body/attachment; it does not validate the new AI or trash path against real services. Human security review, clean Windows VM testing, other real mail providers and Google verification remain separate open gates. Real AI login, paid inference and real trash operations were not tested. This version migrates local storage from schema 24 to 25; do not run an older core against migrated data. macOS mail operations are not available yet.
+**Release: [0.1.0-beta.9](https://github.com/tz1012/mail-hantong/releases/tag/v0.1.0-beta.9).** The [Korean website guide](https://tz1012.github.io/mail-hantong/) covers installation, mail and AI feature switching. Release downloads include checksums and build metadata. Full checks passed 1,906 test executions (including nested harness checks). Earlier beta.3 manual Gmail verification covered account retention, terminal cancellation, one synthetic send/receive and matching body/attachment; it does not validate the new AI or trash path against real services. Human security review, clean Windows VM testing, other real mail providers and Google verification remain separate open gates. Real AI login, paid inference and real trash operations were not tested. This version migrates local storage from schema 24 to 25; do not run an older core against migrated data. macOS mail operations are not available yet.
 
 ## What works in this preview
 
-The current beta includes guided installation/startup, direct read-only Google account connection followed by an explicit composing/sending feature action, bounded Gmail text previews, and an explicit same-account read-to-send feature action. Publisher configuration is included, so ordinary users do not configure Google Cloud. Compose, complete message review, Send/Cancel, client registration and advanced settings use the same terminal. Google OAuth opens its standard provider browser. See [Google setup and commands](GOOGLE-MAIL.md) and [verification status](PROGRESS.md).
+The current beta includes guided installation/startup, Google account selection and read/write/send consent followed by explicit terminal account-scope confirmation, bounded Gmail text previews, and an explicit same-account read-to-send feature action. Publisher configuration is included, so ordinary users do not configure Google Cloud. Compose, complete message review, Send/Cancel, client registration and advanced settings use the same terminal. Google OAuth opens its standard provider browser. See [Google setup and commands](GOOGLE-MAIL.md) and [verification status](PROGRESS.md).
 
 | Available | Not yet available |
 | --- | --- |

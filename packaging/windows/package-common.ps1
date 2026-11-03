@@ -37,12 +37,12 @@ function Read-JsonFile([string] $Path) {
     if ((Get-Item -LiteralPath $Path).Length -gt 4194304) { throw 'Manifest is too large' }
     return (Get-Content -LiteralPath $Path -Raw -Encoding UTF8 | ConvertFrom-Json)
 }
-function Assert-FileRecords($Files) {
+function Assert-FileRecords($Files, [string] $Base) {
     if ($Files -isnot [Array] -or $Files.Count -eq 0) { throw 'Files must be a nonempty array' }
     $seen = @{}
     foreach ($entry in $Files) {
         $relative = [string]$entry.path
-        $null = Get-ChildPath $script:InstallBase $relative
+        $null = Get-ChildPath $Base $relative
         $key = $relative.Replace('/', '\').ToLowerInvariant()
         if ($seen.ContainsKey($key) -or [string]$entry.sha256 -notmatch '^[0-9a-fA-F]{64}$') { throw 'Duplicate file or invalid hash' }
         $seen[$key] = $true
@@ -114,7 +114,7 @@ function Read-InstallState([string] $Root) {
         Assert-Version ([string]$version.version)
         if ($seen.ContainsKey([string]$version.version)) { throw 'Duplicate installed version' }
         $seen[[string]$version.version] = $true
-        Assert-FileRecords $version.files
+        Assert-FileRecords $version.files $Root
         $directory = Get-ChildPath $Root "versions/$($version.version)"
         foreach ($file in $version.files) { Assert-FileHash (Get-ChildPath $directory $file.path) $file.sha256 }
     }

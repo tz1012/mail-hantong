@@ -21,7 +21,7 @@ Assert-SafePath $sourceFull
 $release = Read-JsonFile (Join-Path $sourceFull 'release-manifest.json')
 if ($release.format_version -ne 1 -or $release.target -cne 'windows-x86_64') { throw 'Unsupported release manifest' }
 Assert-Version ([string]$release.version)
-Assert-FileRecords $release.files
+Assert-FileRecords $release.files $root
 foreach ($file in $release.files) { Assert-FileHash (Get-ChildPath $sourceFull $file.path) $file.sha256 }
 # The release manifest cannot hash itself. Keep its exact verified-source bytes
 # as a separately owned installed file so first launch can verify sibling code.
@@ -57,7 +57,7 @@ $ownedFiles = @($release.files) + @([pscustomobject]@{
     sha256 = (Get-FileHash -LiteralPath $releaseManifestPath -Algorithm SHA256).Hash.ToLowerInvariant()
     size = (Get-Item -LiteralPath $releaseManifestPath).Length
 })
-Assert-FileRecords $ownedFiles
+Assert-FileRecords $ownedFiles $root
 $marker = Get-ChildPath $root '.mail-hantong-owner'
 $statePath = Get-ChildPath $root 'install-manifest.json'
 if ((Test-Path -LiteralPath $root) -and -not (Test-Path -LiteralPath $marker) -and
