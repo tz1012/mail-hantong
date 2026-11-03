@@ -1764,3 +1764,15 @@ API 403/429 때만 공개 Atom feed와 HEAD 길이 확인으로 전환하는 boo
 v3 별도 복구 스크립트는 새 스냅샷마다 OWNER|GROUP|DACL을 명시적으로 요청해 primary group까지 저장·검증한다. 기존 보호 백업은 요청됐던 object ID/owner/protection/ACL revision/정확한 ACE 바이트와 9개 대상 수를 검증해 결속하고, 구형 스냅샷의 미요청 Group은 비교 근거로 사용하지 않는다. 새 쓰기 전후에는 실제 primary group 비교를 계속 유지한다. OS가 관리하는 defaulted/auto-inherited bookkeeping flags를 전체 descriptor 바이트 동일성으로 오인하지 않으며 DACL present/nonNULL·보호 상태·ACE의 SID/mask/flags는 검증한다.
 
 `target/test_storage_repair_resume.ps1` 합성 시험 통과: 구형 백업 첫 3개 Group 누락/기존 ACE 9개 동일 조건 재현, 보호 백업에 결속한 재적용 9개 성공, 명시 조회한 primary group 9개 보존, 원본 DACL 불일치 재시도 무변경 거부. 기존 파일 hash/owner 보존·wrong plan 무변경·share=0 lock 차단·주입 실패 원복 시험도 통과했다. 호스트 비관리자 제약상 Administrators 소유 Apply는 여전히 실제로 실행하지 못했고 시험 전용 클래스에서 user-owned 9개 fixture를 사용했다. 제품 코드·설치·실제 DB는 변경하지 않았다. 실제 재적용은 아직 **미실행**이며 기존 9개 권한 복구 승인 범위를 유지한다. **[사람 보안 검토 필요]**.
+
+### v3 원격 재실패 후 관리자 Windows 독립 재현·v4 검증
+
+사용자 PC v3 적용은 `REPAIR_FAILED_ROLLED_BACK`, RollbackComplete=true, NodesChanged=0으로 실패했다. 원래 권한으로 돌아갔음을 스크립트가 검증했으나 사용자 FA 추가는 되지 않았다. 사용자가 반복 명령에 불만을 표시하여 추가 사용자 PC 적용/진단 요청을 중단하고, 에이전트가 소유한 별도 GitHub Actions Windows VM에서 재현했다. 기존 9개 복구 승인만 유지하며 새로운 권한 범위나 실제 메일 작업은 추가하지 않았다.
+
+격리 branch `diagnostics/admin-storage-20261103`는 실제 관리자 토큰·SeBackupPrivilege·SeRestorePrivilege를 사용하는 Windows 2022/2025 VM에서 RUNNER_TEMP의 합성 객체만 만든다. 실제 LocalAppData mail-hantong 경로나 계정/DB/key에는 접근하지 않는다. 이 branch만 전체 제품 CI를 분리했으며 main의 workflow는 변경하지 않았다. `41575302278`에서 두 OS의 3개 primary-group 조건 모두 **첫 변경 뒤 ACL_CHANGED**, owner/group/protection/ACE는 모두 일치, 역순 원복 완료로 사용자 v3 실패를 재현했다. 원인은 쓰기 전 CAS가 여전히 전체 descriptor 바이트를 비교하여 OS가 바꾼 저장 표현/bookkeeping을 실제 권한 충돌로 오인한 것이다.
+
+v4는 쓰기 전 두 CAS를 owner·명시 조회 GROUP·protected·전체 DACL bytes/revision/순서/SID/mask/ACE flags 비교로 통일했다. 임의 ACL 변경을 허용하거나 검증을 생략하지 않는다. 객체 핸들/ID·기존 보호 백업·배타 lock·실패 원복은 유지하며 실패 원인을 고정 코드로 남긴다. 새 보안 API나 종속성을 추가하지 않았다.
+
+GitHub Actions [관리자 Windows 시험 41575717730](https://github.com/tz1012/mail-hantong/actions/runs/41575717730), commit `c8bcbc7e1529a4da7bcdebef30ea8b548a0ef90c`에서 **2개 OS × 9개 조건 = 18개 관리자 사례 전부 통과**했다. 각 OS는 primary-group 3종 × 정상 9개 적용/3개 변경 후 주입 실패 원복/실제 v3 실패 백업에 Group 누락을 재현한 뒤 v4 재개 적용을 검사한다. 합성 파일 SHA-256·owner·실제 primary group 보존과 실패 원복을 확인했다. 이전 12-case 관리자 시험도 통과했다. 근거 `target/admin-storage-ci-verification.json`, 전체 로그 SHA-256 `06afb447e45e13e8fed4353c77faa2584e08f5ab1ef6fd008ebcbb0787ec8e70`.
+
+독립 정적 검토에서 추가 차단 요소는 없었다. 검증한 v4를 별도 진단 branch commit `0cde4303a8e00574191356b89fe31f699e46a3bf`로 게시하고 공개 원문의 LF SHA-256 `5df920ea3700729a0af9ca7afa53ef6a6200d912b0f7650b16758cad0e6d9991`이 CI 검증 소스와 동일함을 확인했다. beta.7 패키지/태그는 변경하지 않았다. 사용자 PC v4 적용과 일반 권한 Core 기동·기존 계정 이용은 아직 **미확인**이며 실제 추가 Apply는 수행하지 않았다. **[사람 보안 검토 필요]**.
