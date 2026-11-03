@@ -2,15 +2,29 @@
 # calls the recovery command's LocalAppData entry point and uses no credentials.
 $ErrorActionPreference='Stop'
 if(-not $env:RUNNER_TEMP -or -not $env:GITHUB_ACTIONS){throw 'Ephemeral CI runner required'}
-$source=[IO.File]::ReadAllText((Join-Path $PSScriptRoot 'repair_storage_access_v3.ps1')).Replace("`r`n","`n")
+$source=[IO.File]::ReadAllText((Join-Path $PSScriptRoot 'repair_storage_access_v4.ps1')).Replace("`r`n","`n")
 $native=$source.Split(@("Add-Type -TypeDefinition @'`n"),[StringSplitOptions]::None)[1].Split(@("`n'@"),[StringSplitOptions]::None)[0]
-$native=$native.Replace('HantongStorageRepairV3Native','HantongStorageAdminFixtureNative')
+$native=$native.Replace('HantongStorageRepairV4Native','HantongStorageAdminFixtureNative')
+$native=$native.Replace('public string ErrorCode="OK", PlanHash,FailureCause;','public string ErrorCode="OK", PlanHash,FailureCause,FailureStage; public bool OwnerEqual,GroupEqual,ProtectionEqual,AclEqual;')
+$native=$native.Replace('SetDacl(item.Handle,item.Updated);changed++;','SetDacl(item.Handle,item.Updated);changed++;if(FaultAfterChanges>0&&changed==FaultAfterChanges)throw new InvalidOperationException("SYNTHETIC_FAULT");')
 $native=$native.Replace('public string ErrorCode="OK", PlanHash;','public string ErrorCode="OK", PlanHash,FailureStage; public int ChangedBeforeRollback; public bool OwnerEqual,GroupEqual,ProtectionEqual,AclEqual;')
 $native=$native.Replace('if(!SameDaclAndOwner(item.Updated,TreeDescriptor(item.Handle)))throw new InvalidOperationException("ACL_VERIFY_FAILED");','if(!SameDaclAndOwner(item.Updated,TreeDescriptor(item.Handle))){DebugComparison(item.Updated,TreeDescriptor(item.Handle),report);throw new InvalidOperationException("ACL_VERIFY_FAILED");}')
 $native=$native.Replace('if(!SameBytes(item.Original,TreeDescriptor(item.Handle)))throw new InvalidOperationException("ACL_CHANGED");','if(!SameBytes(item.Original,TreeDescriptor(item.Handle))){DebugComparison(item.Original,TreeDescriptor(item.Handle),report);throw new InvalidOperationException("ACL_CHANGED");}')
 $native=$native.Replace('} catch {', '} catch(Exception failure) {')
 $native=$native.Replace('report.RollbackAttempted=true;bool complete=true;','report.FailureStage=failure is InvalidOperationException?failure.Message:"NATIVE_EXCEPTION";report.ChangedBeforeRollback=changed;report.RollbackAttempted=true;bool complete=true;')
 $extra=@'
+    public static int FaultAfterChanges;
+    public static string RequestedSecurityDigest(string product,bool identityOnly){
+        var text=new System.Text.StringBuilder();
+        foreach(string relative in new string[]{"data","data/database.lock","data/mail-hantong.db","secrets","secrets/database-key.lock","secrets/database-v1.secret","secrets/one.secret","secrets/two.secret","secrets/three.secret"}){
+            IntPtr h=TreeOpen(System.IO.Path.Combine(product,relative),relative.IndexOf('/')<0);
+            try{var raw=new RawSecurityDescriptor(TreeDescriptor(h),0);text.Append(relative).Append('|').Append(raw.Owner.Value).Append('|').Append(raw.Group==null?"missing":raw.Group.Value);
+                if(!identityOnly){text.Append('|').Append((raw.ControlFlags&ControlFlags.DiscretionaryAclProtected)!=0).Append('|').Append(raw.DiscretionaryAcl.Revision);foreach(GenericAce ace in raw.DiscretionaryAcl){var bytes=new byte[ace.BinaryLength];ace.GetBinaryForm(bytes,0);text.Append('|').Append(Convert.ToBase64String(bytes));}}
+                text.Append('\n');
+            }finally{CloseHandle(h);}
+        }
+        using(var sha=System.Security.Cryptography.SHA256.Create())return BitConverter.ToString(sha.ComputeHash(System.Text.Encoding.UTF8.GetBytes(text.ToString())));
+    }
     private static void DebugComparison(byte[] a,byte[] b,TreeReport report){
         var x=new RawSecurityDescriptor(a,0);var y=new RawSecurityDescriptor(b,0);
         report.OwnerEqual=Object.Equals(x.Owner,y.Owner);report.GroupEqual=Object.Equals(x.Group,y.Group);
@@ -56,7 +70,7 @@ $oldRestore=[HantongStorageAdminFixtureNative]::EnableBackup('SeRestorePrivilege
 $failed=$false
 try{
  if(-not $elevated -or -not $enabled -or -not $restoreEnabled){throw 'Real elevated backup/restore token required'}
- foreach($group in 'absent','admin','current'){
+ foreach($group in 'absent','admin','current'){foreach($fault in 0,3){
   $owned=Join-Path $env:RUNNER_TEMP ('hantong-admin-fixture-'+[guid]::NewGuid().ToString('N'))
   New-Item -ItemType Directory -Path $owned | Out-Null
   $product=Join-Path $owned 'product'
@@ -64,11 +78,16 @@ try{
   $plan=[HantongStorageAdminFixtureNative]::TreeScan($product,$false,$null)
   if($plan.ErrorCode -ne 'OK' -or $plan.AdminOwners -ne 9 -or $plan.MissingUserFullControlNodes -ne 9 -or $plan.LogonReadOnlyNodes -ne 9){$plan|ConvertTo-Json -Compress;throw 'Fixture does not reproduce diagnosed metadata'}
   $before=@{};foreach($f in Get-ChildItem -LiteralPath (Join-Path $product 'data'),(Join-Path $product 'secrets') -File){$before[$f.FullName]=(Get-FileHash -LiteralPath $f.FullName).Hash}
+  $identityBefore=[HantongStorageAdminFixtureNative]::RequestedSecurityDigest($product,$true)
+  $securityBefore=[HantongStorageAdminFixtureNative]::RequestedSecurityDigest($product,$false)
+  [HantongStorageAdminFixtureNative]::FaultAfterChanges=$fault
   $result=[HantongStorageAdminFixtureNative]::TreeScan($product,$true,$plan.PlanHash)
-  [pscustomobject]@{case=$group;elevated=$elevated;backup_enabled=$enabled;restore_enabled=$restoreEnabled;result=$result}|ConvertTo-Json -Depth 6 -Compress
+  [pscustomobject]@{case=$group;fault_after=$fault;elevated=$elevated;backup_enabled=$enabled;restore_enabled=$restoreEnabled;result=$result}|ConvertTo-Json -Depth 6 -Compress
   foreach($path in $before.Keys){if((Get-FileHash -LiteralPath $path).Hash -ne $before[$path]){throw 'Synthetic contents changed'}}
-  if(-not $result.Applied -or $result.NodesChanged -ne 9){$failed=$true}
- }
+  if([HantongStorageAdminFixtureNative]::RequestedSecurityDigest($product,$true) -cne $identityBefore){throw 'Owner or primary group changed'}
+  if($fault -eq 0){if(-not $result.Applied -or $result.NodesChanged -ne 9){$failed=$true}}
+  else{if($result.Applied -or -not $result.RollbackComplete -or $result.NodesChanged -ne 0 -or [HantongStorageAdminFixtureNative]::RequestedSecurityDigest($product,$false) -cne $securityBefore){$failed=$true}}
+ }}
 }finally{
  if($restoreKnown){[void][HantongStorageAdminFixtureNative]::RestoreBackup('SeRestorePrivilege',$restoreToken,[uint32]$oldRestore)}
  if($known){[void][HantongStorageAdminFixtureNative]::RestoreBackup('SeBackupPrivilege',$backupToken,[uint32]$old)}
