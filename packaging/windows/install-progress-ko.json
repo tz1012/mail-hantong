@@ -1,0 +1,15 @@
+{
+  "checking": "\uc2dc\uc2a4\ud15c\uacfc \ub9b4\ub9ac\uc988 \ud655\uc778",
+  "selecting": "\ud638\ud658 \ud328\ud0a4\uc9c0 \uc120\ud0dd",
+  "downloaded": "\uc790\uc0b0 {0}/{1} \ub2e4\uc6b4\ub85c\ub4dc",
+  "verified": "\ud328\ud0a4\uc9c0 \uccb4\ud06c\uc12c \uac80\uc99d",
+  "extracted": "\ud30c\uc77c {0}/{1} \uc555\ucd95 \ud574\uc81c",
+  "installing": "\uac80\uc99d\ub41c \ud328\ud0a4\uc9c0 \uc124\uce58",
+  "finalizing": "\uc124\uce58 \ub9c8\ubb34\ub9ac",
+  "preparing": "\uc124\uce58 \uc900\ube44",
+  "installed": "\ud30c\uc77c {0}/{1} \uc124\uce58",
+  "verified_file": "\ud30c\uc77c {0}/{1} \uac80\uc99d",
+  "activating": "\uc124\uce58\ub41c \ubc84\uc804 \ud65c\uc131\ud654",
+  "complete": "\uc644\ub8cc",
+  "activity": "\ud55c\ud1b5 \uc124\uce58"
+}

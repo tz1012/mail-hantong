@@ -5,6 +5,32 @@ param([string] $Version = 'latest', [string] $InstallRoot, [switch] $SessionOnly
 function Install-MailHantong {
     param([string] $ReleaseVersion = 'latest', [string] $Destination, [switch] $SessionOnly)
     $ErrorActionPreference = 'Stop'
+    $progressActivity = 'mail-hantong bootstrap'
+    $progressComplete = $false
+    # BEGIN GENERATED INSTALL_PROGRESS_MESSAGES (from install-progress-en.json/install-progress-ko.json)
+    $progressMessagesJson = @'
+{"en":{"checking":"Checking system and release","selecting":"Selecting a compatible package","downloaded":"Downloaded asset {0} of {1}","verified":"Verified package checksum","extracted":"Extracted file {0} of {1}","installing":"Installing verified package","finalizing":"Finalizing installation","preparing":"Preparing installation","installed":"Installed file {0} of {1}","verified_file":"Verified file {0} of {1}","activating":"Activating installed version","complete":"Complete","activity":"mail-hantong installation"},"ko":{"checking":"\uc2dc\uc2a4\ud15c\uacfc \ub9b4\ub9ac\uc988 \ud655\uc778","selecting":"\ud638\ud658 \ud328\ud0a4\uc9c0 \uc120\ud0dd","downloaded":"\uc790\uc0b0 {0}/{1} \ub2e4\uc6b4\ub85c\ub4dc","verified":"\ud328\ud0a4\uc9c0 \uccb4\ud06c\uc12c \uac80\uc99d","extracted":"\ud30c\uc77c {0}/{1} \uc555\ucd95 \ud574\uc81c","installing":"\uac80\uc99d\ub41c \ud328\ud0a4\uc9c0 \uc124\uce58","finalizing":"\uc124\uce58 \ub9c8\ubb34\ub9ac","preparing":"\uc124\uce58 \uc900\ube44","installed":"\ud30c\uc77c {0}/{1} \uc124\uce58","verified_file":"\ud30c\uc77c {0}/{1} \uac80\uc99d","activating":"\uc124\uce58\ub41c \ubc84\uc804 \ud65c\uc131\ud654","complete":"\uc644\ub8cc","activity":"\ud55c\ud1b5 \uc124\uce58"}}
+'@
+    $progressMessages = $progressMessagesJson | ConvertFrom-Json
+    function Get-InstallProgressText([string] $Key, [object[]] $Arguments) {
+        $culture = if ($env:LANG) { $env:LANG } else { $PSUICulture }
+        $language = if ($culture -match '^(?i:ko)([-_]|$)') { 'ko' } else { 'en' }
+        $template = [string]$progressMessages.$language.PSObject.Properties[$Key].Value
+        if ($Arguments.Count) { return ($template -f $Arguments) }
+        return $template
+    }
+    # END GENERATED INSTALL_PROGRESS_MESSAGES
+    $progressActivity = Get-InstallProgressText 'activity' @()
+    $temporary = $null
+    function Set-InstallProgress([int] $Percent, [string] $Status) {
+        $bounded = [Math]::Max(0, [Math]::Min(99, $Percent))
+        Write-Progress -Id 1 -ParentId 0 -Activity $progressActivity -Status $Status -PercentComplete $bounded
+    }
+    function Complete-InstallProgress {
+        Write-Progress -Id 1 -ParentId 0 -Activity $progressActivity -Status (Get-InstallProgressText 'complete' @()) -PercentComplete 100 -Completed
+    }
+    try {
+    Set-InstallProgress 2 (Get-InstallProgressText 'checking' @())
     if ($ReleaseVersion -ne 'latest' -and $ReleaseVersion -notmatch '^v?(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*)?$') {
         throw 'Invalid release version.'
     }
@@ -23,6 +49,7 @@ function Install-MailHantong {
         $tag = if ($ReleaseVersion.StartsWith('v')) { $ReleaseVersion } else { "v$ReleaseVersion" }
         $releases = @(Invoke-RestMethod -Uri "$base/tags/$tag" -Headers $headers)
     }
+    Set-InstallProgress 12 (Get-InstallProgressText 'selecting' @())
     $selected = $null
     foreach ($release in $releases) {
         if ($release.draft -or $release.tag_name -notmatch '^v(?<label>[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.-]+)?)$') { continue }
@@ -42,7 +69,9 @@ function Install-MailHantong {
     if (-not $temporary.StartsWith($tempBase, [StringComparison]::OrdinalIgnoreCase)) { throw 'Invalid temporary directory.' }
     $null = New-Item -ItemType Directory -Path $temporary
     try {
-        foreach ($asset in @($selected.Zip, $selected.Sums)) {
+        $assets = @($selected.Zip, $selected.Sums)
+        $assetIndex = 0
+        foreach ($asset in $assets) {
             $uri = [Uri]$asset.browser_download_url
             $prefix = '/tz1012/mail-hantong/releases/download/'
             if ($uri.Scheme -cne 'https' -or $uri.Host -cne 'github.com' -or -not $uri.AbsolutePath.StartsWith($prefix, [StringComparison]::Ordinal)) {
@@ -51,6 +80,8 @@ function Install-MailHantong {
             $output = Join-Path $temporary $asset.name
             Invoke-WebRequest -Uri $uri.AbsoluteUri -UseBasicParsing -Headers $headers -OutFile $output
             if ((Get-Item -LiteralPath $output).Length -ne $asset.size) { throw 'Downloaded asset size mismatch.' }
+            $assetIndex++
+            Set-InstallProgress (20 + [int](20 * $assetIndex / $assets.Count)) (Get-InstallProgressText 'downloaded' @($assetIndex, $assets.Count))
         }
         $expected = $null
         foreach ($line in [IO.File]::ReadAllLines((Join-Path $temporary 'SHA256SUMS'))) {
@@ -61,6 +92,7 @@ function Install-MailHantong {
         }
         $archive = Join-Path $temporary $selected.Name
         if (-not $expected -or (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash -ine $expected) { throw 'Package checksum mismatch.' }
+        Set-InstallProgress 45 (Get-InstallProgressText 'verified' @())
         Add-Type -AssemblyName System.IO.Compression.FileSystem
         $destinationRoot = Join-Path $temporary 'package'
         $null = New-Item -ItemType Directory -Path $destinationRoot
@@ -70,6 +102,7 @@ function Install-MailHantong {
             if ($reader.Entries.Count -gt 2048) { throw 'Package contains too many entries.' }
             $seen = @{}
             [long] $total = 0
+            $entryIndex = 0
             foreach ($entry in $reader.Entries) {
                 $relative = $entry.FullName.Replace('/', '\')
                 $parts = $relative.Split('\')
@@ -82,20 +115,31 @@ function Install-MailHantong {
                 if ($entry.Length -gt 67108864 -or $total -gt 268435456) { throw 'Extracted package exceeds its limit.' }
                 $null = New-Item -ItemType Directory -Force -Path ([IO.Path]::GetDirectoryName($path))
                 [IO.Compression.ZipFileExtensions]::ExtractToFile($entry, $path, $false)
+                $entryIndex++
+                $extractPercent = if ($reader.Entries.Count -eq 0) { 60 } else { 45 + [int](25 * $entryIndex / $reader.Entries.Count) }
+                Set-InstallProgress $extractPercent (Get-InstallProgressText 'extracted' @($entryIndex, $reader.Entries.Count))
             }
         } finally { $reader.Dispose() }
         $installer = Join-Path $destinationRoot 'install.ps1'
         if (-not (Test-Path -LiteralPath $installer -PathType Leaf)) { throw 'Package installer is missing.' }
         if ([string]::IsNullOrWhiteSpace($Destination)) { $Destination = Join-Path $env:LOCALAPPDATA 'Programs\mail-hantong-cli' }
+        Set-InstallProgress 72 (Get-InstallProgressText 'installing' @())
         & ([ScriptBlock]::Create([IO.File]::ReadAllText($installer))) -PackageRoot $destinationRoot -Source $destinationRoot -InstallRoot $Destination -AddToPath:(-not $SessionOnly)
         $env:Path = (Join-Path ([IO.Path]::GetFullPath($Destination)) 'bin') + ';' + $env:Path
+        Set-InstallProgress 96 (Get-InstallProgressText 'finalizing' @())
         Write-Output "mail-hantong $($selected.Label) is ready in this terminal. Run: hantong init"
+        Complete-InstallProgress
+        $progressComplete = $true
     } finally {
         # Only the unique directory created above is removed; never the program
         # directory, existing profiles, mail data, or a caller-supplied path.
         if ($temporary.StartsWith($tempBase, [StringComparison]::OrdinalIgnoreCase) -and (Test-Path -LiteralPath $temporary)) {
             Remove-Item -LiteralPath $temporary -Recurse -Force
         }
+    }
+    }
+    finally {
+        if (-not $progressComplete) { Write-Progress -Id 1 -Activity $progressActivity -Completed }
     }
 }
 

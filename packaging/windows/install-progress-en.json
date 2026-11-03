@@ -1,0 +1,15 @@
+{
+  "checking": "Checking system and release",
+  "selecting": "Selecting a compatible package",
+  "downloaded": "Downloaded asset {0} of {1}",
+  "verified": "Verified package checksum",
+  "extracted": "Extracted file {0} of {1}",
+  "installing": "Installing verified package",
+  "finalizing": "Finalizing installation",
+  "preparing": "Preparing installation",
+  "installed": "Installed file {0} of {1}",
+  "verified_file": "Verified file {0} of {1}",
+  "activating": "Activating installed version",
+  "complete": "Complete",
+  "activity": "mail-hantong installation"
+}

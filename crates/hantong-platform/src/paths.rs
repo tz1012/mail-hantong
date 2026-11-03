@@ -87,17 +87,53 @@ fn known_local_app_data_with(
 
 #[cfg(windows)]
 fn resolve_known_folder(flags: u32) -> Result<PathBuf, ErrorCode> {
+    resolve_known_folder_id(&windows_sys::Win32::UI::Shell::FOLDERID_LocalAppData, flags)
+}
+
+/// Resolve the system PowerShell without trusting PATH or environment overrides.
+pub fn system_powershell() -> Result<PathBuf, ErrorCode> {
+    #[cfg(not(windows))]
+    {
+        Err(ErrorCode::CapabilityUnsupported)
+    }
+    #[cfg(windows)]
+    {
+        let system = resolve_known_folder_id(&windows_sys::Win32::UI::Shell::FOLDERID_System, 0)?;
+        validate_base(&system)?;
+        Ok(system.join("WindowsPowerShell/v1.0/powershell.exe"))
+    }
+}
+
+#[cfg(windows)]
+fn resolve_known_folder_id(id: &windows_sys::core::GUID, flags: u32) -> Result<PathBuf, ErrorCode> {
     use std::os::windows::ffi::OsStringExt;
     use std::ptr;
-    use windows_sys::Win32::Foundation::S_OK;
-    use windows_sys::Win32::System::Com::CoTaskMemFree;
-    use windows_sys::Win32::UI::Shell::{FOLDERID_LocalAppData, SHGetKnownFolderPath};
+    use windows_sys::Win32::Foundation::{RPC_E_CHANGED_MODE, S_OK};
+    use windows_sys::Win32::System::Com::{
+        COINIT_APARTMENTTHREADED, CoInitializeEx, CoTaskMemFree, CoUninitialize,
+    };
+    use windows_sys::Win32::UI::Shell::SHGetKnownFolderPath;
 
+    // Known-folder APIs require COM on this thread. Keep an existing apartment
+    // intact, and balance only a successful initialization performed here.
+    let com_status = unsafe { CoInitializeEx(ptr::null(), COINIT_APARTMENTTHREADED as u32) };
+    if com_status < 0 && com_status != RPC_E_CHANGED_MODE {
+        return Err(ErrorCode::CapabilityUnsupported);
+    }
+    struct ComApartment(bool);
+    impl Drop for ComApartment {
+        fn drop(&mut self) {
+            if self.0 {
+                // SAFETY: one matching successful CoInitializeEx on this thread.
+                unsafe { CoUninitialize() }
+            }
+        }
+    }
+    let _apartment = ComApartment(com_status >= 0);
     let mut raw = ptr::null_mut();
     // SAFETY: SHGetKnownFolderPath allocates a null-terminated UTF-16 path;
     // the returned pointer is released exactly once with CoTaskMemFree below.
-    let status =
-        unsafe { SHGetKnownFolderPath(&FOLDERID_LocalAppData, flags, ptr::null_mut(), &mut raw) };
+    let status = unsafe { SHGetKnownFolderPath(id, flags, ptr::null_mut(), &mut raw) };
     struct TaskMem(*mut u16);
     impl Drop for TaskMem {
         fn drop(&mut self) {
@@ -130,6 +166,54 @@ fn resolve_known_folder(flags: u32) -> Result<PathBuf, ErrorCode> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(windows)]
+    #[test]
+    fn inst03_system_powershell_ignores_systemroot_environment() {
+        const PROBE: &str = "HANTONG_SYSTEM_POWERSHELL_PROBE";
+        if std::env::var_os(PROBE).is_some() {
+            let path = system_powershell().unwrap();
+            assert!(path.is_file());
+            assert!(!path.starts_with(std::env::var_os("SystemRoot").unwrap()));
+            return;
+        }
+        let status = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "paths::tests::inst03_system_powershell_ignores_systemroot_environment",
+            ])
+            .env(PROBE, "1")
+            .env("SystemRoot", "C:\\untrusted-system-root")
+            .status()
+            .unwrap();
+        assert!(status.success());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn inst03_known_folder_calls_balance_com_and_preserve_existing_apartments() {
+        std::thread::spawn(|| {
+            use std::ptr;
+            use windows_sys::Win32::Foundation::{S_FALSE, S_OK};
+            use windows_sys::Win32::System::Com::{
+                COINIT_MULTITHREADED, CoInitializeEx, CoUninitialize,
+            };
+            assert!(system_powershell().unwrap().is_file());
+            // A leaked STA initialization would reject this MTA initialization.
+            let first = unsafe { CoInitializeEx(ptr::null(), COINIT_MULTITHREADED as u32) };
+            assert_eq!(first, S_OK);
+            assert!(system_powershell().unwrap().is_file());
+            let second = unsafe { CoInitializeEx(ptr::null(), COINIT_MULTITHREADED as u32) };
+            // The existing MTA must survive the known-folder lookup.
+            assert_eq!(second, S_FALSE);
+            unsafe {
+                CoUninitialize();
+                CoUninitialize();
+            }
+        })
+        .join()
+        .unwrap();
+    }
 
     #[cfg(windows)]
     #[test]

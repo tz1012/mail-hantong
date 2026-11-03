@@ -1,12 +1,12 @@
-# mail-hantong CLI — Windows beta.4
+# mail-hantong CLI — Windows beta.5
 
 The command is `hantong`. English is the default; use `--lang ko` for Korean. The companion `mail-hantong-core` process handles encrypted local storage, mail operations and policy. The graphical mail application is not included in the CLI package.
 
-**Release: [0.1.0-beta.4](https://github.com/tz1012/mail-hantong/releases/tag/v0.1.0-beta.4).** The [Korean website guide](https://tz1012.github.io/mail-hantong/) covers installation, mail and AI feature switching. Release downloads include checksums and build metadata. Full checks passed 1,856 tests. Earlier beta.3 manual Gmail verification covered account retention, terminal cancellation, one synthetic send/receive and matching body/attachment; it does not validate the new AI or trash path against real services. Human security review, clean Windows VM testing, other real mail providers and Google verification remain separate open gates. Real AI login, paid inference and real trash operations were not tested. This version migrates local storage from schema 24 to 25; do not run an older core against migrated data. macOS mail operations are not available yet.
+**Release: [0.1.0-beta.5](https://github.com/tz1012/mail-hantong/releases/tag/v0.1.0-beta.5).** The [Korean website guide](https://tz1012.github.io/mail-hantong/) covers installation, mail and AI feature switching. Release downloads include checksums and build metadata. Full checks passed 1,872 test executions (including nested harness checks). Earlier beta.3 manual Gmail verification covered account retention, terminal cancellation, one synthetic send/receive and matching body/attachment; it does not validate the new AI or trash path against real services. Human security review, clean Windows VM testing, other real mail providers and Google verification remain separate open gates. Real AI login, paid inference and real trash operations were not tested. This version migrates local storage from schema 24 to 25; do not run an older core against migrated data. macOS mail operations are not available yet.
 
 ## What works in this preview
 
-The current beta includes guided installation/startup, personal feature selection followed by Google consent, bounded Gmail text previews, and an explicit same-account read-to-send feature action. Publisher configuration is included, so ordinary users do not configure Google Cloud. Compose, complete message review, Send/Cancel, client registration and advanced settings use the same terminal. Google OAuth opens its standard provider browser. See [Google setup and commands](GOOGLE-MAIL.md) and [verification status](PROGRESS.md).
+The current beta includes guided installation/startup, direct read-only Google account connection followed by an explicit composing/sending feature action, bounded Gmail text previews, and an explicit same-account read-to-send feature action. Publisher configuration is included, so ordinary users do not configure Google Cloud. Compose, complete message review, Send/Cancel, client registration and advanced settings use the same terminal. Google OAuth opens its standard provider browser. See [Google setup and commands](GOOGLE-MAIL.md) and [verification status](PROGRESS.md).
 
 | Available | Not yet available |
 | --- | --- |
@@ -208,7 +208,25 @@ Built-in AI also exposes `mail.messages.trash.request` for moving one Gmail mess
 
 ## Update and remove
 
-Close both CLI and core processes before installing another preview. Run the new extracted package's installer; failed validation must leave the previous version usable. Do not downgrade an encrypted database after a newer core has migrated it.
+From beta.5 onward, update in an interactive terminal with either command:
+
+```powershell
+update hantong
+# Equivalent:
+hantong update
+```
+
+Install beta.5 once using the installation command above if your older version
+does not yet provide these commands. The updater checks the current installation,
+downloads the latest release, verifies its checksums, stages its files and then
+activates it. The terminal shows phase progress and percentages during download,
+verification, extraction and installation. Percentages describe progress through
+the installation steps rather than a remaining-time estimate. Existing account
+data and keys are preserved. A failed validation leaves the previous version
+usable. The installer stops only a verified owned Core when activation requires
+it; there is no need to manually stop the service first. Do not downgrade an
+encrypted database after a newer core has migrated it. JSON, redirected mode and
+`--no-input` cannot start an update.
 
 Use the installed uninstall script as described by the installer output. Removal preserves mail data, encryption keys and registration state; it does not promise to erase accounts or revoke credentials. The data is under the Windows user's local application-data `mail-hantong` directory and is separate from the CLI program directory.
 
@@ -229,7 +247,7 @@ The package tool builds the terminal distribution and core, records versions and
 
 `hantong`은 터미널에서 사용하는 CLI입니다. `--lang ko`로 한국어를 선택하고 자동화에는 `--json`과 종료 코드를 사용합니다.
 
-현재 beta.4는 기존 메일 기능에 `/help`, 내장 AI 메일 도구 자동 연결과 Gmail 단일 메일 휴지통 이동을 추가합니다. AI 최초 이용에는 같은 터미널에서 제공자별 계정·도구·외부 전송 범위를 확인하며, 설정 후 수동 MCP 등록이나 필수 `/agent on` 없이 연결합니다. 발송·휴지통 이동은 매번 같은 터미널에서 최종 확인합니다. 휴지통 이동에는 Google Modify 권한이 필요하며 영구·대량 삭제는 지원하지 않습니다. 업데이트만으로 권한을 부여하지 않으며 과거 중단 요청의 범위도 바꾸지 않습니다. 일반 첨부 다운로드·예약·주소록·규칙 자동화와 Mac 제품은 후속입니다.
+현재 beta.5는 기존 메일 기능에 `/help`, 내장 AI 메일 도구 자동 연결과 Gmail 단일 메일 휴지통 이동을 추가합니다. AI 최초 이용에는 같은 터미널에서 제공자별 계정·도구·외부 전송 범위를 확인하며, 설정 후 수동 MCP 등록이나 필수 `/agent on` 없이 연결합니다. 발송·휴지통 이동은 매번 같은 터미널에서 최종 확인합니다. 휴지통 이동에는 Google Modify 권한이 필요하며 영구·대량 삭제는 지원하지 않습니다. 업데이트만으로 권한을 부여하지 않으며 과거 중단 요청의 범위도 바꾸지 않습니다. 일반 첨부 다운로드·예약·주소록·규칙 자동화와 Mac 제품은 후속입니다.
 
 위 PowerShell 한 줄로 설치·업데이트한 뒤 `hantong --lang ko init`을 실행하세요. 코어는 필요할 때 자동으로 시작합니다. 계정 연결·기능 선택·숨김 입력·메일 전체 검토·보내기/취소는 같은 터미널에서 진행하며, Google 로그인·동의만 브라우저를 사용합니다. 계정 작업 메뉴 4번은 작성·보내기 활성화, 5번은 메일 작성입니다. AI는 별도 `hantong ai login codex`, `hantong ai chat codex` 명령으로 시작하고 `/provider`, `/model`, `/mode`, `/fast`, `/agent`로 지원 기능을 전환합니다. 자세한 순서는 [홈페이지](https://tz1012.github.io/mail-hantong/)에 있습니다.
 

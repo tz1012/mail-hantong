@@ -168,27 +168,16 @@ fn choose(io: &mut impl Io, lang: Lang, help_keys: &[&str]) -> Result<Option<Str
     }
 }
 
-fn choose_profile(lang: Lang, io: &mut impl Io) -> Result<Option<GoogleLocalProfile>, ErrorCode> {
-    say(io, lang, "feature_menu")?;
-    match choose(
-        io,
-        lang,
-        &[
-            "help_feature_read",
-            "help_feature_send",
-            "help_feature_cancel",
-        ],
-    )?
-    .as_deref()
-    {
-        Some("1") => Ok(Some(GoogleLocalProfile::PersonalRead)),
-        Some("2") => Ok(Some(GoogleLocalProfile::PersonalReadSend)),
-        None | Some("0") => Ok(None),
-        Some(_) => {
-            say(io, lang, "invalid_choice")?;
-            Ok(None)
-        }
-    }
+fn connect_account(
+    lang: Lang,
+    io: &mut impl Io,
+    effects: &mut impl Effects,
+) -> Result<String, ErrorCode> {
+    say(io, lang, "connecting")?;
+    let account = effects.connect_google(lang, GoogleLocalProfile::PersonalRead)?;
+    say(io, lang, "connected")?;
+    say(io, lang, "features_after_connection")?;
+    Ok(account)
 }
 
 fn work_menu(
@@ -216,11 +205,7 @@ fn work_menu(
             None | Some("3") => return Ok(()),
             Some("1") => effects.inbox(&current_account, lang)?,
             Some("2") => {
-                let Some(profile) = choose_profile(lang, io)? else {
-                    continue;
-                };
-                current_account = effects.connect_google(lang, profile)?;
-                say(io, lang, "connected")?;
+                current_account = connect_account(lang, io, effects)?;
             }
             Some("4") => effects.enable_send(&current_account, lang)?,
             Some("5") => effects.compose(&current_account, lang, io)?,
@@ -242,11 +227,7 @@ fn connect_prompt(
         say(io, lang, "connect_or_exit")?;
         match choose(io, lang, &["help_connect", "help_exit"])?.as_deref() {
             Some("1") => {
-                let Some(profile) = choose_profile(lang, io)? else {
-                    return Ok(());
-                };
-                let account = effects.connect_google(lang, profile)?;
-                say(io, lang, "connected")?;
+                let account = connect_account(lang, io, effects)?;
                 return work_menu(lang, &account, io, effects);
             }
             None | Some("2") => return Ok(()),
@@ -286,11 +267,7 @@ fn select_existing(
         {
             None | Some("0") => return Ok(()),
             Some("add") => {
-                let Some(profile) = choose_profile(lang, io)? else {
-                    continue;
-                };
-                let account = effects.connect_google(lang, profile)?;
-                say(io, lang, "connected")?;
+                let account = connect_account(lang, io, effects)?;
                 return work_menu(lang, &account, io, effects);
             }
             Some(value) => {
@@ -441,8 +418,8 @@ mod tests {
     }
 
     #[test]
-    fn cli04_feature_selection_cancel_has_no_connection_effect() {
-        let mut io = TestIo::new(&["1", "0"]);
+    fn cli04_exit_before_connection_has_no_effect() {
+        let mut io = TestIo::new(&["2"]);
         let mut effects = TestEffects {
             connected: Ok("google_new".into()),
             inbox_calls: 0,
@@ -454,12 +431,12 @@ mod tests {
         };
         assert_eq!(run_flow(Lang::En, &[], &mut io, &mut effects), Ok(()));
         assert_eq!(effects.connect_calls, 0);
-        assert!(io.output.contains(resource(Lang::En, "feature_menu")));
+        assert!(!io.output.contains(resource(Lang::En, "connecting")));
     }
 
     #[test]
-    fn cli04_feature_selection_passes_read_send_profile_before_connection() {
-        let mut io = TestIo::new(&["1", "2", "3"]);
+    fn cli04_connect_opens_google_directly_with_read_only_then_shows_features() {
+        let mut io = TestIo::new(&["1", "3"]);
         let mut effects = TestEffects {
             connected: Ok("google_new".into()),
             inbox_calls: 0,
@@ -470,8 +447,42 @@ mod tests {
             profiles: Vec::new(),
         };
         assert_eq!(run_flow(Lang::En, &[], &mut io, &mut effects), Ok(()));
-        assert_eq!(effects.profiles, vec![GoogleLocalProfile::PersonalReadSend]);
+        assert_eq!(effects.profiles, vec![GoogleLocalProfile::PersonalRead]);
+        assert_eq!(effects.enable_send_calls, 0);
+        assert_eq!(effects.connect_calls, 1);
+        let connected = io.output.find(resource(Lang::En, "connected")).unwrap();
+        let features = io
+            .output
+            .find(resource(Lang::En, "features_after_connection"))
+            .unwrap();
+        assert!(connected < features);
+        assert!(!io.output.contains("Choose features:"));
         assert_eq!(effects.inbox_calls, 0);
+    }
+
+    #[test]
+    fn acc02_cli04_add_account_paths_connect_directly_without_send_or_inbox() {
+        for input in [&["add", "3"][..], &["1", "2", "3"][..]] {
+            let mut io = TestIo::new(input);
+            let mut effects = TestEffects {
+                connected: Ok("google_new".into()),
+                inbox_calls: 0,
+                enable_send_calls: 0,
+                compose_calls: 0,
+                connect_calls: 0,
+                continue_calls: 0,
+                profiles: Vec::new(),
+            };
+            assert_eq!(
+                run_flow(Lang::En, &[account()], &mut io, &mut effects),
+                Ok(())
+            );
+            assert_eq!(effects.profiles, vec![GoogleLocalProfile::PersonalRead]);
+            assert_eq!(effects.connect_calls, 1);
+            assert_eq!(effects.enable_send_calls, 0);
+            assert_eq!(effects.inbox_calls, 0);
+            assert!(!io.output.contains("Choose features:"));
+        }
     }
 
     #[test]
@@ -621,7 +632,7 @@ mod tests {
 
     #[test]
     fn cli04_help_is_local_and_keeps_the_current_menu_open() {
-        let mut io = TestIo::new(&["1", "/help", "2", "3"]);
+        let mut io = TestIo::new(&["1", "/help", "3"]);
         let mut effects = TestEffects {
             connected: Ok("google_new".into()),
             inbox_calls: 0,
@@ -633,9 +644,9 @@ mod tests {
         };
         assert_eq!(run_flow(Lang::En, &[], &mut io, &mut effects), Ok(()));
         assert_eq!(effects.connect_calls, 1);
-        assert_eq!(effects.profiles, vec![GoogleLocalProfile::PersonalReadSend]);
+        assert_eq!(effects.profiles, vec![GoogleLocalProfile::PersonalRead]);
         assert!(io.output.contains("Available choices:"));
-        assert!(io.output.contains("2) Read, write, and send mail"));
+        assert!(io.output.contains("4) Enable composing and sending"));
     }
 
     #[test]

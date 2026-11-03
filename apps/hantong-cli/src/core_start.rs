@@ -224,7 +224,7 @@ impl Drop for ChildGuard {
 }
 
 #[cfg(windows)]
-fn validate_package(bin: &std::path::Path) -> Result<(), ErrorCode> {
+pub(super) fn validate_package(bin: &std::path::Path) -> Result<(), ErrorCode> {
     use std::fs;
     let root = bin.parent().ok_or(ErrorCode::CoreUnavailable)?;
     validate_ancestors(root)?;
@@ -490,7 +490,9 @@ fn validate_ancestors(path: &std::path::Path) -> Result<(), ErrorCode> {
 }
 
 #[cfg(windows)]
-fn canonical_regular_file(path: &std::path::Path) -> Result<std::path::PathBuf, ErrorCode> {
+pub(super) fn canonical_regular_file(
+    path: &std::path::Path,
+) -> Result<std::path::PathBuf, ErrorCode> {
     validate_regular_file(path)?;
     path.canonicalize().map_err(|_| ErrorCode::CoreUnavailable)
 }

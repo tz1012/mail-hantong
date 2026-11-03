@@ -13,6 +13,13 @@ Implementation extension, 2026-11-02 user instruction to implement the single
 install → launch → connect → approve → use flow. Human security review required.
 Related: CLI-01/04, ACC-02/03, SETUP-01, INST-03/04, APR-01.
 
+2026-11-03 owner correction: choosing Connect Google account (including add and
+Connect another account) proceeds directly to the existing Google browser flow
+with PersonalRead. Remove the pre-connection feature menu. Only after connection
+is ready show mail actions and explicit option 4 to add composing/sending. There
+is no automatic inbox read, send permission request or message send on connection.
+Earlier descriptions of the feature-before-connection sequence are superseded.
+
 `hantong init [--lang en|ko]` opens the guided flow. Bare `hantong` does so only
 when stdin and stdout are terminals. Help/version remain side-effect free.
 Explicit init rejects JSON, no-input and redirected input/output with

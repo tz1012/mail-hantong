@@ -33,16 +33,29 @@ PersonalReadSend may combine with reauthorize_account only for the fixed
 same-account personal B->C feature action below. PersonalRead cannot. Advanced setup
 with None retains its existing native behavior and does not configure CLI grants.
 
-The guided CLI first offers read mail or read/write/send. Selection happens
-before opening Google so only that feature's provider scopes are requested.
-Google consent then connects the account and applies the selected fixed local
-feature set without an additional HanTong/Hello approval. Cancel/EOF has no
-OAuth/registration/grant effects. Selecting compose does not approve a message.
+The guided CLI Connect action opens Google account selection/sign-in directly
+with the fixed PersonalRead scope. It does not ask the user to choose a mail
+operation before the account is connected. After Google consent and local access
+are ready, show the work menu with explicit Enable composing and sending (4).
+Only that later action requests the same-account send upgrade; connecting alone
+never requests write/send access. Advanced commands may still explicitly select
+PersonalReadSend. There is no additional HanTong/Hello approval. Cancel/EOF before
+Connect has no OAuth/registration/grant effects. Selecting compose does not
+approve a message.
 External MCP configuration remains a separate opt-in action and is never
 preselected by Google setup. Built-in AI feature setup is a separate
 provider/account flow; when completed, its supported tools are discovered
 automatically under `ClientKind::Ai`.
 After ready, show available actions; never automatically read an inbox or send.
+
+2026-11-03 reconnect correction: after a fresh verified OAuth permit, an existing
+exact active same-account default CLI Google OAuth grant is an idempotent success.
+PersonalRead matches body tools at epoch 2; PersonalReadSend matches send tools
+at epoch 2 (initial L-to-C) or 3 (B-to-C upgrade). Do not create another scope row,
+change keys/epochs, republish profiles or replace registrations for that case.
+Other accounts, sources, states, mixed scopes and unexpected epochs retain their
+existing conflict behavior. Credential version CAS remains unchanged. A missing
+or corrupted profile is a separate recovery issue, never an implicit repair.
 
 ## Authority and identity
 

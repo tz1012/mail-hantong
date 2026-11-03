@@ -27,6 +27,7 @@ mod search;
 mod smtp_setup;
 mod sync;
 mod terminal_workflows;
+mod update;
 
 const EN_RESOURCES: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/resources/en.txt"));
 const KO_RESOURCES: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/resources/ko.txt"));
@@ -304,7 +305,7 @@ fn message(code: ErrorCode, lang: Lang) -> &'static str {
 
 fn help(lang: Lang) -> String {
     format!(
-        "mail-hantong / hantong\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}",
+        "mail-hantong / hantong\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}",
         resource(lang, "usage"),
         resource(lang, "preview_scope"),
         resource(lang, "quick_start"),
@@ -316,6 +317,7 @@ fn help(lang: Lang) -> String {
         resource(lang, "protected"),
         resource(lang, "help_language"),
         resource(lang, "google_help"),
+        resource(lang, "update_help"),
         ai::help(matches!(lang, Lang::Ko))
     )
 }
@@ -805,6 +807,14 @@ fn run_with_mail_actions(
     }
     let mut google_options = setup_options.clone();
     google_options.extend(folder_options.iter().cloned());
+    if command.first().is_some_and(|value| value == "update")
+        && (!google_options.is_empty() || seen_client)
+    {
+        return emit_error(ErrorCode::InvalidInput, lang, json);
+    }
+    if let Some(code) = update::run(&command, lang, json, seen_no_input) {
+        return code;
+    }
     if matches!(command.as_slice(), [action] if action == "review") {
         if json || seen_no_input || !terminal {
             return emit_error(ErrorCode::HumanStepRequired, lang, json);
@@ -1570,6 +1580,24 @@ mod tests {
             );
         }
     }
+    #[test]
+    fn cli04_inst03_update_rejects_unrelated_options_before_effects() {
+        for args in [
+            vec!["update", "--account", "a", "--json"],
+            vec!["update", "--client", "default", "--json"],
+            vec!["update", "--host", "example.test", "--json"],
+        ] {
+            assert_eq!(
+                run_with_boundaries(
+                    args.into_iter().map(String::from),
+                    |_| panic!("update must not register"),
+                    || panic!("update must not authenticate")
+                ),
+                ErrorCode::InvalidInput.exit_code()
+            );
+        }
+    }
+
     #[test]
     fn cli02_verify_json_is_fixed_and_language_neutral_without_identity_details() {
         let expected = "{\"schema_version\":1,\"ok\":true,\"items\":[{\"profile\":\"default\",\"authenticated\":true}],\"next_cursor\":null,\"account_results\":[],\"completeness\":\"complete\",\"warnings\":[],\"observed_at\":null}";

@@ -2022,6 +2022,11 @@ pub(crate) fn complete_google_oauth_registration(
     };
     let existing = store.load_default_cli_registration()?;
     if let Some(record) = existing {
+        // A fresh verified OAuth reconnect may find this exact grant already
+        // active. Preserve the registration, key, epoch and scope history.
+        if existing_personal_registration_is_current(&record, &account_id, profile) {
+            return Ok(());
+        }
         if !existing_personal_registration_supported(&record, &account_id, profile) {
             return Err(ErrorCode::Conflict);
         }
@@ -2048,6 +2053,29 @@ pub(crate) fn complete_google_oauth_registration(
         store.create_google_oauth_cli_scope_refresh(refresh_id, target, pin)?
     };
     crate::scope_refresh::run_google_oauth_job(store, server, *refresh.refresh_id())
+}
+
+fn existing_personal_registration_is_current(
+    record: &RegistrationRecord,
+    account: &str,
+    profile: hantong_contracts::google_setup::GoogleLocalProfile,
+) -> bool {
+    use hantong_contracts::{auth::*, google_setup::GoogleLocalProfile};
+    record.client_kind == ClientKind::Cli
+        && record.display_label == DEFAULT_CLI_LABEL
+        && record.state == RegistrationState::Active
+        && record.approved_channel == "google_oauth"
+        && record.scope.accounts() == [account]
+        && match profile {
+            GoogleLocalProfile::PersonalRead => {
+                record.scope.tools() == default_cli_body_tools() && record.profile_epoch == 2
+            }
+            GoogleLocalProfile::PersonalReadSend => {
+                record.scope.tools() == default_cli_send_tools()
+                    && matches!(record.profile_epoch, 2 | 3)
+            }
+            GoogleLocalProfile::None => false,
+        }
 }
 
 fn existing_personal_registration_supported(

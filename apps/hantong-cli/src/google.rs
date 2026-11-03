@@ -449,18 +449,9 @@ fn login_inner(
             return Err(error);
         }
         if receipt.state != previous {
-            println!(
-                "{}",
-                resource(
-                    lang,
-                    match receipt.state.as_str() {
-                        "awaiting_client" => "client",
-                        "awaiting_browser" => "browser",
-                        "awaiting_review" => "review",
-                        _ => "opening",
-                    }
-                )
-            );
+            if let Some(key) = setup_stage_message(&receipt.state) {
+                println!("{}", resource(lang, key));
+            }
             show_deadline(lang, receipt.expires_at_utc_ms)?;
             let now = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -502,6 +493,23 @@ fn login_inner(
         return Ok(json!({"state":"ready","account_id":account.account_id()}));
     }
     continue_account_inner(account, lang, details)
+}
+
+fn setup_stage_message(state: &str) -> Option<&'static str> {
+    match state {
+        "awaiting_client" => Some("client"),
+        "awaiting_browser" => Some("browser"),
+        "awaiting_review" => Some("review"),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn cli04_google_queued_stage_does_not_repeat_the_opening_message() {
+    assert_eq!(setup_stage_message("queued"), None);
+    assert_eq!(setup_stage_message("awaiting_browser"), Some("browser"));
+    assert_eq!(setup_stage_message("awaiting_review"), Some("review"));
 }
 
 pub(super) fn connect_guided(lang: Lang, profile: GoogleLocalProfile) -> Result<String, ErrorCode> {

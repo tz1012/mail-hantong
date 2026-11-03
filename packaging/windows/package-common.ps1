@@ -57,6 +57,17 @@ function Assert-FileHash([string] $Path, [string] $Hash) {
         (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash -ine $Hash) { throw "Owned file is missing or changed: $Path" }
 }
 function Get-Shim([string] $Binary) {
+    if ($Binary -ceq 'update') {
+        return (@('@echo off', 'setlocal',
+            'if /i not "%~1"=="hantong" exit /b 2',
+            'if not "%~2"=="" exit /b 2',
+            'set "HT_VERSION="',
+            'if not exist "%~dp0..\current.txt" exit /b 1',
+            'set /p HT_VERSION=<"%~dp0..\current.txt"',
+            'if not defined HT_VERSION exit /b 1',
+            '"%~dp0..\versions\%HT_VERSION%\bin\hantong.exe" update',
+            'exit /b %errorlevel%', '') -join "`r`n")
+    }
     return (@('@echo off', 'setlocal', 'set "HT_VERSION="',
         'if not exist "%~dp0..\current.txt" exit /b 1',
         'set /p HT_VERSION=<"%~dp0..\current.txt"', 'if not defined HT_VERSION exit /b 1',
@@ -65,7 +76,14 @@ function Get-Shim([string] $Binary) {
 }
 function Get-OwnedBinaries($Versions) {
     $names = @('hantong', 'mail-hantong-core')
+    $hasUpdater = $false
     if ($null -ne $Versions) {
+        foreach ($version in $Versions) {
+            foreach ($file in $version.files) {
+                if ([string]$file.path -ieq 'update.ps1') { $hasUpdater = $true }
+            }
+        }
+        if ($hasUpdater) { $names += 'update' }
         foreach ($binary in @('hantong-t', 'hantong-mcp')) {
             $included = $false
             foreach ($version in $Versions) {

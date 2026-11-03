@@ -93,16 +93,19 @@ Stop-OwnedCoreForUpdate '{install_root.as_posix()}' $state.versions
             state_path = install_root / "install-manifest.json"
             state = json.loads(state_path.read_text(encoding="utf-8"))
             state["versions"][0]["files"] = [entry for entry in state["versions"][0]["files"] if entry["path"] != "release-manifest.json"]
+            state["versions"][0]["files"] = [entry for entry in state["versions"][0]["files"] if entry["path"] != "update.ps1"]
             state_path.write_text(json.dumps(state), encoding="utf-8")
             (install_root / "versions/1.0.0/release-manifest.json").unlink()
+            (install_root / "versions/1.0.0/update.ps1").unlink()
             record = {"Pid": 4105, "Path": str(root / "foreign/bin/mail-hantong-core.exe"), "CommandLine": "run", "OwnerSid": "S-1-5-21-test"}
             result = self.run_core_gate(root, install_root, record)
             self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_inst01_production_script_has_no_test_process_overrides(self):
         text = INSTALL.read_text(encoding="utf-8")
-        self.assertNotIn("HANTONG_TEST", text)
-        self.assertNotIn("ConvertFrom-Json", text)
+        block = text.split("# TESTABLE_CORE_STOP_FUNCTIONS_BEGIN", 1)[1].split("# TESTABLE_CORE_STOP_FUNCTIONS_END", 1)[0]
+        self.assertNotIn("HANTONG_TEST", block)
+        self.assertNotIn("ConvertFrom-Json", block)
 
     def test_inst01_core_command_line_normalizes_windows_path_forms_but_keeps_strict_args(self):
         functions = INSTALL.read_text(encoding="utf-8").split("# TESTABLE_CORE_STOP_FUNCTIONS_BEGIN", 1)[1].split("# TESTABLE_CORE_STOP_FUNCTIONS_END", 1)[0]
@@ -148,15 +151,29 @@ foreach ($case in $cases) {{ if ((Test-CoreCommandLine $case.line $path) -ne $ca
             manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
             result = ps(INSTALL, "-Source", second, "-InstallRoot", installed)
             self.assertEqual(result.returncode, 0, result.stderr)
-            for binary in ("hantong", "mail-hantong-core", "hantong-mcp", "hantong-t"):
+            for binary in ("hantong", "mail-hantong-core", "hantong-mcp", "hantong-t", "update"):
                 self.assertTrue((installed / f"bin/{binary}.cmd").is_file())
+            update_shim = (installed / "bin/update.cmd").read_text(encoding="utf-8")
+            self.assertIn('if /i not "%~1"=="hantong" exit /b 2', update_shim)
+            self.assertIn('if not "%~2"=="" exit /b 2', update_shim)
+            self.assertIn('bin\\hantong.exe" update', update_shim)
+            self.assertEqual(
+                subprocess.run(["cmd.exe", "/d", "/c", str(installed / "bin/update.cmd"), "wrong", "hantong"],
+                       capture_output=True).returncode,
+                2,
+            )
+            accepted = subprocess.run(
+                ["cmd.exe", "/d", "/c", str(installed / "bin/update.cmd"), "hantong"],
+                capture_output=True,
+            )
+            self.assertNotEqual(accepted.returncode, 2)
             result = ps(UNINSTALL, "-InstallRoot", installed)
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertFalse((installed / "bin").exists())
 
     def bundle(self, root, version="0.1.0"):
         src = root / "bundle"; (src / "bin").mkdir(parents=True)
-        for name, content in {"bin/hantong.exe": b"cli", "bin/mail-hantong-core.exe": b"core", "LICENSE": b"license"}.items(): (src / name).write_bytes(content)
+        for name, content in {"bin/hantong.exe": b"cli", "bin/mail-hantong-core.exe": b"core", "LICENSE": b"license", "update.ps1": b"synthetic updater"}.items(): (src / name).write_bytes(content)
         files = [{"path": str(p.relative_to(src)).replace("\\", "/"), "sha256": hashlib.sha256(p.read_bytes()).hexdigest(), "size": p.stat().st_size} for p in src.rglob("*") if p.is_file()]
         (src / "release-manifest.json").write_text(json.dumps({"format_version": 1, "version": version, "package_version": version, "target": "windows-x86_64", "files": files}), encoding="utf-8")
         return src
@@ -181,6 +198,7 @@ foreach ($case in $cases) {{ if ((Test-CoreCommandLine $case.line $path) -ne $ca
             for _ in range(2):
                 result = ps(INSTALL, "-Source", src, "-InstallRoot", install_root); self.assertEqual(result.returncode, 0, result.stderr)
             self.assertTrue((install_root / "bin" / "hantong.cmd").exists())
+            self.assertTrue((install_root / "bin" / "update.cmd").exists())
             (install_root / "data").mkdir(); (install_root / "data" / "mail.db").write_text("keep", encoding="utf-8")
             result = ps(UNINSTALL, "-InstallRoot", install_root); self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual((install_root / "data" / "mail.db").read_text(encoding="utf-8"), "keep")

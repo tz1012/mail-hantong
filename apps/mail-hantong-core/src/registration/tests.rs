@@ -451,6 +451,66 @@ fn acc02_existing_personal_read_upgrades_only_same_account_from_exact_oauth_prof
         PersonalReadSend
     ));
 }
+#[test]
+fn acc02_google_reconnect_accepts_only_exact_active_oauth_grants_without_new_scope() {
+    use hantong_contracts::{auth::*, google_setup::GoogleLocalProfile::*};
+    let account = format!("google_{}", "a".repeat(64));
+    let mut current = record();
+    current.state = RegistrationState::Active;
+    current.approved_channel = "google_oauth".into();
+    for (profile, tools, epoch) in [
+        (PersonalRead, default_cli_body_tools(), 2),
+        (PersonalReadSend, default_cli_send_tools(), 2),
+        (PersonalReadSend, default_cli_send_tools(), 3),
+    ] {
+        current.profile_epoch = epoch;
+        current.scope = RequestedScope::new(vec![account.clone()], tools).unwrap();
+        assert!(existing_personal_registration_is_current(
+            &current, &account, profile
+        ));
+        assert!(!existing_personal_registration_supported(
+            &current, &account, profile
+        ));
+        assert!(!existing_personal_registration_is_current(
+            &current, "other", profile
+        ));
+        for channel in ["approval_helper", "terminal_cli", "ai_feature"] {
+            current.approved_channel = channel.into();
+            assert!(!existing_personal_registration_is_current(
+                &current, &account, profile
+            ));
+        }
+        current.approved_channel = "google_oauth".into();
+        for state in [RegistrationState::Provisioning, RegistrationState::Revoked] {
+            current.state = state;
+            assert!(!existing_personal_registration_is_current(
+                &current, &account, profile
+            ));
+        }
+        current.state = RegistrationState::Active;
+        current.profile_epoch = 4;
+        assert!(!existing_personal_registration_is_current(
+            &current, &account, profile
+        ));
+    }
+    current.profile_epoch = 2;
+    current.scope = RequestedScope::new(vec![account.clone()], default_cli_send_tools()).unwrap();
+    assert!(!existing_personal_registration_is_current(
+        &current,
+        &account,
+        PersonalRead
+    ));
+    assert!(!existing_personal_registration_is_current(
+        &current, &account, None
+    ));
+    current.client_kind = ClientKind::Mcp;
+    assert!(!existing_personal_registration_is_current(
+        &current,
+        &account,
+        PersonalReadSend
+    ));
+}
+
 fn gui_record() -> RegistrationRecord {
     let mut value = record();
     value.client_kind = ClientKind::Gui;

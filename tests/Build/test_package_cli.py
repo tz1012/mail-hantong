@@ -39,7 +39,7 @@ class PackageCliTests(unittest.TestCase):
         self.target = self.root / "target"
         self.binary_dir = self.target / package.TARGET / "release"
         self.binary_dir.mkdir(parents=True)
-        for path in ("LICENSE", "README.md", "docs/latest/CLI-LAUNCH.md", "docs/latest/GOOGLE-MAIL.md",
+        for path in ("LICENSE", "README.md", "docs/latest/CLI-LAUNCH.md", "docs/latest/GOOGLE-MAIL.md", "install.ps1",
                      "packaging/windows/install.ps1", "packaging/windows/uninstall.ps1", "packaging/windows/package-common.ps1"):
             source = self.root / path
             source.parent.mkdir(parents=True, exist_ok=True)

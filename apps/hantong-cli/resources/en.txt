@@ -185,3 +185,4 @@ send_prompt=Send this message? 1) Send 0) Cancel
 smtp_setup_request=SMTP setup request
 smtp_setup_state=State
 google_help=Google: gmail accounts; login google [--client-id ID] [--name NAME]; login google --reauthorize-account ACCOUNT_ID; login google --resume-request REQUEST_ID; login google --continue-account ACCOUNT_ID; gmail labels/sync/status/list/read --account ACCOUNT_ID. Configure the app once, then reuse the protected same-client configuration. See GOOGLE-MAIL.md.
+update_help=update: download and install the latest published version using the owned updater. Requires an interactive terminal; update hantong is accepted only by the installed launcher.
