@@ -1748,3 +1748,11 @@ API 403/429 때만 공개 Atom feed와 HEAD 길이 확인으로 전환하는 boo
 ### beta.7 통합 검증
 
 최종 `python -X utf8 scripts/check_all.py` exit 0: Rust **1,749개/31 suites/실패 0/ignored 0**, Docs **29개**, Build **110개**, 합계 **1,888회 실행**. fmt·Clippy(-D warnings)·all-targets build/test·문서/요건/아키텍처/추적표가 통과했다. 최초 실행은 진단 PS1 추가 중 source hash 변경으로 추적표 stale에서 중단되어, 소스를 고정하고 추적표를 생성한 뒤 전체를 다시 실행했다. 최종 source hash `1f27fb7e29a232aab42b915f8a4c8503d552e2f2b1ceb66a85a3c27974ddb122`, 로그 SHA-256 `fa8b04fb9531ba1753e380af9752e731dfaba9707a359a5519f6628b7871a892`, 근거 `target/beta7-verification.json`. 기존 beta.3 Core를 같은 경로/인자/SHA-256으로 복원했다(PID 13660). 실제 계정/DB 이행은 하지 않았다. beta.7 패키징과 원격 기존 저장소 복구는 별도 진행 중이다. **[사람 보안 검토 필요]**.
+
+### beta.7 공개·원격 ACL 복구 시도 후 검증 중단
+
+소스 `5052591441a03efa6a75011359421afa967c2199`를 main에 fast-forward하고 `v0.1.0-beta.7` prerelease를 공개했다. 자산 3개 size/digest를 게시 전에 검증하고 공개 ZIP 재다운로드 SHA-256 `bc87a1faef1250c4e6a9dc9fc82ed314fc1421bee716379883e416efbe146b1d`, 25,098,588 bytes를 대조했다. manifest 261개 파일과 승인 beta.3 publisher 동일성, DB/profile 미포함을 확인했다. 별도 설치 후 도움말·AI 안내·바이너리 6개와 update shim headless 거부가 통과했다. 문서 29개도 재실행했다. 사이트 `a42e39978f3015cf743b2245f9d06ea2bad1320b` Pages 성공과 공개 HTTP의 beta.7·1,888·고정 설치 commit을 확인했다. 기존 설치/실제 DB는 교체하지 않았다.
+
+원격 읽기 전용 트리 진단 `ba56da8496c2936b9eb2e0a2cb8cfbb39bec5e3c`는 9개 객체(폴더 2/파일 7) 모두 Administrators 소유, 사용자 FullControl 없음, deny/unknown/unsupported ACE 없음, logon-session ReadExecute만 존재함을 확인했다. 사용자가 이 9개에 사용자 권한을 추가하는 데이터 보존 복구를 명시 승인했다. 별도 진단 branch의 `6c16164348e4a9c67bf615324b82cb8f0d72c3e7` 스크립트는 실제 Core와 같은 share=0 기존 DB/key lock을 유지하고 owner/기존 ACE를 보존하며 ACL 메타데이터 백업을 먼저 생성한다. 합성 user-owned 9개 fixture에서 hash·owner 보존/계획 불일치 무변경/배타 lock/주입 실패 역순 원복이 통과했다. **실제 Administrators owner/상속 부모 조건의 Apply는 로컬에서 검증하지 못한 제약**이 있었다.
+
+원격 Apply 결과 첫 객체 변경 후 검증과 원복 검증이 실패하여 `RECOVERY_REQUIRED`, BackupSaved=true, RollbackComplete=false, NodesChanged=1로 중단했다. DB/key 파일 내용·소유권 변경·삭제는 하지 않았다. 동일 명령을 반복하지 않도록 안내했다. 후속 읽기 전용 조회의 data/secrets owner/보호 상태/3 ACE/사용자 mask 0은 초기와 같지만 이것만으로 원복 완료를 주장하지 않는다. 부모 상속 처리나 ACL 정규화가 검증에 영향을 줬을 가능성을 조사 중이며 원인은 아직 확정하지 않는다. 보호된 ACL 백업과 현재 9개를 비교하는 읽기 전용 `dd8521b09fb2624eb8e0211b2cee1ecc7614db08` 감사를 게시하고 공개 동일성, 합성 백업 9개 비교를 검증했다. 실제 추가 Apply는 중단 중이고 기존 계정 복구 성공은 **미확인**이다. **[사람 보안 검토 필요]**.
