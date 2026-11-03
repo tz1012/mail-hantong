@@ -1756,3 +1756,11 @@ API 403/429 때만 공개 Atom feed와 HEAD 길이 확인으로 전환하는 boo
 원격 읽기 전용 트리 진단 `ba56da8496c2936b9eb2e0a2cb8cfbb39bec5e3c`는 9개 객체(폴더 2/파일 7) 모두 Administrators 소유, 사용자 FullControl 없음, deny/unknown/unsupported ACE 없음, logon-session ReadExecute만 존재함을 확인했다. 사용자가 이 9개에 사용자 권한을 추가하는 데이터 보존 복구를 명시 승인했다. 별도 진단 branch의 `6c16164348e4a9c67bf615324b82cb8f0d72c3e7` 스크립트는 실제 Core와 같은 share=0 기존 DB/key lock을 유지하고 owner/기존 ACE를 보존하며 ACL 메타데이터 백업을 먼저 생성한다. 합성 user-owned 9개 fixture에서 hash·owner 보존/계획 불일치 무변경/배타 lock/주입 실패 역순 원복이 통과했다. **실제 Administrators owner/상속 부모 조건의 Apply는 로컬에서 검증하지 못한 제약**이 있었다.
 
 원격 Apply 결과 첫 객체 변경 후 검증과 원복 검증이 실패하여 `RECOVERY_REQUIRED`, BackupSaved=true, RollbackComplete=false, NodesChanged=1로 중단했다. DB/key 파일 내용·소유권 변경·삭제는 하지 않았다. 동일 명령을 반복하지 않도록 안내했다. 후속 읽기 전용 조회의 data/secrets owner/보호 상태/3 ACE/사용자 mask 0은 초기와 같지만 이것만으로 원복 완료를 주장하지 않는다. 부모 상속 처리나 ACL 정규화가 검증에 영향을 줬을 가능성을 조사 중이며 원인은 아직 확정하지 않는다. 보호된 ACL 백업과 현재 9개를 비교하는 읽기 전용 `dd8521b09fb2624eb8e0211b2cee1ecc7614db08` 감사를 게시하고 공개 동일성, 합성 백업 9개 비교를 검증했다. 실제 추가 Apply는 중단 중이고 기존 계정 복구 성공은 **미확인**이다. **[사람 보안 검토 필요]**.
+
+### 원격 백업 감사 결과와 Group 조회 누락 수정
+
+사용자가 보낸 ACL 감사 결과는 **9개 모두 object ID·owner·protection·ACL revision 2·기존 ACE 바이트가 정확히 일치**했다. 사용자 FA는 9개 모두 없으며 원래 접근 권한은 돌아온 상태다. 첫 3개는 GroupMatches=false/descriptor bytes 차이, 나머지 6개는 descriptor 전체도 일치했다. 상속 ACE 추가나 ACL revision 변경을 원인으로 확정했던 가설을 폐기한다. 실제 코드는 `GetSecurityInfo(OWNER|DACL)`만 요청한 스냅샷에서 요청하지 않은 Group까지 비교했다. Microsoft 공식 GetSecurityInfo 문서상 Group 유효성은 GROUP_SECURITY_INFORMATION 요청을 필요로 한다.
+
+v3 별도 복구 스크립트는 새 스냅샷마다 OWNER|GROUP|DACL을 명시적으로 요청해 primary group까지 저장·검증한다. 기존 보호 백업은 요청됐던 object ID/owner/protection/ACL revision/정확한 ACE 바이트와 9개 대상 수를 검증해 결속하고, 구형 스냅샷의 미요청 Group은 비교 근거로 사용하지 않는다. 새 쓰기 전후에는 실제 primary group 비교를 계속 유지한다. OS가 관리하는 defaulted/auto-inherited bookkeeping flags를 전체 descriptor 바이트 동일성으로 오인하지 않으며 DACL present/nonNULL·보호 상태·ACE의 SID/mask/flags는 검증한다.
+
+`target/test_storage_repair_resume.ps1` 합성 시험 통과: 구형 백업 첫 3개 Group 누락/기존 ACE 9개 동일 조건 재현, 보호 백업에 결속한 재적용 9개 성공, 명시 조회한 primary group 9개 보존, 원본 DACL 불일치 재시도 무변경 거부. 기존 파일 hash/owner 보존·wrong plan 무변경·share=0 lock 차단·주입 실패 원복 시험도 통과했다. 호스트 비관리자 제약상 Administrators 소유 Apply는 여전히 실제로 실행하지 못했고 시험 전용 클래스에서 user-owned 9개 fixture를 사용했다. 제품 코드·설치·실제 DB는 변경하지 않았다. 실제 재적용은 아직 **미실행**이며 기존 9개 권한 복구 승인 범위를 유지한다. **[사람 보안 검토 필요]**.
