@@ -54,3 +54,19 @@ count. Obtain and validate bounded asset lengths before using the existing
 download, SHA256SUMS, archive path and manifest checks. Unexpected status,
 malformed feed/tag, host changes or missing/oversized assets fail closed. This
 lookup fallback grants no mail, account, credential or arbitrary script access.
+
+## Compatible release ordering
+
+REST and Atom response order is not version precedence. Select the highest valid
+compatible published package with both the exact Windows ZIP and checksums.
+Compare numeric version and prerelease components without integer overflow;
+stable releases outrank prereleases of the same core version. For the product's
+legacy same-core channel transition, `beta` outranks the earlier `preview`
+channel. Other prerelease identifiers retain SemVer precedence. An explicit
+requested tag stays exact.
+
+The latest channel must not move an owned installation's current pointer to a
+lower version. Inspect only the exact bounded owner marker and bounded current
+version file, rejecting reparse points before reading. Version selection grants
+no installation ownership and does not replace the package installer's existing
+ownership, manifest, hash, lock and activation checks.

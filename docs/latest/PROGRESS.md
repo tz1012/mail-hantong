@@ -1856,3 +1856,13 @@ beta.9 공개 자산의 hash/size와 별도 설치 스모크까지 통과했으�
 PowerShell에 전달하는 -File/-InstallRoot 인자에만 verbatim DOS/UNC→일반 Windows 경로 변환을 적용했다. 원본 canonical 경로의 manifest·런처·파일 검증은 유지한다. 변환한 updater와 root를 다시 canonical 검증해 원래 경로와 정확히 일치할 때만 실행하며, trailing dot/space·예약 DOS 이름·ADS·wildcard·제어 문자·device/GLOBALROOT를 거부한다. 자동 재검토에서 경로 별칭 우회 지적이 해소됨을 확인했다. 사람 보안 검토와는 구분한다.
 
 업데이트 시험 10개 통과: Unicode DOS/UNC, namespace/별칭 거부, 경쟁 normalized updater 무실행, 실제 Windows PowerShell 5.1 Join-Path, 기존 manifest/current/변조·junction·headless 경계를 포함한다. 대상 CLI Clippy(-D warnings) exit 0, 해당 파일 rustfmt 통과. 근거 target/beta10-update-tests.log와 beta10-cli-clippy.log. source hash `fc97eec5cecdcbb329bc9175a0e71b0d1033d41a214e51f36f7e58121d29d8d3`; 전체 검사는 반복하지 않았다. 패키지와 실제 설치/업데이트 확인은 이어서 진행한다.
+
+beta.10 ZIP 공개 재다운로드 SHA-256 `c254b3aaece3e45f424f3e2fce3e373e7eb58f585cb8cabb28f2c3660cf4d673`, 25,150,655 bytes와 source hash 일치를 확인했다. 직접 설치는 beta.8→beta.10으로 성공하고 Core가 실행됐다. 이후 실제 `update hantong`은 경로 오류 없이 exit 0이었지만 beta.8을 선택해 설치 포인터가 내려갔다. 이를 업데이트 성공으로 표시하지 않는다. GitHub releases 응답에서 beta.10이 beta.8 뒤에 있어 첫 호환 항목을 최신으로 간주한 선택 결함이 드러났다. 숫자 prerelease를 포함한 SemVer 비교와 latest 자동 하향 방지를 별도 대상 설치 시험으로 수정한다. 기존 Core는 같은 검증된 실행 파일로 복원했다(PID 64340). 계정·메일·키·ACL 변경은 없다.
+
+### beta.11 릴리스 선택·자동 하향 방지 대상 검증
+
+REST/Atom 응답 순서 대신 유효한 호환 패키지의 버전을 비교한다. core 숫자·prerelease 숫자를 overflow 없이 비교하며 stable이 같은 core의 prerelease보다 우선한다. 기존 제품의 preview→beta 전환은 같은 core에서 beta를 우선하는 명시적 호환 규칙으로 유지한다. 그렇지 않으면 과거 preview.4가 beta.11보다 높게 해석되는 이력 문제도 함께 막는다. 정확한 버전 요청은 해당 tag만 선택하고, latest가 검증된 owned current보다 낮으면 다운로드·설치 전에 거부한다. marker/current와 root 조상의 reparse point, marker 정확한 내용·크기, current 크기·형식을 확인한 뒤에만 읽는다. 기존 다운로드 URL·압축 경로·manifest/hash 검사는 유지한다.
+
+새 릴리스 선택 합성 시험 9개 통과(15.657초). 기존 API 제한/Atom fallback 시험도 5개 통과했고 이후 변경 없는 해당 경로는 반복하지 않았다. PowerShell parse와 diff check 통과, 좁은 자동 검토에서 구체적 차단 사항 없음. Rust 경로 변경은 앞서 통과한 10개 시험과 CLI Clippy 근거를 재사용하며 전체 검사는 재실행하지 않는다. 계약은 cli-update.md에 선택/하향 방지 규칙을 보충했다. 새 패키지·실제 update의 최종 버전 확인을 이어간다. [사람 보안 검토 필요].
+
+공통 메일 별도 작업 사본의 IMAP 인증→SELECT→단일 UID MOVE 합성 종단 시험 4개가 새 독립 Cargo target에서 통과했다. 실제 서버·계정은 사용하지 않았다. READ-WRITE 응답의 scanner/typed decoder 불일치를 수정했으며, target을 원본 릴리스 검증과 분리해 작업 사본 간 오래된 artifact 혼입을 피한다. 공통 전체 기능 완료나 배포로 표시하지 않는다.

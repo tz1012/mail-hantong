@@ -1,7 +1,8 @@
 # mail-hantong CLI — Windows beta.8
 
-beta.10 fixes update installation path handling and gives update-specific failure
-messages. It retains beta.8, which fixes adding another sending Gmail account while preserving existing
+beta.11 fixes Windows PowerShell update paths, selects the newest compatible
+release independently of API order, and prevents automatic downgrades. It gives
+update-specific failure messages and retains beta.8, which fixes adding another sending Gmail account while preserving existing
 account permissions. Google consent is followed by the exact scope selection
 in the same terminal; every message still needs a separate preview and Send.
 The sending-account selection supports up to 128 accounts. This release does
@@ -17,7 +18,7 @@ and stable error code. Do not send credentials, database files or mail content.
 
 The command is `hantong`. English is the default; use `--lang ko` for Korean. The companion `mail-hantong-core` process handles encrypted local storage, mail operations and policy. The graphical mail application is not included in the CLI package.
 
-**Release: [0.1.0-beta.10](https://github.com/tz1012/mail-hantong/releases/tag/v0.1.0-beta.10).** The [Korean website guide](https://tz1012.github.io/mail-hantong/) covers installation, mail and AI feature switching. Release downloads include checksums and build metadata. The preceding baseline passed 1,906 full-check test executions. This update delta is verified with 10 updater regression tests, CLI static checks and package validation; the full suite was not repeated. Earlier beta.3 manual Gmail verification covered account retention, terminal cancellation, one synthetic send/receive and matching body/attachment; it does not validate the new AI or trash path against real services. Human security review, clean Windows VM testing, other real mail providers and Google verification remain separate open gates. Real AI login, paid inference and real trash operations were not tested. This version migrates local storage from schema 24 to 25; do not run an older core against migrated data. macOS mail operations are not available yet.
+**Release: [0.1.0-beta.11](https://github.com/tz1012/mail-hantong/releases/tag/v0.1.0-beta.11).** The [Korean website guide](https://tz1012.github.io/mail-hantong/) covers installation, mail and AI feature switching. Release downloads include checksums and build metadata. The preceding baseline passed 1,906 full-check test executions. This update delta is verified with 10 updater regression tests, 9 release-selection cases, API-limit fallback checks, CLI static checks and package validation; the full suite was not repeated. Earlier beta.3 manual Gmail verification covered account retention, terminal cancellation, one synthetic send/receive and matching body/attachment; it does not validate the new AI or trash path against real services. Human security review, clean Windows VM testing, other real mail providers and Google verification remain separate open gates. Real AI login, paid inference and real trash operations were not tested. This version migrates local storage from schema 24 to 25; do not run an older core against migrated data. macOS mail operations are not available yet.
 
 ## What works in this preview
 

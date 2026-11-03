@@ -29,10 +29,117 @@ function Install-MailHantong {
     function Complete-InstallProgress {
         Write-Progress -Id 1 -ParentId 0 -Activity $progressActivity -Status (Get-InstallProgressText 'complete' @()) -PercentComplete 100 -Completed
     }
+    function Get-ReleaseVersionInfo([string] $Label) {
+        if ([string]::IsNullOrWhiteSpace($Label) -or $Label.Length -gt 64) { return $null }
+        $pattern = '^(?<major>0|[1-9][0-9]*)\.(?<minor>0|[1-9][0-9]*)\.(?<patch>0|[1-9][0-9]*)(?<pre>-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$'
+        if ($Label -notmatch $pattern) { return $null }
+        $major = $Matches.major
+        $minor = $Matches.minor
+        $patch = $Matches.patch
+        $preText = $Matches.pre
+        $pre = @()
+        if ($preText) {
+            foreach ($identifier in $preText.Substring(1).Split('.')) {
+                $numeric = $identifier -match '^[0-9]+$'
+                if ($numeric -and $identifier.Length -gt 1 -and $identifier.StartsWith('0', [StringComparison]::Ordinal)) { return $null }
+                $pre += [pscustomobject]@{ Text = $identifier; Numeric = $numeric }
+            }
+        }
+        return [pscustomobject]@{ Label = $Label; Major = $major; Minor = $minor; Patch = $patch; Pre = $pre }
+    }
+    function Compare-ReleaseDecimal([string] $Left, [string] $Right) {
+        if ($Left.Length -ne $Right.Length) { return [Math]::Sign($Left.Length - $Right.Length) }
+        return [StringComparer]::Ordinal.Compare($Left, $Right)
+    }
+    function Compare-ReleaseVersion([object] $Left, [object] $Right) {
+        foreach ($part in @('Major', 'Minor', 'Patch')) {
+            $comparison = Compare-ReleaseDecimal ([string]$Left.$part) ([string]$Right.$part)
+            if ($comparison -ne 0) { return $comparison }
+        }
+        $leftPre = @($Left.Pre)
+        $rightPre = @($Right.Pre)
+        if ($leftPre.Count -eq 0 -and $rightPre.Count -gt 0) { return 1 }
+        if ($leftPre.Count -gt 0 -and $rightPre.Count -eq 0) { return -1 }
+        if ($leftPre.Count -gt 0 -and $rightPre.Count -gt 0) {
+            # The product previously published same-core preview builds before
+            # beta builds. Keep that channel promotion explicit while retaining
+            # SemVer ordering for every other prerelease identifier.
+            if ($leftPre[0].Text -ceq 'preview' -and $rightPre[0].Text -ceq 'beta') { return -1 }
+            if ($leftPre[0].Text -ceq 'beta' -and $rightPre[0].Text -ceq 'preview') { return 1 }
+        }
+        $count = [Math]::Min($leftPre.Count, $rightPre.Count)
+        for ($i = 0; $i -lt $count; $i++) {
+            $leftIdentifier = $leftPre[$i]
+            $rightIdentifier = $rightPre[$i]
+            if ($leftIdentifier.Numeric -and $rightIdentifier.Numeric) {
+                $comparison = Compare-ReleaseDecimal $leftIdentifier.Text $rightIdentifier.Text
+            } elseif ($leftIdentifier.Numeric) {
+                $comparison = -1
+            } elseif ($rightIdentifier.Numeric) {
+                $comparison = 1
+            } else {
+                $comparison = [StringComparer]::Ordinal.Compare($leftIdentifier.Text, $rightIdentifier.Text)
+            }
+            if ($comparison -ne 0) { return $comparison }
+        }
+        return [Math]::Sign($leftPre.Count - $rightPre.Count)
+    }
+    function Select-CompatibleRelease([object[]] $Releases, [string] $ExactTag, [bool] $UseAtomFallback) {
+        $selected = $null
+        foreach ($release in $Releases) {
+            if ($release.draft -eq $true) { continue }
+            $tag = [string]$release.tag_name
+            if ($ExactTag -and $tag -cne $ExactTag) { continue }
+            if ($tag -notmatch '^v(?<label>[0-9A-Za-z.-]+)$') { continue }
+            $label = $Matches.label
+            $version = Get-ReleaseVersionInfo $label
+            if (-not $version) { continue }
+            $name = "mail-hantong-cli-$label-windows-x86_64.zip"
+            $zip = @($release.assets | Where-Object { $_.name -ceq $name })
+            $sums = @($release.assets | Where-Object { $_.name -ceq 'SHA256SUMS' })
+            $assetShapeOk = $zip.Count -eq 1 -and $sums.Count -eq 1 -and ($UseAtomFallback -or ($zip[0].size -gt 0 -and $zip[0].size -le 134217728 -and $sums[0].size -gt 0 -and $sums[0].size -le 65536))
+            if (-not $assetShapeOk) { continue }
+            $candidate = @{ Zip = $zip[0]; Sums = $sums[0]; Name = $name; Label = $label; Version = $version }
+            if (-not $selected -or (Compare-ReleaseVersion $candidate.Version $selected.Version) -gt 0) { $selected = $candidate }
+        }
+        return $selected
+    }
+    function Assert-SelectionPathSafe([string] $Path) {
+        $cursor = [IO.Path]::GetFullPath($Path)
+        while ($cursor) {
+            if (Test-Path -LiteralPath $cursor) {
+                $item = Get-Item -LiteralPath $cursor -Force
+                if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'Owned installation path is invalid.' }
+            }
+            $parent = [IO.Path]::GetDirectoryName($cursor)
+            if ($parent -eq $cursor) { break }
+            $cursor = $parent
+        }
+    }
+    function Get-OwnedCurrentVersion([string] $Root) {
+        if ([string]::IsNullOrWhiteSpace($Root)) { return $null }
+        $rootPath = [IO.Path]::GetFullPath($Root)
+        Assert-SelectionPathSafe $rootPath
+        $marker = Join-Path $rootPath '.mail-hantong-owner'
+        if (-not (Test-Path -LiteralPath $marker -PathType Leaf)) { return $null }
+        $markerItem = Get-Item -LiteralPath $marker -Force
+        if (($markerItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or $markerItem.Length -gt 64 -or
+            [IO.File]::ReadAllText($marker) -cne 'mail-hantong-cli-v1') { throw 'Installation ownership is missing.' }
+        $current = Join-Path $rootPath 'current.txt'
+        if (-not (Test-Path -LiteralPath $current -PathType Leaf)) { throw 'Owned installation current version is invalid.' }
+        $currentItem = Get-Item -LiteralPath $current -Force
+        if (($currentItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or $currentItem.Length -gt 64) { throw 'Owned installation current version is invalid.' }
+        $label = ([IO.File]::ReadAllText($current)).Trim()
+        $version = Get-ReleaseVersionInfo $label
+        if (-not $version) { throw 'Owned installation current version is invalid.' }
+        return $version
+    }
     try {
     Set-InstallProgress 2 (Get-InstallProgressText 'checking' @())
-    if ($ReleaseVersion -ne 'latest' -and $ReleaseVersion -notmatch '^v?(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*)?$') {
-        throw 'Invalid release version.'
+    $requestedLabel = $null
+    if ($ReleaseVersion -ne 'latest') {
+        $requestedLabel = if ($ReleaseVersion.StartsWith('v')) { $ReleaseVersion.Substring(1) } else { $ReleaseVersion }
+        if (-not (Get-ReleaseVersionInfo $requestedLabel)) { throw 'Invalid release version.' }
     }
     if (-not [Environment]::Is64BitOperatingSystem -or [Environment]::OSVersion.Platform -ne 'Win32NT') {
         throw 'This package requires 64-bit Windows.'
@@ -81,8 +188,9 @@ function Install-MailHantong {
             $prefix = '/tz1012/mail-hantong/releases/tag/'
             if ($linkUri.Scheme -cne 'https' -or $linkUri.Host -cne 'github.com' -or $linkUri.UserInfo -or -not $linkUri.IsDefaultPort -or $linkUri.Query -or $linkUri.Fragment -or -not $linkUri.AbsolutePath.StartsWith($prefix, [StringComparison]::Ordinal)) { throw 'GitHub release feed is invalid.' }
             $tag = $linkUri.AbsolutePath.Substring($prefix.Length)
-            if ($tag -notmatch '^v(?<label>[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.-]+)?)$' -or [Uri]::UnescapeDataString($tag) -cne $tag) { throw 'GitHub release feed is invalid.' }
+            if ($tag -notmatch '^v(?<label>[0-9A-Za-z.-]+)$') { throw 'GitHub release feed is invalid.' }
             $label = $Matches.label
+            if ([Uri]::UnescapeDataString($tag) -cne $tag -or -not (Get-ReleaseVersionInfo $label)) { throw 'GitHub release feed is invalid.' }
             if ($wantedTag -and $tag -cne $wantedTag) { continue }
             $name = "mail-hantong-cli-$label-windows-x86_64.zip"
             $assetPrefix = "https://github.com/tz1012/mail-hantong/releases/download/$tag/"
@@ -112,20 +220,14 @@ function Install-MailHantong {
         $releases = @(Get-AtomReleases $ReleaseVersion)
     }
     Set-InstallProgress 12 (Get-InstallProgressText 'selecting' @())
-    $selected = $null
-    foreach ($release in $releases) {
-        if ($release.draft -or $release.tag_name -notmatch '^v(?<label>[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.-]+)?)$') { continue }
-        $label = $Matches.label
-        $name = "mail-hantong-cli-$label-windows-x86_64.zip"
-        $zip = @($release.assets | Where-Object { $_.name -ceq $name })
-        $sums = @($release.assets | Where-Object { $_.name -ceq 'SHA256SUMS' })
-        $assetShapeOk = $zip.Count -eq 1 -and $sums.Count -eq 1 -and ($usedAtomFallback -or ($zip[0].size -gt 0 -and $zip[0].size -le 134217728 -and $sums[0].size -gt 0 -and $sums[0].size -le 65536))
-        if ($assetShapeOk) {
-            $selected = @{ Zip = $zip[0]; Sums = $sums[0]; Name = $name; Label = $label }
-            break
-        }
-    }
+    $exactTag = if ($ReleaseVersion -eq 'latest') { $null } elseif ($ReleaseVersion.StartsWith('v')) { $ReleaseVersion } else { "v$ReleaseVersion" }
+    $selected = Select-CompatibleRelease $releases $exactTag $usedAtomFallback
     if (-not $selected) { throw 'No compatible published Windows package is available.' }
+    if ($ReleaseVersion -eq 'latest') {
+        $destinationForSelection = if ([string]::IsNullOrWhiteSpace($Destination)) { Join-Path $env:LOCALAPPDATA 'Programs\mail-hantong-cli' } else { $Destination }
+        $installed = Get-OwnedCurrentVersion $destinationForSelection
+        if ($installed -and (Compare-ReleaseVersion $selected.Version $installed) -lt 0) { throw 'No compatible published Windows package is available.' }
+    }
     if ($usedAtomFallback) {
         foreach ($asset in @($selected.Zip, $selected.Sums)) {
             $assetUri = [Uri]$asset.browser_download_url
