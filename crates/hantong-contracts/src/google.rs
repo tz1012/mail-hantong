@@ -36,6 +36,7 @@ pub struct GoogleMessage {
     pub label_ids: Vec<String>,
     pub subject: String,
     pub sender: String,
+    pub headers: Option<crate::message_body::MessageEnvelope>,
     pub snippet: String,
     pub body_text: Option<String>,
     pub body_error: Option<String>,

@@ -7,6 +7,80 @@ use crate::{ErrorCode, uid_page::UidMailboxIdentity};
 use std::fmt;
 
 pub const MAX_BODY_BYTES: usize = 1024 * 1024;
+pub const MAX_ENVELOPE_FIELD_BYTES: usize = 8192;
+pub const MAX_ENVELOPE_BYTES: usize = 32768;
+
+/// Untrusted RFC822 envelope fields retained for display only.
+#[derive(Clone, Eq, PartialEq)]
+pub struct MessageEnvelope {
+    subject: Option<String>,
+    from: Option<String>,
+    to: Option<String>,
+    cc: Option<String>,
+    date: Option<String>,
+}
+
+impl std::fmt::Debug for MessageEnvelope {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MessageEnvelope")
+            .field("subject", &self.subject.as_ref().map(|_| "<redacted>"))
+            .field("from", &self.from.as_ref().map(|_| "<redacted>"))
+            .field("to", &self.to.as_ref().map(|_| "<redacted>"))
+            .field("cc", &self.cc.as_ref().map(|_| "<redacted>"))
+            .field("date", &self.date.as_ref().map(|_| "<redacted>"))
+            .finish()
+    }
+}
+
+impl MessageEnvelope {
+    pub fn new(
+        subject: Option<String>,
+        from: Option<String>,
+        to: Option<String>,
+        cc: Option<String>,
+        date: Option<String>,
+    ) -> Result<Self, ErrorCode> {
+        let values = [&subject, &from, &to, &cc, &date];
+        if values.iter().filter_map(|v| v.as_ref()).any(|v| {
+            v.len() > MAX_ENVELOPE_FIELD_BYTES
+                || v.bytes()
+                    .any(|b| b == 0 || (b.is_ascii_control() && b != b'\t'))
+        }) || values
+            .iter()
+            .filter_map(|v| v.as_ref())
+            .map(|v| v.len())
+            .sum::<usize>()
+            > MAX_ENVELOPE_BYTES
+        {
+            return Err(ErrorCode::InvalidInput);
+        }
+        Ok(Self {
+            subject,
+            from,
+            to,
+            cc,
+            date,
+        })
+    }
+    pub fn subject(&self) -> Option<&str> {
+        self.subject.as_deref()
+    }
+    pub fn from(&self) -> Option<&str> {
+        self.from.as_deref()
+    }
+    pub fn to(&self) -> Option<&str> {
+        self.to.as_deref()
+    }
+    pub fn cc(&self) -> Option<&str> {
+        self.cc.as_deref()
+    }
+    pub fn date(&self) -> Option<&str> {
+        self.date.as_deref()
+    }
+    pub fn to_json(&self) -> serde_json::Value {
+        serde_json::json!({"subject":self.subject,"from":self.from,"to":self.to,"cc":self.cc,"date":self.date})
+    }
+}
 
 #[derive(Clone, Eq, PartialEq)]
 pub struct MessageBodyRequest {
@@ -125,6 +199,18 @@ mod mime;
 pub fn render_message_text(bytes: &[u8]) -> Result<String, ErrorCode> {
     mime::render(bytes)
 }
+/// Decode MIME text with a platform-provided legacy charset decoder.
+/// The callback is display-only and must return `None` for invalid input.
+pub fn render_message_text_with_charset<F>(bytes: &[u8], decode: F) -> Result<String, ErrorCode>
+where
+    F: Fn(&[u8], &str) -> Option<String>,
+{
+    mime::render_with_charset(bytes, &decode)
+}
+/// Extract bounded RFC822 envelope fields without changing body semantics.
+pub fn message_envelope(bytes: &[u8]) -> Result<Option<MessageEnvelope>, ErrorCode> {
+    mime::envelope(bytes)
+}
 /// Legacy plain sanitization; never interpret terminal commands.
 pub fn render_terminal_text(bytes: &[u8]) -> String {
     sanitize_terminal_text(&String::from_utf8_lossy(bytes))
@@ -186,5 +272,32 @@ mod tests {
         )
         .unwrap();
         assert_eq!(rendered, "Hello red\n");
+    }
+
+    #[test]
+    fn mail03_envelope_projection_is_bounded_and_display_only() {
+        let raw = b"Subject: Hello\r\nFrom: sender@example.test\r\nTo: recipient@example.test\r\nCc: copy@example.test\r\nDate: Tue, 3 Nov 2026 10:00:00 +0000\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nBody";
+        let envelope = message_envelope(raw).unwrap().unwrap();
+        assert_eq!(envelope.subject(), Some("Hello"));
+        assert_eq!(envelope.from(), Some("sender@example.test"));
+        assert_eq!(envelope.to(), Some("recipient@example.test"));
+        assert_eq!(envelope.cc(), Some("copy@example.test"));
+        assert_eq!(envelope.date(), Some("Tue, 3 Nov 2026 10:00:00 +0000"));
+        assert!(format!("{envelope:?}").contains("<redacted>"));
+    }
+
+    #[test]
+    fn mail03_envelope_projection_tolerates_absent_headers() {
+        assert!(message_envelope(b"plain body").unwrap().is_none());
+        assert!(
+            MessageEnvelope::new(
+                Some("x".repeat(MAX_ENVELOPE_FIELD_BYTES + 1)),
+                None,
+                None,
+                None,
+                None
+            )
+            .is_err()
+        );
     }
 }

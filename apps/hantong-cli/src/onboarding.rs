@@ -24,6 +24,14 @@ pub(super) trait Io {
     fn read_text_line(&mut self, _max_bytes: usize) -> Result<Option<String>, ErrorCode> {
         self.read_line()
     }
+    fn read_command(
+        &mut self,
+        _prompt: &str,
+        _hints: &[String],
+        _choices: &[(String, String)],
+    ) -> Result<Option<String>, ErrorCode> {
+        self.read_line()
+    }
 }
 
 pub(super) trait Effects {
@@ -41,7 +49,8 @@ pub(super) trait Effects {
     ) -> Result<(), ErrorCode>;
     fn enable_send(&mut self, account: &str, lang: Lang) -> Result<(), ErrorCode>;
     fn compose(&mut self, account: &str, lang: Lang, io: &mut dyn Io) -> Result<(), ErrorCode>;
-    fn inbox(&mut self, account: &str, provider: &str, lang: Lang) -> Result<(), ErrorCode>;
+    fn inbox(&mut self, account: &str, provider: &str, lang: &mut Lang) -> Result<(), ErrorCode>;
+    fn ai(&mut self, command: &str, lang: Lang) -> Result<(), ErrorCode>;
 }
 
 pub(super) struct Stdio {
@@ -91,6 +100,15 @@ impl Io for Stdio {
         }
         decode_text_line(&bytes, max_bytes).map(Some)
     }
+
+    fn read_command(
+        &mut self,
+        prompt: &str,
+        hints: &[String],
+        choices: &[(String, String)],
+    ) -> Result<Option<String>, ErrorCode> {
+        hantong_platform::command_prompt::read_command_line_with_options(prompt, hints, choices)
+    }
 }
 
 fn decode_text_line(bytes: &[u8], max_bytes: usize) -> Result<String, ErrorCode> {
@@ -112,6 +130,28 @@ fn decode_line(bytes: &[u8]) -> Result<Option<String>, ErrorCode> {
     }
     let line = std::str::from_utf8(bytes).map_err(|_| ErrorCode::InvalidInput)?;
     Ok(Some(line.trim().to_owned()))
+}
+
+fn parse_language_command(value: &str) -> Option<Result<Lang, ErrorCode>> {
+    let value = value.strip_prefix("/language ")?.trim();
+    Some(match value {
+        "ko" => Ok(Lang::Ko),
+        "en" => Ok(Lang::En),
+        _ => Err(ErrorCode::InvalidInput),
+    })
+}
+
+fn choose_language(io: &mut impl Io, lang: Lang) -> Result<Lang, ErrorCode> {
+    let choices = vec![
+        ("ko".into(), "한국어".into()),
+        ("en".into(), "English".into()),
+    ];
+    match io.read_command(resource(lang, "language_prompt"), &[], &choices)? {
+        Some(value) if value == "/back" => Ok(lang),
+        Some(value) => parse_language_command(&format!("/language {value}"))
+            .unwrap_or(Err(ErrorCode::InvalidInput)),
+        None => Ok(lang),
+    }
 }
 
 struct RealEffects;
@@ -153,11 +193,65 @@ impl Effects for RealEffects {
         super::guided_compose::run(account, lang, io)
     }
 
-    fn inbox(&mut self, account: &str, provider: &str, lang: Lang) -> Result<(), ErrorCode> {
-        if provider == "imap" {
-            return super::guided_mail_setup::open_inbox(account, lang);
-        }
-        super::google::inbox_guided(account, lang)
+    fn inbox(&mut self, account: &str, provider: &str, lang: &mut Lang) -> Result<(), ErrorCode> {
+        let active_language = std::cell::Cell::new(*lang);
+        let result =
+            super::cli_mail_reader::run_with(account, provider, *lang, |command, current_lang| {
+                if super::ai::is_terminal_command(command) {
+                    if let Err(error) = super::ai::run_terminal_command(command, *current_lang) {
+                        println!(
+                            "{} ({})",
+                            resource(*current_lang, "ai_failed"),
+                            error.as_str()
+                        );
+                    }
+                    return Ok(());
+                }
+                if command == "/language" {
+                    let choices = vec![
+                        ("ko".into(), "한국어".into()),
+                        ("en".into(), "English".into()),
+                    ];
+                    if let Some(value) =
+                        hantong_platform::command_prompt::read_command_line_with_options(
+                            resource(*current_lang, "language_prompt"),
+                            &[],
+                            &choices,
+                        )?
+                    {
+                        match value.as_str() {
+                            "ko" => {
+                                *current_lang = Lang::Ko;
+                                active_language.set(Lang::Ko);
+                            }
+                            "en" => {
+                                *current_lang = Lang::En;
+                                active_language.set(Lang::En);
+                            }
+                            _ => println!("{}", resource(*current_lang, "invalid_choice")),
+                        }
+                    }
+                    return Ok(());
+                }
+                if let Some(result) = parse_language_command(command) {
+                    match result {
+                        Ok(next) => {
+                            *current_lang = next;
+                            active_language.set(next);
+                        }
+                        Err(_) => println!("{}", resource(*current_lang, "invalid_choice")),
+                    }
+                    return Ok(());
+                }
+                println!("{}", resource(*current_lang, "invalid_choice"));
+                Ok(())
+            });
+        *lang = active_language.get();
+        result.map(|_| ())
+    }
+
+    fn ai(&mut self, command: &str, lang: Lang) -> Result<(), ErrorCode> {
+        super::ai::run_terminal_command(command, lang)
     }
 }
 
@@ -177,9 +271,27 @@ pub(super) fn say<T: Io + ?Sized>(io: &mut T, lang: Lang, key: &str) -> Result<(
     io.write("\n")
 }
 
-fn choose(io: &mut impl Io, lang: Lang, help_keys: &[&str]) -> Result<Option<String>, ErrorCode> {
+fn choose(
+    io: &mut impl Io,
+    lang: Lang,
+    help_keys: &[&str],
+    choices: &[(String, String)],
+) -> Result<Option<String>, ErrorCode> {
+    let hints = [
+        "/ai codex",
+        "/ai claude",
+        "/agent",
+        "/language ko",
+        "/language en",
+        "/help",
+        "/back",
+    ]
+    .into_iter()
+    .map(str::to_owned)
+    .collect::<Vec<_>>();
     loop {
-        let Some(value) = io.read_line()? else {
+        say(io, lang, "command_hint")?;
+        let Some(value) = io.read_command("> ", &hints, choices)? else {
             return Ok(None);
         };
         if value == "/help" {
@@ -224,11 +336,12 @@ fn work_menu(
     io: &mut impl Io,
     effects: &mut impl Effects,
 ) -> Result<(), ErrorCode> {
+    let mut lang = lang;
     let mut current_account = account.to_owned();
     let mut current_provider = provider.to_owned();
     loop {
         say(io, lang, "work_menu")?;
-        match choose(
+        let Some(value) = choose(
             io,
             lang,
             &[
@@ -238,23 +351,59 @@ fn work_menu(
                 "help_work_enable_send",
                 "help_work_compose",
                 "help_work_imap",
+                "help_ai",
+                "help_language",
+            ],
+            &[
+                ("1".into(), resource(lang, "help_work_inbox").into()),
+                ("2".into(), resource(lang, "help_work_connect").into()),
+                ("3".into(), resource(lang, "help_work_exit").into()),
+                ("4".into(), resource(lang, "help_work_enable_send").into()),
+                ("5".into(), resource(lang, "help_work_compose").into()),
+                ("6".into(), resource(lang, "help_work_imap").into()),
             ],
         )?
-        .as_deref()
-        {
-            None | Some("3") => return Ok(()),
-            Some("1") => effects.inbox(&current_account, &current_provider, lang)?,
-            Some("2") => {
+        else {
+            return Ok(());
+        };
+        if super::ai::is_terminal_command(&value) {
+            if let Err(error) = effects.ai(&value, lang) {
+                io.write(&format!(
+                    "{} ({})\n",
+                    resource(lang, "ai_failed"),
+                    error.as_str()
+                ))?;
+            }
+            continue;
+        }
+        if value == "/language" {
+            match choose_language(io, lang) {
+                Ok(next) => lang = next,
+                Err(_) => say(io, lang, "invalid_choice")?,
+            }
+            continue;
+        }
+        if let Some(result) = parse_language_command(&value) {
+            match result {
+                Ok(next) => lang = next,
+                Err(_) => say(io, lang, "invalid_choice")?,
+            }
+            continue;
+        }
+        match value.as_str() {
+            "3" | "/back" => return Ok(()),
+            "1" => effects.inbox(&current_account, &current_provider, &mut lang)?,
+            "2" => {
                 current_account = connect_account(lang, io, effects)?;
                 current_provider = "gmail".to_owned();
             }
-            Some("4") => effects.enable_send(&current_account, lang)?,
-            Some("5") => effects.compose(&current_account, lang, io)?,
-            Some("6") => {
+            "4" => effects.enable_send(&current_account, lang)?,
+            "5" => effects.compose(&current_account, lang, io)?,
+            "6" => {
                 current_account = connect_imap(lang, io, effects)?;
                 current_provider = "imap".to_owned();
             }
-            Some(_) => {
+            _ => {
                 say(io, lang, "invalid_choice")?;
                 continue;
             }
@@ -267,16 +416,49 @@ fn connect_prompt(
     io: &mut impl Io,
     effects: &mut impl Effects,
 ) -> Result<(), ErrorCode> {
+    let mut lang = lang;
     say(io, lang, "no_accounts")?;
     loop {
         say(io, lang, "connect_or_exit")?;
-        match choose(
+        let value = choose(
             io,
             lang,
-            &["help_connect", "help_connect_imap", "help_exit"],
-        )?
-        .as_deref()
+            &[
+                "help_connect",
+                "help_connect_imap",
+                "help_exit",
+                "help_ai",
+                "help_language",
+            ],
+            &[
+                ("1".into(), resource(lang, "help_connect").into()),
+                ("2".into(), resource(lang, "help_exit").into()),
+                ("3".into(), resource(lang, "help_connect_imap").into()),
+            ],
+        )?;
+        if let Some(value) = value.as_deref()
+            && super::ai::is_terminal_command(value)
         {
+            if let Err(error) = effects.ai(value, lang) {
+                io.write(&format!(
+                    "{} ({})\n",
+                    resource(lang, "ai_failed"),
+                    error.as_str()
+                ))?;
+            }
+            continue;
+        }
+        match value.as_deref() {
+            Some("/language") => match choose_language(io, lang) {
+                Ok(next) => lang = next,
+                Err(_) => say(io, lang, "invalid_choice")?,
+            },
+            Some(value) if parse_language_command(value).is_some() => {
+                match parse_language_command(value).unwrap() {
+                    Ok(next) => lang = next,
+                    Err(_) => say(io, lang, "invalid_choice")?,
+                }
+            }
             Some("1") => {
                 let account = connect_account(lang, io, effects)?;
                 return work_menu(lang, &account, "gmail", io, effects);
@@ -285,7 +467,7 @@ fn connect_prompt(
                 let account = connect_imap(lang, io, effects)?;
                 return work_menu(lang, &account, "imap", io, effects);
             }
-            None | Some("2") => return Ok(()),
+            None | Some("2" | "/back") => return Ok(()),
             Some(_) => {
                 say(io, lang, "invalid_choice")?;
             }
@@ -300,6 +482,7 @@ fn select_existing(
     effects: &mut impl Effects,
     update: Option<&str>,
 ) -> Result<(), ErrorCode> {
+    let mut lang = lang;
     let mut showed_ready_header = false;
     loop {
         for (index, account) in accounts.iter().enumerate() {
@@ -315,7 +498,7 @@ fn select_existing(
             showed_ready_header = true;
         }
         say(io, lang, "add_or_exit")?;
-        match choose(
+        let value = choose(
             io,
             lang,
             &[
@@ -323,11 +506,49 @@ fn select_existing(
                 "help_account_add",
                 "help_account_imap",
                 "help_account_exit",
+                "help_ai",
+                "help_language",
             ],
-        )?
-        .as_deref()
+            &{
+                let mut choices = accounts
+                    .iter()
+                    .enumerate()
+                    .map(|(index, account)| ((index + 1).to_string(), account.label.clone()))
+                    .collect::<Vec<_>>();
+                choices.push(("add".into(), resource(lang, "help_account_add").into()));
+                choices.push(("imap".into(), resource(lang, "help_account_imap").into()));
+                choices.push(("0".into(), resource(lang, "help_account_exit").into()));
+                choices
+            },
+        )?;
+        if let Some(value) = value.as_deref()
+            && super::ai::is_terminal_command(value)
         {
-            None | Some("0") => return Ok(()),
+            if let Err(error) = effects.ai(value, lang) {
+                io.write(&format!(
+                    "{} ({})\n",
+                    resource(lang, "ai_failed"),
+                    error.as_str()
+                ))?;
+            }
+            continue;
+        }
+        match value.as_deref() {
+            Some("/language") => {
+                match choose_language(io, lang) {
+                    Ok(next) => lang = next,
+                    Err(_) => say(io, lang, "invalid_choice")?,
+                }
+                continue;
+            }
+            Some(value) if parse_language_command(value).is_some() => {
+                match parse_language_command(value).unwrap() {
+                    Ok(next) => lang = next,
+                    Err(_) => say(io, lang, "invalid_choice")?,
+                }
+                continue;
+            }
+            None | Some("0") | Some("/back") => return Ok(()),
             Some("add") => {
                 let account = connect_account(lang, io, effects)?;
                 return work_menu(lang, &account, "gmail", io, effects);
@@ -476,9 +697,12 @@ mod tests {
             self.compose_calls += 1;
             Ok(())
         }
-        fn inbox(&mut self, _: &str, _: &str, _: Lang) -> Result<(), ErrorCode> {
+        fn inbox(&mut self, _: &str, _: &str, _: &mut Lang) -> Result<(), ErrorCode> {
             self.inbox_calls += 1;
             Ok(())
+        }
+        fn ai(&mut self, _: &str, _: Lang) -> Result<(), ErrorCode> {
+            Err(ErrorCode::InternalError)
         }
     }
 
@@ -654,6 +878,42 @@ mod tests {
         assert_eq!(effects.inbox_calls, 1);
         assert_eq!(effects.connect_calls, 0);
         assert_eq!(effects.continue_calls, 1);
+    }
+
+    #[test]
+    fn cli17_ai_short_command_returns_to_menu_after_failure() {
+        let mut io = TestIo::new(&["1", "ai codex", "3"]);
+        let mut effects = TestEffects {
+            connected: Ok("google_new".into()),
+            inbox_calls: 0,
+            enable_send_calls: 0,
+            compose_calls: 0,
+            connect_calls: 0,
+            continue_calls: 0,
+            profiles: Vec::new(),
+        };
+        assert_eq!(
+            run_flow(Lang::En, &[account()], &mut io, &mut effects),
+            Ok(())
+        );
+        assert!(io.output.contains(resource(Lang::En, "ai_failed")));
+        assert!(io.output.matches(resource(Lang::En, "work_menu")).count() >= 2);
+    }
+
+    #[test]
+    fn cli17_language_command_changes_the_next_menu_language_for_this_session() {
+        let mut io = TestIo::new(&["1", "/language", "ko", "3"]);
+        let mut effects = TestEffects {
+            connected: Ok("google_new".into()),
+            inbox_calls: 0,
+            enable_send_calls: 0,
+            compose_calls: 0,
+            connect_calls: 0,
+            continue_calls: 0,
+            profiles: Vec::new(),
+        };
+        run_flow(Lang::En, &[account()], &mut io, &mut effects).unwrap();
+        assert!(io.output.contains(resource(Lang::Ko, "work_menu")));
     }
 
     #[test]

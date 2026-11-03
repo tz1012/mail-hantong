@@ -227,6 +227,29 @@ pub(super) fn parse_message(v: &Value, metadata_only: bool) -> Result<GoogleMess
         Ok(v) => (Some(v.text), None, v.truncated),
         Err(e) => (None, Some(e.as_str().into()), e == ErrorCode::QuotaExceeded),
     };
+    let subject =
+        Some(display(header(payload, "Subject").unwrap_or(""), 8192)).filter(|v| !v.is_empty());
+    let sender =
+        Some(display(header(payload, "From").unwrap_or(""), 8192)).filter(|v| !v.is_empty());
+    let to = Some(display(header(payload, "To").unwrap_or(""), 8192)).filter(|v| !v.is_empty());
+    let cc = Some(display(header(payload, "Cc").unwrap_or(""), 8192)).filter(|v| !v.is_empty());
+    let date = Some(display(header(payload, "Date").unwrap_or(""), 8192)).filter(|v| !v.is_empty());
+    let headers = if subject.is_some()
+        || sender.is_some()
+        || to.is_some()
+        || cc.is_some()
+        || date.is_some()
+    {
+        Some(hantong_contracts::message_body::MessageEnvelope::new(
+            subject.clone(),
+            sender.clone(),
+            to,
+            cc,
+            date,
+        )?)
+    } else {
+        None
+    };
     Ok(GoogleMessage {
         attachment_checks: None,
         id: required(v, "id")?.into(),
@@ -235,8 +258,9 @@ pub(super) fn parse_message(v: &Value, metadata_only: bool) -> Result<GoogleMess
             .parse()
             .map_err(|_| ErrorCode::InvalidInput)?,
         label_ids,
-        subject: display(header(payload, "Subject").unwrap_or(""), 8192),
-        sender: display(header(payload, "From").unwrap_or(""), 8192),
+        subject: subject.unwrap_or_default(),
+        sender: sender.unwrap_or_default(),
+        headers,
         snippet: display(v.get("snippet").and_then(Value::as_str).unwrap_or(""), 8192),
         body_text,
         body_error,

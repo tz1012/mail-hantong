@@ -2,6 +2,7 @@
 use super::*;
 use crate::terminal_view::{Frame, Hit, Theme, body_line_count, hit_test, render, text};
 use hantong_platform::{MouseKind, TerminalEvent, TerminalKey, TerminalSession};
+use std::sync::mpsc::{self, Receiver, TryRecvError};
 
 struct State {
     accounts: Value,
@@ -22,6 +23,8 @@ struct State {
     preferences: hantong_platform::ui_preferences::Preferences,
     unified: Option<crate::unified::Unified>,
     expanded: bool,
+    body_loading: Option<Receiver<(u64, Result<String, String>)>>,
+    body_generation: u64,
 }
 impl State {
     fn new(theme: Theme, demo: bool) -> Self {
@@ -44,6 +47,8 @@ impl State {
             preferences: Default::default(),
             unified: None,
             expanded: false,
+            body_loading: None,
+            body_generation: 0,
         }
     }
     fn body_limit(&self) -> usize {
@@ -92,6 +97,7 @@ impl State {
         Ok(state)
     }
     fn open_unified(&mut self, runner: &Runner) {
+        self.body_generation = self.body_generation.wrapping_add(1);
         let unified = crate::unified::load(
             &self.accounts,
             self.preferences.aliases(),
@@ -201,28 +207,52 @@ impl State {
     fn select_index(&mut self, index: usize) {
         let next = index.min(rows(self.page()).len().saturating_sub(1));
         if self.selected != next && self.screen >= 2 {
+            self.invalidate_body_context(true);
+        }
+        self.selected = next;
+    }
+    fn invalidate_body_context(&mut self, clear: bool) {
+        self.body_generation = self.body_generation.wrapping_add(1);
+        if clear {
             self.body.clear();
             self.offset = 0;
         }
-        self.selected = next;
+    }
+    fn change_language(&mut self, lang: Lang) {
+        self.lang = lang;
+        self.body =
+            hantong_platform::mail_display::relanguage_reading_text(&self.body, lang == Lang::Ko);
+        self.status = text(
+            lang == Lang::Ko,
+            if self.body_loading.is_some() {
+                "loading"
+            } else {
+                "ready"
+            },
+        )
+        .into();
     }
     fn back(&mut self) {
         if self.expanded {
             self.expanded = false;
-            return;
         }
         if self.help {
             self.help = false;
             return;
         }
         match self.screen {
-            3 => self.screen = 2,
+            3 => {
+                self.screen = 2;
+                self.invalidate_body_context(false);
+            }
             2 => {
                 if self.unified.is_some() {
+                    self.invalidate_body_context(true);
                     self.screen = 0;
                     self.selected = 0;
                     return;
                 }
+                self.invalidate_body_context(true);
                 self.screen = 1;
                 self.selected = rows(&self.folders)
                     .iter()
@@ -241,11 +271,17 @@ impl State {
     }
     fn open(&mut self, runner: &Runner) -> Result<(), String> {
         if self.unified.is_some() && self.screen == 2 {
+            if self.body_loading.is_some() {
+                return Err(text(self.lang == Lang::Ko, "read_in_progress").into());
+            }
             let mut source = self.source_state()?;
             source.open(runner)?;
             self.account = source.account;
             self.folder = source.folder;
             self.body = source.body;
+            self.body_loading = source.body_loading;
+            self.body_generation = source.body_generation;
+            self.expanded = source.expanded;
             self.screen = 3;
             self.offset = 0;
             return Ok(());
@@ -260,6 +296,7 @@ impl State {
             .ok_or_else(|| text(runner.lang == Lang::Ko, "empty").to_owned())?;
         match self.screen {
             0 => {
+                self.invalidate_body_context(true);
                 self.unified = None;
                 self.expanded = false;
                 self.account = Some(item);
@@ -278,6 +315,7 @@ impl State {
                 self.selected = 0;
             }
             1 => {
+                self.invalidate_body_context(true);
                 self.folder = Some(item);
                 self.messages = serde_json::json!({"items":[]});
                 self.body.clear();
@@ -293,49 +331,110 @@ impl State {
                 self.selected = 0;
             }
             _ => {
-                self.body.clear();
-                self.offset = 0;
-                self.body = if self.demo {
-                    format!("Message {:02}\n{}", self.selected + 1, demo_body())
-                } else {
-                    let id = self.account_id()?;
-                    let message = field(
-                        &item,
-                        if self.gmail() {
-                            "id"
-                        } else {
-                            "internal_message_id"
-                        },
-                    )
-                    .ok_or_else(|| text(self.lang == Lang::Ko, "message_identity").to_owned())?;
-                    let value = if self.gmail() {
-                        runner.call(&[
-                            "gmail",
-                            "read",
-                            "--account",
-                            id,
-                            "--message-id",
-                            &message,
-                        ])?
-                    } else {
-                        runner.call(&["read", "--account", id, "--message-id", &message])?
-                    };
-                    let mut body = value
-                        .pointer(if self.gmail() { "/body/text" } else { "/text" })
-                        .and_then(Value::as_str)
-                        .ok_or_else(|| text(self.lang == Lang::Ko, "body_unavailable").to_owned())?
-                        .to_owned();
-                    if value.get("truncated").and_then(Value::as_bool) == Some(true) {
-                        body.push_str("\n\n");
-                        body.push_str(text(self.lang == Lang::Ko, "body_truncated"));
-                    }
-                    body
-                };
-                self.offset = 0;
-                self.screen = 3;
+                self.start_body_load(runner, &item)?;
             }
         }
         Ok(())
+    }
+    fn start_body_load(&mut self, runner: &Runner, item: &Value) -> Result<(), String> {
+        if self.body_loading.is_some() {
+            return Err(text(self.lang == Lang::Ko, "read_in_progress").into());
+        }
+        self.body.clear();
+        self.offset = 0;
+        self.screen = 3;
+        self.expanded = true;
+        if self.demo {
+            self.body = format!("Message {:02}\n{}", self.selected + 1, demo_body());
+            return Ok(());
+        }
+        let account = self.account_id()?.to_owned();
+        let gmail = self.gmail();
+        let message = field(item, if gmail { "id" } else { "internal_message_id" })
+            .ok_or_else(|| text(self.lang == Lang::Ko, "message_identity").to_owned())?
+            .to_owned();
+        let lang = self.lang;
+        let fallback = header_projection(&self.messages, item);
+        self.body = hantong_platform::mail_display::reading_text(
+            &serde_json::json!({"text": text(lang == Lang::Ko, "loading")}),
+            &fallback,
+            lang == Lang::Ko,
+        )
+        .unwrap_or_else(|| text(lang == Lang::Ko, "loading").into());
+        let worker = Runner {
+            program: runner.program.clone(),
+            lang: runner.lang,
+        };
+        let generation = self.body_generation;
+        let (sender, receiver) = mpsc::channel();
+        self.body_loading = Some(receiver);
+        std::thread::spawn(move || {
+            let result = (|| {
+                let value = if gmail {
+                    worker.call(&[
+                        "gmail",
+                        "read",
+                        "--account",
+                        &account,
+                        "--message-id",
+                        &message,
+                    ])?
+                } else {
+                    worker.call(&["read", "--account", &account, "--message-id", &message])?
+                };
+                let mut body = hantong_platform::mail_display::reading_text(
+                    &value,
+                    &fallback,
+                    lang == Lang::Ko,
+                )
+                .ok_or_else(|| text(lang == Lang::Ko, "body_unavailable").to_owned())?
+                .to_owned();
+                if value
+                    .get("truncated")
+                    .or_else(|| value.pointer("/body/truncated"))
+                    .and_then(Value::as_bool)
+                    == Some(true)
+                {
+                    body.push_str("\n\n");
+                    body.push_str(text(lang == Lang::Ko, "body_truncated"));
+                }
+                Ok(body)
+            })();
+            let _ = sender.send((generation, result));
+        });
+        Ok(())
+    }
+    fn poll_body(&mut self) {
+        let Some(receiver) = self.body_loading.take() else {
+            return;
+        };
+        match receiver.try_recv() {
+            Ok((generation, result)) if generation != self.body_generation => {
+                let _ = result;
+                self.status = text(self.lang == Lang::Ko, "ready").into();
+            }
+            Ok((_generation, Ok(body))) => {
+                self.body = hantong_platform::mail_display::relanguage_reading_text(
+                    &body,
+                    self.lang == Lang::Ko,
+                );
+                self.offset = 0;
+                self.status = text(self.lang == Lang::Ko, "ready").into();
+            }
+            Ok((_generation, Err(error))) => {
+                self.body.push_str("\n\n");
+                self.body.push_str(&error);
+                self.offset = 0;
+                self.status = error;
+            }
+            Err(TryRecvError::Empty) => {
+                self.body_loading = Some(receiver);
+            }
+            Err(TryRecvError::Disconnected) => {
+                self.body.clear();
+                self.status = text(self.lang == Lang::Ko, "body_unavailable").into();
+            }
+        }
     }
     fn load_messages(&self, runner: &Runner) -> Result<Value, String> {
         let id = self.account_id()?;
@@ -377,6 +476,7 @@ impl State {
         }
     }
     fn refresh(&mut self, runner: &Runner) -> Result<(), String> {
+        self.body_generation = self.body_generation.wrapping_add(1);
         if self.unified.is_some() && self.screen >= 2 {
             self.open_unified(runner);
             return Ok(());
@@ -527,6 +627,15 @@ impl State {
         )?)
     }
 }
+
+/// Read the stable message-body response from the provider-specific contract.
+#[cfg(test)]
+fn message_text(value: &Value, gmail: bool) -> Option<&str> {
+    value
+        .pointer(if gmail { "/body/text" } else { "/text" })
+        .and_then(Value::as_str)
+}
+
 fn account_label(item: &Value, index: usize) -> String {
     [
         "primary_address",
@@ -569,6 +678,14 @@ fn demo_body() -> String {
     (1..=60).map(|i|format!("{i:02}  한통 통신 터미널 / Welcome to HANTONG\n     Keyboard and mouse, one connected workspace.\n")).collect()
 }
 
+fn parse_language_command(command: &str) -> Option<Lang> {
+    match command.trim().to_ascii_lowercase().as_str() {
+        "language ko" | "/language ko" | "lang ko" => Some(Lang::Ko),
+        "language en" | "/language en" | "lang en" => Some(Lang::En),
+        _ => None,
+    }
+}
+
 pub(super) fn run(args: &[String]) -> io::Result<()> {
     let ko = args.windows(2).any(|v| v == ["--lang", "ko"]);
     let lang = if ko { Lang::Ko } else { Lang::En };
@@ -580,7 +697,7 @@ pub(super) fn run(args: &[String]) -> io::Result<()> {
         None => Theme::Blue,
     };
     let demo = args.iter().any(|v| v == "--demo");
-    let runner = Runner {
+    let mut runner = Runner {
         program: if demo {
             std::path::PathBuf::new()
         } else {
@@ -636,20 +753,18 @@ pub(super) fn run(args: &[String]) -> io::Result<()> {
         }
     }
     loop {
+        let lang = state.lang;
+        let ko = lang == Lang::Ko;
         if session.is_none() {
             session = Some(TerminalSession::enter().map_err(|e| io::Error::other(e.as_str()))?);
         }
         let terminal = session.as_mut().unwrap();
+        state.poll_body();
         state.width = terminal.size().0;
         state.draw(terminal, lang)?;
-        let event = loop {
-            let event = terminal
-                .read_event()
-                .map_err(|e| io::Error::other(e.as_str()))?;
-            if event != TerminalEvent::Tick {
-                break event;
-            }
-        };
+        let event = terminal
+            .read_event()
+            .map_err(|e| io::Error::other(e.as_str()))?;
         let key = match event {
             TerminalEvent::Tick | TerminalEvent::Resize => continue,
             TerminalEvent::Key(key) => key,
@@ -691,6 +806,7 @@ pub(super) fn run(args: &[String]) -> io::Result<()> {
                         if index >= rows(&state.accounts).len() {
                             continue;
                         }
+                        state.invalidate_body_context(true);
                         state.screen = 0;
                         state.selected = index;
                         if kind == MouseKind::DoubleClick {
@@ -706,6 +822,7 @@ pub(super) fn run(args: &[String]) -> io::Result<()> {
                         if index >= rows(&state.folders).len() {
                             continue;
                         }
+                        state.invalidate_body_context(true);
                         state.screen = 1;
                         state.selected = index;
                         if kind == MouseKind::DoubleClick {
@@ -769,6 +886,7 @@ pub(super) fn run(args: &[String]) -> io::Result<()> {
             TerminalKey::Left | TerminalKey::Escape | TerminalKey::Char('h') => state.back(),
             TerminalKey::Tab | TerminalKey::BackTab => {
                 if state.unified.is_some() && state.screen >= 2 {
+                    state.invalidate_body_context(false);
                     state.screen = if state.screen == 2 && !state.body.is_empty() {
                         3
                     } else {
@@ -777,10 +895,7 @@ pub(super) fn run(args: &[String]) -> io::Result<()> {
                     state.expanded = false;
                     continue;
                 }
-                if state.selected != 0 {
-                    state.body.clear();
-                    state.offset = 0;
-                }
+                state.invalidate_body_context(false);
                 state.expanded = false;
                 state.screen = if key == TerminalKey::BackTab {
                     state.screen.saturating_sub(1)
@@ -802,7 +917,17 @@ pub(super) fn run(args: &[String]) -> io::Result<()> {
                 } else {
                     state.open(&runner)
                 };
-                state.status = result.err().unwrap_or_else(|| text(ko, "ready").into());
+                state.status = result.err().unwrap_or_else(|| {
+                    text(
+                        ko,
+                        if state.body_loading.is_some() {
+                            "loading"
+                        } else {
+                            "ready"
+                        },
+                    )
+                    .into()
+                });
             }
             TerminalKey::Char('c' | 't' | ':' | 'a') => {
                 if demo {
@@ -872,6 +997,21 @@ pub(super) fn run(args: &[String]) -> io::Result<()> {
                                 Ok(Some(args)) => runner.interactive_owned(&args),
                                 Err(e) => Err(e),
                                 Ok(None) => match command.as_str() {
+                                    "language" | "/language" => {
+                                        let next = match state.lang {
+                                            Lang::En => Lang::Ko,
+                                            Lang::Ko => Lang::En,
+                                        };
+                                        state.change_language(next);
+                                        runner.lang = next;
+                                        Ok(())
+                                    }
+                                    _ if parse_language_command(&command).is_some() => {
+                                        let next = parse_language_command(&command).unwrap();
+                                        state.change_language(next);
+                                        runner.lang = next;
+                                        Ok(())
+                                    }
                                     "ai codex" => runner.interactive(&["ai", "chat", "codex"]),
                                     "ai claude" => runner.interactive(&["ai", "chat", "claude"]),
                                     "ai login codex" => {
@@ -981,5 +1121,98 @@ mod tests {
         assert_eq!(s.screen, 1);
         assert_eq!(s.account_id().unwrap(), "demo2");
         assert_eq!(s.theme, Theme::Amber);
+    }
+
+    #[test]
+    fn tui01_message_body_accepts_imap_and_gmail_responses() {
+        assert_eq!(
+            message_text(&serde_json::json!({"text":"imap"}), false),
+            Some("imap")
+        );
+        assert_eq!(
+            message_text(&serde_json::json!({"body":{"text":"gmail"}}), true),
+            Some("gmail")
+        );
+        assert_eq!(
+            message_text(&serde_json::json!({"text":""}), false),
+            Some("")
+        );
+        assert_eq!(
+            message_text(&serde_json::json!({"state":"pending"}), false),
+            None
+        );
+    }
+
+    #[test]
+    fn tui01_body_poll_updates_ready_and_error_without_blocking() {
+        let (sender, receiver) = mpsc::channel();
+        let mut state = State::new(Theme::Blue, false);
+        state.body_loading = Some(receiver);
+        assert!(state.body.is_empty());
+        state.poll_body();
+        assert!(state.body_loading.is_some());
+        sender.send((0, Ok("loaded body".to_owned()))).unwrap();
+        state.poll_body();
+        assert_eq!(state.body, "loaded body");
+        assert!(state.body_loading.is_none());
+
+        let (sender, receiver) = mpsc::channel();
+        state.body_loading = Some(receiver);
+        sender.send((0, Err("read failed".to_owned()))).unwrap();
+        state.poll_body();
+        assert!(state.body.contains("read failed"));
+        assert_eq!(state.status, "read failed");
+    }
+
+    #[test]
+    fn tui01_selection_change_discards_in_flight_body() {
+        let (sender, receiver) = mpsc::channel();
+        let mut state = State::new(Theme::Blue, false);
+        state.messages = demo_messages();
+        state.screen = 2;
+        state.body_loading = Some(receiver);
+        state.select_index(1);
+        assert!(state.body_loading.is_some());
+        assert!(state.body.is_empty());
+        sender.send((0, Ok("stale body".into()))).unwrap();
+        state.poll_body();
+        assert!(state.body.is_empty());
+        assert!(state.body_loading.is_none());
+    }
+
+    #[test]
+    fn tui01_account_switch_invalidates_pending_body_without_dropping_worker() {
+        let (sender, receiver) = mpsc::channel();
+        let mut state = State::new(Theme::Blue, false);
+        state.screen = 0;
+        state.body_loading = Some(receiver);
+        state.invalidate_body_context(true);
+        sender.send((0, Ok("stale account body".into()))).unwrap();
+        state.poll_body();
+        assert!(state.body.is_empty());
+        assert!(state.body_loading.is_none());
+    }
+
+    #[test]
+    fn tui01_language_command_updates_requested_locale_only() {
+        assert_eq!(parse_language_command("/language ko"), Some(Lang::Ko));
+        assert_eq!(parse_language_command("language en"), Some(Lang::En));
+        assert_eq!(parse_language_command("lang fr"), None);
+    }
+
+    #[test]
+    fn tui01_language_switch_keeps_pending_read_and_relabels_loaded_envelope() {
+        let (sender, receiver) = mpsc::channel();
+        let mut state = State::new(Theme::Blue, false);
+        state.body_loading = Some(receiver);
+        state.change_language(Lang::Ko);
+        assert!(state.body_loading.is_some());
+        sender.send((0, Ok("Subject: Hello\nFrom: sender\nTo: recipient\nCc: Not provided\nDate: today\n\nFrom: body text".into()))).unwrap();
+        state.poll_body();
+        assert!(state.body.starts_with("제목: Hello\n보낸 사람: sender"));
+        assert!(state.body.ends_with("From: body text"));
+        assert!(state.body_loading.is_none());
+        state.change_language(Lang::En);
+        assert!(state.body.starts_with("Subject: Hello\nFrom: sender"));
     }
 }

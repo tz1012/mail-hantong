@@ -1,5 +1,6 @@
 //! Bounded text MIME selection. No markup, URL or attachment is executed.
 use super::MAX_BODY_BYTES;
+use super::{MAX_ENVELOPE_BYTES, MAX_ENVELOPE_FIELD_BYTES, MessageEnvelope};
 use crate::ErrorCode;
 struct Text {
     bytes: Vec<u8>,
@@ -81,6 +82,46 @@ fn headers(bytes: &[u8]) -> Result<Option<Headers<'_>>, ErrorCode> {
     }
     Ok(Some((map, &bytes[split + width..])))
 }
+
+pub(super) fn envelope(bytes: &[u8]) -> Result<Option<MessageEnvelope>, ErrorCode> {
+    let Some((map, _)) = headers(bytes)? else {
+        return Ok(None);
+    };
+    let pick = |name: &str| map.get(name).cloned();
+    let envelope = MessageEnvelope::new(
+        pick("subject"),
+        pick("from"),
+        pick("to"),
+        pick("cc"),
+        pick("date"),
+    )?;
+    let total = [
+        envelope.subject(),
+        envelope.from(),
+        envelope.to(),
+        envelope.cc(),
+        envelope.date(),
+    ]
+    .into_iter()
+    .flatten()
+    .map(str::len)
+    .sum::<usize>();
+    if total > MAX_ENVELOPE_BYTES
+        || [
+            envelope.subject(),
+            envelope.from(),
+            envelope.to(),
+            envelope.cc(),
+            envelope.date(),
+        ]
+        .into_iter()
+        .flatten()
+        .any(|v| v.len() > MAX_ENVELOPE_FIELD_BYTES)
+    {
+        return Err(ErrorCode::QuotaExceeded);
+    }
+    Ok(Some(envelope))
+}
 fn base64(bytes: &[u8]) -> Result<Vec<u8>, ErrorCode> {
     let v: Vec<u8> = bytes
         .iter()
@@ -147,7 +188,26 @@ fn quoted(bytes: &[u8]) -> Result<Vec<u8>, ErrorCode> {
     }
     Ok(out)
 }
-fn extract(bytes: &[u8], depth: usize, parts: &mut usize) -> Result<Text, ErrorCode> {
+fn default_charset(bytes: &[u8], charset: &str) -> Option<String> {
+    match charset.to_ascii_lowercase().as_str() {
+        "utf-8" | "utf8" => String::from_utf8(bytes.to_vec()).ok(),
+        "us-ascii" | "ascii" => bytes
+            .iter()
+            .all(|b| *b < 0x80)
+            .then(|| bytes.iter().map(|b| *b as char).collect()),
+        "iso-8859-1" | "iso8859-1" | "latin1" | "latin-1" => {
+            Some(bytes.iter().map(|b| *b as char).collect())
+        }
+        "windows-1252" | "cp1252" => None,
+        _ => None,
+    }
+}
+fn extract(
+    bytes: &[u8],
+    depth: usize,
+    parts: &mut usize,
+    decode: &dyn Fn(&[u8], &str) -> Option<String>,
+) -> Result<Text, ErrorCode> {
     if depth > 8 || bytes.len() > MAX_BODY_BYTES || *parts >= 32 {
         return Err(ErrorCode::QuotaExceeded);
     }
@@ -214,7 +274,7 @@ fn extract(bytes: &[u8], depth: usize, parts: &mut usize) -> Result<Text, ErrorC
         }
         let mut html = None;
         for piece in pieces {
-            match extract(&piece, depth + 1, parts) {
+            match extract(&piece, depth + 1, parts, decode) {
                 Ok(text) if !text.html => return Ok(text),
                 Ok(text) => {
                     if html.is_none() {
@@ -231,19 +291,6 @@ fn extract(bytes: &[u8], depth: usize, parts: &mut usize) -> Result<Text, ErrorC
         return Err(ErrorCode::CapabilityUnsupported);
     }
     let charset = parameter(content, "charset").unwrap_or_else(|| "us-ascii".into());
-    if ![
-        "utf-8",
-        "utf8",
-        "us-ascii",
-        "ascii",
-        "iso-8859-1",
-        "windows-1252",
-    ]
-    .iter()
-    .any(|v| charset.eq_ignore_ascii_case(v))
-    {
-        return Err(ErrorCode::CapabilityUnsupported);
-    }
     let cte = head
         .get("content-transfer-encoding")
         .map(|v| v.trim().to_ascii_lowercase())
@@ -254,19 +301,12 @@ fn extract(bytes: &[u8], depth: usize, parts: &mut usize) -> Result<Text, ErrorC
         "quoted-printable" => quoted(body)?,
         _ => return Err(ErrorCode::CapabilityUnsupported),
     };
-    let bytes = if charset.eq_ignore_ascii_case("iso-8859-1") {
-        bytes
-            .into_iter()
-            .map(char::from)
-            .collect::<String>()
-            .into_bytes()
-    } else if charset.eq_ignore_ascii_case("windows-1252") {
-        return Err(ErrorCode::CapabilityUnsupported);
-    } else {
-        bytes
-    };
+    let decoded = decode(&bytes, &charset).ok_or(ErrorCode::CapabilityUnsupported)?;
+    if decoded.len() > MAX_BODY_BYTES {
+        return Err(ErrorCode::QuotaExceeded);
+    }
     Ok(Text {
-        bytes,
+        bytes: decoded.into_bytes(),
         html: kind == "text/html",
     })
 }
@@ -363,7 +403,13 @@ fn html_text(input: &str) -> String {
     entities(&out)
 }
 pub(super) fn render(bytes: &[u8]) -> Result<String, ErrorCode> {
-    let text = extract(bytes, 0, &mut 0)?;
+    render_with_charset(bytes, &default_charset)
+}
+pub(super) fn render_with_charset(
+    bytes: &[u8],
+    decode: &dyn Fn(&[u8], &str) -> Option<String>,
+) -> Result<String, ErrorCode> {
+    let text = extract(bytes, 0, &mut 0, decode)?;
     let decoded = String::from_utf8(text.bytes).map_err(|_| ErrorCode::CapabilityUnsupported)?;
     let out = if text.html {
         html_text(&decoded)
@@ -414,5 +460,15 @@ mod realistic_tests {
             render(b"Content-Type: text/plain; charset=euc-kr\r\n\r\nlegacy"),
             Err(ErrorCode::CapabilityUnsupported)
         );
+        let decoded = super::render_with_charset(
+            b"Content-Type: text/plain; charset=euc-kr\r\n\r\n\xc7\xd1\xb1\xdb",
+            &|bytes, charset| {
+                (charset.eq_ignore_ascii_case("euc-kr")
+                    && bytes == [0xc7, 0xd1, 0xb1, 0xdb].as_slice())
+                .then(|| "한글".to_owned())
+            },
+        )
+        .unwrap();
+        assert_eq!(decoded, "한글");
     }
 }

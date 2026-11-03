@@ -13,11 +13,7 @@ use hantong_contracts::{
     smtp_setup::{SmtpSetupCommand, SmtpSetupInput, SmtpSetupState},
     terminal_review::TerminalReviewKind,
 };
-use std::{
-    process::{Command, Stdio},
-    thread,
-    time::Duration,
-};
+use std::{thread, time::Duration};
 
 fn prompt(io: &mut dyn Io, lang: Lang, key: &str) -> Result<String, ErrorCode> {
     onboarding::say(io, lang, key)?;
@@ -166,41 +162,6 @@ pub(super) fn run(lang: Lang, io: &mut dyn Io) -> Result<String, ErrorCode> {
     onboarding::say(io, lang, "smtp_ready")?;
     ensure_default_scope(&account, lang)?;
     Ok(account)
-}
-
-pub(super) fn open_inbox(account: &str, lang: Lang) -> Result<(), ErrorCode> {
-    if account.is_empty()
-        || account.len() > 128
-        || !account
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || b"_-".contains(&b))
-    {
-        return Err(ErrorCode::InvalidInput);
-    }
-    let current = std::env::current_exe().map_err(|_| ErrorCode::CoreUnavailable)?;
-    let parent = current.parent().ok_or(ErrorCode::CoreUnavailable)?;
-    let path = parent.join(if cfg!(windows) {
-        "hantong-t.exe"
-    } else {
-        "hantong-t"
-    });
-    let status = Command::new(path)
-        .args([
-            "--lang",
-            if matches!(lang, Lang::Ko) { "ko" } else { "en" },
-            "--account",
-            account,
-        ])
-        .stdin(Stdio::inherit())
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit())
-        .status()
-        .map_err(|_| ErrorCode::CoreUnavailable)?;
-    if status.success() {
-        Ok(())
-    } else {
-        Err(ErrorCode::CoreUnavailable)
-    }
 }
 
 #[cfg(test)]

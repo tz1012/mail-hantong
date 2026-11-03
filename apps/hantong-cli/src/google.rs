@@ -278,10 +278,12 @@ fn print_value(value: &Value, lang: Lang, json_output: bool) {
             );
         }
     } else if let Some(body) = value.get("body") {
-        if let Some(text) = body.get("text").and_then(Value::as_str) {
+        if let Some(text) =
+            hantong_platform::mail_display::reading_text(value, &Value::Null, lang == Lang::Ko)
+        {
             println!(
                 "{}",
-                hantong_contracts::message_body::render_terminal_text(text.as_bytes())
+                hantong_contracts::message_body::sanitize_terminal_text(&text)
             );
         }
         if body["truncated"] == true {
@@ -854,71 +856,14 @@ fn inbox_page(
     )
 }
 
-pub(super) fn inbox_guided(account: &str, lang: Lang) -> Result<(), ErrorCode> {
-    println!("{}", resource(lang, "guided_inbox"));
-    let value = inbox_page(
+pub(super) fn refresh_guided_inbox(account: &str) -> Result<(), ErrorCode> {
+    inbox_page(
         account,
         &nonce()?,
         &mut hantong_ipc_client::google_mail::call_default,
         &mut || std::thread::sleep(Duration::from_millis(250)),
     )?;
-    let messages = value["messages"]
-        .as_array()
-        .ok_or(ErrorCode::InvalidInput)?;
-    if messages.is_empty() {
-        println!("{}", resource(lang, "guided_empty"));
-        return Ok(());
-    }
-    use std::io::{BufRead, Read, Write};
-    let mut input = std::io::stdin().lock();
-    loop {
-        for (i, message) in messages.iter().enumerate() {
-            println!(
-                "{}) {}  {}",
-                i + 1,
-                safe(message, "subject"),
-                safe(message, "sender")
-            );
-        }
-        println!("{}", resource(lang, "guided_read_choice"));
-        std::io::stdout()
-            .flush()
-            .map_err(|_| ErrorCode::InternalError)?;
-        let mut bytes = Vec::new();
-        if input
-            .by_ref()
-            .take(257)
-            .read_until(b'\n', &mut bytes)
-            .map_err(|_| ErrorCode::InternalError)?
-            == 0
-        {
-            return Ok(());
-        }
-        if bytes.len() > 256 {
-            return Err(ErrorCode::InvalidInput);
-        }
-        let choice = std::str::from_utf8(&bytes)
-            .map_err(|_| ErrorCode::InvalidInput)?
-            .trim();
-        if choice == "0" || choice.is_empty() {
-            return Ok(());
-        }
-        let selected = choice
-            .parse::<usize>()
-            .ok()
-            .and_then(|i| i.checked_sub(1))
-            .and_then(|i| messages.get(i));
-        let Some(message) = selected else {
-            println!("{}", resource(lang, "guided_invalid"));
-            continue;
-        };
-        let id = message["id"].as_str().ok_or(ErrorCode::InvalidInput)?;
-        let body = hantong_ipc_client::google_mail::call_default(
-            "mail.messages.get",
-            json!({"mode":"gmail_body","account_id":account,"message_id":id,"max_bytes":65536}),
-        )?;
-        print_value(&body, lang, false);
-    }
+    Ok(())
 }
 pub(super) fn try_run(
     command: &[String],

@@ -101,12 +101,23 @@ pub(super) fn run(
         };
         if let Some(text) = response.text {
             if json {
+                let headers = response.headers.as_ref().map(|h| h.to_json());
                 println!(
                     "{}",
-                    serde_json::json!({"schema_version":1,"ok":true,"state":"ready","account_id":request.account_id(),"mailbox_wire_hex":request.mailbox().wire_hex(),"mailbox_encoding":request.mailbox().encoding().as_str(),"uidvalidity":request.uidvalidity(),"uid":request.uid(),"text":text,"truncated":response.truncated})
+                    serde_json::json!({"schema_version":1,"ok":true,"state":"ready","account_id":request.account_id(),"mailbox_wire_hex":request.mailbox().wire_hex(),"mailbox_encoding":request.mailbox().encoding().as_str(),"uidvalidity":request.uidvalidity(),"uid":request.uid(),"text":text,"truncated":response.truncated,"headers":headers})
                 );
             } else {
-                println!("{text}");
+                let value = serde_json::json!({"text":text,"headers":response.headers.as_ref().map(|headers|headers.to_json())});
+                if let Some(rendered) = hantong_platform::mail_display::reading_text(
+                    &value,
+                    &serde_json::Value::Null,
+                    lang == Lang::Ko,
+                ) {
+                    println!(
+                        "{}",
+                        hantong_contracts::message_body::sanitize_terminal_text(&rendered)
+                    );
+                }
                 if response.truncated {
                     println!("{}", resource(lang, "body_truncated"));
                 }

@@ -1,0 +1,16 @@
+﻿folder_prompt=Folder >
+message_prompt=Message >
+mail_prompt=Mail >
+empty_messages=No messages.
+body_empty=No readable body.
+back_hint=/back
+help_hint=/help
+next_hint=/next
+prev_hint=/prev
+account=Account
+invalid_choice=Select a displayed item or use / for commands.
+loading=Loading message...
+reading_keys=Esc: list · /next: next page · /prev: previous page · /: commands
+next_page=Next page
+prev_page=Previous page
+return_list=Return to message list

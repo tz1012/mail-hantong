@@ -1,0 +1,7 @@
+subject=제목
+from=보낸 사람
+to=받는 사람
+cc=참조
+date=날짜
+missing=정보 없음
+empty=(빈 본문)

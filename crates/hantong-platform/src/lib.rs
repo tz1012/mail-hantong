@@ -3,7 +3,10 @@
 #[cfg(not(windows))]
 use hantong_contracts::ErrorCode;
 
+pub mod command_prompt;
 pub mod google_browser;
+pub mod mail_charset;
+pub mod mail_display;
 #[allow(unsafe_code)]
 mod paths;
 mod profile_file;

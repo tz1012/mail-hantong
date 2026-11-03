@@ -799,7 +799,7 @@ account_id:account.into(),subject:r.get(0)?,client_id:r.get(1)?,credential_versi
         })
     }
     fn message_json(m: &GoogleMessage) -> Value {
-        json!({"attachment_checks":m.attachment_checks.as_ref().map(|checks|checks.iter().map(|a|a.to_json()).collect::<Vec<_>>()),"id":m.id,"thread_id":m.thread_id,"internal_date_ms":m.internal_date_ms,"label_ids":m.label_ids,"subject":m.subject,"sender":m.sender,"snippet":m.snippet,"body_text":m.body_text,"body_error":m.body_error,"body_truncated":m.body_truncated,"size":m.size})
+        json!({"attachment_checks":m.attachment_checks.as_ref().map(|checks|checks.iter().map(|a|a.to_json()).collect::<Vec<_>>()),"id":m.id,"thread_id":m.thread_id,"internal_date_ms":m.internal_date_ms,"label_ids":m.label_ids,"subject":m.subject,"sender":m.sender,"headers":m.headers.as_ref().map(|h|h.to_json()),"snippet":m.snippet,"body_text":m.body_text,"body_error":m.body_error,"body_truncated":m.body_truncated,"size":m.size})
     }
     fn parse_message(raw: &str) -> Result<GoogleMessage, ErrorCode> {
         let v: Value = serde_json::from_str(raw).map_err(|_| ErrorCode::InternalError)?;
@@ -833,6 +833,30 @@ account_id:account.into(),subject:r.get(0)?,client_id:r.get(1)?,credential_versi
                 .collect::<Result<_, _>>()?,
             subject: string(&v, "subject")?,
             sender: string(&v, "sender")?,
+            headers: match v.get("headers") {
+                None | Some(Value::Null) => None,
+                Some(value) => {
+                    let o = value.as_object().ok_or(ErrorCode::InternalError)?;
+                    if o.len() != 5
+                        || !["subject", "from", "to", "cc", "date"]
+                            .iter()
+                            .all(|k| o.contains_key(*k))
+                    {
+                        return Err(ErrorCode::InternalError);
+                    }
+                    let text = |key: &str| o.get(key).and_then(Value::as_str).map(str::to_owned);
+                    Some(
+                        hantong_contracts::message_body::MessageEnvelope::new(
+                            text("subject"),
+                            text("from"),
+                            text("to"),
+                            text("cc"),
+                            text("date"),
+                        )
+                        .map_err(|_| ErrorCode::InternalError)?,
+                    )
+                }
+            },
             snippet: string(&v, "snippet")?,
             body_text: opt_string(&v, "body_text")?,
             body_error: opt_string(&v, "body_error")?,

@@ -1,5 +1,7 @@
 //! Strict, account-bound Gmail variants of the existing authenticated tools.
-use hantong_contracts::{ErrorCode, google::*, google_mail::GoogleMailRequest, wire_hex};
+use hantong_contracts::{
+    ErrorCode, google::*, google_mail::GoogleMailRequest, message_body::MessageEnvelope, wire_hex,
+};
 use serde::{
     Deserialize,
     de::{self, MapAccess, SeqAccess, Visitor},
@@ -201,6 +203,9 @@ pub fn parse_response(
                 if m.get("attachment_checks").is_some() {
                     keys.push("attachment_checks");
                 }
+                if m.get("headers").is_some() {
+                    keys.push("headers");
+                }
                 object(m, &keys)?;
                 let attachment_checks = match m.get("attachment_checks") {
                     None | Some(Value::Null) => None,
@@ -224,6 +229,28 @@ pub fn parse_response(
                     .iter()
                     .map(|l| l.as_str().map(str::to_owned).ok_or(ErrorCode::InvalidInput))
                     .collect::<Result<Vec<_>, _>>()?;
+                let headers = match m.get("headers") {
+                    None | Some(Value::Null) => None,
+                    Some(value) => {
+                        let o = value.as_object().ok_or(ErrorCode::InvalidInput)?;
+                        if o.len() != 5
+                            || !["subject", "from", "to", "cc", "date"]
+                                .iter()
+                                .all(|k| o.contains_key(*k))
+                        {
+                            return Err(ErrorCode::InvalidInput);
+                        }
+                        let text =
+                            |key: &str| o.get(key).and_then(Value::as_str).map(str::to_owned);
+                        Some(MessageEnvelope::new(
+                            text("subject"),
+                            text("from"),
+                            text("to"),
+                            text("cc"),
+                            text("date"),
+                        )?)
+                    }
+                };
                 let message = GoogleMessage {
                     attachment_checks,
                     id: text(m, "id", 256)?.into(),
@@ -234,6 +261,7 @@ pub fn parse_response(
                     label_ids: labels,
                     subject: text(m, "subject", 8192)?.into(),
                     sender: text(m, "sender", 8192)?.into(),
+                    headers,
                     snippet: text(m, "snippet", 8192)?.into(),
                     body_text: None,
                     body_error: None,
@@ -253,11 +281,36 @@ pub fn parse_response(
         } => {
             base(&v, account, &["body"])?;
             let b = &v["body"];
-            object(b, &["message_id", "text", "truncated"])?;
+            let mut keys = vec!["message_id", "text", "truncated"];
+            if b.get("headers").is_some() {
+                keys.push("headers");
+            }
+            object(b, &keys)?;
             if b["message_id"] != *message_id || !b["truncated"].is_boolean() {
                 return Err(ErrorCode::InvalidInput);
             }
             text(b, "text", *max_bytes)?;
+            if let Some(value) = b.get("headers") {
+                if value.is_null() {
+                    return Ok(v);
+                }
+                let o = value.as_object().ok_or(ErrorCode::InvalidInput)?;
+                if o.len() != 5
+                    || !["subject", "from", "to", "cc", "date"]
+                        .iter()
+                        .all(|k| o.contains_key(*k))
+                {
+                    return Err(ErrorCode::InvalidInput);
+                }
+                let text = |key: &str| o.get(key).and_then(Value::as_str).map(str::to_owned);
+                MessageEnvelope::new(
+                    text("subject"),
+                    text("from"),
+                    text("to"),
+                    text("cc"),
+                    text("date"),
+                )?;
+            }
         }
         GoogleMailRequest::Sync(_) | GoogleMailRequest::Status { .. } => {
             base(&v, account, &["sync"])?;

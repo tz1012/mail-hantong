@@ -100,7 +100,7 @@ Google 다중 계정 로그인·Gmail 읽기 구현(2026-10-30): 브라우저 OA
 | 실행 성능 기준 | 빠른 실행을 추구하면서 상주 메모리 사용도 함께 고려한다. 사용자가 이 절충을 근거로 Rust를 선택했다. 웜 캐시 상태의 기본 메일 목록 사용 가능 목표 **1초 이내**는 유지한다. 현재 기준은 [FEATURES.md](FEATURES.md)의 성능 보완이다. |
 | 런타임 결정 | **코어·CLI Rust 확정** — 2026-10-29 사용자 선택, [ADR-001](../adr/ADR-001-core-runtime.md). 비교 실험에서 .NET은 프로세스 시작, Rust는 메모리에 유리했고 검색은 혼재했다. [실측 보고서](RUNTIME-BENCHMARK.md)는 보존하며 제품의 1초 목표는 아직 검증 전이다. |
 | Mac 지원 방향 | 사용자 승인으로 정식 후속 목표에 포함했다. Windows 우선 출시 후 Mac 코어·CLI·최소 승인 도우미부터 제공하고 전체 GUI를 후속 제공한다. 구체적인 단계·일정·패키지는 미정이며 현재 제품은 미구현이다. |
-| 공개 사용 정책 | **[LICENSE Version 1.0](../../LICENSE) 정식 채택** — 개인·회사 내부 업무용 사용, 수정본 비공개 및 원본·수정본 무료 재배포 허용. 프로그램 판매·유료 제공 금지. 고지 유지·수정 표시·보증과 책임 조항 포함. 저작권자는 **Andrew Cho**, 웹사이트 **https://tzt.kr**, 연락처 [redacted-address]**이다. [한국어 안내](LICENSING.md), [ADR-016](../adr/ADR-016-license.md). |
+| 공개 사용 정책 | **[LICENSE Version 1.0](../../LICENSE) 정식 채택** — 개인·회사 내부 업무용 사용, 수정본 비공개 및 원본·수정본 무료 재배포 허용. 프로그램 판매·유료 제공 금지. 고지 유지·수정 표시·보증과 책임 조항 포함. 저작권자는 **Andrew Cho**, 웹사이트 **https://tzt.kr**, 연락처 **account@example.invalid**이다. [한국어 안내](LICENSING.md), [ADR-016](../adr/ADR-016-license.md). |
 | 다음 제품 작업 | CLI 배포 기준선을 보존하고 첨부·초안 편집·예약·주소록·규칙 등 남은 P0와 사람 보안 검토·실제 제공자 검증을 이어간다. GUI 디자인·자동 추가 로딩·상단 폴더 선택 제거는 후속 범위다. |
 
 ## CLI preview.4 — Google 다중 계정 브라우저 로그인·Gmail 읽기 (2026-10-30)
@@ -374,7 +374,7 @@ v13 기준선 `5f27187` 다음에는 같은 세 담당자가 [복구 계약](../
 
 ## 2026-10-29 사용자 검토 7 저작권자와 무료 재배포
 
-**사용자 답변:** “Andrew Cho, tzt.kr, [redacted-address]”, 이어 “무료 재배포 허용”.
+**사용자 답변:** “Andrew Cho, tzt.kr, account@example.invalid”, 이어 “무료 재배포 허용”.
 
 **확정 범위:** 저작권자 Andrew Cho와 웹사이트·연락처를 사용한다. 원본·수정본의 무료 재배포를 허용하고 수정본의 소스 공개 의무를 두지 않는다. 개인·회사 내부 업무용 사용 허용과 판매·유료 서비스 제공 금지는 유지한다.
 
@@ -1274,9 +1274,9 @@ Gmail 목록·본문 기능은 암호화 로컬 캐시를 읽으므로 실서버
 
 이 절은 앞선 테스트 사용자 미등록 차단을 대체한다. 사용자 개별 승인 후 같은 프로젝트의 테스트 사용자에 지정 계정을 추가했고, Audience에서 기존 계정과 함께 2명을 확인했다. 운영 모드 전환은 Google의 Publish app disabled 및 Branding 구성 완료 요구로 미실행이며 여전히 Testing이다. 홈페이지·개인정보처리방침·약관 URL은 비어 있고 개별 필드의 정확한 차단 기여는 미확정이다. URL을 임의로 입력하거나 검증 심사를 제출하지 않았다.
 
-이후 사용자가 [redacted-identity] 계정의 초안/발송/읽음·라벨 변경과 두 계정 사이 각 1통의 합성 첨부 시험을 요청했다. 새 실제 OAuth/권한/메일 단계는 권한 범위 확정을 위해 보류했다. 현재 Gmail 구현은 readonly이며 SMTP 발송 원장만 존재한다. Gmail POST·첨부 승인 결속·첨부 수신 검증·변경 도구와 계정별 선택 grant는 추가 구현 대상이다. 기존 검사 1,645개 통과는 쓰기 기능/실제 송수신 검증이 아니다.
+이후 사용자가 private-account 계정의 초안/발송/읽음·라벨 변경과 두 계정 사이 각 1통의 합성 첨부 시험을 요청했다. 새 실제 OAuth/권한/메일 단계는 권한 범위 확정을 위해 보류했다. 현재 Gmail 구현은 readonly이며 SMTP 발송 원장만 존재한다. Gmail POST·첨부 승인 결속·첨부 수신 검증·변경 도구와 계정별 선택 grant는 추가 구현 대상이다. 기존 검사 1,645개 통과는 쓰기 기능/실제 송수신 검증이 아니다.
 
-정확한 최소 OAuth 제안은 [redacted-identity]: openid/email/gmail.modify, [redacted-identity]: openid/email/gmail.readonly/gmail.send이다. modify는 Google 자체에서 휴지통 이동/초안 영구 삭제도 허용하므로 앱의 삭제 차단과 구분해 설명해야 한다. Google 전체 mail scope는 요청하지 않는다. 실제 grant 확대는 새 구체 승인 전 수행하지 않았다. 개발 소스와 합성 시험은 다음 단계이며 현재 제품 코드 변경은 없다.
+정확한 최소 OAuth 제안은 private-account: openid/email/gmail.modify, private-account: openid/email/gmail.readonly/gmail.send이다. modify는 Google 자체에서 휴지통 이동/초안 영구 삭제도 허용하므로 앱의 삭제 차단과 구분해 설명해야 한다. Google 전체 mail scope는 요청하지 않는다. 실제 grant 확대는 새 구체 승인 전 수행하지 않았다. 개발 소스와 합성 시험은 다음 단계이며 현재 제품 코드 변경은 없다.
 
 기존 코어 PID44160/정확 경로 존재를 Windows 사용자 관측으로 확인했고 실행 파일 SHA-256은 기존 25CDD6E2F1D29FF9C68925678AE3071A7C0E937E1E97F06D4EF6E9B221E68253와 같다. sandbox에서 PID가 보이지 않는 관측을 코어 부재로 해석하지 않았다. 새 UX 실행·OAuth·credential·grant·메일 작업 및 외부 업로드는 이번 단계에서 모두 미실행이다. 상세 구현 공백·권한·23바이트 합성 첨부 시험·남은 차단은 로컬 oauth-deliverables/gmail-write-preflight.md에 기록했다. 보안 코드 **[사람 검토 필요]** 유지.
 
@@ -1953,3 +1953,16 @@ Affected evidence: TUI38, CLI141, platform62 plus Windows IPC1, AI14, Core AI-re
 Final compatibility decision: Codex 0.163.0 rejects temp-only filesystem permissions on this Windows host even with its already-configured elevated sandbox (effective root read required). The prior built-in-readonly /status proof does not establish the required isolation. Replaced legacy sandbox fields with request-local named permissions (root deny, empty temporary cwd read, network off), checks the returned exact activePermissionProfile, and returns localized CAPABILITY_UNSUPPORTED without a broad-read fallback. No UAC, global Codex config edit, model turn or actual AI mail operation occurred. Built-in AI registration remains ready/preserved. This is a current Codex-chat capability gap, not a fixed/verified conversational path. Protocol enum and dynamic namespace fixes remain covered by fake transport tests.
 
 Final affected checks: TUI39, CLI142, AI15, Core registration4, profile diagnostics IPC/Windows targets, packaging10 and docs29 passed. Affected all-target Clippy (-D warnings) and architecture checks passed. Synthetic hidden-console integration now also proves down-arrow+Enter opens Message02 and unified inbox rendering; runtime resize remains unexercised. Fresh candidate packaging/install/publication follows these checks; beta.17 is not public at this point. Existing accounts and original root HEAD/index are preserved. Human security review pending.
+
+
+Published beta.17: source 02dd4e9af5c9e4103f525619549505b4d17f52c1, canonical source SHA256 5abca0ed59d2994f62d9e216451acc582e1239e52915097ca1c8fea1d3260bbd. ZIP SHA256 26d9d7f5cd2858f854113147b9e7732435b605971909f29b8fb419bed57ee57c (26,308,395 bytes, 261 manifest files); committed source archive and public re-download verified. Release https://github.com/tz1012/mail-hantong/releases/tag/v0.1.0-beta.17 . Site 4ad5093 published and live version/installer pin/TUI keys/Codex capability notice verified. Installed candidate beta.17 with existing three ready accounts and Gmail addresses preserved; Core PID54940 manifest hash d8793c56073a64a682a4c8bc9548ea4024fa0683e6dd2f2b83114a1676c731c6. Packaged CLI and TUI both report beta.17. Actual product Codex session now returns explicit CAPABILITY_UNSUPPORTED under the restricted named-profile requirement; no model turn or AI mail operation was run. Original root HEAD2852a31/index empty, user terminal/TUI processes, account data/keys/ACL preserved. Public PROGRESS copy anonymizes test identities. No actual Trash or resend. Security and contract changes remain human-review pending; runtime resize remains a validation gap.
+
+## 2026-11-03 CLI 독립 화면·언어 전환·메일 정보 표시 보완
+
+사용자는 CLI에 고유한 화면·키·이동 계획과 실행 중 언어 전환이 필요하다고 정정했다. CLI-INTERACTION-PLAN-20261103.md에 계정→폴더→메일 목록→본문 페이지→이전 선택 복귀 흐름을 기록했다. CLI 메뉴와 리더에 방향키/Enter, Esc, / 입력 즉시 명령 목록, /help, /ai, /agent, /language 선택 및 /language ko|en을 연결했다. 언어는 현재 세션에만 적용하며 저장된 설정을 바꿨다고 표시하지 않는다. TUI는 : 명령에서 language ko/en으로 전환하며 CLI가 TUI를 대신 실행하지 않는다.
+
+메일 표시 공통 계층에 bounded RFC2047 B/Q 제목·주소 디코딩, Windows EUC-KR/KS_C_5601/CP949 표시 디코더, 제목·보낸 사람·받는 사람·참조·날짜와 본문을 추가했다. 본문 응답의 선택적 headers와 기존 JSON 캐시 호환 확장은 계약 제안 message-body-envelope-metadata-20261103.md에 기록했다. 권한·계정·UID·발송 정책과 DB 스키마는 확대하지 않는다. IMAP 본문 charset callback은 Core에 연결했다. Gmail body의 기존 charset 지원 범위는 유지한다. CLI는 메타데이터와 18줄 단위 본문 페이지, TUI는 전체 폭 읽기와 비동기 조회를 사용한다. TUI 조회 중 이동·계정 전환 시 generation을 무효화하고 이전 계정 결과를 표시하지 않는다. 언어 변경은 같은 요청을 유지하면서 생성된 정보 제목만 다시 표시한다. CRLF/tab과 제어문자·bidi를 화면에서 안전하게 처리한다.
+
+대상 검증: platform 70, CLI 149, TUI 45, contracts message_body 8, IPC body 3, IPC Google 10, Store Google 원자 캐시 1, Secrets Gmail 2가 통과했다. 별도 소유 숨김 콘솔에서 방향키로 두 번째 값 선택, / 키 직후 Enter 전 명령 표시, 힌트 선택, Esc, 입력/출력 모드 복원을 검증했다(target/command-prompt-console-proof.json). 사용자 창·클립보드·입력은 조작하지 않았다. 검토 중 발견한 이전 계정 본문 혼입과 언어 변경 중 Loading 고착을 수정하고 회귀 시험을 추가했다. 변경 대상 all-target Clippy, 아키텍처 및 문서 검사와 후보 빌드/설치는 최종 확인 중이다. 전체 시험을 반복한 결과로 표시하지 않는다. 실제 발송·휴지통·비밀·ACL 변경은 수행하지 않았으며 보안/계약 변경은 [사람 검토 필요]. beta.18은 이 기록 시점에 아직 공개하지 않았다.
+
+Final beta.18 candidate: affected all-target Clippy and architecture checks passed, docs29 passed, packaged hidden-console TUI keyboard/mouse/unified/restore passed, and actual packaged CLI runtime Korean/English menu switching plus Esc/mode restoration passed. No mail send/Trash/credential/ACL effects. Installation/publication in progress.

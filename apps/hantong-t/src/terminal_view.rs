@@ -331,7 +331,7 @@ pub(crate) fn render(frame: &Frame<'_>) -> String {
     ));
     out.push('\n');
     out.push_str(panel);
-    out.push_str(&line(width, ""));
+    out.push_str(&line(width, text(frame.lang_ko, "commands")));
     out.push('\n');
     let info = if frame.help {
         text(frame.lang_ko, "help_commands")

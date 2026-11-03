@@ -2,7 +2,7 @@
 
 A multi-account mail hub for Windows, with a shared core service, the `hantong` CLI, MCP access, and an optional GUI. GUI languages are Korean and English; themes are light, dark, and system. The CLI defaults to English and supports Korean.
 
-**Windows CLI 0.1.0-beta.17.** Start with the [Korean installation and feature guide](https://tz1012.github.io/mail-hantong/). Account setup, feature selection, composing, Trash review and Send/Cancel use the same terminal without a separate HanTong window or Windows Hello. Google OAuth opens its standard provider browser. See the [CLI usage guide](docs/latest/CLI-LAUNCH.md) for mail, AI sessions, MCP tools and remaining limitations.
+**Current Windows CLI release: 0.1.0-beta.18.** Start with the [Korean installation and feature guide](https://tz1012.github.io/mail-hantong/). Account setup, feature selection, composing, Trash review and Send/Cancel use the same terminal without a separate HanTong window or Windows Hello. Google OAuth opens its standard provider browser. See the [CLI usage guide](docs/latest/CLI-LAUNCH.md) for mail, AI sessions, MCP tools and remaining limitations.
 
 The package contains two terminal experiences over the same Core, account store,
 policy checks and provider operations. `hantong` is the guided, command-style
@@ -23,6 +23,17 @@ wheel scrolls. `c` opens compose, `t` starts the one-message Trash review, and
 returning to the full-screen client. `--demo` uses synthetic data and disables
 account effects; `--plain` keeps the text compatibility view.
 
+In the ordinary CLI, Up/Down and Enter select accounts, folders and messages.
+Press `/` to show commands immediately; `/help` explains the current choices,
+and Esc or `/back` returns to the previous list with its selection preserved.
+The CLI has its own paged mail reader with Subject, From, To, Cc and Date;
+`/next` and `/prev` page through the body. `/ai codex`, `/ai claude`, and
+`/agent` remain available while browsing (provider capability limits below
+still apply). `/language` offers Korean/English; `/language ko` and
+`/language en` switch directly for this session. In the full-screen TUI,
+press `:` then enter `language ko` or `language en`. Runtime language changes
+are not saved for the next launch.
+
 The terminal view can combine cached Inbox pages from every ready account into
 one tagged list with `u`. Account aliases are persistent display labels only;
 they do not change From/authentication, account scope, or provider data. `v`
@@ -31,7 +42,7 @@ remaining width to the body on wide windows. Startup shows a short preparation
 animation while the existing startup work runs, then returns to the normal
 accounts/version/update notice prompt. It never installs an update by itself.
 
-beta.17 keeps the PowerShell update path, newest-compatible release selection
+beta.18 keeps the PowerShell update path, newest-compatible release selection
 and automatic downgrade protection. New accounts can use the same read, body,
 compose and individually confirmed send flow as existing accounts. Google
 account selection requests the required consent and the same terminal confirms

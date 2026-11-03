@@ -398,8 +398,12 @@ impl<'a, 'server> ExecutionContext for CoreExecutionAdapter<'a, 'server> {
         request: &hantong_contracts::message_body::MessageBodyRequest,
     ) -> Result<ReadResult<Value>, ErrorCode> {
         let cached = self.store.cached_message_body(request)?;
+        let raw_headers = cached.as_ref().map(|body| body.bytes().to_vec());
         let (state, text, truncated) = if let Some(body) = cached {
-            let mut text = hantong_contracts::message_body::render_message_text(body.bytes())?;
+            let mut text = hantong_contracts::message_body::render_message_text_with_charset(
+                body.bytes(),
+                hantong_platform::mail_charset::decode_mail_charset,
+            )?;
             let truncated = text.len() > 65536;
             if truncated {
                 let mut end = 65536;
@@ -419,8 +423,14 @@ impl<'a, 'server> ExecutionContext for CoreExecutionAdapter<'a, 'server> {
                 )?;
             ("pending", None, false)
         };
+        let headers = hantong_contracts::message_body::message_envelope(
+            raw_headers.as_deref().unwrap_or(&[]),
+        )
+        .ok()
+        .flatten()
+        .map(|value| value.to_json());
         ReadResult::new(
-            serde_json::json!({"schema_version":1,"ok":true,"state":state,"account_id":request.account_id(),"mailbox_wire_hex":request.mailbox().wire_hex(),"mailbox_encoding":request.mailbox().encoding().as_str(),"uidvalidity":request.uidvalidity(),"uid":request.uid(),"text":text,"truncated":truncated}),
+            serde_json::json!({"schema_version":1,"ok":true,"state":state,"account_id":request.account_id(),"mailbox_wire_hex":request.mailbox().wire_hex(),"mailbox_encoding":request.mailbox().encoding().as_str(),"uidvalidity":request.uidvalidity(),"uid":request.uid(),"text":text,"truncated":truncated,"headers":headers}),
             if state == "ready" { Some(1) } else { None },
         )
     }

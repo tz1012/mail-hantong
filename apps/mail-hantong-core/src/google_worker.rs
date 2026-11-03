@@ -259,7 +259,7 @@ pub(crate) fn receipt(r: &GoogleSyncReceipt) -> Value {
     json!({"account_id":r.account_id,"execution_id":hantong_contracts::wire_hex::encode(&r.execution_id),"state":r.state,"version":r.version,"next_page_token":r.next_page_token,"error_code":r.error_code.map(ErrorCode::as_str),"downloaded_count":r.downloaded_count})
 }
 fn meta(m: &hantong_contracts::google::GoogleMessage) -> Value {
-    json!({"attachment_checks":m.attachment_checks.as_ref().map(|checks|checks.iter().map(|a|a.to_json()).collect::<Vec<_>>()),"id":m.id,"thread_id":m.thread_id,"internal_date_ms":m.internal_date_ms,"label_ids":m.label_ids,"subject":m.subject,"sender":m.sender,"snippet":m.snippet,"size":m.size})
+    json!({"attachment_checks":m.attachment_checks.as_ref().map(|checks|checks.iter().map(|a|a.to_json()).collect::<Vec<_>>()),"id":m.id,"thread_id":m.thread_id,"internal_date_ms":m.internal_date_ms,"label_ids":m.label_ids,"subject":m.subject,"sender":m.sender,"headers":m.headers.as_ref().map(|h|h.to_json()),"snippet":m.snippet,"size":m.size})
 }
 pub(crate) fn read(
     store: &Store,
@@ -322,6 +322,11 @@ pub(crate) fn read(
             let truncated = m.body_truncated || cut < text.len();
             text.truncate(cut);
             out["body"] = json!({"message_id":m.id,"text":text,"truncated":truncated});
+            out["body"]["headers"] = m
+                .headers
+                .as_ref()
+                .map(|h| h.to_json())
+                .unwrap_or(serde_json::Value::Null);
             1
         }
         GoogleMailRequest::Status { execution_id, .. } => {

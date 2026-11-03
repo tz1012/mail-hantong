@@ -231,38 +231,32 @@ fn item_label(item: &Value) -> String {
         .or_else(|| item.get("sender").and_then(Value::as_str))
         .unwrap_or("");
     if sender.is_empty() {
-        sanitize_single_line(subject)
+        hantong_platform::mail_display::decode_header(subject.as_bytes())
     } else {
         format!(
             "{}  —  {}",
-            sanitize_single_line(subject),
-            sanitize_single_line(sender)
+            hantong_platform::mail_display::decode_header(subject.as_bytes()),
+            hantong_platform::mail_display::decode_header(sender.as_bytes())
         )
     }
 }
 
 fn decode_header_hex(value: Option<&Value>) -> String {
-    let Some(hex) = value.and_then(Value::as_str) else {
-        return String::new();
-    };
-    if hex.len() > 16384 || hex.len() % 2 != 0 {
-        return String::new();
-    }
-    let bytes: Option<Vec<u8>> = hex
-        .as_bytes()
-        .chunks_exact(2)
-        .map(|p| {
-            let digit = |b: u8| match b {
-                b'0'..=b'9' => Some(b - b'0'),
-                b'a'..=b'f' => Some(b - b'a' + 10),
-                _ => None,
-            };
-            Some(digit(p[0])? * 16 + digit(p[1])?)
+    hantong_platform::mail_display::decode_hex_header(value)
+}
+fn header_projection(page: &Value, item: &Value) -> Value {
+    item.get("header_content_index")
+        .and_then(Value::as_u64)
+        .and_then(|index| {
+            page.get("untrusted_content")?
+                .as_array()?
+                .get(index as usize)?
+                .get("content")?
+                .as_str()
         })
-        .collect();
-    bytes
-        .map(|b| sanitize_single_line(&String::from_utf8_lossy(&b)))
-        .unwrap_or_default()
+        .filter(|content| content.len() <= 65536)
+        .and_then(|content| serde_json::from_str(content).ok())
+        .unwrap_or_else(|| item.clone())
 }
 fn projected_label(page: &Value, item: &Value) -> String {
     let Some(index) = item

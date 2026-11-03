@@ -1,6 +1,9 @@
 //! Strict body responses and one authenticated Core exchange.
 use crate::accounts::Object;
-use hantong_contracts::{ErrorCode, message_body::MessageBodyRequest};
+use hantong_contracts::{
+    ErrorCode,
+    message_body::{MessageBodyRequest, MessageEnvelope},
+};
 use serde::Deserialize;
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -25,7 +28,7 @@ struct FailureCode {
 #[derive(Deserialize)]
 #[serde(untagged)]
 enum Reply {
-    Success(Object<Success>),
+    Success(Box<Object<Success>>),
     Failure(Object<Failure>),
 }
 #[derive(Deserialize)]
@@ -41,11 +44,23 @@ struct BodyResult {
     uid: u32,
     text: serde_json::Value,
     truncated: bool,
+    #[serde(default)]
+    headers: Option<EnvelopeWire>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct EnvelopeWire {
+    subject: Option<String>,
+    from: Option<String>,
+    to: Option<String>,
+    cc: Option<String>,
+    date: Option<String>,
 }
 pub struct BodyResponse {
     pub state: String,
     pub text: Option<String>,
     pub truncated: bool,
+    pub headers: Option<MessageEnvelope>,
 }
 impl std::fmt::Debug for BodyResponse {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -62,7 +77,8 @@ pub fn parse_response(
     }
     let reply: Reply = serde_json::from_slice(bytes).map_err(|_| ErrorCode::InvalidInput)?;
     let result = match reply {
-        Reply::Success(Object(v)) => {
+        Reply::Success(boxed) => {
+            let Object(v) = *boxed;
             if v.jsonrpc != "2.0" || v.id != id {
                 return Err(ErrorCode::InvalidInput);
             }
@@ -90,6 +106,10 @@ pub fn parse_response(
     {
         return Err(ErrorCode::InvalidInput);
     }
+    let headers = result
+        .headers
+        .map(|h| MessageEnvelope::new(h.subject, h.from, h.to, h.cc, h.date))
+        .transpose()?;
     let text = match result.state.as_str() {
         "pending" if result.text.is_null() && !result.truncated => None,
         "ready" => {
@@ -107,6 +127,7 @@ pub fn parse_response(
         state: result.state,
         text,
         truncated: result.truncated,
+        headers,
     })
 }
 pub fn get_default(request: &MessageBodyRequest) -> Result<BodyResponse, ErrorCode> {
@@ -143,7 +164,7 @@ mod tests {
         .unwrap()
     }
     fn response() -> serde_json::Value {
-        serde_json::json!({"jsonrpc":"2.0","id":"body-1","result":{"schema_version":1,"ok":true,"state":"ready","account_id":"acct","mailbox_wire_hex":"494e424f58","mailbox_encoding":"utf8","uidvalidity":42,"uid":9,"text":"hello","truncated":false}})
+        serde_json::json!({"jsonrpc":"2.0","id":"body-1","result":{"schema_version":1,"ok":true,"state":"ready","account_id":"acct","mailbox_wire_hex":"494e424f58","mailbox_encoding":"utf8","uidvalidity":42,"uid":9,"text":"hello","truncated":false,"headers":{"subject":"Hello","from":"a@example.test","to":null,"cc":null,"date":"today"}}})
     }
     #[test]
     fn mail03_body_reply_binds_identity_and_rejects_unexpected_fields() {
@@ -188,6 +209,25 @@ mod tests {
                 .unwrap()
                 .state,
             "pending"
+        );
+    }
+
+    #[test]
+    fn mail03_body_optional_envelope_accepts_legacy_and_rejects_unknown_fields() {
+        let mut value = response();
+        let parsed =
+            parse_response(&serde_json::to_vec(&value).unwrap(), "body-1", &request()).unwrap();
+        assert_eq!(parsed.headers.unwrap().subject(), Some("Hello"));
+        value["result"].as_object_mut().unwrap().remove("headers");
+        assert!(
+            parse_response(&serde_json::to_vec(&value).unwrap(), "body-1", &request())
+                .unwrap()
+                .headers
+                .is_none()
+        );
+        value["result"]["headers"] = serde_json::json!({"subject":"", "approved":true});
+        assert!(
+            parse_response(&serde_json::to_vec(&value).unwrap(), "body-1", &request()).is_err()
         );
     }
 }

@@ -1,0 +1,16 @@
+﻿folder_prompt=폴더 >
+message_prompt=메일 >
+mail_prompt=메일 읽기 >
+empty_messages=메일이 없습니다.
+body_empty=읽을 수 있는 본문이 없습니다.
+back_hint=/back
+help_hint=/help
+next_hint=/next
+prev_hint=/prev
+account=계정
+invalid_choice=표시된 항목을 선택하거나 /로 명령어를 확인하세요.
+loading=메일을 불러오는 중...
+reading_keys=Esc: 목록 · /next: 다음 쪽 · /prev: 이전 쪽 · /: 명령어
+next_page=다음 쪽
+prev_page=이전 쪽
+return_list=메일 목록으로 돌아가기

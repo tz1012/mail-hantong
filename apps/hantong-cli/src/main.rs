@@ -14,6 +14,7 @@ use hantong_contracts::scope_refresh::{
 use std::env;
 use std::io::{self, Write};
 mod ai;
+mod cli_mail_reader;
 mod core_start;
 mod diagnostics;
 mod google;
@@ -35,7 +36,7 @@ mod update;
 const EN_RESOURCES: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/resources/en.txt"));
 const KO_RESOURCES: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/resources/ko.txt"));
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 enum Lang {
     En,
     Ko,
@@ -496,9 +497,23 @@ fn safe_human(value: &str) -> String {
             | '\u{061c}'
             | '\u{202a}'..='\u{202e}'
             | '\u{2066}'..='\u{2069}' => format!("\\u{{{:x}}}", c as u32),
+            c if c.is_control()
+                || matches!(c as u32, 0x200b..=0x200d | 0x2060..=0x2065 | 0xfeff) =>
+            {
+                format!("\\u{{{:x}}}", c as u32)
+            }
             c => c.to_string(),
         })
         .collect()
+}
+
+#[cfg(test)]
+#[test]
+fn cli16_account_labels_neutralize_controls_and_direction_overrides() {
+    assert_eq!(
+        safe_human("a\u{1b}[31m\r\n\t\u{85}\u{202e}"),
+        "a\\u{1b}[31m\\u{d}\\u{a}\\u{9}\\u{85}\\u{202e}"
+    );
 }
 
 #[cfg(test)]

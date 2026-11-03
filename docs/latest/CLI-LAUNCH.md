@@ -1,4 +1,4 @@
-# mail-hantong CLI — Windows beta.17 candidate
+# mail-hantong CLI — Windows beta.17
 
 beta.17 keeps the Windows PowerShell update path, newest-compatible release
 selection and automatic downgrade protection. New accounts use the same read,

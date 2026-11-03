@@ -342,6 +342,54 @@ pub(super) fn try_run(
         _ => failure(AiError::InvalidInput, ko, json_mode),
     })
 }
+
+/// Accept the short forms used while the onboarding menu is still active.
+/// They are routed directly to this process; no shell or child command is
+/// involved, and the normal AI mail-consent checks remain in `try_run`.
+pub(super) fn is_terminal_command(command: &str) -> bool {
+    matches!(
+        command,
+        "ai codex"
+            | "ai claude"
+            | ":ai codex"
+            | ":ai claude"
+            | "/ai codex"
+            | "/ai claude"
+            | ":agent"
+            | "/agent"
+    )
+}
+
+pub(super) fn run_terminal_command(command: &str, lang: crate::Lang) -> Result<(), ErrorCode> {
+    let ko = matches!(lang, crate::Lang::Ko);
+    let provider = match command {
+        "ai codex" | ":ai codex" | "/ai codex" => Provider::Codex,
+        "ai claude" | ":ai claude" | "/ai claude" => Provider::Claude,
+        ":agent" | "/agent" => {
+            let labels = vec!["openai (Codex)".to_owned(), "Claude".to_owned()];
+            let picked = hantong_platform::interactive_select(&labels, 0)
+                .map_err(|_| ErrorCode::HumanStepRequired)?
+                .ok_or(ErrorCode::ApprovalDenied)?;
+            match picked {
+                0 => Provider::Codex,
+                1 => Provider::Claude,
+                _ => return Err(ErrorCode::InvalidInput),
+            }
+        }
+        _ => return Err(ErrorCode::InvalidInput),
+    };
+    let command = vec![
+        "ai".to_owned(),
+        "chat".to_owned(),
+        provider.name().to_owned(),
+    ];
+    let code = try_run(&command, ko, false, false).ok_or(ErrorCode::InvalidInput)?;
+    if code == 0 {
+        Ok(())
+    } else {
+        Err(ErrorCode::InternalError)
+    }
+}
 enum Slash {
     Continue,
     Exit,
