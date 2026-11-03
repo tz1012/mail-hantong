@@ -1840,3 +1840,19 @@ Assert-FileRecords가 주변 `$script:InstallBase`에 의존하던 경계를 명
 ### beta.9 업데이트 수정본 전체 검사 통과
 
 `scripts/check_all.py` exit 0: Rust 1,763개/31 suites, Docs 29개, Build 114개, 합계 1,906개. 실패·ignored 0이며 fmt·Clippy(-D warnings)·전체 build/test·추적표·아키텍처 검사가 통과했다. source hash `7af056c36a952792933283676ebc1e3556a1820590e7fa11e7f54e41eedcf4c9`, 로그 SHA-256 `ecbc811994863a68623b547e8359e4fd373d292c695a733dbbe426c776c5d2ac`, 근거 `target/beta9-verification.json`. 검사 동안 잠시 중지한 기존 beta.8 Core는 같은 실행 파일 SHA·경로·인자로 복원했다(PID 48244). 실제 계정/메일 작업과 폴더 권한 변경은 수행하지 않았다. 패키지 생성과 공개 후 실제 업데이트 확인을 이어간다. [사람 보안 검토 필요].
+
+### 실제 업데이트 실패 재현 — Windows verbatim 경로 경계 확인
+
+beta.9 공개 자산의 hash/size와 별도 설치 스모크까지 통과했으나, 설치된 beta.8의 실제 `update hantong`은 같은 Join-Path 오류로 실패했다. 설치 포인터는 beta.8, 기존 Core는 PID 48244로 유지됐다. 따라서 beta.9를 다시 draft로 전환하고 홈페이지 beta.9 안내 변경도 되돌렸다. 소스 커밋·검사·패키지는 보존했으며 성공 배포로 최종 보고하지 않는다.
+
+추가 최소 재현에서 `Join-Path '\\?\C:\Users\cyary\AppData\Local\Programs\mail-hantong-cli' 'bin\hantong.exe'`가 Windows PowerShell 5.1의 동일한 PSArgumentNullException(인자 drive)을 발생시켰다. Base 값이 null이라는 앞선 추론은 잘못됐다. Rust canonicalize가 만든 verbatim Windows 경로를 PowerShell provider가 해석하지 못하는 경계가 실제 원인이다. 정상 C: 경로를 사용하던 기존 설치 시험이 이를 놓쳤다. canonical 검증은 유지하고 PowerShell 인자 경계에서만 동등한 일반 Windows 경로로 변환하며, 해당 실제 PowerShell 회귀 시험을 추가한다. 기존 beta.8 런처 자체에 이 버그가 있어 이 PC에는 검증된 새 패키지를 정상 경로로 직접 설치한 뒤 새 버전의 실제 update 명령을 다시 검사한다. 실제 계정·메일·키·ACL은 변경하지 않는다.
+
+### 사용자 정정 — 변경 영향에 맞는 검사만 수행
+
+사용자가 작은 수정마다 전체 1,906개 검사를 반복하는 것은 불필요하다고 지적했다. 이후 검증은 변경 영향에 해당하는 회귀 시험·컴파일/정적 검사·실제 이용 흐름을 우선하며, 큰 기능 묶음 통합 시 전체 검사를 모아서 수행한다. 이번 Windows 경로 수정은 직전 전체 검사 근거를 보존하고 업데이트 경로 회귀·CLI 검사·패키지/실제 update 실행으로 추가 검증하며 전체 검사를 다시 실행하지 않는다. 과거 전체 검사 수를 새 소스 전체 검사 결과로 재표시하지 않는다.
+
+### beta.10 경로 수정의 대상 검증
+
+PowerShell에 전달하는 -File/-InstallRoot 인자에만 verbatim DOS/UNC→일반 Windows 경로 변환을 적용했다. 원본 canonical 경로의 manifest·런처·파일 검증은 유지한다. 변환한 updater와 root를 다시 canonical 검증해 원래 경로와 정확히 일치할 때만 실행하며, trailing dot/space·예약 DOS 이름·ADS·wildcard·제어 문자·device/GLOBALROOT를 거부한다. 자동 재검토에서 경로 별칭 우회 지적이 해소됨을 확인했다. 사람 보안 검토와는 구분한다.
+
+업데이트 시험 10개 통과: Unicode DOS/UNC, namespace/별칭 거부, 경쟁 normalized updater 무실행, 실제 Windows PowerShell 5.1 Join-Path, 기존 manifest/current/변조·junction·headless 경계를 포함한다. 대상 CLI Clippy(-D warnings) exit 0, 해당 파일 rustfmt 통과. 근거 target/beta10-update-tests.log와 beta10-cli-clippy.log. source hash `fc97eec5cecdcbb329bc9175a0e71b0d1033d41a214e51f36f7e58121d29d8d3`; 전체 검사는 반복하지 않았다. 패키지와 실제 설치/업데이트 확인은 이어서 진행한다.

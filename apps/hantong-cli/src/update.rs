@@ -54,11 +54,12 @@ fn run_installed_updater() -> Result<(), ErrorCode> {
     let plan = resolve_update_plan(&executable)?;
     let powershell =
         super::core_start::canonical_regular_file(&hantong_platform::system_powershell()?)?;
+    let (updater, root) = powershell_path_args(&plan)?;
     let status = Command::new(powershell)
         .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-File"])
-        .arg(&plan.updater)
+        .arg(updater)
         .args(["-InstallRoot"])
-        .arg(&plan.root)
+        .arg(root)
         .stdin(Stdio::inherit())
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit())
@@ -186,6 +187,121 @@ fn regular_dir(path: &std::path::Path) -> Result<std::path::PathBuf, ErrorCode> 
         return Err(ErrorCode::CoreUnavailable);
     }
     Ok(path.to_path_buf())
+}
+
+/// PowerShell 5.1's Join-Path rejects the verbatim paths returned by
+/// Windows canonicalization (for example, `\\?\C:\...`). Keep canonical
+/// paths for validation and filesystem access, and convert only the typed
+/// arguments crossing this PowerShell boundary.
+#[cfg(windows)]
+fn powershell_path_arg(path: &std::path::Path) -> Result<std::path::PathBuf, ErrorCode> {
+    use std::ffi::OsString;
+    use std::path::{Component, PathBuf, Prefix};
+
+    let mut components = path.components();
+    let Component::Prefix(prefix) = components.next().ok_or(ErrorCode::CoreUnavailable)? else {
+        return Err(ErrorCode::CoreUnavailable);
+    };
+    let mut result = OsString::new();
+    match prefix.kind() {
+        Prefix::Disk(letter) | Prefix::VerbatimDisk(letter) => {
+            result.push(format!("{}:\\", char::from(letter)));
+        }
+        Prefix::UNC(server, share) | Prefix::VerbatimUNC(server, share) => {
+            validate_powershell_component(server)?;
+            validate_powershell_component(share)?;
+            result.push(r"\\");
+            result.push(server);
+            result.push(r"\");
+            result.push(share);
+            result.push(r"\");
+        }
+        // This also rejects \\?\GLOBALROOT\... and other device namespaces.
+        Prefix::Verbatim(_) | Prefix::DeviceNS(_) => return Err(ErrorCode::CoreUnavailable),
+    }
+    if !matches!(components.next(), Some(Component::RootDir)) {
+        return Err(ErrorCode::CoreUnavailable);
+    }
+    let mut result = PathBuf::from(result);
+    for component in components {
+        match component {
+            Component::Normal(part) => {
+                validate_powershell_component(part)?;
+                result.push(part);
+            }
+            Component::CurDir
+            | Component::ParentDir
+            | Component::RootDir
+            | Component::Prefix(_) => {
+                return Err(ErrorCode::CoreUnavailable);
+            }
+        }
+    }
+    Ok(result)
+}
+
+#[cfg(windows)]
+fn validate_powershell_component(value: &std::ffi::OsStr) -> Result<(), ErrorCode> {
+    let value = value.to_str().ok_or(ErrorCode::CoreUnavailable)?;
+    if value.is_empty()
+        || value == "."
+        || value == ".."
+        || value.ends_with(' ')
+        || value.ends_with('.')
+        || value.chars().any(|character| {
+            character.is_control()
+                || matches!(
+                    character,
+                    ':' | '*' | '?' | '[' | ']' | '<' | '>' | '"' | '|'
+                )
+        })
+    {
+        return Err(ErrorCode::CoreUnavailable);
+    }
+    let stem = value.split('.').next().unwrap_or("").to_ascii_uppercase();
+    if matches!(
+        stem.as_str(),
+        "CON"
+            | "PRN"
+            | "AUX"
+            | "NUL"
+            | "COM1"
+            | "COM2"
+            | "COM3"
+            | "COM4"
+            | "COM5"
+            | "COM6"
+            | "COM7"
+            | "COM8"
+            | "COM9"
+            | "LPT1"
+            | "LPT2"
+            | "LPT3"
+            | "LPT4"
+            | "LPT5"
+            | "LPT6"
+            | "LPT7"
+            | "LPT8"
+            | "LPT9"
+    ) {
+        return Err(ErrorCode::CoreUnavailable);
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn powershell_path_args(
+    plan: &UpdatePlan,
+) -> Result<(std::path::PathBuf, std::path::PathBuf), ErrorCode> {
+    let updater = powershell_path_arg(&plan.updater)?;
+    if super::core_start::canonical_regular_file(&updater)? != plan.updater {
+        return Err(ErrorCode::CoreUnavailable);
+    }
+    let root = powershell_path_arg(&plan.root)?;
+    if std::fs::canonicalize(&root).map_err(|_| ErrorCode::CoreUnavailable)? != plan.root {
+        return Err(ErrorCode::CoreUnavailable);
+    }
+    Ok((updater, root))
 }
 
 #[cfg(test)]
@@ -336,5 +452,131 @@ mod tests {
         std::fs::remove_dir(&link).unwrap();
         std::fs::remove_dir_all(&root).unwrap();
         assert!(result.is_err());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn inst03_powershell_path_arg_normalizes_unicode_verbatim_disk_and_unc() {
+        let unicode: String = ['\u{d14c}', '\u{c2a4}', '\u{d2b8}', '\u{ba54}', '\u{c77c}']
+            .into_iter()
+            .collect();
+        let disk = std::path::PathBuf::from(r"\\?\C:\Users")
+            .join(&unicode)
+            .join("bin");
+        assert_eq!(
+            super::powershell_path_arg(&disk).unwrap(),
+            std::path::PathBuf::from(r"C:\Users")
+                .join(&unicode)
+                .join("bin")
+        );
+
+        let unc = std::path::PathBuf::from(r"\\?\UNC\server\share")
+            .join(&unicode)
+            .join("bin");
+        assert_eq!(
+            super::powershell_path_arg(&unc).unwrap(),
+            std::path::PathBuf::from(r"\\server\share")
+                .join(&unicode)
+                .join("bin")
+        );
+
+        let conventional = std::path::PathBuf::from(r"C:\Users")
+            .join(&unicode)
+            .join("bin");
+        assert_eq!(
+            super::powershell_path_arg(&conventional).unwrap(),
+            conventional
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn inst03_powershell_path_arg_rejects_device_and_globalroot_namespaces() {
+        for path in [
+            std::path::Path::new(r"\\.\GLOBALROOT\Device\HarddiskVolumeShadowCopy1"),
+            std::path::Path::new(r"\\?\GLOBALROOT\Device\HarddiskVolumeShadowCopy1"),
+        ] {
+            assert!(super::powershell_path_arg(path).is_err());
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn inst03_powershell_path_arg_rejects_dos_alias_and_ads_components() {
+        for component in [
+            "extended.",
+            "extended ",
+            "CON.txt",
+            "name:stream",
+            "wild[card]",
+            "bad\u{1}",
+        ] {
+            let path = std::path::PathBuf::from(r"\\?\C:\Users").join(component);
+            assert!(
+                super::powershell_path_arg(&path).is_err(),
+                "ambiguous component was accepted: {component:?}"
+            );
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn inst03_powershell_path_args_reject_competing_normal_updater_path() {
+        let (root, executable) = fixture(false, false, "1.2.3");
+        let plan = super::resolve_update_plan(&executable).unwrap();
+        let competing = super::powershell_path_arg(&plan.updater).unwrap();
+        assert_ne!(competing, plan.updater);
+        let competing_plan = super::UpdatePlan {
+            root: plan.root,
+            updater: competing,
+        };
+        assert!(super::powershell_path_args(&competing_plan).is_err());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn inst03_powershell_51_join_path_accepts_normalized_root_argument() {
+        use std::fs;
+        use std::process::Command;
+
+        let (root, executable) = fixture(false, false, "1.2.3");
+        let plan = super::resolve_update_plan(&executable).unwrap();
+        let (updater, normalized_root) = super::powershell_path_args(&plan).unwrap();
+        let script = root.join("join-path-test.ps1");
+        fs::write(
+            &script,
+            br#"param([string]$InstallRoot, [string]$UpdaterPath)
+$ErrorActionPreference = 'Stop'
+$full = Join-Path $InstallRoot 'versions\1.2.3\update.ps1'
+if (-not (Test-Path -LiteralPath $full)) { exit 7 }
+if (-not (Test-Path -LiteralPath $UpdaterPath)) { exit 8 }
+if ((Get-Item -LiteralPath $full).FullName -ne (Get-Item -LiteralPath $UpdaterPath).FullName) { exit 9 }
+exit 0
+"#,
+        )
+        .unwrap();
+        let powershell = hantong_platform::system_powershell().unwrap();
+        let output = Command::new(powershell)
+            .args([
+                "-NoProfile",
+                "-NonInteractive",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+            ])
+            .arg(super::powershell_path_arg(&script).unwrap())
+            .args(["-InstallRoot"])
+            .arg(normalized_root)
+            .args(["-UpdaterPath"])
+            .arg(updater)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "PowerShell Join-Path failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let _ = fs::remove_dir_all(root);
     }
 }
