@@ -8,18 +8,18 @@
 <body>
 <header><a class="brand" href="index.html">한통 <span>mail-hantong</span></a><nav aria-label="주 메뉴"><a href="index.html" aria-current="page">소개</a><a href="#start">설치</a><a href="#ai">AI 연결</a><a href="privacy.html">개인정보</a><a href="terms.html">이용 안내</a></nav></header>
 <main>
-<p class="eyebrow">Windows 11 x64 · CLI 베타 0.1.0-beta.9</p>
+<p class="eyebrow">Windows 11 x64 · CLI 베타 0.1.0-beta.8</p>
 <h1>메일과 AI를<br>한 터미널에서</h1>
 <p class="lead">내 Windows PC에서 메일을 읽고 작성하는 메일 클라이언트입니다. 한통의 설정·내용 확인·보내기·취소는 같은 터미널에서 진행합니다. 별도 한통 확인창이나 Windows Hello를 요구하지 않으며, Google 로그인·동의만 표준 브라우저에서 진행합니다.</p>
-<div class="actions"><a class="button" href="#start">설치하고 시작하기</a><a href="https://github.com/tz1012/mail-hantong/releases/tag/v0.1.0-beta.9">beta.9 다운로드·변경 내용</a></div>
+<div class="actions"><a class="button" href="#start">설치하고 시작하기</a><a href="https://github.com/tz1012/mail-hantong/releases/tag/v0.1.0-beta.8">beta.8 다운로드·변경 내용</a></div>
 
-<p class="notice"><strong>beta.9 안내:</strong> 업데이트 설치 경로 전달과 오류 안내를 수정했습니다. 기존 Gmail 다계정 읽기·작성·발송 기능을 유지하며 계정 데이터와 보호 키를 삭제하지 않습니다. 일반 IMAP/SMTP 기본 메뉴·휴지통 확장은 별도 개발·검증 중이며 이번 ZIP에는 포함하지 않았습니다.</p>
+<p class="notice"><strong>beta.8 안내:</strong> 다른 Google 계정을 선택한 뒤 CONFLICT로 끝나던 계정 추가 경로를 수정했습니다. 기존 계정과 읽기·작성·발송 권한을 보존하면서 선택한 계정을 터미널에서 추가합니다. 업데이트와 재설치는 계정 데이터와 보호 키를 삭제하지 않습니다. 일반 IMAP/SMTP의 기본 메뉴·휴지통 확장은 별도 개발·검증 중이며 이번 ZIP에는 포함하지 않았습니다.</p>
 
 <section id="start">
 <h2>설치 → 실행 → 계정 연결 → Google 동의 → 이용</h2>
 <ol class="steps">
 <li><strong>설치·업데이트:</strong> Windows PowerShell에서 아래 명령을 실행하세요. beta.5부터는 설치 후 <code>update hantong</code> 또는 <code>hantong update</code>로 업데이트할 수 있습니다. beta.3·beta.4 사용자는 먼저 아래 설치 명령을 한 번 실행해야 업데이트 명령이 추가됩니다.
-<pre><code>irm https://raw.githubusercontent.com/tz1012/mail-hantong/3fa513f4e0a28b07adcdf43cbb3ba37b718288a1/install.ps1 | iex</code></pre>
+<pre><code>irm https://raw.githubusercontent.com/tz1012/mail-hantong/f351d17948b283affa8c304ce3028982314833b2/install.ps1 | iex</code></pre>
 <p>설치기는 공개 릴리스의 체크섬을 확인합니다. GitHub API가 일시적으로 403 또는 429를 반환하면 같은 저장소의 공개 릴리스 피드를 사용해도 고정된 GitHub 자산 URL·HEAD 크기·SHA256을 다시 확인합니다. 피드가 잘못되면 설치를 중단합니다. 일반 메일 이용에 Rust·Python·Docker·Google Cloud 설정 파일은 필요하지 않습니다. ZIP으로 직접 설치할 때는 릴리스의 <code>SHA256SUMS</code>를 대조하세요.</p></li>
 <li><strong>실행:</strong> 같은 터미널에서 한국어 시작 메뉴를 여세요.
 <pre><code>hantong --lang ko init</code></pre>
@@ -73,9 +73,9 @@ hantong ai chat codex</code></pre>
 </section>
 
 <section id="status">
-<h2>beta.9에서 확인한 범위</h2>
+<h2>beta.8에서 확인한 범위</h2>
 <ul>
-<li>beta.9 전체 자동 검사 1,906개 통과(중첩 하네스 검사 포함). 실제 설치·업데이트·코어 자동 기동과 기존 계정 유지는 이전 베타에서 확인한 범위입니다.</li>
+<li>beta.8 전체 자동 검사 1,905개 통과(중첩 하네스 검사 포함). 실제 설치·업데이트·코어 자동 기동과 기존 계정 유지는 이전 베타에서 확인한 범위입니다.</li>
 <li>실제 Gmail 계정에서 터미널 취소, 본인 주소로 합성 메일 1회 발송·수신, 본문·첨부 내용 일치와 자동 재발송 없음은 beta.3에서 확인한 결과입니다.</li>
 <li>내장 AI의 제공자별 자동 연결과 메일 도구 정책은 구현돼 있으나, 실제 AI 로그인·유료 추론·실제 휴지통 이동 시험은 이번 검증에서 실행하지 않았습니다. 기존 beta.3의 실제 Gmail 송수신 검증은 beta.3에 대한 근거입니다.</li>
 <li>새 Windows 가상 머신 점검·사람 보안 검토·Google 검증 심사 완료는 별도 과제입니다. 터미널 선택은 요청 의도이며 OS 본인 확인 증거가 아닙니다.</li>
