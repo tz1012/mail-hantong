@@ -1,0 +1,22 @@
+name: Isolated administrator storage regression
+on:
+  push:
+    branches: [diagnostics/admin-storage-20261103]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  reproduce:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022, windows-2025]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v6.1.0
+        with:
+          persist-credentials: false
+      - name: Synthetic administrator-owned storage only
+        shell: powershell
+        run: ./scripts/test_admin_storage_recovery.ps1
