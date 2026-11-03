@@ -111,6 +111,12 @@ fn start() -> Result<(), ErrorCode> {
         "publisher",
         hantong_secrets::google::load_installed_publisher_configuration(),
     )?);
+    // Storage leaves must not depend on the launching token's default DACL.
+    // Existing leaves are validated and pinned, never silently repaired.
+    let _storage_directories = startup_step(
+        "storage",
+        hantong_approval_windows::prepare_storage_directories(&directories),
+    )?;
     // Keep the encrypted store and exclusive file locks alive until transport
     // shutdown. Any schema, key or persisted-config failure precedes readiness.
     let store = startup_step("storage", storage::initialize_storage(&directories))?;

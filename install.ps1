@@ -40,14 +40,76 @@ function Install-MailHantong {
     [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
     $headers = @{ 'User-Agent' = 'mail-hantong-installer'; 'Accept' = 'application/vnd.github+json' }
     $base = 'https://api.github.com/repos/tz1012/mail-hantong/releases'
-    if ($ReleaseVersion -eq 'latest') {
-        # Windows PowerShell 5.1 emits a REST JSON array as one pipeline item.
-        # Assign first, then enumerate the returned value rather than nesting it.
-        $response = Invoke-RestMethod -Uri "$base`?per_page=20" -Headers $headers
-        $releases = @($response)
-    } else {
-        $tag = if ($ReleaseVersion.StartsWith('v')) { $ReleaseVersion } else { "v$ReleaseVersion" }
-        $releases = @(Invoke-RestMethod -Uri "$base/tags/$tag" -Headers $headers)
+    $usedAtomFallback = $false
+    function Test-GitHubRateLimitError([object] $ErrorRecord) {
+        $response = $ErrorRecord.Exception.Response
+        if (-not $response) { return $false }
+        $status = 0
+        try { $status = [int]$response.StatusCode } catch { return $false }
+        return $status -eq 403 -or $status -eq 429
+    }
+    function Get-AtomReleases([string] $RequestedVersion) {
+        $atomUri = 'https://github.com/tz1012/mail-hantong/releases.atom'
+        $atom = Invoke-WebRequest -Uri $atomUri -UseBasicParsing -Headers @{ 'User-Agent' = 'mail-hantong-installer'; 'Accept' = 'application/atom+xml' }
+        if (-not $atom.Content -or $atom.Content.Length -gt 262144) { throw 'GitHub release feed is invalid.' }
+        $settings = New-Object System.Xml.XmlReaderSettings
+        $settings.DtdProcessing = [System.Xml.DtdProcessing]::Prohibit
+        $settings.XmlResolver = $null
+        $settings.MaxCharactersInDocument = 262144
+        $reader = $null
+        try {
+            $document = New-Object System.Xml.XmlDocument
+            $document.XmlResolver = $null
+            $reader = [System.Xml.XmlReader]::Create((New-Object System.IO.StringReader($atom.Content)), $settings)
+            $document.Load($reader)
+        } catch { throw 'GitHub release feed is invalid.' }
+        finally { if ($reader) { $reader.Dispose() } }
+        $namespace = 'http://www.w3.org/2005/Atom'
+        if (-not $document.DocumentElement -or $document.DocumentElement.LocalName -cne 'feed' -or $document.DocumentElement.NamespaceURI -cne $namespace) { throw 'GitHub release feed is invalid.' }
+        $namespaces = New-Object System.Xml.XmlNamespaceManager($document.NameTable)
+        $namespaces.AddNamespace('a', $namespace)
+        $entries = @($document.SelectNodes('/a:feed/a:entry', $namespaces))
+        if ($entries.Count -gt 32) { throw 'GitHub release feed is invalid.' }
+        $wantedTag = if ($RequestedVersion -eq 'latest') { $null } elseif ($RequestedVersion.StartsWith('v')) { $RequestedVersion } else { "v$RequestedVersion" }
+        $found = @()
+        foreach ($entry in $entries) {
+            $links = @($entry.SelectNodes("a:link[@rel='alternate']", $namespaces))
+            if ($links.Count -ne 1) { throw 'GitHub release feed is invalid.' }
+            $link = [string]$links[0].GetAttribute('href')
+            $linkUri = $null
+            try { $linkUri = [Uri]$link } catch { throw 'GitHub release feed is invalid.' }
+            $prefix = '/tz1012/mail-hantong/releases/tag/'
+            if ($linkUri.Scheme -cne 'https' -or $linkUri.Host -cne 'github.com' -or $linkUri.UserInfo -or -not $linkUri.IsDefaultPort -or $linkUri.Query -or $linkUri.Fragment -or -not $linkUri.AbsolutePath.StartsWith($prefix, [StringComparison]::Ordinal)) { throw 'GitHub release feed is invalid.' }
+            $tag = $linkUri.AbsolutePath.Substring($prefix.Length)
+            if ($tag -notmatch '^v(?<label>[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.-]+)?)$' -or [Uri]::UnescapeDataString($tag) -cne $tag) { throw 'GitHub release feed is invalid.' }
+            $label = $Matches.label
+            if ($wantedTag -and $tag -cne $wantedTag) { continue }
+            $name = "mail-hantong-cli-$label-windows-x86_64.zip"
+            $assetPrefix = "https://github.com/tz1012/mail-hantong/releases/download/$tag/"
+            $found += [pscustomobject]@{ draft = $false; tag_name = $tag; assets = @(
+                    [pscustomobject]@{ name = $name; size = 0; browser_download_url = $assetPrefix + $name },
+                    [pscustomobject]@{ name = 'SHA256SUMS'; size = 0; browser_download_url = $assetPrefix + 'SHA256SUMS' }
+                ) }
+            if ($wantedTag) { break }
+        }
+        if ($wantedTag -and $found.Count -ne 1) { throw 'The requested published release was not found.' }
+        if (-not $found) { throw 'No compatible published Windows package is available.' }
+        return $found
+    }
+    try {
+        if ($ReleaseVersion -eq 'latest') {
+            # Windows PowerShell 5.1 emits a REST JSON array as one pipeline item.
+            # Assign first, then enumerate the returned value rather than nesting it.
+            $response = Invoke-RestMethod -Uri "$base`?per_page=20" -Headers $headers
+            $releases = @($response)
+        } else {
+            $tag = if ($ReleaseVersion.StartsWith('v')) { $ReleaseVersion } else { "v$ReleaseVersion" }
+            $releases = @(Invoke-RestMethod -Uri "$base/tags/$tag" -Headers $headers)
+        }
+    } catch {
+        if (-not (Test-GitHubRateLimitError $_)) { throw }
+        $usedAtomFallback = $true
+        $releases = @(Get-AtomReleases $ReleaseVersion)
     }
     Set-InstallProgress 12 (Get-InstallProgressText 'selecting' @())
     $selected = $null
@@ -57,12 +119,27 @@ function Install-MailHantong {
         $name = "mail-hantong-cli-$label-windows-x86_64.zip"
         $zip = @($release.assets | Where-Object { $_.name -ceq $name })
         $sums = @($release.assets | Where-Object { $_.name -ceq 'SHA256SUMS' })
-        if ($zip.Count -eq 1 -and $sums.Count -eq 1 -and $zip[0].size -gt 0 -and $zip[0].size -le 134217728 -and $sums[0].size -le 65536) {
+        $assetShapeOk = $zip.Count -eq 1 -and $sums.Count -eq 1 -and ($usedAtomFallback -or ($zip[0].size -gt 0 -and $zip[0].size -le 134217728 -and $sums[0].size -gt 0 -and $sums[0].size -le 65536))
+        if ($assetShapeOk) {
             $selected = @{ Zip = $zip[0]; Sums = $sums[0]; Name = $name; Label = $label }
             break
         }
     }
     if (-not $selected) { throw 'No compatible published Windows package is available.' }
+    if ($usedAtomFallback) {
+        foreach ($asset in @($selected.Zip, $selected.Sums)) {
+            $assetUri = [Uri]$asset.browser_download_url
+            $prefix = '/tz1012/mail-hantong/releases/download/'
+            if ($assetUri.Scheme -cne 'https' -or $assetUri.Host -cne 'github.com' -or -not $assetUri.AbsolutePath.StartsWith($prefix, [StringComparison]::Ordinal)) {
+                throw 'Unexpected release asset URL.'
+            }
+            try { $head = Invoke-WebRequest -Uri $assetUri.AbsoluteUri -Method Head -UseBasicParsing -Headers $headers } catch { throw 'Unable to verify release asset size.' }
+            $length = [string]$head.Headers['Content-Length']
+            if ($length -notmatch '^[1-9][0-9]{0,11}$') { throw 'Unable to verify release asset size.' }
+            $asset.size = [long]$length
+            if (($asset.name -ceq $selected.Name -and ($asset.size -gt 134217728)) -or ($asset.name -ceq 'SHA256SUMS' -and ($asset.size -gt 65536))) { throw 'Release asset is too large.' }
+        }
+    }
     $temporary = Join-Path ([IO.Path]::GetTempPath()) ('mail-hantong-install-' + [guid]::NewGuid().ToString('N'))
     $temporary = [IO.Path]::GetFullPath($temporary)
     $tempBase = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\') + '\'

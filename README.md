@@ -2,12 +2,14 @@
 
 A multi-account mail hub for Windows, with a shared core service, the `hantong` CLI, MCP access, and an optional GUI. GUI languages are Korean and English; themes are light, dark, and system. The CLI defaults to English and supports Korean.
 
-**Current release: [Windows CLI 0.1.0-beta.6](https://github.com/tz1012/mail-hantong/releases/tag/v0.1.0-beta.6).** Start with the [Korean installation and feature guide](https://tz1012.github.io/mail-hantong/). Account setup, feature selection, composing and Send/Cancel use the same terminal without a separate HanTong window or Windows Hello. Google OAuth opens its standard provider browser. See the [CLI usage guide](docs/latest/CLI-LAUNCH.md) for mail, AI sessions, MCP tools and remaining limitations.
+**Current release: [Windows CLI 0.1.0-beta.7](https://github.com/tz1012/mail-hantong/releases/tag/v0.1.0-beta.7).** Start with the [Korean installation and feature guide](https://tz1012.github.io/mail-hantong/). Account setup, feature selection, composing and Send/Cancel use the same terminal without a separate HanTong window or Windows Hello. Google OAuth opens its standard provider browser. See the [CLI usage guide](docs/latest/CLI-LAUNCH.md) for mail, AI sessions, MCP tools and remaining limitations.
 
-beta.6 displays the release label in `hantong --version` and a fixed failure stage
-if Core cannot start. A beta.4 startup `INTERNAL_ERROR` reported on another PC
-remains under investigation; this diagnostic release does not establish its
-cause or claim to resolve it. Preserve existing data and keys during diagnosis.
+beta.7 creates absent storage directories with explicit user permissions and
+opens storage ancestors without requesting directory-list access. Existing
+storage ACLs, databases and keys are preserved. The installer also handles
+GitHub API rate limiting through the public release feed. Another PC's existing
+storage directories still deny access; their recovery remains under investigation.
+This release does not automatically repair existing folder permissions.
 
 Install or update from PowerShell on Windows x64:
 
@@ -23,7 +25,7 @@ to add these commands. Installation displays phase progress and percentages.
 Choosing Connect Google account opens the browser directly with read-only access;
 enable composing/sending from the connected account's menu when needed.
 
-The beta includes publisher Google Desktop configuration; ordinary users do not configure Google Cloud. Full checks passed 1,877 test executions (including nested harness checks). Earlier beta.3 manual Gmail checks covered account retention, terminal cancellation, one synthetic self-addressed send/receive and attachment matching. New AI connections and trash operations have synthetic coverage only. This unsigned beta still needs human security review, clean Windows VM testing and additional provider verification. Schema 25 migration preserves existing data; do not downgrade after migration. Google publisher verification is separate. See [Google commands](docs/latest/GOOGLE-MAIL.md) and [PROGRESS.md](docs/latest/PROGRESS.md).
+The beta includes publisher Google Desktop configuration; ordinary users do not configure Google Cloud. Full checks passed 1,888 test executions (including nested harness checks). Earlier beta.3 manual Gmail checks covered account retention, terminal cancellation, one synthetic self-addressed send/receive and attachment matching. New AI connections and trash operations have synthetic coverage only. This unsigned beta still needs human security review, clean Windows VM testing and additional provider verification. Schema 25 migration preserves existing data; do not downgrade after migration. Google publisher verification is separate. See [Google commands](docs/latest/GOOGLE-MAIL.md) and [PROGRESS.md](docs/latest/PROGRESS.md).
 
 Optional AI sessions use separately installed official Codex CLI or Claude Code: `hantong ai login codex` then `hantong ai chat codex` (use `claude` for Console/API billing). `/help` lists available commands and descriptions. Built-in AI automatically connects provider-specific mail tools after the first same-terminal account and external-transfer setup; manual MCP registration and `/agent on` are not required. `/provider`, `/model`, `/mode`, `/fast on|off` and `/agent on|off` switch supported features. Sending and single-message Gmail trash moves require final terminal confirmation; trash also requires Google Modify permission. Permanent and batch deletion are unsupported. External MCP grants remain separate. Real AI login, paid inference and real trash operations were not exercised. Follow the [AI and agent instructions](docs/latest/CLI-LAUNCH.md#ai-sessions-and-agent-tools).
 

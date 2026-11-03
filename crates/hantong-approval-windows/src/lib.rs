@@ -44,12 +44,30 @@ pub struct PreparedProfileDirectories {
     _private: (),
 }
 
+/// Core startup guard for the fixed data and secrets directories. This only
+/// creates absent leaves with an explicit protected ACL and validates existing
+/// leaves without repairing them.
+pub struct PreparedStorageDirectories {
+    #[cfg(windows)]
+    _inner: profile_publication::DirectoryGuard,
+    #[cfg(not(windows))]
+    _private: (),
+}
+
 #[cfg(windows)]
 pub fn prepare_profile_directories(
     directories: &hantong_platform::AppDirectories,
 ) -> Result<PreparedProfileDirectories, ErrorCode> {
     profile_publication::prepare_directories(&directories.profiles)
         .map(|inner| PreparedProfileDirectories { _inner: inner })
+}
+
+#[cfg(windows)]
+pub fn prepare_storage_directories(
+    directories: &hantong_platform::AppDirectories,
+) -> Result<PreparedStorageDirectories, ErrorCode> {
+    profile_publication::prepare_storage_directories(directories)
+        .map(|inner| PreparedStorageDirectories { _inner: inner })
 }
 
 impl fmt::Debug for PublishedProfile {

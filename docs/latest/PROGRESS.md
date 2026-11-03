@@ -1722,3 +1722,29 @@ beta.5 ZIP 25,037,586 bytes의 SHA-256은 `0a04590ba47a2b0184394f3d162c7ff94e345
 최종 `python -X utf8 scripts/check_all.py` **exit 0**: Rust **1,743개/31 suites**, Docs **29개**, Build **105개**, 합계 **1,877개 실행**, 실패·ignored 0. fmt·Clippy(-D warnings)·workspace all-targets build·요건·원본·아키텍처·추적표도 통과했다. `target/beta6-verification.json`, 최종 로그 SHA-256 `a17eb0c3ef36ec78d7d52125d97a55bc69c940f3555c18277426350cf3f4254f`, source hash `d92b268f81681764d1bab9f05211e088c6fd820e994953135e88132a3969fffe`. 기존 beta.3 Core는 같은 경로·인자·해시로 복구했다(PID 46248).
 
 추가로 `RUSTFLAGS=-C target-feature=+crt-static` 및 배포와 같은 release/x86_64-pc-windows-msvc 설정에서 Core 시작 관련 **9개 시험 통과**를 확인했다(`target/beta6-release-startup-tests.log`). 한글 경로의 실제 SQLCipher/DPAPI 저장소와 CNG 키 초기화·재시작, CREATE_NO_WINDOW 신호 처리가 이 PC의 합성 환경에서 통과했다. 다른 PC의 원인과 성공을 입증하는 자료로 확대 해석하지 않는다. beta.6는 진단 개선 배포이며 실제 시작 오류는 원격 단계 출력 확인이 남아 있다.
+
+### beta.6 공개와 다른 PC 설치의 API 제한 확인
+
+소스 `5229edb0cda456dfd3b490d556f07f7eb5296731`을 별도 release worktree에서 게시하고 GitHub main을 fast-forward했다. `v0.1.0-beta.6` prerelease의 ZIP·체크섬·빌드 정보 3개 자산을 모두 업로드 후 hash 대조하고 공개했다. 공개 ZIP 재다운로드 SHA-256 `82e7d1ad20c48f99db6ea6f694ea38d04c1a5172f6bf548e3084d2882affe012`, 크기 25,088,890 bytes가 로컬 검증본과 일치했다. manifest 261개 파일과 이전 승인 publisher 자산 동일성, 실제 DB/profile 미포함을 검증했다. 별도 영문 경로 및 한글·공백 경로 설치, 배포 CLI의 `hantong 0.1.0-beta.6` 출력과 도움말/업데이트 shim 검증이 통과했다. 실제 설치와 실제 DB는 교체하지 않았다.
+
+다른 PC에서 pinned bootstrap 실행이 GitHub 익명 REST API rate limit으로 중단됐다는 새 증거를 받았다. beta.6 설치 전의 실패이므로 이어진 구버전 Core 오류를 beta.6 결과로 표시하지 않는다. API를 사용하지 않는 고정 beta.6 ZIP 다운로드→공개 검증 SHA-256 대조→해당 패키지 설치 명령을 안내했다. 사용자에게 토큰을 요청하거나 API를 반복 호출하지 않는다. GitHub 공식 [REST 오류 처리](https://docs.github.com/en/rest/using-the-rest-api/troubleshooting-the-rest-api)의 403/429 제한 설명을 확인했고, 공개 repository Atom feed에서 beta.6/5/4 태그를 직접 확인했다. bootstrap의 제한 대응을 계약에 명시하고 보완한다. Core 원인 확정은 다른 PC의 새 버전 단계 출력이 남아 있다. **[사람 보안 검토 필요]**.
+
+### 원격 beta.6 저장소 접근 거부·기존 계정 보존 정정
+
+직접 ZIP 설치 후 beta.6는 `hantong_startup stage=storage outcome=failed code=INTERNAL_ERROR`를 출력했다. `data`·`secrets`·`profiles` 폴더가 존재하고, 공개 읽기 전용 진단 `e592e2e622ca1886c42bfac9e9d727f69ad1fcc1` 실행 결과 product/profiles와 모든 상위 경로는 정상이나 data/secrets leaf의 READ_ATTRIBUTES|LIST_DIRECTORY, READ_ATTRIBUTES|TRAVERSE, FILE_ADD_FILE 열기가 모두 Win32 오류 **5(접근 거부)**였다. Get-Acl도 두 leaf에서 거부되며 profiles는 현재 사용자 소유·protected·3개 규칙이었다.
+
+사용자는 **그 PC에서 한 계정 연결 및 메일 조회에 성공한 이력이 있음**을 확인했다. 이전 Get-Item의 고정 DB/key/lock 파일 `Exists=False`는 접근 거부를 숨긴 결과일 수 있으며 파일 부재 증거로 사용하지 않는다. 초기화·quarantine·기존 폴더/DB/키 삭제·새 저장소 대체를 하지 않는다. 해당 계정과 암호화 키 보존이 필수다. 원격 오류를 한글 경로나 조상 LIST 권한으로 확정하지 않는다.
+
+별도로 조상 LIST 권한을 불필요하게 요청하는 결함을 통제된 ACL fixture에서 RED(InvalidRoot)/GREEN으로 재현·수정했고, reparse 거부 회귀를 유지했다. 새 저장소 leaf에 명시적 사용자 소유자·protected OICI allowlist ACL을 주는 생성 API를 추가하고 Core 시작에 연결한다. 기존 leaf는 출시 Secrets 경로의 type/reparse·속성 읽기·통과·삭제 공유 금지 검사만 유지하고 ACL을 읽거나 수정하거나 새 whitelist 검사를 적용하지 않는다. 기존 broad readable ACL 및 logon-session Read/Execute ACL의 바이트 보존과 empty thread DefaultDACL에서 신규 생성·DPAPI 재열기까지 합성 시험 4개가 통과했다. 기존 접근 불가 폴더는 계속 거부한다. 이는 없는 폴더의 생성 보완이며 이미 막힌 원격 기존 계정의 복구를 뜻하지 않는다. 기존 ACL 보존은 새 사람 보안 검토 완료가 아니다.
+
+API 403/429 때만 공개 Atom feed와 HEAD 길이 확인으로 전환하는 bootstrap은 DTD/외부 entity·호스트/경로·크기 경계를 검증한다. 새 모의 5개 시험과 기존 bootstrap 5개가 통과했다. 실제 공개 feed/HEAD/ZIP을 사용하되 API 403만 모의한 별도 설치가 beta.6 다운로드·체크섬·설치까지 통과했고 실제 설치·PATH·계정은 바꾸지 않았다(`target/beta7-rate-fallback-verification.json`). **[사람 보안 검토 필요]**.
+
+추가 읽기 전용 ACL 진단 `f1db951eb53eb7258947254956abdf6b86e4f209`을 게시하고 공개 원문 동일성을 검증했다. 원격 일반 및 사용자가 관리자 실행으로 보고한 결과 모두 data/secrets의 READ_CONTROL 열기 오류 5이며 product/profiles는 현재 사용자 소유·protected·3개 allow 규칙이었다. data/secrets 소유자·DACL은 아직 미확인이다. 강제 소유권 변경이나 ACL 교체를 하지 않고, 백업 권한을 일시 활성화하는 읽기 전용 진단을 준비한다. DB·키·기존 계정 복구 성공은 아직 주장하지 않는다.
+
+백업 권한 진단은 `5afe974a2bbd962fb384faa471605d11183245e8`로 게시하고 공개 원문을 대조했다. 관리자 여부·SeBackupPrivilege 활성화/복원 오류와 고정 폴더의 소유자 분류·DACL 요약만 출력하며 DB/key 파일은 열지 않는다. 로컬 비관리자 실행은 exit 0, 활성화 오류 1300, 실제 상태 미변경, 정상 폴더 4개 조회를 확인했다. 원격 관리자 결과는 대기 중이다. 읽기 권한도 거부된 기존 저장소에 소유권 강제 변경·ACL 수리·새 DB 생성을 시도하지 않았다. 별도 읽기 코드 검토에서 신규 생성/legacy 보존 변경의 차단 사항은 없었으며 이는 사람 보안 검토 완료가 아니다.
+
+원격 백업 권한 진단의 첫 결과는 IsElevated=false/1300이었다. RunAs로 사용자가 직접 UAC를 완료한 뒤 받은 결과는 IsElevated=true, 백업 권한 활성화/복원 오류 0이다. data/secrets는 **Administrators 소유·unprotected·3개 ACE·현재 사용자 직접 허용 mask 0·deny 없음·추가 trustee 있음**으로 확인됐다. product/profiles는 현재 사용자 소유·protected·3개 정상 allow 규칙이다. 관리자 기본 권한으로 생성된 상태가 남았을 가능성이 있으며, 추가 trustee와 하위 파일 상태는 아직 확인되지 않았다. 실제 소유권/ACL 변경을 하지 않았다.
+
+### beta.7 통합 검증
+
+최종 `python -X utf8 scripts/check_all.py` exit 0: Rust **1,749개/31 suites/실패 0/ignored 0**, Docs **29개**, Build **110개**, 합계 **1,888회 실행**. fmt·Clippy(-D warnings)·all-targets build/test·문서/요건/아키텍처/추적표가 통과했다. 최초 실행은 진단 PS1 추가 중 source hash 변경으로 추적표 stale에서 중단되어, 소스를 고정하고 추적표를 생성한 뒤 전체를 다시 실행했다. 최종 source hash `1f27fb7e29a232aab42b915f8a4c8503d552e2f2b1ceb66a85a3c27974ddb122`, 로그 SHA-256 `fa8b04fb9531ba1753e380af9752e731dfaba9707a359a5519f6628b7871a892`, 근거 `target/beta7-verification.json`. 기존 beta.3 Core를 같은 경로/인자/SHA-256으로 복원했다(PID 13660). 실제 계정/DB 이행은 하지 않았다. beta.7 패키징과 원격 기존 저장소 복구는 별도 진행 중이다. **[사람 보안 검토 필요]**.

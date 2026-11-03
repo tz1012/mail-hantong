@@ -21,6 +21,8 @@ Secrets가 DB 키를 생성·복호화·설정·지우고 `KeyedConnection`을 �
 
 DB 위치·파일명·백업 위치는 설치 구성에서 결정한 상수다. 사용자 입력으로 경로를 만들지 않는다. 루트·조상·leaf·임시 파일은 reparse/symlink·junction을 거부하고 조상 핸들을 열린 채 유지한다. DB leaf도 DELETE 공유 없는 핸들로 연결 수명 동안 고정하며 SQLite는 NOFOLLOW로 연다. 데이터 루트의 고정 lockfile을 `share_mode=0`으로 KeyedConnection 전체 수명 동안 유지해 동시 초기화와 migration을 직렬화한다. 키 루트는 DB 루트와 분리한다. lockfile은 크래시 후 남아도 열린 핸들이 닫히면 다음 실행에서 재사용할 수 있으며, 파일 존재만으로 잠금 상태를 판단하지 않는다.
 
+2026-11-03 생성 권한 보완: Core는 없는 `data`·`secrets` leaf를 현재 Windows 사용자 소유자로 명시하고, 해당 사용자·SYSTEM·Administrators만 허용하는 protected OICI ACL로 생성·검증한다. 기본 토큰 DACL이나 제품 부모의 상속 유무에 의존하지 않는다. 기존 leaf는 출시된 Secrets 경로의 type/reparse·속성 읽기·통과·삭제 공유 금지 검사를 유지하며 ACL을 읽거나 수정하거나 새 allowlist 검사를 추가하지 않는다. 기존 logon-session Read/Execute ACE도 그대로 보존하며 이를 새로운 권한 부여나 사람 보안 검토 완료로 취급하지 않는다. 접근 불가 폴더는 자동으로 고치지 않는다. 조상 고정 핸들은 목록 조회 대신 속성 읽기·통과 권한만 요청한다. 접근 거부로 조회하지 못한 DB/키를 없는 파일로 취급하거나 새 키/DB로 대체하지 않는다. 기존 계정이 있는 PC의 권한 복구는 별도 명시적·검토 가능한 절차로 진행한다.
+
 열기 순서는 다음과 같다.
 
 1. 고정 루트의 안전성을 확인하고, 새 DB인지 기존 DB인지 구분한다.

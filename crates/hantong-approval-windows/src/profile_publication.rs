@@ -61,6 +61,36 @@ pub(super) fn prepare_directories(profiles: &Path) -> Result<DirectoryGuard, Err
     })
 }
 
+/// Creates and pins the three fixed storage/profile leaves. Profile roots use
+/// the existing profile policy; data and secrets receive an explicit protected
+/// allow-list so their first creation does not depend on the thread token's
+/// default DACL.
+pub(super) fn prepare_storage_directories(
+    directories: &hantong_platform::AppDirectories,
+) -> Result<DirectoryGuard, ErrorCode> {
+    let product = validate_storage_paths(directories)?;
+    let identity = hantong_platform::current_peer_context()?;
+    let user = identity.user_sid();
+    let profile_security = creation_security(user)?;
+    let storage_security = storage_creation_security(user)?;
+    let mut pinned = open_profile_directories(&directories.profiles, user, &profile_security)?;
+    pinned.push(open_storage_directory(
+        &directories.data,
+        product.as_path(),
+        user,
+        &storage_security,
+    )?);
+    pinned.push(open_storage_directory(
+        &directories.secrets,
+        product.as_path(),
+        user,
+        &storage_security,
+    )?);
+    Ok(DirectoryGuard {
+        _directories: pinned,
+    })
+}
+
 impl std::fmt::Debug for Publication {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("Publication { <redacted> }")
@@ -209,6 +239,44 @@ fn open_profile_directories(
         directories.push(directory);
     }
     Ok(directories)
+}
+
+fn open_storage_directory(
+    path: &Path,
+    product: &Path,
+    user: &str,
+    security: &LocalAllocation,
+) -> Result<File, ErrorCode> {
+    if path.parent() != Some(product)
+        || !matches!(path.file_name(), Some(name) if name == "data" || name == "secrets")
+    {
+        return Err(ErrorCode::ScopeDenied);
+    }
+    let name = wide_path(path)?;
+    let attributes = security.attributes();
+    // The security descriptor is supplied only when the leaf is created.
+    // Existing leaves are opened and validated; their ACL is never repaired.
+    let created = if unsafe { CreateDirectoryW(name.as_ptr(), &attributes) } != 0 {
+        true
+    } else if unsafe { GetLastError() } == ERROR_ALREADY_EXISTS {
+        false
+    } else {
+        return Err(ErrorCode::ScopeDenied);
+    };
+    let directory = OpenOptions::new()
+        // Existing storage roots are legacy state. Preserve their ACL bytes
+        // and use the same pinning/readability guard as Secrets::lock_root;
+        // only a newly-created root needs READ_CONTROL for its exact ACL check.
+        .access_mode(FILE_READ_ATTRIBUTES | FILE_TRAVERSE | if created { READ_CONTROL } else { 0 })
+        .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
+        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
+        .open(path)
+        .map_err(|_| ErrorCode::ScopeDenied)?;
+    check_type(&directory, true)?;
+    if created {
+        check_security(&directory, user, true)?;
+    }
+    Ok(directory)
 }
 
 /// Replaces the fixed default profile only after proving the exact old bytes.
@@ -557,6 +625,27 @@ fn creation_security(user: &str) -> Result<LocalAllocation, ErrorCode> {
     Ok(LocalAllocation(descriptor))
 }
 
+fn storage_creation_security(user: &str) -> Result<LocalAllocation, ErrorCode> {
+    // Storage roots must carry the same allow-list into files created below
+    // them, while remaining protected from inherited foreign entries.
+    let sddl = format!("O:{user}D:P(A;OICI;FA;;;{user})(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)");
+    let wide: Vec<u16> = sddl.encode_utf16().chain(Some(0)).collect();
+    let mut descriptor = ptr::null_mut();
+    if unsafe {
+        ConvertStringSecurityDescriptorToSecurityDescriptorW(
+            wide.as_ptr(),
+            SDDL_REVISION_1,
+            &mut descriptor,
+            ptr::null_mut(),
+        )
+    } == 0
+        || descriptor.is_null()
+    {
+        return Err(ErrorCode::ScopeDenied);
+    }
+    Ok(LocalAllocation(descriptor))
+}
+
 impl LocalAllocation {
     fn attributes(&self) -> SECURITY_ATTRIBUTES {
         SECURITY_ATTRIBUTES {
@@ -603,6 +692,24 @@ fn validate_path(path: &Path) -> Result<(), ErrorCode> {
         return Err(ErrorCode::ScopeDenied);
     }
     Ok(())
+}
+
+fn validate_storage_paths(
+    directories: &hantong_platform::AppDirectories,
+) -> Result<PathBuf, ErrorCode> {
+    validate_path(&directories.profiles)?;
+    let product = directories
+        .profiles
+        .parent()
+        .ok_or(ErrorCode::ScopeDenied)?;
+    if directories.data.parent() != Some(product)
+        || directories.secrets.parent() != Some(product)
+        || directories.data.file_name() != Some(std::ffi::OsStr::new("data"))
+        || directories.secrets.file_name() != Some(std::ffi::OsStr::new("secrets"))
+    {
+        return Err(ErrorCode::ScopeDenied);
+    }
+    Ok(product.to_path_buf())
 }
 
 fn check_type(file: &File, directory: bool) -> Result<(), ErrorCode> {
@@ -734,6 +841,7 @@ unsafe fn allowed_sid(sid: PSID, user: &str) -> Result<bool, ErrorCode> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use hantong_secrets::{SecretKind, SecretStore};
     use std::fs::{self, OpenOptions};
     use std::io::Write;
     use std::os::windows::ffi::OsStrExt;
@@ -741,19 +849,106 @@ mod tests {
     use std::path::PathBuf;
     use std::ptr;
     use std::sync::atomic::{AtomicU64, Ordering};
-    use windows_sys::Win32::Foundation::LocalFree;
+    use windows_sys::Win32::Foundation::{CloseHandle, HANDLE, LocalFree};
     use windows_sys::Win32::Security::Authorization::{
         ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1,
     };
     use windows_sys::Win32::Security::{
-        DACL_SECURITY_INFORMATION, PROTECTED_DACL_SECURITY_INFORMATION, SetFileSecurityW,
-        UNPROTECTED_DACL_SECURITY_INFORMATION,
+        ACL, ACL_REVISION, DACL_SECURITY_INFORMATION, DuplicateTokenEx,
+        PROTECTED_DACL_SECURITY_INFORMATION, RevertToSelf, SetFileSecurityW, SetTokenInformation,
+        TOKEN_ADJUST_DEFAULT, TOKEN_DEFAULT_DACL, TOKEN_DUPLICATE, TOKEN_IMPERSONATE, TOKEN_QUERY,
+        TokenDefaultDacl, TokenImpersonation, UNPROTECTED_DACL_SECURITY_INFORMATION,
     };
     use windows_sys::Win32::Storage::FileSystem::{
         DELETE, FILE_GENERIC_READ, FILE_GENERIC_WRITE, FILE_SHARE_READ, READ_CONTROL,
     };
+    use windows_sys::Win32::System::Threading::{
+        GetCurrentProcess, OpenProcessToken, SetThreadToken,
+    };
 
     static NEXT: AtomicU64 = AtomicU64::new(0);
+
+    struct HandleGuard(HANDLE);
+
+    impl Drop for HandleGuard {
+        fn drop(&mut self) {
+            if !self.0.is_null() {
+                unsafe {
+                    CloseHandle(self.0);
+                }
+            }
+        }
+    }
+
+    // A kernel token handle is an owned, process-wide reference and is safe
+    // to transfer to the isolated test thread; all use remains synchronized
+    // by the move and the handle is closed there.
+    unsafe impl Send for HandleGuard {}
+
+    struct ThreadTokenGuard;
+
+    impl Drop for ThreadTokenGuard {
+        fn drop(&mut self) {
+            unsafe {
+                // Revert only this test thread. The process token is never
+                // changed, so other tests and threads retain their identity.
+                RevertToSelf();
+            }
+        }
+    }
+
+    fn empty_default_dacl_token() -> HandleGuard {
+        let mut process_token = ptr::null_mut();
+        assert_ne!(
+            unsafe {
+                OpenProcessToken(
+                    GetCurrentProcess(),
+                    TOKEN_DUPLICATE | TOKEN_QUERY,
+                    &mut process_token,
+                )
+            },
+            0
+        );
+        let process_token = HandleGuard(process_token);
+
+        let mut token = ptr::null_mut();
+        assert_ne!(
+            unsafe {
+                DuplicateTokenEx(
+                    process_token.0,
+                    TOKEN_ADJUST_DEFAULT | TOKEN_IMPERSONATE | TOKEN_QUERY,
+                    ptr::null(),
+                    windows_sys::Win32::Security::SecurityImpersonation,
+                    TokenImpersonation,
+                    &mut token,
+                )
+            },
+            0
+        );
+        let token = HandleGuard(token);
+        let empty_acl = ACL {
+            AclRevision: ACL_REVISION as u8,
+            Sbz1: 0,
+            AclSize: std::mem::size_of::<ACL>() as u16,
+            AceCount: 0,
+            Sbz2: 0,
+        };
+        let default_dacl = TOKEN_DEFAULT_DACL {
+            DefaultDacl: (&empty_acl as *const ACL).cast_mut(),
+        };
+        assert_ne!(
+            unsafe {
+                SetTokenInformation(
+                    token.0,
+                    TokenDefaultDacl,
+                    (&default_dacl as *const TOKEN_DEFAULT_DACL).cast(),
+                    std::mem::size_of::<TOKEN_DEFAULT_DACL>() as u32,
+                )
+            },
+            0
+        );
+        token
+    }
 
     struct Fixture {
         root: PathBuf,
@@ -862,6 +1057,45 @@ mod tests {
         assert_ne!(status, 0);
     }
 
+    fn secure_legacy_logon(path: &Path) {
+        let identity = hantong_platform::current_peer_context().unwrap();
+        // This synthetic logon-session SID models the read/execute ACE that
+        // older SecretStore-created roots received from a token default DACL.
+        let sddl = format!(
+            "D:(A;;FA;;;{})(A;;FA;;;SY)(A;;GRGX;;;S-1-5-5-0-1)",
+            identity.user_sid()
+        );
+        let wide: Vec<u16> = sddl.encode_utf16().chain(Some(0)).collect();
+        let mut sd = ptr::null_mut();
+        assert_ne!(
+            unsafe {
+                ConvertStringSecurityDescriptorToSecurityDescriptorW(
+                    wide.as_ptr(),
+                    SDDL_REVISION_1,
+                    &mut sd,
+                    ptr::null_mut(),
+                )
+            },
+            0
+        );
+        let wide = path
+            .as_os_str()
+            .encode_wide()
+            .chain(Some(0))
+            .collect::<Vec<_>>();
+        let status = unsafe {
+            SetFileSecurityW(
+                wide.as_ptr(),
+                DACL_SECURITY_INFORMATION | UNPROTECTED_DACL_SECURITY_INFORMATION,
+                sd,
+            )
+        };
+        unsafe {
+            LocalFree(sd);
+        }
+        assert_ne!(status, 0);
+    }
+
     #[test]
     fn inst04_profile_publication_creates_only_fixed_file_with_complete_bytes() {
         let fixture = Fixture::new();
@@ -900,6 +1134,174 @@ mod tests {
         drop(profiles);
         drop(product);
         drop(guard);
+    }
+
+    #[test]
+    fn inst01_startup_prepares_missing_storage_roots_with_explicit_protected_acl() {
+        let fixture = Fixture::new();
+        let directories = hantong_platform::AppDirectories {
+            data: fixture.product.join("data"),
+            secrets: fixture.product.join("secrets"),
+            profiles: fixture.profiles.clone(),
+        };
+        let guard = prepare_storage_directories(&directories).unwrap();
+        let user = hantong_platform::current_peer_context().unwrap();
+        let data = OpenOptions::new()
+            .access_mode(READ_CONTROL | FILE_READ_ATTRIBUTES | FILE_TRAVERSE)
+            .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
+            .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
+            .open(&directories.data)
+            .unwrap();
+        let secrets = OpenOptions::new()
+            .access_mode(READ_CONTROL | FILE_READ_ATTRIBUTES | FILE_TRAVERSE)
+            .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
+            .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
+            .open(&directories.secrets)
+            .unwrap();
+        check_security(&data, user.user_sid(), true).unwrap();
+        check_security(&secrets, user.user_sid(), true).unwrap();
+        drop(secrets);
+        drop(data);
+
+        {
+            let store = SecretStore::open(&directories.secrets).unwrap();
+            let handle = store
+                .store_from_reader("startup", SecretKind::AppPassword, b"fixture".as_slice())
+                .unwrap();
+            let reopened = SecretStore::open(&directories.secrets).unwrap();
+            reopened.verify(&handle).unwrap();
+        }
+        drop(guard);
+        for entry in fs::read_dir(&directories.secrets).unwrap() {
+            fs::remove_file(entry.unwrap().path()).unwrap();
+        }
+        fs::remove_dir(&directories.secrets).unwrap();
+        fs::remove_dir(&directories.data).unwrap();
+    }
+
+    #[test]
+    fn inst01_storage_preparation_survives_empty_thread_default_dacl() {
+        let fixture = Fixture::new();
+        fixture.dirs(false);
+        let directories = hantong_platform::AppDirectories {
+            data: fixture.product.join("data"),
+            secrets: fixture.product.join("secrets"),
+            profiles: fixture.profiles.clone(),
+        };
+        let token = empty_default_dacl_token();
+        let worker_directories = directories.clone();
+        let result = std::thread::spawn(move || {
+            let token = token;
+            assert_ne!(unsafe { SetThreadToken(ptr::null(), token.0) }, 0);
+            let _thread_token = ThreadTokenGuard;
+            let _directories = prepare_storage_directories(&worker_directories).unwrap();
+
+            // A child secret is created while the thread has an empty default
+            // DACL. The explicit OICI ACL on `secrets` must therefore carry
+            // the current-user allow-list to the file as well.
+            let store = SecretStore::open(&worker_directories.secrets).unwrap();
+            let handle = store
+                .store_from_reader(
+                    "empty-default-dacl",
+                    SecretKind::AppPassword,
+                    b"fixture".as_slice(),
+                )
+                .unwrap();
+            let reopened = SecretStore::open(&worker_directories.secrets).unwrap();
+            reopened.verify(&handle).unwrap();
+        })
+        .join();
+        assert!(
+            result.is_ok(),
+            "isolated token fixture panicked: {result:?}"
+        );
+
+        for entry in fs::read_dir(&directories.secrets).unwrap() {
+            fs::remove_file(entry.unwrap().path()).unwrap();
+        }
+        fs::remove_dir(&directories.secrets).unwrap();
+        fs::remove_dir(&directories.data).unwrap();
+    }
+
+    #[test]
+    fn inst01_storage_preparation_accepts_legacy_safe_leaf_without_repair() {
+        let fixture = Fixture::new();
+        let directories = hantong_platform::AppDirectories {
+            data: fixture.product.join("data"),
+            secrets: fixture.product.join("secrets"),
+            profiles: fixture.profiles.clone(),
+        };
+        let profile_guard = prepare_directories(&fixture.profiles).unwrap();
+        drop(profile_guard);
+        fs::create_dir(&directories.data).unwrap();
+        secure(&directories.data, false, false);
+        let file = OpenOptions::new()
+            .access_mode(READ_CONTROL | FILE_READ_ATTRIBUTES | FILE_TRAVERSE)
+            .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
+            .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
+            .open(&directories.data)
+            .unwrap();
+        let before = security_snapshot(&file);
+        let guard = prepare_storage_directories(&directories).unwrap();
+        assert_eq!(security_snapshot(&file), before);
+        drop(file);
+        drop(guard);
+        fs::remove_dir(&directories.secrets).unwrap();
+        fs::remove_dir(&directories.data).unwrap();
+    }
+
+    #[test]
+    fn inst01_storage_preparation_preserves_existing_legacy_acl_without_repair() {
+        let fixture = Fixture::new();
+        let directories = hantong_platform::AppDirectories {
+            data: fixture.product.join("data"),
+            secrets: fixture.product.join("secrets"),
+            profiles: fixture.profiles.clone(),
+        };
+        let profile_guard = prepare_directories(&fixture.profiles).unwrap();
+        drop(profile_guard);
+        fs::create_dir(&directories.data).unwrap();
+        secure(&directories.data, true, false);
+        let file = OpenOptions::new()
+            .access_mode(READ_CONTROL | FILE_READ_ATTRIBUTES | FILE_TRAVERSE)
+            .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
+            .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
+            .open(&directories.data)
+            .unwrap();
+        let before = security_snapshot(&file);
+        let guard = prepare_storage_directories(&directories).unwrap();
+        assert_eq!(security_snapshot(&file), before);
+        drop(file);
+        drop(guard);
+        fs::remove_dir(&directories.secrets).unwrap();
+        fs::remove_dir(&directories.data).unwrap();
+    }
+
+    #[test]
+    fn inst01_storage_preparation_preserves_legacy_logon_read_acl_without_repair() {
+        let fixture = Fixture::new();
+        let directories = hantong_platform::AppDirectories {
+            data: fixture.product.join("data"),
+            secrets: fixture.product.join("secrets"),
+            profiles: fixture.profiles.clone(),
+        };
+        let profile_guard = prepare_directories(&fixture.profiles).unwrap();
+        drop(profile_guard);
+        fs::create_dir(&directories.data).unwrap();
+        secure_legacy_logon(&directories.data);
+        let file = OpenOptions::new()
+            .access_mode(READ_CONTROL | FILE_READ_ATTRIBUTES | FILE_TRAVERSE)
+            .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
+            .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
+            .open(&directories.data)
+            .unwrap();
+        let before = security_snapshot(&file);
+        let guard = prepare_storage_directories(&directories).unwrap();
+        assert_eq!(security_snapshot(&file), before);
+        drop(file);
+        drop(guard);
+        fs::remove_dir(&directories.secrets).unwrap();
+        fs::remove_dir(&directories.data).unwrap();
     }
 
     #[test]

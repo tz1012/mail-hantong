@@ -41,3 +41,16 @@ do not update the user's real installation or connect a real mail account.
 
 Changes to package verification and launcher ownership remain subject to human
 security review; automated test success does not close that review.
+
+## Public release lookup under API limits (2026-11-03)
+
+The installer must not require a personal GitHub token to download a public
+package. On a GitHub REST 403/429 rate restriction, do not repeatedly call that
+API. A bounded public releases Atom feed from the exact repository may supply
+validated release tags; construct asset URLs only beneath that repository's
+HTTPS release-download prefix. Explicit requested versions remain exact.
+Disable XML DTD and external entity resolution; bound feed size and candidate
+count. Obtain and validate bounded asset lengths before using the existing
+download, SHA256SUMS, archive path and manifest checks. Unexpected status,
+malformed feed/tag, host changes or missing/oversized assets fail closed. This
+lookup fallback grants no mail, account, credential or arbitrary script access.

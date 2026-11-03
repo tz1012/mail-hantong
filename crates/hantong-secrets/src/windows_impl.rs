@@ -12,7 +12,7 @@ use windows_sys::Win32::Security::Cryptography::{
 };
 use windows_sys::Win32::Storage::FileSystem::{
     FILE_ATTRIBUTE_REPARSE_POINT, FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT,
-    FILE_LIST_DIRECTORY, FILE_READ_ATTRIBUTES, FILE_SHARE_READ, FILE_SHARE_WRITE,
+    FILE_READ_ATTRIBUTES, FILE_SHARE_READ, FILE_SHARE_WRITE, FILE_TRAVERSE,
 };
 
 fn acceptable(metadata: &fs::Metadata, directory: bool) -> bool {
@@ -53,7 +53,11 @@ pub(super) fn lock_root(root: &Path) -> Result<(PathBuf, Vec<File>), SecretError
         // OPEN_REPARSE_POINT inspects the directory itself. Omitting SHARE_DELETE
         // pins each ancestor before opening/creating its children.
         let handle = OpenOptions::new()
-            .access_mode(FILE_READ_ATTRIBUTES | FILE_LIST_DIRECTORY)
+            // Directory traversal is sufficient here. Requiring
+            // FILE_LIST_DIRECTORY rejects a valid LocalAppData ancestor whose
+            // ACL permits traversal and attribute reads but intentionally does
+            // not permit enumerating its children.
+            .access_mode(FILE_READ_ATTRIBUTES | FILE_TRAVERSE)
             .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
             .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
             .open(&current)
@@ -372,4 +376,100 @@ fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), SecretError> {
         return result.map_err(|_| SecretError::Io);
     }
     Err(SecretError::Io)
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{SecretKind, SecretStore};
+    use std::path::PathBuf;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    struct Fixture {
+        root: PathBuf,
+    }
+
+    impl Fixture {
+        fn new() -> Self {
+            static NEXT: AtomicU64 = AtomicU64::new(0);
+            let root = std::env::temp_dir().join(format!(
+                "hantong-secret-lock-root-{}-{}",
+                std::process::id(),
+                NEXT.fetch_add(1, Ordering::Relaxed)
+            ));
+            assert!(!root.exists());
+            std::fs::create_dir(&root).unwrap();
+            Self { root }
+        }
+
+        fn data_root(&self) -> PathBuf {
+            self.root.join("restricted-ancestor").join("data")
+        }
+    }
+
+    impl Drop for Fixture {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.root);
+        }
+    }
+
+    struct ListDenied<'a> {
+        path: &'a std::path::Path,
+        sid: String,
+    }
+
+    impl<'a> ListDenied<'a> {
+        fn apply(path: &'a std::path::Path) -> Self {
+            let identity = std::process::Command::new("whoami.exe")
+                .args(["/user", "/fo", "csv", "/nh"])
+                .output()
+                .expect("whoami fixture");
+            assert!(identity.status.success());
+            let sid = String::from_utf8_lossy(&identity.stdout)
+                .lines()
+                .next()
+                .and_then(|line| line.split(',').nth(1))
+                .map(|value| value.trim_matches('"').to_owned())
+                .expect("whoami SID");
+            run_icacls(path, ["/deny".to_owned(), format!("*{sid}:(RD)")]);
+            Self { path, sid }
+        }
+    }
+
+    impl Drop for ListDenied<'_> {
+        fn drop(&mut self) {
+            let _ = std::process::Command::new("icacls.exe")
+                .arg(self.path)
+                .args(["/remove:d", &format!("*{}", self.sid)])
+                .output();
+        }
+    }
+
+    fn run_icacls(path: &std::path::Path, args: [String; 2]) {
+        let output = std::process::Command::new("icacls.exe")
+            .arg(path)
+            .args(args)
+            .output()
+            .expect("icacls fixture");
+        assert!(
+            output.status.success(),
+            "icacls failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    #[test]
+    fn sec01_lock_root_accepts_traverse_without_directory_enumeration() {
+        let fixture = Fixture::new();
+        let ancestor = fixture.root.join("restricted-ancestor");
+        let data = fixture.data_root();
+        std::fs::create_dir_all(&data).unwrap();
+        let _denied = ListDenied::apply(&ancestor);
+
+        let store = SecretStore::open(&data).unwrap();
+        let handle = store
+            .store_from_reader("acl", SecretKind::AppPassword, b"secret".as_slice())
+            .unwrap();
+        let reopened = SecretStore::open(&data).unwrap();
+        reopened.verify(&handle).unwrap();
+    }
 }
