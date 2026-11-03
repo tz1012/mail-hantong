@@ -95,87 +95,115 @@ fn event(kind: EventKind) {
 
 #[cfg(windows)]
 fn start() -> Result<(), ErrorCode> {
-    let directories = hantong_platform::app_directories()?;
+    let directories = startup_step("directories", hantong_platform::app_directories())?;
     // Prepare and pin the profile roots before Secrets/Store can create the
     // product directory with inherited ACLs. This guard remains alive for the
     // complete core lifetime and never publishes or approves a profile.
-    let _profile_directories = hantong_approval_windows::prepare_profile_directories(&directories)?;
+    let _profile_directories = startup_step(
+        "profiles",
+        hantong_approval_windows::prepare_profile_directories(&directories),
+    )?;
     // Validate an optional release-owned Google Desktop asset inside Secrets
     // before opening the persisted store. The returned credential remains
     // opaque and is intentionally discarded here; the OAuth setup path loads
     // it again only when a user explicitly starts Google account connection.
-    drop(hantong_secrets::google::load_installed_publisher_configuration()?);
+    drop(startup_step(
+        "publisher",
+        hantong_secrets::google::load_installed_publisher_configuration(),
+    )?);
     // Keep the encrypted store and exclusive file locks alive until transport
     // shutdown. Any schema, key or persisted-config failure precedes readiness.
-    let store = storage::initialize_storage(&directories)?;
-    let server_identity = identity::initialize_server_identity(&store)?;
-    let server_instance = hantong_platform::random_nonce()?;
+    let store = startup_step("storage", storage::initialize_storage(&directories))?;
+    let server_identity = startup_step("identity", identity::initialize_server_identity(&store))?;
+    let server_instance = startup_step("instance", hantong_platform::random_nonce())?;
     let read_policy = std::rc::Rc::new(std::cell::RefCell::new(hantong_policy::ReadPolicy::new()));
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_io()
-        .enable_time()
-        .build()
-        .map_err(|_| ErrorCode::InternalError)?;
-    runtime.block_on(async {
-        let mut interrupt =
-            tokio::signal::windows::ctrl_c().map_err(|_| ErrorCode::InternalError)?;
-        let mut terminate =
-            tokio::signal::windows::ctrl_break().map_err(|_| ErrorCode::InternalError)?;
-        let shutdown = async move {
-            let signal =
-                tokio::select! { value=interrupt.recv()=>value, value=terminate.recv()=>value };
-            signal.ok_or(ErrorCode::InternalError)?;
-            event(EventKind::CoreStopping);
+    let runtime = startup_step(
+        "runtime",
+        tokio::runtime::Builder::new_current_thread()
+            .enable_io()
+            .enable_time()
+            .build()
+            .map_err(|_| ErrorCode::InternalError),
+    )?;
+    startup_step(
+        "transport",
+        runtime.block_on(async {
+            let mut interrupt =
+                tokio::signal::windows::ctrl_c().map_err(|_| ErrorCode::InternalError)?;
+            let mut terminate =
+                tokio::signal::windows::ctrl_break().map_err(|_| ErrorCode::InternalError)?;
+            let shutdown = async move {
+                let signal =
+                    tokio::select! { value=interrupt.recv()=>value, value=terminate.recv()=>value };
+                signal.ok_or(ErrorCode::InternalError)?;
+                event(EventKind::CoreStopping);
+                Ok(())
+            };
+            let (registration, registration_worker) = registration::coordinator_with_policy(
+                &store,
+                &server_identity,
+                &directories.secrets,
+                read_policy.clone(),
+            );
+            let shared_slot = std::rc::Rc::new(std::cell::Cell::new(None));
+            let (folder_worker_handle, folder_worker) = folder_worker::coordinator_for_store(
+                &store,
+                &directories.secrets,
+                shared_slot.clone(),
+            );
+            let (uid_worker_handle, uid_worker) = uid_worker::coordinator_for_store(
+                &store,
+                &directories.secrets,
+                shared_slot,
+                server_instance,
+            );
+            let (google_handle, google_worker) =
+                google_worker::coordinator(&store, &directories.secrets)?;
+            let server = hantong_ipc_server::authenticated_wire::serve_until_with_setup_context(
+                // All provider jobs have their own account-bound durable claims.
+                shutdown,
+                || event(EventKind::CoreTransportReady),
+                &server_identity,
+                server_instance,
+                |id| execution_adapter::load_registration(&store, id),
+                |session, request| {
+                    execution_adapter::execute_with_google(
+                        &store,
+                        &mut read_policy.borrow_mut(),
+                        &folder_worker_handle,
+                        Some(&uid_worker_handle),
+                        &registration,
+                        &google_handle,
+                        session,
+                        request,
+                    )
+                },
+                |context, command| registration.setup_command_with_context(context, command),
+            );
+            tokio::select! {
+                biased;
+                result=registration_worker.run()=>{result?;return Err(ErrorCode::InternalError);},
+                result=folder_worker.run()=>{result?;return Err(ErrorCode::InternalError);},
+                result=uid_worker.run()=>{result?;return Err(ErrorCode::InternalError);},
+                result=google_worker.run()=>{result?;return Err(ErrorCode::InternalError);},
+                result=server=>result?,
+            }
+            event(EventKind::CoreStopped);
             Ok(())
-        };
-        let (registration, registration_worker) = registration::coordinator_with_policy(
-            &store,
-            &server_identity,
-            &directories.secrets,
-            read_policy.clone(),
+        }),
+    )
+}
+
+// Only compile-time stage names and stable error codes reach diagnostics.
+// Never print paths, underlying errors, database content or credentials here.
+#[cfg(any(windows, test))]
+fn startup_step<T>(stage: &'static str, result: Result<T, ErrorCode>) -> Result<T, ErrorCode> {
+    result.inspect_err(|code| {
+        let _ = writeln!(
+            io::stderr(),
+            "hantong_startup stage={stage} outcome=failed code={}",
+            code.as_str()
         );
-        let shared_slot = std::rc::Rc::new(std::cell::Cell::new(None));
-        let (folder_worker_handle, folder_worker) =
-            folder_worker::coordinator_for_store(&store, &directories.secrets, shared_slot.clone());
-        let (uid_worker_handle, uid_worker) = uid_worker::coordinator_for_store(
-            &store,
-            &directories.secrets,
-            shared_slot,
-            server_instance,
-        );
-        let (google_handle, google_worker) =
-            google_worker::coordinator(&store, &directories.secrets)?;
-        let server = hantong_ipc_server::authenticated_wire::serve_until_with_setup_context(
-            // All provider jobs have their own account-bound durable claims.
-            shutdown,
-            || event(EventKind::CoreTransportReady),
-            &server_identity,
-            server_instance,
-            |id| execution_adapter::load_registration(&store, id),
-            |session, request| {
-                execution_adapter::execute_with_google(
-                    &store,
-                    &mut read_policy.borrow_mut(),
-                    &folder_worker_handle,
-                    Some(&uid_worker_handle),
-                    &registration,
-                    &google_handle,
-                    session,
-                    request,
-                )
-            },
-            |context, command| registration.setup_command_with_context(context, command),
-        );
-        tokio::select! {
-            biased;
-            result=registration_worker.run()=>{result?;return Err(ErrorCode::InternalError);},
-            result=folder_worker.run()=>{result?;return Err(ErrorCode::InternalError);},
-            result=uid_worker.run()=>{result?;return Err(ErrorCode::InternalError);},
-            result=google_worker.run()=>{result?;return Err(ErrorCode::InternalError);},
-            result=server=>result?,
-        }
-        event(EventKind::CoreStopped);
-        Ok(())
     })
 }
 
@@ -242,6 +270,53 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(windows)]
+    #[test]
+    fn inst01_hidden_console_signals_are_available() {
+        const MARKER: &str = "HANTONG_TEST_HIDDEN_SIGNALS_CHILD";
+        if std::env::var_os(MARKER).is_some() {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_io()
+                .enable_time()
+                .build()
+                .unwrap();
+            runtime.block_on(async {
+                let _interrupt = tokio::signal::windows::ctrl_c().unwrap();
+                let _terminate = tokio::signal::windows::ctrl_break().unwrap();
+            });
+            return;
+        }
+        use std::os::windows::process::CommandExt;
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "tests::inst01_hidden_console_signals_are_available",
+                "--nocapture",
+            ])
+            .env(MARKER, "1")
+            .creation_flags(0x0800_0000)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stdout)
+        );
+    }
+
+    #[test]
+    fn inst01_sec08_startup_step_preserves_success_and_stable_errors() {
+        assert_eq!(startup_step("storage", Ok(7)), Ok(7));
+        assert_eq!(
+            startup_step::<()>("storage", Err(ErrorCode::InternalError)),
+            Err(ErrorCode::InternalError)
+        );
+        assert_eq!(
+            startup_step::<()>("identity", Err(ErrorCode::Conflict)),
+            Err(ErrorCode::Conflict)
+        );
+    }
 
     #[test]
     fn sec08_lifecycle_logs_have_no_user_controlled_fields() {

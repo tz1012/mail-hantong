@@ -100,3 +100,16 @@ message and its Send button issues a distinct personal confirmation without
 Windows Hello. The CLI prompt only opens that window. Eligibility and atomic
 claim guards follow native-send-ledger; other registrations keep OS verification.
 No human/direct/approved wire option is introduced. Unknown never resubmits.
+
+## Startup diagnostics, 2026-11-03
+
+An unavailable Core does not authorize account reset, database deletion, ACL
+repair or new OAuth consent. Core startup failures may report only a fixed
+stage name and stable error code: directories, profiles, publisher, storage,
+identity, instance, runtime or transport. The CLI drains a bounded 16 KiB
+stderr capture while waiting and relays only exact allowlisted failure lines
+after startup fails. It never relays arbitrary child stderr, underlying error
+text, user paths, account information, database content or credentials. Capture
+does not create a persistent log. Existing readiness deadlines and child
+ownership/cleanup remain unchanged. A diagnostic stage locates a failing
+boundary; it does not establish the root cause or authorize bypassing it.

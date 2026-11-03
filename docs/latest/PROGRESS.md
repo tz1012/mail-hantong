@@ -1700,3 +1700,25 @@ GitHub raw main CDN이 수정 전 설치기를 일시 반환하여 수정 commit
 최종 `python -X utf8 scripts/check_all.py` **exit 0**: Rust **1,738개/31 suites/실패 0/ignored 0**, Docs **29개**, Build **105개**, 합계 **1,872개 실행(중첩 하네스 포함)**. fmt·전체 Clippy(-D warnings)·all-targets build·요건·문서 원본·아키텍처·추적표도 통과했다. 첫 통합 검사 이후 리뷰 보완이 있어 최종 검사를 재실행했으며 최종 근거는 `target/beta5-verification.json`, `target/beta5-full-check.log` SHA-256 `6a1dfadaaac9f9e35c185ed7bc36c66eaa8e66ee69949ba47acab94a68b3b0af`이다. source hash `ec15d7ef32c7a0161d25e54832467de321bb6f6f554fda637cf83d480a631e3d`. 기존 beta.3 Core를 검사 후 같은 경로/인자/hash로 복구했다(PID 41244, SHA-256 `710aeff80153953f8a2625ba041a0ff48f3f434f41c74efb50781c1397f0b80c`).
 
 beta.5 ZIP 25,037,586 bytes의 SHA-256은 `0a04590ba47a2b0184394f3d162c7ff94e34546719b611a429eae1ab1d2cd26d`이다. manifest 261개 파일, updater 원문, 이전 승인 publisher 자산 동일성, 실제 DB·프로필 미포함을 검증하고 별도 경로 설치가 통과했다. 설치된 실제 CLI의 도움말/AI 안내/각 binary 6개 실행과 `update hantong`이 정확히 CLI의 headless guard까지 도달하는 것을 확인했다(24/HUMAN_STEP_REQUIRED). 잘못된 명령/추가 인자는 2로 거부했다. 공개 배포와 공개 설치/업데이트 검증 결과는 아래에 누적한다. 실제 기본 설치·DB·계정은 보존했고 추가 Google 동의·실제 메일/AI 작업은 실행하지 않았다. **[사람 보안 검토 필요]**.
+
+### beta.5 공개 게시·격리 업데이트 검증
+
+검증한 소스를 별도 worktree의 `39ab49981150e906210bdf5055e34772aa17befa`로 게시하고 GitHub main 및 `v0.1.0-beta.5` prerelease를 갱신했다. ZIP·SHA256SUMS·BUILD-METADATA.json을 공개했으며 공개 ZIP을 다시 내려받은 SHA-256이 로컬 검증본과 일치했다. 실제 사용자 설치를 바꾸지 않고 별도 beta.4 설치에 공개 bootstrap을 실행해 beta.5 업그레이드, 이전 버전 보존, 한국어 진행률과 두 단계 완료 표시를 확인했다. 영구 PATH와 실제 설치 current.txt는 바뀌지 않았다(`target/beta5-public-upgrade-verification.json`). 이는 대화형 `hantong update` 전체를 실제 사용자 설치에서 실행한 검증과는 구분한다.
+
+홈페이지 gh-pages `0286d01cd824f33409418f2e0a83058d37793f47`는 beta.5와 설치/업데이트 명령·직접 Google 연결 흐름을 안내하며 Pages 배포 success를 확인했다. 원본 HEAD·index·미커밋/새 파일은 보존했다.
+
+## 2026-11-03 다른 PC beta.4 Core 시작 실패 조사
+
+사용자가 다른 PC의 `hantong`에서 CORE_UNAVAILABLE, `hantong-t`에서 일반 요청 실패를 보고했다. 이 PC의 기존 beta.3 Core 상태와 섞지 않는다. 원격 PC current.txt는 `0.1.0-beta.4`, 해당 Core를 직접 실행한 결과는 `INTERNAL_ERROR: The core could not start or continue safely.`이다. 전달 과정에서 한 번 경로 구분자가 빠진 명령은 실행 실패였으며 Join-Path 명령으로 실행 파일을 찾은 뒤의 INTERNAL_ERROR와 구분한다. 기존 `hantong --version`의 0.1.0은 모든 베타에 같아서 실제 배포판 판별에 부족했다.
+
+패키지 빌드에만 릴리스 라벨을 주입해 CLI 버전 출력을 보완했다(개발 빌드는 Cargo 버전 유지). Core는 고정 시작 단계와 안정 오류 코드만 출력하고, CLI는 자식 stderr를 16 KiB 한도로 읽어 실패 시 허용된 정확한 진단 행만 전달한다. 원시 오류·경로·계정·메일·비밀값은 전달하거나 저장하지 않는다. 기존 준비 제한 시간과 자식 프로세스 정리는 유지한다. docs/contracts/cli-onboarding.md에 진단 경계를 기록했다.
+
+합성 한글·공백 경로에 존재하지 않던 제품/profile 디렉터리부터 보호 생성→저장소→서버 키→동일 키 재시작을 검증하는 시험을 추가했다. 시작 관련 8개, CLI 진단 필터 1개 및 패키지 10개가 통과했다. 이 결과로 다른 PC 오류의 근본 원인을 확정하거나 해결 완료로 표시하지 않는다. 추가 OAuth 동의, 계정/키/DB 삭제·교체·ACL 완화는 수행하지 않는다. 전체 검사와 후속 진단 배포 결과를 아래에 누적한다. **[사람 보안 검토 필요]**.
+
+### beta.6 진단 보완 최종 검사
+
+검토 중 stderr 캡처 한도 도달 후 파이프를 닫을 수 있는 문제를 수정했다. 처음 16 KiB만 보관하며 이후에도 출력은 계속 비우고, 완전한 고정 진단 행을 발견하면 즉시 전달한다. 32 KiB 출력 전체 drain 및 한도 이후 행 미전달 회귀 시험을 추가했다. 숨김 프로세스의 Windows 신호 처리 시험도 추가했고, 새 시험의 must_use 경고를 수정한 뒤 최종 검사를 다시 수행했다. 중간 검사와 최종 검사의 근거를 구분한다.
+
+최종 `python -X utf8 scripts/check_all.py` **exit 0**: Rust **1,743개/31 suites**, Docs **29개**, Build **105개**, 합계 **1,877개 실행**, 실패·ignored 0. fmt·Clippy(-D warnings)·workspace all-targets build·요건·원본·아키텍처·추적표도 통과했다. `target/beta6-verification.json`, 최종 로그 SHA-256 `a17eb0c3ef36ec78d7d52125d97a55bc69c940f3555c18277426350cf3f4254f`, source hash `d92b268f81681764d1bab9f05211e088c6fd820e994953135e88132a3969fffe`. 기존 beta.3 Core는 같은 경로·인자·해시로 복구했다(PID 46248).
+
+추가로 `RUSTFLAGS=-C target-feature=+crt-static` 및 배포와 같은 release/x86_64-pc-windows-msvc 설정에서 Core 시작 관련 **9개 시험 통과**를 확인했다(`target/beta6-release-startup-tests.log`). 한글 경로의 실제 SQLCipher/DPAPI 저장소와 CNG 키 초기화·재시작, CREATE_NO_WINDOW 신호 처리가 이 PC의 합성 환경에서 통과했다. 다른 PC의 원인과 성공을 입증하는 자료로 확대 해석하지 않는다. beta.6는 진단 개선 배포이며 실제 시작 오류는 원격 단계 출력 확인이 남아 있다.

@@ -1,8 +1,14 @@
-# mail-hantong CLI — Windows beta.5
+# mail-hantong CLI — Windows beta.6
+
+beta.6 adds the actual release label to `hantong --version` and bounded startup
+failure diagnostics. Another PC's beta.4 `INTERNAL_ERROR` remains unresolved;
+these changes identify the failing boundary without resetting accounts or keys.
+If startup still fails after updating, report the fixed `hantong_startup stage`
+and stable error code. Do not send credentials, database files or mail content.
 
 The command is `hantong`. English is the default; use `--lang ko` for Korean. The companion `mail-hantong-core` process handles encrypted local storage, mail operations and policy. The graphical mail application is not included in the CLI package.
 
-**Release: [0.1.0-beta.5](https://github.com/tz1012/mail-hantong/releases/tag/v0.1.0-beta.5).** The [Korean website guide](https://tz1012.github.io/mail-hantong/) covers installation, mail and AI feature switching. Release downloads include checksums and build metadata. Full checks passed 1,872 test executions (including nested harness checks). Earlier beta.3 manual Gmail verification covered account retention, terminal cancellation, one synthetic send/receive and matching body/attachment; it does not validate the new AI or trash path against real services. Human security review, clean Windows VM testing, other real mail providers and Google verification remain separate open gates. Real AI login, paid inference and real trash operations were not tested. This version migrates local storage from schema 24 to 25; do not run an older core against migrated data. macOS mail operations are not available yet.
+**Release: [0.1.0-beta.6](https://github.com/tz1012/mail-hantong/releases/tag/v0.1.0-beta.6).** The [Korean website guide](https://tz1012.github.io/mail-hantong/) covers installation, mail and AI feature switching. Release downloads include checksums and build metadata. Full checks passed 1,877 test executions (including nested harness checks). Earlier beta.3 manual Gmail verification covered account retention, terminal cancellation, one synthetic send/receive and matching body/attachment; it does not validate the new AI or trash path against real services. Human security review, clean Windows VM testing, other real mail providers and Google verification remain separate open gates. Real AI login, paid inference and real trash operations were not tested. This version migrates local storage from schema 24 to 25; do not run an older core against migrated data. macOS mail operations are not available yet.
 
 ## What works in this preview
 

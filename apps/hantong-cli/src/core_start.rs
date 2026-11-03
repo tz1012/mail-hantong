@@ -141,13 +141,86 @@ fn start_installed_core() -> Result<(), ErrorCode> {
         .creation_flags(0x0800_0000)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::null());
-    let child = child.spawn().map_err(|_| ErrorCode::CoreUnavailable)?;
-    wait_for_readiness(
+        .stderr(Stdio::piped());
+    let mut child = child.spawn().map_err(|_| ErrorCode::CoreUnavailable)?;
+    let stderr = child.stderr.take().ok_or(ErrorCode::CoreUnavailable)?;
+    let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+    // Drain while waiting so the child cannot block on a full pipe. Bound the
+    // capture and relay only our exact startup vocabulary after a failed start.
+    std::thread::spawn(move || {
+        drain_startup_diagnostics(stderr, sender);
+    });
+    let result = wait_for_readiness(
         child,
         hantong_ipc_client::core_status,
         Duration::from_secs(10),
-    )
+    );
+    if result.is_err()
+        && let Ok(Some(line)) = receiver.recv_timeout(Duration::from_millis(200))
+    {
+        eprintln!("{line}");
+    }
+    result
+}
+
+#[cfg(any(windows, test))]
+fn drain_startup_diagnostics(
+    mut reader: impl std::io::Read,
+    sender: std::sync::mpsc::SyncSender<Option<String>>,
+) {
+    let mut captured = Vec::new();
+    let mut announced = false;
+    let mut chunk = [0; 1024];
+    loop {
+        let count = match reader.read(&mut chunk) {
+            Ok(0) => break,
+            Ok(count) => count,
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(_) => break,
+        };
+        if !announced && captured.len() < 16 * 1024 {
+            let remaining = 16 * 1024 - captured.len();
+            captured.extend_from_slice(&chunk[..count.min(remaining)]);
+            // A complete line is required: a split suffix must never turn
+            // arbitrary stderr into a recognized diagnostic.
+            if let Some(end) = captured.iter().rposition(|byte| *byte == b'\n')
+                && let Some(line) = startup_diagnostic(&captured[..=end])
+            {
+                let _ = sender.send(Some(line));
+                announced = true;
+                captured.clear();
+            }
+        }
+        // Once the bounded capture is exhausted, continue draining silently.
+        // Closing a full pipe must not change the running Core's behavior.
+    }
+    if !announced {
+        let _ = sender.send(startup_diagnostic(&captured));
+    }
+}
+
+#[cfg(any(windows, test))]
+fn startup_diagnostic(bytes: &[u8]) -> Option<String> {
+    const STAGES: &[&str] = &[
+        "directories",
+        "profiles",
+        "publisher",
+        "storage",
+        "identity",
+        "instance",
+        "runtime",
+        "transport",
+    ];
+    std::str::from_utf8(bytes).ok()?.lines().find_map(|line| {
+        let remainder = line.strip_prefix("hantong_startup stage=")?;
+        let (stage, code) = remainder.split_once(" outcome=failed code=")?;
+        if !STAGES.contains(&stage) || !ErrorCode::ALL.iter().any(|value| value.as_str() == code) {
+            return None;
+        }
+        Some(format!(
+            "hantong_startup stage={stage} outcome=failed code={code}"
+        ))
+    })
 }
 
 #[cfg(windows)]
@@ -512,6 +585,53 @@ fn hex_hash(path: &std::path::Path) -> Result<String, ErrorCode> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn inst01_sec08_startup_capture_drains_beyond_limit_without_relaying_later_data() {
+        let diagnostic = b"hantong_startup stage=storage outcome=failed code=INTERNAL_ERROR\n";
+        let mut data = diagnostic.to_vec();
+        data.extend(vec![b'x'; 32 * 1024]);
+        let mut reader = std::io::Cursor::new(data);
+        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+        drain_startup_diagnostics(&mut reader, sender);
+        assert_eq!(reader.position(), reader.get_ref().len() as u64);
+        assert_eq!(
+            receiver.recv().unwrap(),
+            Some(
+                String::from_utf8(diagnostic.to_vec())
+                    .unwrap()
+                    .trim()
+                    .into()
+            )
+        );
+        let mut data = vec![b'x'; 16 * 1024];
+        data.extend_from_slice(diagnostic);
+        let mut reader = std::io::Cursor::new(data);
+        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+        drain_startup_diagnostics(&mut reader, sender);
+        assert_eq!(reader.position(), reader.get_ref().len() as u64);
+        assert_eq!(receiver.recv().unwrap(), None);
+    }
+
+    #[test]
+    fn inst01_sec08_startup_diagnostics_relay_only_fixed_stages_and_error_codes() {
+        assert_eq!(
+            startup_diagnostic(
+                b"hantong_startup stage=storage outcome=failed code=INTERNAL_ERROR\n"
+            ),
+            Some("hantong_startup stage=storage outcome=failed code=INTERNAL_ERROR".into())
+        );
+        for bytes in [
+            b"provider secret text".as_slice(),
+            b"hantong_startup stage=user@example.com outcome=failed code=INTERNAL_ERROR",
+            b"hantong_startup stage=storage outcome=failed code=INTERNAL_ERROR secret",
+            b"hantong_startup stage=storage outcome=failed code=\x1b[2J",
+            b"hantong_startup stage=storage outcome=failed code=\xff",
+        ] {
+            assert_eq!(startup_diagnostic(bytes), None);
+        }
+        assert_eq!(startup_diagnostic(b"secret\nhantong_startup stage=identity outcome=failed code=INTERNAL_ERROR\nother secret"), Some("hantong_startup stage=identity outcome=failed code=INTERNAL_ERROR".into()));
+    }
 
     #[test]
     fn cli_first_run_non_windows_is_explicitly_unsupported() {

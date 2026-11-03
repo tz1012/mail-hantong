@@ -941,7 +941,10 @@ fn run_with_mail_actions(
         return 0;
     }
     if want_version && command.is_empty() {
-        println!("hantong {}", env!("CARGO_PKG_VERSION"));
+        println!(
+            "hantong {}",
+            option_env!("HANTONG_RELEASE_VERSION").unwrap_or(env!("CARGO_PKG_VERSION"))
+        );
         return 0;
     }
     if matches!(command.as_slice(), [a,b] if a == "clients" && b == "verify") {

@@ -13,6 +13,9 @@ fn keys(path: &Path) -> BTreeSet<String> {
     seen
 }
 fn main() {
+    if let Ok(version) = std::env::var("HANTONG_RELEASE_VERSION") {
+        println!("cargo:rustc-env=HANTONG_RELEASE_VERSION={version}");
+    }
     let en = keys(Path::new("resources/en.txt"));
     let ko = keys(Path::new("resources/ko.txt"));
     assert_eq!(en, ko, "English and Korean CLI resource keys must match");
@@ -87,4 +90,5 @@ fn main() {
     println!("cargo:rerun-if-changed=resources/ko.txt");
     println!("cargo:rerun-if-changed=resources/onboarding-en.txt");
     println!("cargo:rerun-if-changed=resources/onboarding-ko.txt");
+    println!("cargo:rerun-if-env-changed=HANTONG_RELEASE_VERSION");
 }

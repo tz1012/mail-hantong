@@ -99,7 +99,8 @@ class PackageCliTests(unittest.TestCase):
             binary = Path(command[0]).stem
             self.assertEqual(kwargs["stdin"], package.subprocess.DEVNULL)
             if command[1] == "--version":
-                output = f"{binary} {'9.0.0' if self.bad_version else '0.1.0'}\n".encode()
+                version = kwargs["env"].get("HANTONG_RELEASE_VERSION", "0.1.0") if binary == "hantong" else "0.1.0"
+                output = f"{binary} {'9.0.0' if self.bad_version else version}\n".encode()
             else:
                 output = b"" if self.bad_help else f"{binary}\nUsage: --help\n".encode()
         return SimpleNamespace(returncode=0, stdout=output, stderr=b"")
@@ -189,7 +190,8 @@ class PackageCliTests(unittest.TestCase):
         for name in package.BINARIES:
             expected.extend(["-p", name])
         self.assertEqual(build, expected + ["--bins", "--locked", "--offline"])
-        self.assertTrue(all(kwargs["env"] == self.env | {"RUSTFLAGS": package.RUSTFLAGS} for _, kwargs in self.calls))
+        expected_env = self.env | {"RUSTFLAGS": package.RUSTFLAGS, "HANTONG_RELEASE_VERSION": package.DEFAULT_VERSION}
+        self.assertTrue(all(kwargs["env"] == expected_env for _, kwargs in self.calls))
         self.assertNotIn("RUSTFLAGS", self.env)
         self.assertEqual([command[1] for command in commands if command[0] not in ("cargo", "rustc")], ["--help", "--version"] * len(package.BINARIES))
         self.assertFalse(any("run" in command for command in commands))

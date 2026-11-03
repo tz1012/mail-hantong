@@ -339,6 +339,10 @@ def package(root: Path = ROOT, *, version: str = DEFAULT_VERSION, output_dir: Pa
         if env.get(variable):
             raise PackageError(f"{variable} conflicts with the package's static CRT build; clear it for this invocation")
     env["RUSTFLAGS"] = RUSTFLAGS
+    # Cargo's package version remains 0.1.0 for compatibility with the
+    # workspace. Embed the immutable release label only in packaged CLI
+    # builds; development binaries continue to report CARGO_PKG_VERSION.
+    env["HANTONG_RELEASE_VERSION"] = version
     source_before = checked_source_hash(root)
     result = run_command(runner, ["cargo", "metadata", "--format-version", "1", "--locked", "--offline", "--filter-platform", TARGET], root, env, capture=True, timeout=120)
     try:
@@ -388,7 +392,8 @@ def package(root: Path = ROOT, *, version: str = DEFAULT_VERSION, output_dir: Pa
                 output = smoke.stdout.decode("utf-8", "strict")
                 if smoke.stderr or len(smoke.stdout) > 131072 or binary not in output:
                     raise PackageError(f"{binary} {flag} smoke validation failed")
-                if flag == "--version" and output.strip() != f"{binary} {roots[name]['version']}":
+                expected_version = version if binary == "hantong" else roots[name]["version"]
+                if flag == "--version" and output.strip() != f"{binary} {expected_version}":
                     raise PackageError(f"{binary} binary version does not match Cargo metadata")
             if executable.read_bytes() != data:
                 raise PackageError("smoke validation modified an executable")

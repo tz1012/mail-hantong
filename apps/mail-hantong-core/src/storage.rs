@@ -13,6 +13,7 @@ pub(super) fn initialize_storage(directories: &AppDirectories) -> Result<Store, 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use hantong_platform::ServerSigningKey;
     use std::{
         fs,
         path::PathBuf,
@@ -42,6 +43,46 @@ mod tests {
     }
     impl Drop for Fixture {
         fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.root);
+        }
+    }
+
+    struct UnicodeStartupFixture {
+        root: PathBuf,
+        directories: AppDirectories,
+        key_ids: Vec<[u8; 32]>,
+    }
+
+    impl UnicodeStartupFixture {
+        fn new() -> Self {
+            static NEXT: AtomicU64 = AtomicU64::new(0);
+            let root = std::env::temp_dir().join("한통 사용자").join(format!(
+                "Local App Data {} - {}",
+                std::process::id(),
+                NEXT.fetch_add(1, Ordering::Relaxed)
+            ));
+            fs::create_dir_all(&root).unwrap();
+            let product = root.join("mail-hantong");
+            let directories = AppDirectories {
+                data: product.join("data"),
+                secrets: product.join("secrets"),
+                profiles: product.join("profiles"),
+            };
+            assert!(!product.exists());
+            assert!(!directories.profiles.exists());
+            Self {
+                root,
+                directories,
+                key_ids: Vec::new(),
+            }
+        }
+    }
+
+    impl Drop for UnicodeStartupFixture {
+        fn drop(&mut self) {
+            for id in self.key_ids.drain(..) {
+                let _ = ServerSigningKey::open(id).and_then(|key| key.delete());
+            }
             let _ = fs::remove_dir_all(&self.root);
         }
     }
@@ -88,5 +129,31 @@ mod tests {
                 .join("database-v1.secret")
                 .exists()
         );
+    }
+
+    #[test]
+    fn inst01_inst07_startup_supports_unicode_user_path_and_identity_restart() {
+        let mut fixture = UnicodeStartupFixture::new();
+
+        let profile_guard =
+            hantong_approval_windows::prepare_profile_directories(&fixture.directories).unwrap();
+        let store = initialize_storage(&fixture.directories).unwrap();
+        let first = crate::identity::initialize_server_identity(&store).unwrap();
+        let key_id = first.id();
+        let public_key = first.public_key().unwrap();
+        fixture.key_ids.push(key_id);
+        drop(first);
+        drop(store);
+        drop(profile_guard);
+
+        let profile_guard =
+            hantong_approval_windows::prepare_profile_directories(&fixture.directories).unwrap();
+        let store = initialize_storage(&fixture.directories).unwrap();
+        let second = crate::identity::initialize_server_identity(&store).unwrap();
+        assert_eq!(second.id(), key_id);
+        assert_eq!(second.public_key().unwrap(), public_key);
+        drop(second);
+        drop(store);
+        drop(profile_guard);
     }
 }
