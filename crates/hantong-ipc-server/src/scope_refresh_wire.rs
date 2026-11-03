@@ -23,7 +23,12 @@ pub fn parse(request: &RpcRequest) -> Result<ScopeRefreshCommand, ErrorCode> {
             .get("account_ids")
             .and_then(Value::as_array)
             .ok_or(ErrorCode::InvalidInput)?;
-        if values.len() > 4 {
+        let maximum = if request.method == "registration.scope.google_send.request" {
+            128
+        } else {
+            4
+        };
+        if values.len() > maximum {
             return Err(ErrorCode::InvalidInput);
         }
         let values = values
@@ -124,7 +129,7 @@ mod tests {
         for (method, expected) in [
             (
                 "registration.scope.google_send.request",
-                ScopeRefreshCommand::RequestGoogleSend(selected),
+                ScopeRefreshCommand::RequestGoogleSend(selected.clone()),
             ),
             (
                 "registration.scope.google_changes.request",
@@ -156,6 +161,32 @@ mod tests {
             id: "1".into(),
             method: method.into(),
             params,
+        }
+    }
+
+    #[test]
+    fn acc02_send_scope_wire_supports_more_than_four_accounts_without_expanding_changes() {
+        let ids: Vec<String> = (0..129).map(|i| format!("google_{i:064x}")).collect();
+        for count in [5, 128] {
+            assert!(matches!(
+                parse(&request(
+                    "registration.scope.google_send.request",
+                    json!({"protocol_version":1,"account_ids":&ids[..count]})
+                )),
+                Ok(ScopeRefreshCommand::RequestGoogleSend(_))
+            ));
+        }
+        for (method, count) in [
+            ("registration.scope.google_send.request", 129),
+            ("registration.scope.google_changes.request", 5),
+        ] {
+            assert_eq!(
+                parse(&request(
+                    method,
+                    json!({"protocol_version":1,"account_ids":&ids[..count]})
+                )),
+                Err(ErrorCode::InvalidInput)
+            );
         }
     }
     #[test]

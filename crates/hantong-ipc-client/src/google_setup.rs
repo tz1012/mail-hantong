@@ -1,7 +1,7 @@
 //! Strict Google setup bootstrap. Public client configuration only.
 use hantong_contracts::{
     ErrorCode,
-    google_setup::{GoogleSetupCommand, GoogleSetupReceipt},
+    google_setup::{GoogleLocalProfile, GoogleSetupCommand, GoogleSetupReceipt},
     wire_hex,
 };
 use serde::Deserialize;
@@ -16,6 +16,8 @@ struct Wire {
     login_url: Option<String>,
     error_code: serde_json::Value,
     client_ticket: Option<String>,
+    #[serde(default)]
+    local_profile: Option<String>,
 }
 pub fn request(id: &str, c: &GoogleSetupCommand) -> Result<Vec<u8>, ErrorCode> {
     if id.is_empty()
@@ -102,6 +104,12 @@ pub fn parse_response(
             .client_ticket
             .map(|v| wire_hex::decode_bounded(&v, 320))
             .transpose()?,
+        local_profile: w
+            .local_profile
+            .as_deref()
+            .map(GoogleLocalProfile::parse)
+            .transpose()?
+            .unwrap_or_default(),
     };
     r.validate()?;
     if matches!(c,GoogleSetupCommand::Status(expected) | GoogleSetupCommand::ClientTicket(expected) if *expected!=r.request_id)
@@ -212,6 +220,7 @@ mod tests {
             login_url: None,
             error_code: None,
             client_ticket: None,
+            local_profile: GoogleLocalProfile::None,
         };
         let mut v = serde_json::json!({"jsonrpc":"2.0","id":"r","result":r.to_json()});
         assert!(parse_response(&serde_json::to_vec(&v).unwrap(), "r", &c).is_ok());

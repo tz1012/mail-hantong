@@ -12,7 +12,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE_FILES = ("Cargo.toml", "Cargo.lock", "rust-toolchain.toml", "install.ps1", "tests/Corpus/index.json", "scripts/native-tools.json", "scripts/check-all", "scripts/traceability", "scripts/test-mail-server", "packaging/licenses/index.json")
-SOURCE_SUFFIXES = {".rs", ".py", ".toml", ".txt", ".eml", ".mbox", ".ps1", ".sh", ".cert", ".fullchain", ".key", ".manifest"}
+SOURCE_SUFFIXES = {".rs", ".py", ".toml", ".txt", ".eml", ".mbox", ".ps1", ".sh", ".cert", ".fullchain", ".key", ".manifest", ".html"}
 RESULTS = {"unimplemented", "not_run", "passed", "failed", "review_required", "not_applicable"}
 REQUIRED_EVIDENCE = {"result", "test_id", "test_kind", "environment", "command", "exit_code", "log_path", "log_sha256", "evidence", "reviewer"}
 
@@ -23,6 +23,7 @@ class ValidationError(ValueError):
 
 def source_hash(root: Path) -> str:
     digest = hashlib.sha256()
+    digest.update(b"mail-hantong.source.lf.v2\0")
     paths = []
     for name in SOURCE_FILES:
         path = root / name
@@ -38,7 +39,12 @@ def source_hash(root: Path) -> str:
             raise ValidationError("source hash cannot include links outside the source tree")
         relative = path.relative_to(root).as_posix().encode()
         digest.update(len(relative).to_bytes(4, "big")); digest.update(relative)
-        data = path.read_bytes(); digest.update(len(data).to_bytes(8, "big")); digest.update(data)
+        data = path.read_bytes()
+        # Product sources use Git's LF text representation. Preserve raw corpus
+        # bytes: changing a protocol fixture's CRLF must still invalidate proof.
+        if not path.relative_to(root).as_posix().startswith("tests/Corpus/"):
+            data = data.replace(b"\r\n", b"\n")
+        digest.update(len(data).to_bytes(8, "big")); digest.update(data)
     return digest.hexdigest()
 
 

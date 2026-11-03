@@ -1,7 +1,7 @@
 //! Public scope-refresh progress data, never an approval or authentication proof.
 use crate::ErrorCode;
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub enum ScopeRefreshCommand {
     Request,
     RequestGoogleSend(GoogleSendAccounts),
@@ -105,10 +105,9 @@ impl ScopeRefreshReceipt {
 }
 
 /// Explicit, canonical bounded selection. Never interprets empty as all accounts.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct GoogleSendAccounts {
-    ids: [[u8; 32]; 4],
-    count: u8,
+    ids: Vec<[u8; 32]>,
 }
 impl std::fmt::Debug for GoogleSendAccounts {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -117,7 +116,7 @@ impl std::fmt::Debug for GoogleSendAccounts {
 }
 impl GoogleSendAccounts {
     pub fn parse(values: &[String]) -> Result<Self, ErrorCode> {
-        if values.is_empty() || values.len() > 4 {
+        if values.is_empty() || values.len() > 128 {
             return Err(ErrorCode::InvalidInput);
         }
         let mut values = values.to_vec();
@@ -125,18 +124,15 @@ impl GoogleSendAccounts {
         if values.windows(2).any(|v| v[0] == v[1]) {
             return Err(ErrorCode::InvalidInput);
         }
-        let mut ids = [[0; 32]; 4];
-        for (n, value) in values.iter().enumerate() {
+        let mut ids = Vec::with_capacity(values.len());
+        for value in &values {
             crate::google::validate_google_account_id(value)?;
-            ids[n] = crate::wire_hex::decode_fixed(&value[7..])?;
+            ids.push(crate::wire_hex::decode_fixed(&value[7..])?);
         }
-        Ok(Self {
-            ids,
-            count: values.len() as u8,
-        })
+        Ok(Self { ids })
     }
-    pub fn accounts(self) -> Vec<String> {
-        self.ids[..self.count as usize]
+    pub fn accounts(&self) -> Vec<String> {
+        self.ids
             .iter()
             .map(|v| format!("google_{}", crate::wire_hex::encode(v)))
             .collect()

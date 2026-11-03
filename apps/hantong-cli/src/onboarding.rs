@@ -174,7 +174,7 @@ fn connect_account(
     effects: &mut impl Effects,
 ) -> Result<String, ErrorCode> {
     say(io, lang, "connecting")?;
-    let account = effects.connect_google(lang, GoogleLocalProfile::PersonalRead)?;
+    let account = effects.connect_google(lang, GoogleLocalProfile::PersonalReadSend)?;
     say(io, lang, "connected")?;
     say(io, lang, "features_after_connection")?;
     Ok(account)
@@ -447,7 +447,7 @@ mod tests {
             profiles: Vec::new(),
         };
         assert_eq!(run_flow(Lang::En, &[], &mut io, &mut effects), Ok(()));
-        assert_eq!(effects.profiles, vec![GoogleLocalProfile::PersonalRead]);
+        assert_eq!(effects.profiles, vec![GoogleLocalProfile::PersonalReadSend]);
         assert_eq!(effects.enable_send_calls, 0);
         assert_eq!(effects.connect_calls, 1);
         let connected = io.output.find(resource(Lang::En, "connected")).unwrap();
@@ -477,7 +477,7 @@ mod tests {
                 run_flow(Lang::En, &[account()], &mut io, &mut effects),
                 Ok(())
             );
-            assert_eq!(effects.profiles, vec![GoogleLocalProfile::PersonalRead]);
+            assert_eq!(effects.profiles, vec![GoogleLocalProfile::PersonalReadSend]);
             assert_eq!(effects.connect_calls, 1);
             assert_eq!(effects.enable_send_calls, 0);
             assert_eq!(effects.inbox_calls, 0);
@@ -644,7 +644,7 @@ mod tests {
         };
         assert_eq!(run_flow(Lang::En, &[], &mut io, &mut effects), Ok(()));
         assert_eq!(effects.connect_calls, 1);
-        assert_eq!(effects.profiles, vec![GoogleLocalProfile::PersonalRead]);
+        assert_eq!(effects.profiles, vec![GoogleLocalProfile::PersonalReadSend]);
         assert!(io.output.contains("Available choices:"));
         assert!(io.output.contains("4) Enable composing and sending"));
     }

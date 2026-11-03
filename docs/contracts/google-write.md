@@ -82,7 +82,10 @@ shows attachment names/types/sizes, text preview where valid, and full digest.
 ## Explicit send registration selection
 
 clients refresh-gmail-send <comma-separated-google-account-ids> requests C11 only
-for 1..4 exact selected accounts. Empty, duplicate and non-Google IDs are rejected.
+for 1..128 exact selected sending accounts (the existing RequestedScope account
+bound). Change-label grants retain their separate 1..4 account bound until the
+account-qualified tool representation is extended. Empty, duplicate and
+non-Google IDs are rejected.
 The same native scope review/Windows Hello and durable activation protocol apply;
 no CLI approval is added. Every selected account must already have Google Send
 mode. Existing account grants outside that selection cause Conflict rather than

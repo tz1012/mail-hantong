@@ -54,8 +54,46 @@ PersonalRead matches body tools at epoch 2; PersonalReadSend matches send tools
 at epoch 2 (initial L-to-C) or 3 (B-to-C upgrade). Do not create another scope row,
 change keys/epochs, republish profiles or replace registrations for that case.
 Other accounts, sources, states, mixed scopes and unexpected epochs retain their
-existing conflict behavior. Credential version CAS remains unchanged. A missing
+existing conflict behavior for automatic OAuth grant configuration. Credential version CAS remains unchanged. A missing
 or corrupted profile is a separate recovery issue, never an implicit repair.
+
+2026-11-03 guided additional-account correction: when PersonalRead connects a
+different account and the active default CLI already has the exact body-read
+toolset with Google OAuth registration provenance (single-account epoch 2, or
+multi-account epoch 3 or later with Store-validated scope history), account
+publication completes without changing that registration or
+issuing an OAuth scope refresh. The CLI then uses the existing read-only
+account-add workflow from [Google onboarding](google-onboarding.md), with the
+exact old/new account and tool snapshot selected in the same terminal. The
+existing registration/key/epoch remain unchanged until that terminal selection
+commits. Existing multi-account body-read grants follow this path too; probing
+an already included account has no new scope effect. Authentication errors never
+start a scope request. PersonalReadSend and existing writable/mixed/legacy scopes
+are not broadened by this exception. Ready OAuth account publication is not
+proof that additional local CLI access was selected; the CLI verifies that
+separately before presenting the work menu.
+
+2026-11-03 user correction: guided new accounts must support composing and
+sending too. Guided connection requests PersonalReadSend and Google's ReadSend
+consent. A fresh verified permit for a different account may hand off from an
+active exact OAuth-origin C grant (singleton epoch 2 or 3, or multi-account
+epoch >=3 with validated history) without changing any local grant. The CLI
+authenticates the current C profile, forms the explicit union of its existing
+accounts and only the selected account, then runs RequestGoogleSend in the same
+terminal. Core checks every selected Google account's Send capability and
+preserves all old accounts/tools before staging the existing terminal_cli v10
+refresh. Authentication failures never start this selection. Up to 128 selected
+accounts share RequestedScope's existing resource bound; no four-account limit.
+After confirmation both old and new accounts retain C. Each message still
+targets exactly one account and needs its own immutable preview confirmation.
+This is not authority to send mail during setup or grant external AI/MCP access.
+ReadOnly/Modify or mixed non-C scopes are not silently reinterpreted as C.
+
+Setup receipts now carry bounded `local_profile` routing metadata copied from
+the Core session input. A resumed personal send setup must follow its original
+send-scope terminal handoff, not the legacy read-only continuation. Missing
+metadata from old servers means `none`; unknown values and an explicit flow
+mismatch are rejected. This receipt field is never OAuth or grant authority.
 
 ## Authority and identity
 

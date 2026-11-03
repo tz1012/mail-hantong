@@ -5,6 +5,8 @@ use serde::{
     de::{self, MapAccess, SeqAccess, Visitor},
 };
 use serde_json::{Map, Value};
+#[cfg(any(windows, test))]
+use std::collections::BTreeSet;
 use std::fmt;
 
 // serde_json::Value alone overwrites duplicate object keys. Reject duplicates
@@ -420,6 +422,45 @@ pub fn verify_default_personal(
             Ok(personal_scope(connection.scope(), account, profile))
         })
 }
+/// Returns the bounded union of the current default Google scope accounts and
+/// the selected account. The result is only suitable for an explicit
+/// terminal scope request; it never grants or enumerates ready accounts.
+pub fn default_google_account_union(account: &str) -> Result<Vec<String>, ErrorCode> {
+    validate_google_account_id(account)?;
+    #[cfg(not(windows))]
+    {
+        Err(ErrorCode::CapabilityUnsupported)
+    }
+    #[cfg(windows)]
+    tokio::runtime::Builder::new_current_thread()
+        .enable_io()
+        .enable_time()
+        .build()
+        .map_err(|_| ErrorCode::CoreUnavailable)?
+        .block_on(async {
+            let connection = crate::authenticate_default().await?;
+            account_union(connection.scope(), account)
+        })
+}
+/// Verifies the exact send toolset over the bounded current-account union.
+pub fn verify_default_personal_accounts(account: &str) -> Result<bool, ErrorCode> {
+    validate_google_account_id(account)?;
+    #[cfg(not(windows))]
+    {
+        Err(ErrorCode::CapabilityUnsupported)
+    }
+    #[cfg(windows)]
+    tokio::runtime::Builder::new_current_thread()
+        .enable_io()
+        .enable_time()
+        .build()
+        .map_err(|_| ErrorCode::CoreUnavailable)?
+        .block_on(async {
+            let connection = crate::authenticate_default().await?;
+            let accounts = account_union(connection.scope(), account)?;
+            Ok(send_scope(connection.scope(), &accounts))
+        })
+}
 #[cfg(any(windows, test))]
 fn personal_scope(
     scope: &hantong_contracts::auth::RequestedScope,
@@ -433,6 +474,28 @@ fn personal_scope(
         GoogleLocalProfile::None => return false,
     };
     scope.accounts() == [account] && scope.tools() == tools
+}
+#[cfg(any(windows, test))]
+fn account_union(
+    scope: &hantong_contracts::auth::RequestedScope,
+    selected: &str,
+) -> Result<Vec<String>, ErrorCode> {
+    validate_google_account_id(selected)?;
+    let mut accounts = BTreeSet::new();
+    for account in scope.accounts() {
+        validate_google_account_id(account)?;
+        accounts.insert(account.clone());
+    }
+    accounts.insert(selected.to_owned());
+    if accounts.len() > 128 {
+        return Err(ErrorCode::InvalidInput);
+    }
+    Ok(accounts.into_iter().collect())
+}
+#[cfg(any(windows, test))]
+fn send_scope(scope: &hantong_contracts::auth::RequestedScope, accounts: &[String]) -> bool {
+    scope.accounts() == accounts
+        && scope.tools() == hantong_contracts::auth::default_cli_send_tools()
 }
 #[cfg(any(windows, test))]
 fn readonly_scope(scope: &hantong_contracts::auth::RequestedScope, account: &str) -> bool {
@@ -482,5 +545,39 @@ mod onboarding_tests {
         assert!(!readonly_scope(&s, &b));
         let s = RequestedScope::new(vec![a.clone()], default_cli_folder_tools()).unwrap();
         assert!(!readonly_scope(&s, &a));
+    }
+    #[test]
+    fn acc02_send_probe_uses_bounded_current_account_union() {
+        let a = format!("google_{}", "a".repeat(64));
+        let b = format!("google_{}", "b".repeat(64));
+        let scope = RequestedScope::new(vec![a.clone()], default_cli_send_tools()).unwrap();
+        assert_eq!(
+            account_union(&scope, &b).unwrap(),
+            vec![a.clone(), b.clone()]
+        );
+        assert!(!send_scope(&scope, &account_union(&scope, &b).unwrap()));
+        let scope =
+            RequestedScope::new(vec![a.clone(), b.clone()], default_cli_send_tools()).unwrap();
+        let union = account_union(&scope, &b).unwrap();
+        assert_eq!(union, vec![a, b]);
+        assert!(send_scope(&scope, &union));
+
+        let many = (0..128)
+            .map(|value| format!("google_{value:064x}"))
+            .collect::<Vec<_>>();
+        let scope = RequestedScope::new(many.clone(), default_cli_send_tools()).unwrap();
+        assert_eq!(account_union(&scope, &many[127]).unwrap(), many);
+    }
+    #[test]
+    fn acc02_send_probe_rejects_more_than_128_accounts() {
+        let accounts = (0..129)
+            .map(|value| format!("google_{value:064x}"))
+            .collect::<Vec<_>>();
+        let scope =
+            RequestedScope::new(accounts[..128].to_vec(), default_cli_send_tools()).unwrap();
+        assert_eq!(
+            account_union(&scope, &accounts[128]),
+            Err(ErrorCode::InvalidInput)
+        );
     }
 }

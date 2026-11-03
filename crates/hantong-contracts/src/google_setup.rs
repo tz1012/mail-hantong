@@ -95,6 +95,8 @@ pub struct GoogleSetupReceipt {
     pub login_url: Option<String>,
     pub error_code: Option<ErrorCode>,
     pub client_ticket: Option<Vec<u8>>,
+    /// Session routing metadata only; never authorization evidence.
+    pub local_profile: GoogleLocalProfile,
 }
 impl std::fmt::Debug for GoogleSetupReceipt {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -138,7 +140,7 @@ impl GoogleSetupReceipt {
         Ok(())
     }
     pub fn to_json(&self) -> serde_json::Value {
-        serde_json::json!({"protocol_version":1,"request_id":crate::wire_hex::encode(&self.request_id),"expires_at_utc_ms":self.expires_at_utc_ms,"state":self.state,"account_id":self.account_id,"login_url":self.login_url,"error_code":self.error_code.map(ErrorCode::as_str),"client_ticket":self.client_ticket.as_ref().map(|v| crate::wire_hex::encode(v))})
+        serde_json::json!({"protocol_version":1,"request_id":crate::wire_hex::encode(&self.request_id),"expires_at_utc_ms":self.expires_at_utc_ms,"state":self.state,"account_id":self.account_id,"login_url":self.login_url,"error_code":self.error_code.map(ErrorCode::as_str),"client_ticket":self.client_ticket.as_ref().map(|v| crate::wire_hex::encode(v)),"local_profile":self.local_profile.as_str()})
     }
 }
 

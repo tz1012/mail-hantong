@@ -536,7 +536,7 @@ fn prepare_google_changes_for_pin(
     let base = store
         .load_default_cli_registration()?
         .ok_or(ErrorCode::ClientNotRegistered)?;
-    let target = google_changes_scope(&base.scope, selected)?;
+    let target = google_changes_scope(&base.scope, selected.clone())?;
     if let Some(staged) = store.list_staged_cli_scope_refreshes()?.into_iter().next() {
         if staged.decision_channel() != "terminal_cli"
             || !matches_google_changes(&staged, selected)

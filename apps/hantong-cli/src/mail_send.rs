@@ -112,10 +112,7 @@ fn interactive_send(
         return Err(ErrorCode::HumanStepRequired);
     }
     let personal = if request.account_id().starts_with("google_") {
-        hantong_ipc_client::google_mail::verify_default_personal(
-            request.account_id(),
-            hantong_contracts::google_setup::GoogleLocalProfile::PersonalReadSend,
-        )?
+        hantong_ipc_client::google_mail::verify_default_personal_accounts(request.account_id())?
     } else {
         false
     };

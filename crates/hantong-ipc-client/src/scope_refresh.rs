@@ -20,7 +20,7 @@ pub fn request(id: &str, command: ScopeRefreshCommand) -> Result<Vec<u8>, ErrorC
     {
         return Err(ErrorCode::InvalidInput);
     }
-    let (method, params) = match command {
+    let (method, params) = match &command {
         ScopeRefreshCommand::RequestGoogleSend(accounts) => (
             "registration.scope.google_send.request",
             json!({"protocol_version":1,"account_ids":accounts.accounts()}),
@@ -42,12 +42,12 @@ pub fn request(id: &str, command: ScopeRefreshCommand) -> Result<Vec<u8>, ErrorC
             ("registration.scope.request", json!({"protocol_version":1}))
         }
         ScopeRefreshCommand::Status(refresh_id) => {
-            if refresh_id == [0; 32] {
+            if *refresh_id == [0; 32] {
                 return Err(ErrorCode::InvalidInput);
             }
             (
                 "registration.scope.status",
-                json!({"protocol_version":1,"refresh_id":wire_hex::encode(&refresh_id)}),
+                json!({"protocol_version":1,"refresh_id":wire_hex::encode(refresh_id)}),
             )
         }
     };
@@ -244,7 +244,7 @@ async fn exchange_connected<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Un
     command: ScopeRefreshCommand,
 ) -> Result<ScopeRefreshReceipt, ErrorCode> {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
-    let body = request("scope-refresh-1", command)?;
+    let body = request("scope-refresh-1", command.clone())?;
     pipe.write_u32_le(body.len() as u32)
         .await
         .map_err(|_| ErrorCode::CoreUnavailable)?;

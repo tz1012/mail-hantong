@@ -65,11 +65,12 @@ pub(super) fn scope(
     lang: Lang,
 ) -> Result<hantong_contracts::scope_refresh::ScopeRefreshReceipt, ErrorCode> {
     use hantong_contracts::scope_refresh::{ScopeRefreshCommand as C, ScopeRefreshProgress as P};
-    if !matches!(command, C::Status(_)) {
+    let is_status = matches!(&command, C::Status(_));
+    if !is_status {
         require_interactive()?;
     }
     let receipt = hantong_ipc_client::scope_refresh::exchange(command)?;
-    if !matches!(command, C::Status(_)) && receipt.state() == P::Pending {
+    if !is_status && receipt.state() == P::Pending {
         maybe_review(
             TerminalReviewKind::ScopeRefresh,
             *receipt.refresh_id(),

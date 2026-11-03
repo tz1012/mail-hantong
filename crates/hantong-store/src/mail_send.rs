@@ -211,11 +211,31 @@ mod windows {
             || registration.approved_channel != "google_oauth"
             || registration.read_only
             || registration.profile_epoch != p.profile_epoch
-            || registration.scope.accounts() != [p.request.account_id().to_owned()]
+            || registration.scope.accounts().len() > 128
+            || !registration
+                .scope
+                .accounts()
+                .iter()
+                .any(|account| account == p.request.account_id())
             || registration.scope.tools() != default_cli_send_tools().as_slice()
             || p.request.account_ids() != [p.request.account_id().to_owned()]
         {
             return Ok(false);
+        }
+
+        // A multi-account personal registration is still restricted to the
+        // bounded Google account set created by the OAuth CLI flow.  Do not
+        // let an IMAP/SMTP account or a mixed registration enter the no-Hello
+        // path merely because the selected account itself is Gmail.
+        for account in registration.scope.accounts() {
+            let provider: String = db(tx.query_row(
+                "SELECT provider FROM accounts WHERE account_id=?1",
+                [account.as_str()],
+                |row| row.get(0),
+            ))?;
+            if provider != "gmail" {
+                return Ok(false);
+            }
         }
 
         let (current_version, current_endpoint) = endpoint(tx, p.request.account_id())?;

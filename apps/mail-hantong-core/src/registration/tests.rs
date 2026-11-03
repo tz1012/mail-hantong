@@ -511,6 +511,151 @@ fn acc02_google_reconnect_accepts_only_exact_active_oauth_grants_without_new_sco
     ));
 }
 
+#[test]
+fn acc02_second_read_account_hands_off_without_broadening_personal_oauth_grants() {
+    use hantong_contracts::{auth::*, google_setup::GoogleLocalProfile::*};
+    let mut current = record();
+    current.state = RegistrationState::Active;
+    current.profile_epoch = 2;
+    current.approved_channel = "google_oauth".into();
+    current.scope = RequestedScope::new(vec!["first".into()], default_cli_body_tools()).unwrap();
+    assert!(needs_terminal_account_access(
+        &current,
+        "second",
+        PersonalRead
+    ));
+    assert!(!needs_terminal_account_access(
+        &current,
+        "first",
+        PersonalRead
+    ));
+    assert!(!needs_terminal_account_access(
+        &current,
+        "second",
+        PersonalReadSend
+    ));
+    for channel in ["approval_helper", "terminal_cli", "ai_feature", "unknown"] {
+        current.approved_channel = channel.into();
+        assert!(!needs_terminal_account_access(
+            &current,
+            "second",
+            PersonalRead
+        ));
+    }
+    current.approved_channel = "google_oauth".into();
+    for epoch in [0, 1, 3, u64::MAX] {
+        current.profile_epoch = epoch;
+        assert!(!needs_terminal_account_access(
+            &current,
+            "second",
+            PersonalRead
+        ));
+    }
+    current.profile_epoch = 3;
+    current.scope = RequestedScope::new(
+        vec!["first".into(), "second".into()],
+        default_cli_body_tools(),
+    )
+    .unwrap();
+    current.profile_epoch = 2;
+    assert!(!needs_terminal_account_access(
+        &current,
+        "third",
+        PersonalRead
+    ));
+    current.profile_epoch = 3;
+    assert!(needs_terminal_account_access(
+        &current,
+        "second",
+        PersonalRead
+    ));
+    assert!(needs_terminal_account_access(
+        &current,
+        "third",
+        PersonalRead
+    ));
+    for tools in [default_cli_legacy_tools(), default_cli_send_tools()] {
+        current.scope = RequestedScope::new(vec!["first".into()], tools).unwrap();
+        assert!(!needs_terminal_account_access(
+            &current,
+            "second",
+            PersonalRead
+        ));
+    }
+    current.scope = RequestedScope::new(vec!["first".into()], default_cli_body_tools()).unwrap();
+    for state in [RegistrationState::Provisioning, RegistrationState::Revoked] {
+        current.state = state;
+        assert!(!needs_terminal_account_access(
+            &current,
+            "second",
+            PersonalRead
+        ));
+    }
+    current.state = RegistrationState::Active;
+    current.client_kind = ClientKind::Mcp;
+    assert!(!needs_terminal_account_access(
+        &current,
+        "second",
+        PersonalRead
+    ));
+    current.client_kind = ClientKind::Cli;
+    current.display_label = "other".into();
+    assert!(!needs_terminal_account_access(
+        &current,
+        "second",
+        PersonalRead
+    ));
+}
+
+#[test]
+fn acc02_second_send_account_preserves_exact_send_tools_for_terminal_selection() {
+    use hantong_contracts::{auth::*, google_setup::GoogleLocalProfile::*};
+    let mut current = record();
+    current.state = RegistrationState::Active;
+    current.approved_channel = "google_oauth".into();
+    current.scope = RequestedScope::new(vec!["first".into()], default_cli_send_tools()).unwrap();
+    for epoch in [2, 3] {
+        current.profile_epoch = epoch;
+        assert!(needs_terminal_account_access(
+            &current,
+            "second",
+            PersonalReadSend
+        ));
+        assert!(!needs_terminal_account_access(
+            &current,
+            "second",
+            PersonalRead
+        ));
+    }
+    for epoch in [0, 1, 4, u64::MAX] {
+        current.profile_epoch = epoch;
+        assert!(!needs_terminal_account_access(
+            &current,
+            "second",
+            PersonalReadSend
+        ));
+    }
+    current.profile_epoch = 3;
+    current.scope = RequestedScope::new(
+        vec!["first".into(), "second".into()],
+        default_cli_send_tools(),
+    )
+    .unwrap();
+    assert!(needs_terminal_account_access(
+        &current,
+        "third",
+        PersonalReadSend
+    ));
+    for channel in ["approval_helper", "terminal_cli", "ai_feature"] {
+        current.approved_channel = channel.into();
+        assert!(!needs_terminal_account_access(
+            &current,
+            "third",
+            PersonalReadSend
+        ));
+    }
+}
+
 fn gui_record() -> RegistrationRecord {
     let mut value = record();
     value.client_kind = ClientKind::Gui;

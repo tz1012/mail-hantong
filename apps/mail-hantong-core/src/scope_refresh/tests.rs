@@ -30,7 +30,7 @@ fn gmail_write_scope_selects_exact_accounts_and_never_grants_before_native_appro
         .map(|a| a.account_id())
         .collect::<Vec<_>>();
     let selected = GoogleSendAccounts::parse(&ids).unwrap();
-    assert!(prepare_google_send_for_pin(&f.store, f.pin(), selected).is_err());
+    assert!(prepare_google_send_for_pin(&f.store, f.pin(), selected.clone()).is_err());
     assert!(f.store.load_pending_cli_scope_refresh().unwrap().is_none());
     for account in &ids {
         let binding = f.store.google_account_binding(account).unwrap();
@@ -54,8 +54,8 @@ fn gmail_write_scope_selects_exact_accounts_and_never_grants_before_native_appro
             .unwrap();
     }
     let baseline = f.store.load_default_cli_registration().unwrap().unwrap();
-    let request = prepare_google_send_for_pin(&f.store, f.pin(), selected).unwrap();
-    assert!(matches_google_send(&request, selected));
+    let request = prepare_google_send_for_pin(&f.store, f.pin(), selected.clone()).unwrap();
+    assert!(matches_google_send(&request, selected.clone()));
     assert_eq!(
         f.store.load_default_cli_registration().unwrap().unwrap(),
         baseline
@@ -1404,7 +1404,7 @@ fn sec03_google_mutation_scope_v7_only_changes_selected_account_after_native_act
     f.store.activate_cli_scope_refresh(&staged).unwrap();
     let before = f.store.load_default_cli_registration().unwrap().unwrap();
     let selected = GoogleSendAccounts::parse(&[ids[0].clone()]).unwrap();
-    let change = prepare_google_changes_for_pin(&f.store, f.pin(), selected).unwrap();
+    let change = prepare_google_changes_for_pin(&f.store, f.pin(), selected.clone()).unwrap();
     assert!(matches_google_changes(&change, selected));
     assert_eq!(
         f.store.load_default_cli_registration().unwrap().unwrap(),

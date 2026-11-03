@@ -226,6 +226,7 @@ pub(crate) fn request_with_peer(
         login_url: None,
         error_code: None,
         client_ticket: None,
+        local_profile: input.local_profile,
     };
     sessions.insert(
         id,
@@ -692,6 +693,7 @@ async fn connect(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use hantong_contracts::google_setup::GoogleLocalProfile;
 
     #[test]
     fn acc02_terminal_google_expiry_and_peer_are_checked_before_pending_credentials() {
@@ -751,6 +753,7 @@ mod tests {
                 login_url: None,
                 error_code: None,
                 client_ticket: None,
+                local_profile: GoogleLocalProfile::PersonalRead,
             },
             peer: Some(peer.clone()),
             terminal_captures: new_terminal_captures(),
@@ -851,6 +854,176 @@ mod tests {
         let mut altered = identity.clone();
         altered.subject = "different-subject".into();
         assert!(GoogleBootstrapAuthority::new(&session, &altered, 1).is_ok());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn acc02_second_google_account_preserves_grant_until_terminal_scope_selection() {
+        additional_google_account_case(
+            hantong_contracts::google_setup::GoogleLocalProfile::PersonalRead,
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn acc02_second_send_account_preserves_sending_until_terminal_scope_selection() {
+        additional_google_account_case(
+            hantong_contracts::google_setup::GoogleLocalProfile::PersonalReadSend,
+        );
+    }
+
+    #[cfg(windows)]
+    fn additional_google_account_case(
+        profile: hantong_contracts::google_setup::GoogleLocalProfile,
+    ) {
+        use hantong_contracts::{
+            auth::*, google_setup::GoogleLocalProfile, registration::GoogleReadAccount,
+        };
+        use hantong_store::{CliRegistrationStage, ClientKind, DEFAULT_CLI_LABEL};
+        let mode = profile.access_mode().unwrap();
+        let tools = match profile {
+            GoogleLocalProfile::PersonalRead => default_cli_body_tools(),
+            GoogleLocalProfile::PersonalReadSend => default_cli_send_tools(),
+            GoogleLocalProfile::None => unreachable!(),
+        };
+        struct OwnedKey(Option<hantong_platform::ServerSigningKey>);
+        impl Drop for OwnedKey {
+            fn drop(&mut self) {
+                self.0.take().unwrap().delete().unwrap();
+            }
+        }
+        let root = std::env::temp_dir().join(format!(
+            "hantong-google-add-{}",
+            hantong_contracts::wire_hex::encode(&hantong_platform::random_nonce().unwrap())
+        ));
+        let store = Store::open(root.join("data"), root.join("keys")).unwrap();
+        let selector = hantong_platform::random_nonce().unwrap();
+        let key = OwnedKey(Some(
+            hantong_platform::ServerSigningKey::create(selector).unwrap(),
+        ));
+        let server = key.0.as_ref().unwrap();
+        let public = server.public_key().unwrap();
+        let pin = hantong_platform::sha256(&public).unwrap();
+        store.stage_server_identity(selector).unwrap();
+        store.activate_server_identity(selector, public, 1).unwrap();
+        let mut bindings = Vec::new();
+        for subject in ["additional-fixture-first", "additional-fixture-second"] {
+            let identity = hantong_contracts::google::GoogleIdentity {
+                account_id: format!(
+                    "google_{}",
+                    hantong_contracts::wire_hex::encode(
+                        &hantong_platform::sha256(subject.as_bytes()).unwrap()
+                    )
+                ),
+                subject: subject.into(),
+                email: "synthetic@example.test".into(),
+                access_mode: mode,
+                granted_scopes: mode.required_scopes().iter().map(|s| (*s).into()).collect(),
+            };
+            bindings.push(
+                store
+                    .activate_google_account(
+                        &identity,
+                        "fixture.apps.googleusercontent.com",
+                        0,
+                        None,
+                    )
+                    .unwrap(),
+            );
+        }
+        let first = &bindings[0];
+        let second = &bindings[1];
+        let request = store
+            .create_registration_request(
+                [31; 32],
+                ClientKind::Cli,
+                DEFAULT_CLI_LABEL,
+                &RequestedScope::new(vec![first.account_id.clone()], default_cli_legacy_tools())
+                    .unwrap(),
+            )
+            .unwrap();
+        let id = hantong_platform::registration_id_for_request([31; 32]).unwrap();
+        store
+            .stage_google_oauth_cli_registration(
+                &CliRegistrationStage::new_google_oauth(request, id, public, pin).unwrap(),
+            )
+            .unwrap();
+        store.activate_cli_registration(id, 1, pin).unwrap();
+        let initial = store
+            .create_google_oauth_cli_scope_refresh(
+                [32; 32],
+                RequestedScope::new(vec![first.account_id.clone()], tools.clone()).unwrap(),
+                pin,
+            )
+            .unwrap();
+        let staged = store.stage_cli_scope_refresh(&initial).unwrap();
+        store.activate_cli_scope_refresh(&staged).unwrap();
+        let before = store.load_default_cli_registration().unwrap().unwrap();
+        let permit = || GoogleBootstrapPermit {
+            request_id: [33; 32],
+            account_id: second.account_id.clone(),
+            subject: second.subject.clone(),
+            client_id: second.client_id.clone(),
+            credential_version: second.credential_version,
+            access_mode: second.access_mode,
+            local_profile: profile,
+            peer: hantong_platform::current_peer_context().unwrap(),
+            expires_at_utc_ms: now().unwrap() + 100_000,
+        };
+        crate::registration::complete_google_oauth_registration(&store, server, permit()).unwrap();
+        assert_eq!(
+            store.load_default_cli_registration().unwrap().unwrap(),
+            before
+        );
+        assert!(store.load_pending_cli_scope_refresh().unwrap().is_none());
+        assert_eq!(
+            store.google_account_binding(&first.account_id).unwrap(),
+            *first
+        );
+        assert_eq!(
+            store.google_account_binding(&second.account_id).unwrap(),
+            *second
+        );
+        let selection = match profile {
+            GoogleLocalProfile::PersonalRead => crate::scope_refresh::prepare_google_readonly_add(
+                &store,
+                server,
+                GoogleReadAccount::parse(&second.account_id).unwrap(),
+            ),
+            GoogleLocalProfile::PersonalReadSend => crate::scope_refresh::prepare_google_send(
+                &store,
+                server,
+                hantong_contracts::scope_refresh::GoogleSendAccounts::parse(&[
+                    first.account_id.clone(),
+                    second.account_id.clone(),
+                ])
+                .unwrap(),
+            ),
+            GoogleLocalProfile::None => unreachable!(),
+        }
+        .unwrap();
+        assert_eq!(selection.decision_channel(), "terminal_cli");
+        assert_eq!(selection.target_accounts().len(), 2);
+        assert_eq!(selection.target_tools(), tools);
+        assert_eq!(
+            store.load_default_cli_registration().unwrap().unwrap(),
+            before
+        );
+        // Store transition fixture represents the existing terminal selection;
+        // the OAuth completion above did not stage or activate this grant.
+        let staged = store.stage_cli_scope_refresh(&selection).unwrap();
+        let after = store.activate_cli_scope_refresh(&staged).unwrap();
+        assert_eq!(after.registration_id, before.registration_id);
+        assert_eq!(after.public_key, before.public_key);
+        assert_eq!(after.scope.accounts(), selection.target_accounts());
+        crate::registration::complete_google_oauth_registration(&store, server, permit()).unwrap();
+        assert_eq!(
+            store.load_default_cli_registration().unwrap().unwrap(),
+            after
+        );
+        assert!(store.load_pending_cli_scope_refresh().unwrap().is_none());
+        drop(store);
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[cfg(windows)]
@@ -966,6 +1139,7 @@ mod tests {
             login_url: Some("https://accounts.google.com/o/oauth2/v2/auth?state=synthetic".into()),
             error_code: None,
             client_ticket: None,
+            local_profile: input.local_profile,
         };
         let sessions = RefCell::new(BTreeMap::from([(
             [1; 32],
@@ -992,6 +1166,7 @@ mod tests {
 #[cfg(test)]
 mod deadline_tests {
     use super::*;
+    use hantong_contracts::google_setup::GoogleLocalProfile;
     #[test]
     fn acc02_app_credential_source_never_crosses_client_or_reauthorization_account() {
         let root = std::env::temp_dir().join(format!(
@@ -1074,6 +1249,7 @@ mod deadline_tests {
                     login_url: None,
                     error_code: None,
                     client_ticket: None,
+                    local_profile: GoogleLocalProfile::None,
                 },
                 peer: None,
                 terminal_captures: new_terminal_captures(),

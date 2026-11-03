@@ -84,13 +84,13 @@ where
             return Err(ErrorCode::InvalidInput);
         }
         let command = crate::scope_refresh_wire::parse(request)?;
-        let expected_id = match command {
+        let expected_id = match &command {
             ScopeRefreshCommand::Request
             | ScopeRefreshCommand::RequestGoogleReadOnly(_)
             | ScopeRefreshCommand::AddGoogleReadOnly(_)
             | ScopeRefreshCommand::RequestGoogleSend(_)
             | ScopeRefreshCommand::RequestGoogleChanges(_) => None,
-            ScopeRefreshCommand::Status(id) => Some(id),
+            ScopeRefreshCommand::Status(id) => Some(*id),
         };
         let SetupReceipt::ScopeRefresh(receipt) = callback(SetupCommand::ScopeRefresh(command))?
         else {

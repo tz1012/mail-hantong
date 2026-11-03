@@ -1606,23 +1606,24 @@ impl RegistrationHandle<'_> {
                     let Job::ScopeRefresh(id) = job else {
                         return Err(ErrorCode::RateLimited);
                     };
-                    if let ScopeRefreshCommand::RequestGoogleSend(accounts) = command {
+                    if let ScopeRefreshCommand::RequestGoogleSend(accounts) = &command {
                         let pending = self
                             .state
                             .store
                             .load_cli_scope_refresh(id)?
                             .ok_or(ErrorCode::NotFound)?;
-                        if !crate::scope_refresh::matches_google_send(&pending, accounts) {
+                        if !crate::scope_refresh::matches_google_send(&pending, accounts.clone()) {
                             return Err(ErrorCode::Conflict);
                         }
                     }
-                    if let ScopeRefreshCommand::RequestGoogleChanges(accounts) = command {
+                    if let ScopeRefreshCommand::RequestGoogleChanges(accounts) = &command {
                         let pending = self
                             .state
                             .store
                             .load_cli_scope_refresh(id)?
                             .ok_or(ErrorCode::NotFound)?;
-                        if !crate::scope_refresh::matches_google_changes(&pending, accounts) {
+                        if !crate::scope_refresh::matches_google_changes(&pending, accounts.clone())
+                        {
                             return Err(ErrorCode::Conflict);
                         }
                     }
@@ -2027,6 +2028,12 @@ pub(crate) fn complete_google_oauth_registration(
         if existing_personal_registration_is_current(&record, &account_id, profile) {
             return Ok(());
         }
+        if needs_terminal_account_access(&record, &account_id, profile) {
+            // OAuth connected this exact account. Keep the existing grant and
+            // key unchanged; the foreground CLI must select the additional
+            // account through the existing terminal scope workflow.
+            return Ok(());
+        }
         if !existing_personal_registration_supported(&record, &account_id, profile) {
             return Err(ErrorCode::Conflict);
         }
@@ -2053,6 +2060,33 @@ pub(crate) fn complete_google_oauth_registration(
         store.create_google_oauth_cli_scope_refresh(refresh_id, target, pin)?
     };
     crate::scope_refresh::run_google_oauth_job(store, server, *refresh.refresh_id())
+}
+
+fn needs_terminal_account_access(
+    record: &RegistrationRecord,
+    account: &str,
+    profile: hantong_contracts::google_setup::GoogleLocalProfile,
+) -> bool {
+    use hantong_contracts::{auth::*, google_setup::GoogleLocalProfile};
+    let (tools, single_epoch_valid) = match profile {
+        GoogleLocalProfile::PersonalRead => (default_cli_body_tools(), record.profile_epoch == 2),
+        GoogleLocalProfile::PersonalReadSend => (
+            default_cli_send_tools(),
+            matches!(record.profile_epoch, 2 | 3),
+        ),
+        GoogleLocalProfile::None => return false,
+    };
+    record.client_kind == ClientKind::Cli
+        && record.display_label == DEFAULT_CLI_LABEL
+        && record.state == RegistrationState::Active
+        && record.approved_channel == "google_oauth"
+        && match record.scope.accounts().len() {
+            1 => single_epoch_valid,
+            2..=128 => record.profile_epoch >= 3,
+            _ => false,
+        }
+        && record.scope.tools() == tools
+        && record.scope.accounts() != [account]
 }
 
 fn existing_personal_registration_is_current(

@@ -44,3 +44,16 @@ separate terminal job that never calls native approval APIs. Existing policy,
 durable SendExecute audit, immutable CAS/outbox, expiry, no duplicate provider
 poll, startup recovery and SEND_UNKNOWN no-resend rules remain. No DB migration
 or broader MCP grant is introduced. Tests use synthetic data only.
+## 2026-11-03 multiple sending accounts
+
+The user requires sending from each additional connected account. The exact
+OAuth-origin default CLI C grant may therefore list up to 128 Google accounts
+after the existing explicit terminal scope selection. Personal send eligibility
+requires the selected account to be in that scope; each request still has exactly
+one account. Exact C tools, OAuth provenance, active state, epoch and credential
+version, current selected-account ReadSend mode, draft/content/attachment hash,
+immutable full preview, explicit Send/Cancel, single claim and SEND_UNKNOWN
+no-retry remain unchanged. Adding accounts does not bypass per-message checks.
+Earlier singleton descriptions are superseded only for the registration's
+account-list length. Human security review remains required.
+

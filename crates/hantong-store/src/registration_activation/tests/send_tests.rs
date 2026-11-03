@@ -24,8 +24,12 @@ fn fixture() -> Fixture {
     f
 }
 fn compose(operation: &str, body: &str) -> DraftCreateRequest {
+    compose_for_account("a", operation, body)
+}
+#[cfg(windows)]
+fn compose_for_account(account: &str, operation: &str, body: &str) -> DraftCreateRequest {
     let r = DraftCreateRequest::new(
-        "a",
+        account,
         vec!["recipient@example.test".into()],
         "hello".into(),
         body.into(),
@@ -37,7 +41,7 @@ fn compose(operation: &str, body: &str) -> DraftCreateRequest {
     .unwrap();
     let hash = hantong_platform::sha256_storage_payload(&r.canonical_payload()).unwrap();
     DraftCreateRequest::new(
-        "a",
+        account,
         r.recipients().to_vec(),
         r.subject().into(),
         r.body().into(),
@@ -237,6 +241,38 @@ fn personal_audit(f: &Fixture, p: &PendingSend, id: u8) -> [u8; 32] {
 }
 
 #[cfg(windows)]
+fn personal_pending_for_account(f: &Fixture, account: &str, operation: &str) -> PendingSend {
+    let registration = f.store().load_default_cli_registration().unwrap().unwrap();
+    let draft = compose_for_account(account, operation, "complete body");
+    let draft_id = f
+        .store()
+        .create_mail_draft(
+            registration.registration_id,
+            registration.profile_epoch,
+            &draft,
+        )
+        .unwrap();
+    let request = SendReviewRequest::new(
+        account,
+        draft_id,
+        1,
+        operation,
+        operation,
+        *draft.payload_hash(),
+    )
+    .unwrap();
+    let receipt = f
+        .store()
+        .request_mail_send_review(
+            registration.registration_id,
+            registration.profile_epoch,
+            &request,
+        )
+        .unwrap();
+    f.store().pending_mail_send(receipt.review_id).unwrap()
+}
+
+#[cfg(windows)]
 #[test]
 fn apr01_personal_google_send_allows_initial_and_upgraded_epochs() {
     for (body_first, audit_id) in [(false, 91), (true, 92)] {
@@ -312,6 +348,59 @@ fn apr01_personal_google_send_rejects_wrong_provenance_and_scope() {
         ));
         assert_eq!(count(f.store(), "mail_outbox"), 0);
     }
+}
+
+#[cfg(windows)]
+#[test]
+fn apr01_personal_google_send_allows_each_account_in_bounded_multi_account_scope() {
+    let (f, first_account, old_pending) = personal_fixture(false);
+    let second = personal_identity("personal-send-second-fixture");
+    let second_account = second.account_id.clone();
+    f.store()
+        .activate_google_account(&second, "fixture.apps.googleusercontent.com", 0, None)
+        .unwrap();
+    let target = RequestedScope::new(
+        vec![first_account.clone(), second_account.clone()],
+        hantong_contracts::auth::default_cli_send_tools(),
+    )
+    .unwrap();
+    let refresh = f
+        .store()
+        .create_terminal_cli_scope_refresh([4; 32], target, server_hash())
+        .unwrap();
+    let staged = f.store().stage_cli_scope_refresh(&refresh).unwrap();
+    f.store().activate_cli_scope_refresh(&staged).unwrap();
+
+    // The old review is bound to the pre-expansion epoch and cannot be reused.
+    assert!(
+        !f.store()
+            .can_confirm_personal_mail_send(&old_pending)
+            .unwrap()
+    );
+    let first_pending = personal_pending_for_account(&f, &first_account, "personal-send-first");
+    let second_pending = personal_pending_for_account(&f, &second_account, "personal-send-second");
+
+    assert!(
+        f.store()
+            .can_confirm_personal_mail_send(&first_pending)
+            .unwrap()
+    );
+    assert!(
+        f.store()
+            .can_confirm_personal_mail_send(&second_pending)
+            .unwrap()
+    );
+    assert_eq!(count(f.store(), "mail_outbox"), 0);
+
+    let first_audit = personal_audit(&f, &first_pending, 94);
+    let second_audit = personal_audit(&f, &second_pending, 95);
+    f.store()
+        .claim_personal_mail_send(&first_pending, first_audit)
+        .unwrap();
+    f.store()
+        .claim_personal_mail_send(&second_pending, second_audit)
+        .unwrap();
+    assert_eq!(count(f.store(), "mail_outbox"), 2);
 }
 
 #[cfg(windows)]

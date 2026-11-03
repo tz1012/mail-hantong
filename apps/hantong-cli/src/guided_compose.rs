@@ -1,7 +1,5 @@
 use crate::{Lang, onboarding::Io};
-use hantong_contracts::{
-    ErrorCode, google_setup::GoogleLocalProfile, mail_send::SendReviewRequest, wire_hex,
-};
+use hantong_contracts::{ErrorCode, mail_send::SendReviewRequest, wire_hex};
 use hantong_ipc_client::{google_mail, mail_send as client};
 
 const EN: &str = include_str!("../resources/compose-en.txt");
@@ -170,7 +168,7 @@ struct RealEffects;
 
 impl Effects for RealEffects {
     fn verify(&mut self, account: &str) -> Result<bool, ErrorCode> {
-        google_mail::verify_default_personal(account, GoogleLocalProfile::PersonalReadSend)
+        google_mail::verify_default_personal_accounts(account)
     }
 
     fn create(

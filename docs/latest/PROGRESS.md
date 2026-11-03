@@ -1776,3 +1776,43 @@ v4는 쓰기 전 두 CAS를 owner·명시 조회 GROUP·protected·전체 DACL b
 GitHub Actions [관리자 Windows 시험 41575717730](https://github.com/tz1012/mail-hantong/actions/runs/41575717730), commit `c8bcbc7e1529a4da7bcdebef30ea8b548a0ef90c`에서 **2개 OS × 9개 조건 = 18개 관리자 사례 전부 통과**했다. 각 OS는 primary-group 3종 × 정상 9개 적용/3개 변경 후 주입 실패 원복/실제 v3 실패 백업에 Group 누락을 재현한 뒤 v4 재개 적용을 검사한다. 합성 파일 SHA-256·owner·실제 primary group 보존과 실패 원복을 확인했다. 이전 12-case 관리자 시험도 통과했다. 근거 `target/admin-storage-ci-verification.json`, 전체 로그 SHA-256 `06afb447e45e13e8fed4353c77faa2584e08f5ab1ef6fd008ebcbb0787ec8e70`.
 
 독립 정적 검토에서 추가 차단 요소는 없었다. 검증한 v4를 별도 진단 branch commit `0cde4303a8e00574191356b89fe31f699e46a3bf`로 게시하고 공개 원문의 LF SHA-256 `5df920ea3700729a0af9ca7afa53ef6a6200d912b0f7650b16758cad0e6d9991`이 CI 검증 소스와 동일함을 확인했다. beta.7 패키지/태그는 변경하지 않았다. 사용자 PC v4 적용과 일반 권한 Core 기동·기존 계정 이용은 아직 **미확인**이며 실제 추가 Apply는 수행하지 않았다. **[사람 보안 검토 필요]**.
+
+사용자가 이후 일반 PowerShell의 `hantong_startup stage=storage outcome=failed code=INTERNAL_ERROR`를 보고했다. v4 복구 JSON은 아직 제공되지 않았으므로 v4 적용 성공·실패·미실행 중 어느 상태인지 추정하지 않는다. `Succeeded` 값 또는 직전 JSON만 확인 요청했으며 추가 진단·권한 변경·DB/key 초기화는 요청/실행하지 않았다. v4 성공 여부에 따라 기존 ACL 문제와 후속 저장소 오류를 구분한다.
+
+### 사용자 PC v4 권한 복구 성공 확인
+
+사용자가 직전 실패 출력이 v4가 아니라 v3였음을 확인할 수 있는 JSON을 제공했다. 이후 실제 v4 적용 결과는 **Succeeded=true, ErrorCode=OK, Applied=true, NodesChanged=9, BackupSaved=true**, 백업·복원 privilege 활성화/원복 오류 모두 0이다. 이전 승인 범위의 기존 폴더 2개/파일 7개에 사용자 권한을 추가하고 검증한 실제 결과이며 DB/key 내용·owner 변경이나 초기화는 하지 않았다. 결과의 MissingUserFullControlNodes=9/AdminOwners=9는 변경 전 계획 집계값이며, Applied/NodesChanged와 쓰기 후 검증이 실제 적용 성공을 나타낸다. ACL 백업은 사용자 PC에 보관됐다. 일반 권한 `hantong` 실행 및 기존 계정 표시·이용은 아직 확인되지 않았으므로 전체 계정 복구 완료로 확대 표시하지 않는다. 추가 권한 복구 명령을 반복하지 않고 일반 PowerShell 실행만 확인한다. **[사람 보안 검토 필요]**.
+
+### 2026-11-03 추가 Google 읽기 계정 연결 충돌 수정
+
+사용자 일반 PowerShell에서 Core 기동과 기존 계정 표시가 성공했다. 기존 저장소 접근 복구는 이 범위까지 확인됐으며 실제 메일 조회·발송 성공으로 확대하지 않는다. 이후 다른 Google 계정을 추가하면 OAuth 동의 다음 `CONFLICT`가 발생했다. 개발 PC의 beta.7 설치·실행 화면에서도 같은 오류를 확인했다. 실제 주소·콜백·자격증명은 진행 기록과 시험에 넣지 않는다.
+
+원인은 Google 계정 저장 후 기본 CLI의 단일 계정 OAuth 등록 검사가 새 계정을 거부하는 순서다. 기존 정확한 본문 읽기 범위에서 다른 계정의 PersonalRead OAuth 연결은 기존 등록·키·epoch·권한을 그대로 두고 마친다. CLI는 기존 인증된 readonly probe와 `AddGoogleReadOnly` 터미널 기능 선택을 이어서 수행한다. OAuth만으로 새 계정의 메일 도구 권한을 자동 확장하지 않는다. 쓰기·발송·혼합 범위는 이 예외에 포함하지 않는다. 기존 다계정 읽기 범위의 재연결도 권한을 재발급하지 않는다.
+
+변경: Core 등록 분기/회귀·실제 합성 Store 통합 시험, CLI 연결 후 handoff/시험, 기존 계약의 제한된 예외 명시. Google 응답 HTML의 폐기된 Hello 안내를 터미널로 돌아가는 문구로 바로잡았다. 실제 Google 로그인·동의는 사용자 단계로 유지한다. Core `acc02_second` 2개와 CLI bin 116개 시험이 통과했다. CLI 추가 시험의 Lang 비교 컴파일 오류를 matches!로 수정한 후 통과한 결과다. 전체 통합 검사·배포는 다음 검증 단계이며 실제 추가 계정 재시험 성공은 아직 미확인이다. **[사람 보안 검토 필요]**.
+
+### 실제 C 범위 확인과 사용자 요구 정정 반영
+
+`agent-desktop` 1.1.0의 공식 내장 desktop/platform 지침을 읽고 열린 WindowsTerminal 창과 추가 계정 오류 화면을 직접 확인했다. 기존 창 제어 도구가 놓친 창이 이 도구에서는 관찰됐다. 보호된 기본 프로필의 상호 인증 API로 계정 수·고정 도구 집합 여부만 확인한 결과 실제 설치는 단일 계정 C(읽기·작성·발송)였다. 주소·비밀값·메일·DB 내용을 진단하거나 출력하지 않았다. 따라서 초기 B 전용 수정만으로 실제 오류가 해결됐다고 표시하지 않는다.
+
+사용자는 새 계정도 발송 가능해야 하며 계정 수와 Gmail/일반 메일 종류에 관계없이 조회·읽기·작성·발송·휴지통을 이용해야 한다고 정정했다. 읽기 전용 새 계정과 기존 C를 섞는다는 초기 가정을 폐기했다. 우선 Gmail 연결은 PersonalReadSend와 실제 Google ReadSend 동의를 사용하고, OAuth 직후 기존 C는 그대로 둔 채 보호된 현재 계정 목록과 이번 선택 계정만 합친 `RequestGoogleSend` 터미널 기능 선택으로 이어진다. Core는 선택 계정 전부의 Send capability와 기존 계정·도구 보존을 확인한다. OAuth만으로 계정 grant나 발송을 만들지 않는다. 발송은 매 요청 단일 계정·불변 preview·명시 확인·단일 claim·불확실 결과 무재전송을 유지한다.
+
+임의 4계정 제한은 공통 RequestedScope의 128계정 자원 한도로 맞췄다. 고정 128 배열로 커진 enum은 Clippy가 검출해 bounded Vec로 수정했다. 일반 CLI 발송과 guided compose는 다계정 C probe를 공유하고, Store의 개인 발송 분류도 선택 계정이 명시 범위에 속하는지 확인한다. 중간 보안 검토에서 resume 흐름이 PersonalReadSend를 잃는 문제를 찾아 receipt의 Core 소유 local_profile routing metadata를 추가했다. 이것을 권한 증거로 사용하지 않는다. 실제 Store scope 전이로 과거 epoch 요청 무효화·새 epoch 두 계정 독립 발송 claim을 시험했다.
+
+현재까지 Core 계정 추가 4개, CLI 117개, scope wire 9개, Store 개인 발송 4개와 targeted Clippy가 통과했다(뒤의 receipt 추가 전 결과는 최종 전체 검사와 구분). 전체 검사는 두 번 추적표 stale로 중단됐고 기존 beta.7 런타임은 각 시도 후 같은 경로·인자·해시로 복원했다. source가 안정된 후 추적표 갱신과 전체 검사를 다시 실행한다. 실제 추가 계정 동의 후 성공·새 패키지 배포는 아직 미확인이다.
+
+일반 IMAP/SMTP와 휴지통은 별도 미완료 범위다. 기존 IMAP 조회/본문, SMTP 발송, 터미널 설정 경로는 있으나 기본 메뉴·guided compose는 Gmail 중심이며 일반 IMAP 휴지통 실행이 없다. Gmail 휴지통도 Modify와 별도 도구 grant가 필요하다. 사용자 최신 요구를 통합 기능의 완료 기준으로 유지하고 단순 parser/stub 또는 Gmail 일부 수정만으로 전체 완료라 표시하지 않는다. IMAP 휴지통은 RFC 9051/6851의 UID MOVE와 계정+mailbox+UIDVALIDITY+UID 결속, 명시 Trash 선택, 불확실 결과 무재시도, EXPUNGE/영구 삭제 폴백 금지를 기준으로 계약·구현을 이어간다. **[사람 보안 검토 필요]**.
+
+### 2026-11-03 다계정 공통 관리 기능 통합 중
+
+최신 사용자 요구는 Gmail과 일반 IMAP/SMTP의 모든 추가 계정에 조회·본문·작성·발송·휴지통 이동을 제공하는 것이다. beta.8 계정 추가 수정 검증과 공통 기능 개발은 별도 worktree로 분리했다. 원본 HEAD/index와 기존 미커밋·새 파일 및 실제 계정 저장소를 보존한다.
+
+공통 작업 사본에 명시적 ManageAccounts(1..128개, 합계 ID 12,288 bytes), RequestManage IPC, Core의 기존 계정·도구 보존 전이와 Google Modify/일반 SMTP 설정 선검사를 연결했다. fresh Google permit의 혼합 공급자 연결은 grant를 변경하지 않고 터미널 기능 선택으로 넘긴다. 관리 profile 및 schema26/IMAP 휴지통 ledger/Secrets UID MOVE 경로는 통합 중이다. IMAP은 검증된 wire mailbox 인코딩을 사용하고 MOVE 전 실패와 전송 후 불확실 결과를 구분하며, 전송 후 NO/단절은 Unknown으로 보존하여 자동 반복하지 않는다.
+
+현재 검증: 공통 변경의 대상 rustfmt 및 diff check만 확인했다. 공통 Cargo·합성 서버·Windows migration·CLI/TUI 전체 이용 시험은 아직 미실행이다. beta.8 최종 fullcheck는 기존 바이너리 자동 복원 wrapper 아래 OpenSSL 재빌드 중이며 완료로 기록하지 않는다. 소스 해시의 LF/CRLF 차이를 scripts/traceability.py의 canonical LF v2로 해결했고 raw tests/Corpus bytes는 보존한다. fresh Git archive와 원본의 source hash e6009aca2acdb04eb9efa733a069ed3e4ea7d9d016bbbfa1ce2772355fcf7619 일치를 확인했다. 새 패키지 재생성·공개는 최종 검증 이후 진행한다. 실제 계정 동의·메일 이동/발송은 자동 수행하지 않았다. [사람 보안 검토 필요].
+
+### beta.8 최종 전체 검사와 재현 가능한 패키지
+
+`python -X utf8 scripts/check_all.py` 최종 exit 0: Rust 1,763개/31 suites, Docs 29개, Build 113개, 합계 1,905개. 실패·ignored 0. fmt·Clippy(-D warnings)·전체 build/test·요건/아키텍처/추적표 검사가 통과했다. source hash e6009aca2acdb04eb9efa733a069ed3e4ea7d9d016bbbfa1ce2772355fcf7619, 전체 로그 SHA-256 1c520f5ba1db69803d6d0d8d182c37ea0f53a4151059afa110367e6a526c2ce7, 근거 target/beta8-verification.json. 기존 설치 beta.7 Core를 같은 경로·인자·실행 파일 SHA로 복원했다(PID 27348). 검증 중 실제 계정·메일·키 내용을 읽거나 변경하지 않았다.
+
+새 source hash 기준 beta.8 release build와 패키지를 재생성했다. ZIP SHA-256 cb5e9c94b5d3168da4325004c48f551e8cc51cfd501e33c0e6ed56eb04b6a667, 25,143,465 bytes, manifest 파일 261개를 검증했다. 승인된 beta.3 publisher 자산과 동일하며 계정 DB/profile은 포함하지 않는다. 최초 미게시 패키지는 target/beta8-initial-package에 보존했다. 별도 설치·스모크·공개 배포는 이어서 검증한다. 일반 IMAP/SMTP 관리·휴지통 확장(schema26)은 별도 공통 worktree이며 이 패키지에 포함하지 않았다. [사람 보안 검토 필요].

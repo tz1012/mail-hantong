@@ -12,6 +12,31 @@ import traceability
 
 
 class TraceabilityTests(unittest.TestCase):
+    def test_M004_source_hash_matches_git_text_line_endings(self):
+        temp, root = self.fixture(); self.addCleanup(temp.cleanup)
+        source = root / "crates/a/src/main.rs"
+        source.write_bytes(b"fn main() {}\r\n")
+        windows_hash = traceability.source_hash(root)
+        source.write_bytes(b"fn main() {}\n")
+        self.assertEqual(windows_hash, traceability.source_hash(root))
+
+    def test_M004_source_hash_preserves_raw_mail_corpus_bytes(self):
+        temp, root = self.fixture(); self.addCleanup(temp.cleanup)
+        corpus = root / "tests/Corpus/message.eml"
+        corpus.parent.mkdir(parents=True)
+        corpus.write_bytes(b"Subject: sample\r\n\r\nbody\r\n")
+        original = traceability.source_hash(root)
+        corpus.write_bytes(b"Subject: sample\n\nbody\n")
+        self.assertNotEqual(original, traceability.source_hash(root))
+
+    def test_M004_source_hash_binds_compiled_html_resources(self):
+        temp, root = self.fixture(); self.addCleanup(temp.cleanup)
+        resource = root / "crates/a/callback.html"
+        resource.write_bytes(b"<p>Return to terminal</p>\n")
+        original = traceability.source_hash(root)
+        resource.write_bytes(b"<p>Changed</p>\n")
+        self.assertNotEqual(original, traceability.source_hash(root))
+
     def fixture(self):
         temp = tempfile.TemporaryDirectory()
         root = Path(temp.name)

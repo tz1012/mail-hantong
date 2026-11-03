@@ -5,7 +5,7 @@ use hantong_contracts::{
     google_mail::GoogleMailRequest,
     google_setup::{GoogleLocalProfile, GoogleSetupCommand, GoogleSetupInput},
     registration::{GoogleReadAccount, RegistrationCommand, RegistrationProgress},
-    scope_refresh::{ScopeRefreshCommand, ScopeRefreshProgress},
+    scope_refresh::{GoogleSendAccounts, ScopeRefreshCommand, ScopeRefreshProgress},
     wire_hex,
 };
 use serde_json::{Value, json};
@@ -367,6 +367,38 @@ fn wait_refresh(account: GoogleReadAccount, lang: Lang) -> Result<(), ErrorCode>
         ))?;
     }
 }
+fn wait_google_send(account: GoogleReadAccount, lang: Lang) -> Result<Value, ErrorCode> {
+    println!("{}", resource(lang, "refresh"));
+    let accounts =
+        hantong_ipc_client::google_mail::default_google_account_union(&account.account_id())?;
+    let accounts = GoogleSendAccounts::parse(&accounts)?;
+    let mut r =
+        super::terminal_workflows::scope(ScopeRefreshCommand::RequestGoogleSend(accounts), lang)?;
+    show_deadline(lang, r.expires_at_utc_ms())?;
+    let until = Instant::now() + Duration::from_secs(300);
+    loop {
+        match r.state() {
+            ScopeRefreshProgress::Ready => {
+                println!("{}", resource(lang, "guided_ready"));
+                return Ok(json!({
+                    "state":"ready",
+                    "account_id":account.account_id()
+                }));
+            }
+            ScopeRefreshProgress::Denied => return Err(ErrorCode::ApprovalDenied),
+            ScopeRefreshProgress::Expired => return Err(ErrorCode::ApprovalExpired),
+            ScopeRefreshProgress::Interrupted => return Err(ErrorCode::AuthRequired),
+            _ => {}
+        }
+        if Instant::now() >= until {
+            return Err(ErrorCode::ApprovalExpired);
+        }
+        std::thread::sleep(Duration::from_secs(1));
+        r = hantong_ipc_client::scope_refresh::exchange(ScopeRefreshCommand::Status(
+            *r.refresh_id(),
+        ))?;
+    }
+}
 
 // Each effect stays behind its existing authenticated/native approval boundary.
 fn ensure_access(
@@ -423,6 +455,41 @@ fn continue_account_inner(
         println!("{}", resource(lang, "guided_ready"));
     }
     Ok(json!({"state":"ready","account_id":account.account_id()}))
+}
+fn finish_personal_login(
+    account: GoogleReadAccount,
+    profile: GoogleLocalProfile,
+    lang: Lang,
+    details: bool,
+    verify: &mut impl FnMut(&str, GoogleLocalProfile) -> Result<bool, ErrorCode>,
+    fallback: &mut impl FnMut(GoogleReadAccount, Lang, bool) -> Result<Value, ErrorCode>,
+) -> Result<Value, ErrorCode> {
+    if verify(&account.account_id(), profile)? {
+        println!("{}", resource(lang, "guided_ready"));
+        return Ok(json!({"state":"ready","account_id":account.account_id()}));
+    }
+    if matches!(
+        profile,
+        GoogleLocalProfile::PersonalRead | GoogleLocalProfile::PersonalReadSend
+    ) {
+        return fallback(account, lang, details);
+    }
+    Err(ErrorCode::ScopeDenied)
+}
+fn resume_flow(
+    flow: LoginFlow,
+    receipt_profile: GoogleLocalProfile,
+) -> Result<LoginFlow, ErrorCode> {
+    match flow {
+        LoginFlow::Advanced if receipt_profile == GoogleLocalProfile::None => Ok(flow),
+        LoginFlow::Advanced => Ok(LoginFlow::Personal(receipt_profile)),
+        LoginFlow::Personal(expected)
+            if receipt_profile == GoogleLocalProfile::None || receipt_profile == expected =>
+        {
+            Ok(flow)
+        }
+        LoginFlow::Personal(_) => Err(ErrorCode::Conflict),
+    }
 }
 fn login(command: GoogleSetupCommand, lang: Lang) -> Result<Value, ErrorCode> {
     login_inner(command, lang, true, LoginFlow::Advanced)
@@ -482,15 +549,28 @@ fn login_inner(
         ))?;
     }
     let account = GoogleReadAccount::parse(&receipt.account_id.ok_or(ErrorCode::InternalError)?)?;
+    let flow = resume_flow(flow, receipt.local_profile)?;
     if let LoginFlow::Personal(profile) = flow {
-        if !hantong_ipc_client::google_mail::verify_default_personal(
-            &account.account_id(),
+        return finish_personal_login(
+            account,
             profile,
-        )? {
-            return Err(ErrorCode::ScopeDenied);
-        }
-        println!("{}", resource(lang, "guided_ready"));
-        return Ok(json!({"state":"ready","account_id":account.account_id()}));
+            lang,
+            details,
+            &mut |account, profile| {
+                if profile == GoogleLocalProfile::PersonalReadSend {
+                    hantong_ipc_client::google_mail::verify_default_personal_accounts(account)
+                } else {
+                    hantong_ipc_client::google_mail::verify_default_personal(account, profile)
+                }
+            },
+            &mut |account, lang, details| {
+                if profile == GoogleLocalProfile::PersonalRead {
+                    continue_account_inner(account, lang, details)
+                } else {
+                    wait_google_send(account, lang)
+                }
+            },
+        );
     }
     continue_account_inner(account, lang, details)
 }
@@ -550,10 +630,7 @@ pub(super) fn continue_guided(account: &str, lang: Lang) -> Result<(), ErrorCode
 
 pub(super) fn enable_send_guided(account: &str, lang: Lang) -> Result<(), ErrorCode> {
     let account = GoogleReadAccount::parse(account)?;
-    if hantong_ipc_client::google_mail::verify_default_personal(
-        &account.account_id(),
-        GoogleLocalProfile::PersonalReadSend,
-    )? {
+    if hantong_ipc_client::google_mail::verify_default_personal_accounts(&account.account_id())? {
         println!("{}", resource(lang, "guided_ready"));
         return Ok(());
     }
@@ -863,6 +940,95 @@ mod tests {
         );
     }
     #[test]
+    fn acc02_google_resume_restores_send_profile_from_receipt_metadata() {
+        assert_eq!(
+            resume_flow(LoginFlow::Advanced, GoogleLocalProfile::PersonalReadSend),
+            Ok(LoginFlow::Personal(GoogleLocalProfile::PersonalReadSend))
+        );
+        assert_eq!(
+            resume_flow(
+                LoginFlow::Personal(GoogleLocalProfile::PersonalReadSend),
+                GoogleLocalProfile::PersonalRead
+            ),
+            Err(ErrorCode::Conflict)
+        );
+        assert_eq!(
+            resume_flow(LoginFlow::Advanced, GoogleLocalProfile::None),
+            Ok(LoginFlow::Advanced)
+        );
+    }
+    #[test]
+    fn acc02_personal_read_missing_exact_scope_hands_off_to_readonly_access_once() {
+        let account = GoogleReadAccount::parse(&format!("google_{}", "a".repeat(64))).unwrap();
+        let expected_account_id = account.account_id().to_owned();
+        let mut fallback_calls = 0;
+        let value = finish_personal_login(
+            account,
+            GoogleLocalProfile::PersonalRead,
+            Lang::Ko,
+            false,
+            &mut |_, _| Ok(false),
+            &mut |selected, lang, details| {
+                fallback_calls += 1;
+                assert_eq!(selected.account_id(), expected_account_id);
+                assert!(matches!(lang, Lang::Ko));
+                assert!(!details);
+                Ok(json!({"state":"ready","account_id":selected.account_id()}))
+            },
+        )
+        .unwrap();
+        assert_eq!(fallback_calls, 1);
+        assert_eq!(value["state"], "ready");
+    }
+    #[test]
+    fn acc02_personal_read_exact_scope_does_not_handoff() {
+        let account = GoogleReadAccount::parse(&format!("google_{}", "a".repeat(64))).unwrap();
+        let value = finish_personal_login(
+            account,
+            GoogleLocalProfile::PersonalRead,
+            Lang::En,
+            false,
+            &mut |_, _| Ok(true),
+            &mut |_, _, _| panic!("exact personal read must not add a scope"),
+        )
+        .unwrap();
+        assert_eq!(value["state"], "ready");
+    }
+    #[test]
+    fn acc02_personal_read_send_missing_scope_hands_off_once() {
+        let account = GoogleReadAccount::parse(&format!("google_{}", "a".repeat(64))).unwrap();
+        let mut fallback_calls = 0;
+        let value = finish_personal_login(
+            account,
+            GoogleLocalProfile::PersonalReadSend,
+            Lang::En,
+            false,
+            &mut |_, _| Ok(false),
+            &mut |selected, _, _| {
+                fallback_calls += 1;
+                Ok(json!({"state":"ready","account_id":selected.account_id()}))
+            },
+        )
+        .unwrap();
+        assert_eq!(fallback_calls, 1);
+        assert_eq!(value["state"], "ready");
+    }
+    #[test]
+    fn acc02_personal_login_auth_error_does_not_handoff() {
+        let account = GoogleReadAccount::parse(&format!("google_{}", "a".repeat(64))).unwrap();
+        assert_eq!(
+            finish_personal_login(
+                account,
+                GoogleLocalProfile::PersonalRead,
+                Lang::En,
+                false,
+                &mut |_, _| Err(ErrorCode::AuthRequired),
+                &mut |_, _, _| panic!("auth errors must not retry through scope handoff"),
+            ),
+            Err(ErrorCode::AuthRequired)
+        );
+    }
+    #[test]
     fn acc03_cli_gmail_requires_account_rejects_duplicate_extra_and_bad_numbers() {
         let account = format!("google_{}", "a".repeat(64));
         assert!(parse(&c(&["gmail", "list"]), &[]).is_err());
@@ -1070,6 +1236,47 @@ mod onboarding_tests {
             );
             assert_eq!(calls, 1);
         }
+    }
+    #[test]
+    fn acc02_personal_read_fallback_adds_selected_account_once_after_readonly_probe() {
+        let selected = GoogleReadAccount::parse(&format!("google_{}", "a".repeat(64))).unwrap();
+        let selected_id = selected.account_id().to_owned();
+        let existing_id = format!("google_{}", "b".repeat(64));
+        let grants = RefCell::new(vec![existing_id.clone()]);
+        let probes = RefCell::new(0usize);
+        let adds = RefCell::new(0usize);
+        let published = RefCell::new(None::<String>);
+        let value = finish_personal_login(
+            selected,
+            GoogleLocalProfile::PersonalRead,
+            Lang::En,
+            false,
+            &mut |_, _| Ok(false),
+            &mut |account, _, _| {
+                ensure_access(
+                    account,
+                    &mut |id| {
+                        *probes.borrow_mut() += 1;
+                        Ok(grants.borrow().iter().any(|grant| grant == id))
+                    },
+                    &mut |_| panic!("an existing client must not register again"),
+                    &mut |chosen| {
+                        assert_eq!(*grants.borrow(), vec![existing_id.clone()]);
+                        *adds.borrow_mut() += 1;
+                        grants.borrow_mut().push(chosen.account_id());
+                        *published.borrow_mut() = Some(chosen.account_id());
+                        Ok(())
+                    },
+                )?;
+                Ok(json!({"state":"ready","account_id":account.account_id()}))
+            },
+        )
+        .unwrap();
+        assert_eq!(value["account_id"], selected_id.as_str());
+        assert_eq!(*probes.borrow(), 3);
+        assert_eq!(*adds.borrow(), 1);
+        assert_eq!(*published.borrow(), Some(selected_id.clone()));
+        assert_eq!(*grants.borrow(), vec![existing_id, selected_id]);
     }
     #[test]
     fn acc02_onboarding_resume_modes_are_exclusive_and_noninteractive_guarded() {
