@@ -46,8 +46,9 @@ $extra=@'
         try{var sa=new SecurityAttributes{Length=(uint)Marshal.SizeOf(typeof(SecurityAttributes)),Descriptor=sd};if(!CreateDirectoryW(path,ref sa))throw new InvalidOperationException("FIXTURE_DIR_FAILED");}finally{LocalFree(sd);}
     }
 '@
-$native=$native.Replace("`n}`n",("`n"+$extra+"`n}`n"))
+$native=$native.Substring(0,$native.LastIndexOf('}'))+"`n"+$extra+"`n}"
 Add-Type -TypeDefinition $native
+if($null -eq [HantongStorageAdminFixtureNative].GetMethod('CreateFixture')){throw 'Fixture native helper missing'}
 $backupToken=[IntPtr]::Zero;$restoreToken=[IntPtr]::Zero;$elevated=$false;$enabled=$false;$known=$false;$errorCode=0
 $restoreEnabled=$false;$restoreKnown=$false;$restoreError=0
 $old=[HantongStorageAdminFixtureNative]::EnableBackup('SeBackupPrivilege',[ref]$backupToken,[ref]$elevated,[ref]$enabled,[ref]$known,[ref]$errorCode)
