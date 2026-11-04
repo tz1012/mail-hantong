@@ -8,9 +8,12 @@ BASE = 'https://tz1012.github.io/mail-hantong/'
 IMAGE = BASE+'assets/hantong-share-v1.png'
 class Page(HTMLParser):
     def __init__(self):
-        super().__init__(); self.meta={}; self.links=[]; self.images=[]
+        super().__init__(); self.meta={}; self.links=[]; self.images=[]; self.ids=set()
     def handle_starttag(self,tag,attrs):
         attrs=dict(attrs)
+        if attrs.get('id'):
+            assert attrs['id'] not in self.ids, f'Duplicate ID: {attrs["id"]}'
+            self.ids.add(attrs['id'])
         if tag=='meta':
             key=attrs.get('property',attrs.get('name'))
             if key:
@@ -29,8 +32,12 @@ for name,url in [('index.html',BASE),('download.html',BASE+'download.html')]:
     assert page.meta['twitter:card']=='summary_large_image'
     assert any(img.get('src')=='assets/hantong-tui-demo-v1.png' and img.get('alt') for img in page.images)
     for link in page.links:
+        if link.startswith('#'): assert link[1:] in page.ids, link
         if link and not link.startswith(('https:','mailto:','#')):
             assert (ROOT/link.split('#')[0]).is_file(),link
+            if '#' in link:
+                target=Page(); target.feed((ROOT/link.split('#')[0]).read_text(encoding='utf8'))
+                assert link.split('#',1)[1] in target.ids,link
     if name=='download.html':
         assert len([link for link in page.links if '/releases/download/' in link and link.endswith(('.zip','.tar.gz'))])==4
 
