@@ -91,5 +91,13 @@ These are startup, storage and synthetic-provider checks. Real Unix provider
 login/send/Trash and AI conversation were not tested. Desktop Secret Service
 remains unverified, macOS SSH vault is unsupported, and human security review
 is pending. macOS signing/notarization is not claimed. Source metadata is
-documented in [UNIX-INSTALL.md](UNIX-INSTALL.md); final packaging/publication
-remains in progress, so this document uses release-candidate language.
+documented in [UNIX-INSTALL.md](UNIX-INSTALL.md).
+
+beta.22 was published from commit `5eb5c93b63549bf8c01b668bd6d3a058e90ff066`.
+All ten public assets were downloaded again without authentication and matched
+the release checksums. The public Linux installer and interactive
+`hantong update` both completed successfully in an isolated installation,
+preserving synthetic data and unknown files. Windows final-package isolated
+install/uninstall preserved the real installation pointer, User PATH and data.
+The website deployment `41804688608` succeeded. These publication checks do not
+replace the outstanding real-provider and human-security-review gates above.
