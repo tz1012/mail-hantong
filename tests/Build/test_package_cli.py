@@ -317,6 +317,16 @@ class PackageCliTests(unittest.TestCase):
         entry = json.loads(inventory)["packages"][0]
         self.assertEqual(entry["license_source"], "pinned-upstream-fallback")
         self.assertEqual(entry["license_files"][0]["revision"], revision)
+        # Older Cargo root crates omit path_in_vcs; they cannot match a member.
+        vcs_path.write_text(json.dumps({"git": {"sha1": revision}}), encoding="utf-8")
+        with self.assertRaisesRegex(package.PackageError, "does not match the locked crate"):
+            collect()
+        root_index = copy.deepcopy(index)
+        root_index["packages"][0]["path_in_vcs"] = ""
+        index_path.write_bytes(package.json_bytes(root_index))
+        self.assertEqual(list(collect()[0].values()), [content])
+        index_path.write_bytes(package.json_bytes(index))
+        vcs_path.write_text(json.dumps(vcs), encoding="utf-8")
         mutations = [
             lambda x: x["packages"][0].update(version="1.0.1"),
             lambda x: x["packages"].append(copy.deepcopy(x["packages"][0])),

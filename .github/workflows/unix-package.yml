@@ -46,12 +46,18 @@ jobs:
           rustup toolchain install 1.95.0 --profile minimal
           rustup target add ${{ matrix.target }} --toolchain 1.95.0
           rustup default 1.95.0
+          rustup component add clippy --toolchain 1.95.0
       - name: Fetch locked dependencies
         run: cargo fetch --locked
       - name: Verify source traceability and license provenance
         run: |
           python -X utf8 scripts/traceability.py --check
           test -s packaging/licenses/index.json
+      - name: Check native Unix integration
+        run: |
+          cargo clippy --workspace --all-targets --locked --offline -- -D warnings
+          cargo test -p mail-hantong-core --bin mail-hantong-core --locked --offline unix_core_runtime -- --test-threads=1
+          cargo test -p hantong-secrets --lib --locked --offline terminal_secret_linux_stage_is_encrypted_and_cross_process_readable
       - name: Download and isolate reviewed publisher asset
         env:
           PUBLISHER_URL: https://github.com/tz1012/mail-hantong/releases/download/v0.1.0-beta.21/mail-hantong-cli-0.1.0-beta.21-windows-x86_64.zip
@@ -63,12 +69,19 @@ jobs:
             --connect-timeout 15 --max-time 300 --max-filesize 268435456 "$PUBLISHER_URL" --output "$archive"
           python -X utf8 scripts/prepare_public_publisher.py \
             --archive "$archive" --output "$asset" --expected-sha256 "$PUBLISHER_SHA256"
+      - name: Run synthetic Unix installer checks
+        run: python -X utf8 scripts/test_linux_installer.py
       - name: Build and package native Unix artifact
         run: |
           python -X utf8 scripts/package_unix.py \
             --version "$PACKAGE_VERSION" \
             --output-dir "$RUNNER_TEMP/artifacts" \
             --publisher-config "$RUNNER_TEMP/google-desktop.json"
+      - name: Smoke test the installed macOS product
+        run: |
+          python -X utf8 scripts/test_macos_installed_product.py \
+            --package-dir "$RUNNER_TEMP/artifacts/$PACKAGE_VERSION" \
+            --version "$PACKAGE_VERSION"
       - name: Upload package artifact
         uses: actions/upload-artifact@v7.0.2
         with:

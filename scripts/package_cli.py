@@ -192,7 +192,7 @@ def upstream_licenses(package: dict, checksum: str, directory: Path, fallback_ro
                 or entry["license_expression"] != package.get("license") or repository != package.get("repository")
                 or not re.fullmatch(r"https://github.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repository)
                 or not re.fullmatch(r"[0-9a-f]{40}", revision) or vcs["git"]["sha1"] != revision
-                or vcs["git"].get("dirty", False) is not False or vcs["path_in_vcs"] != entry["path_in_vcs"]):
+                or vcs["git"].get("dirty", False) is not False or vcs.get("path_in_vcs", "") != entry["path_in_vcs"]):
             raise PackageError(f"{name} {version}: upstream license provenance does not match the locked crate")
         if not isinstance(entry["files"], list) or not 1 <= len(entry["files"]) <= 8:
             raise PackageError("upstream license file list is invalid")

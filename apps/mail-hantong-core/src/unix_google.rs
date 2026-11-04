@@ -83,7 +83,7 @@ impl State {
         if !hantong_platform::unix_peer::peer_matches_current_image(&peer)? {
             return Err(ErrorCode::ScopeDenied);
         }
-        if input.local_profile == GoogleLocalProfile::None {
+        if input.local_profile == GoogleLocalProfile::None || input.client_id.is_some() {
             return Err(ErrorCode::CapabilityUnsupported);
         }
         if self.sessions.borrow().len() >= MAX_SESSIONS || self.queue.borrow().len() >= MAX_QUEUE {

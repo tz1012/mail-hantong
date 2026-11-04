@@ -95,6 +95,20 @@ async fn cli07_unix_bootstrap_registration_then_authenticated_accounts() {
     );
     tokio::pin!(server);
     let client = async {
+        let custom_client = rpc(
+            "custom-client",
+            "setup.google.request",
+            json!({
+                "protocol_version":1,"client_id":"123-fixture.apps.googleusercontent.com",
+                "display_name":null,"reauthorize_account":null,"force_consent":false,
+                "access_mode":"readonly","local_profile":"personal_read"
+            }),
+        )
+        .await;
+        assert_eq!(
+            custom_client["error"]["code"], "CAPABILITY_UNSUPPORTED",
+            "an explicit custom client must never silently use the bundled publisher"
+        );
         let before = rpc(
             "before",
             "mail.accounts.list",

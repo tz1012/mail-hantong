@@ -103,6 +103,7 @@ async fn serve_connections(
                 };
                 let policy = &policy;
                 let brokers = &brokers;
+                let shutdown = shutdown.clone();
                 active.push(Box::pin(async move {
                     // Malformed/disconnected clients cannot stop the daemon.
                     let _ = tokio::time::timeout(Duration::from_secs(40), async {

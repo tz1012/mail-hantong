@@ -48,7 +48,14 @@ while IFS= read -r member; do
 done < "$temporary/members"
 tar -tvzf "$temporary/$asset" > "$temporary/details"
 [ -z "$(cut -c1 "$temporary/details" | grep -vE '^[-d]$' || true)" ] || fail 'archive contains links or special files'
-awk '{sum+=$3} END {exit(sum>1073741824)}' "$temporary/details" || fail 'archive expands beyond its size limit'
+# GNU tar prints the member size in field 3; BSD tar (macOS) includes the
+# owner and group separately, so its size is field 5.  Keep the expansion
+# bound effective on both native formats.
+if [ "$os" = Darwin ]; then
+    awk '{sum+=$5} END {exit(sum>1073741824)}' "$temporary/details" || fail 'archive expands beyond its size limit'
+else
+    awk '{sum+=$3} END {exit(sum>1073741824)}' "$temporary/details" || fail 'archive expands beyond its size limit'
+fi
 mkdir "$temporary/package"
 if [ "$os" = Linux ]; then
     tar -xzf "$temporary/$asset" --no-same-owner --no-same-permissions -C "$temporary/package"

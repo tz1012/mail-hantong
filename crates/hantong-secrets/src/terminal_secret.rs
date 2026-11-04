@@ -1126,7 +1126,9 @@ mod tests {
         std::fs::remove_dir(root).unwrap();
     }
 
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    // This end-to-end credential fixture uses the Linux-only isolated vault;
+    // the cross-process encrypted stage above runs on both Unix targets.
+    #[cfg(target_os = "linux")]
     #[test]
     fn terminal_secret_linux_wrong_binding_preserves_stage_and_replay_is_rejected() {
         use hantong_domain::mail_connection::MailConnectionConfig;

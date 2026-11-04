@@ -104,6 +104,96 @@
       "repository": "https://github.com/str4d/rage",
       "revision": "f6383f367e9aa514a3b5fbce7feede08a425d647",
       "version": "0.12.0"
+    },
+    {
+      "files": [
+        {
+          "git_blob_sha1": "31aa79387f27e730e33d871925e152e35e428031",
+          "path": "LICENSE-MIT",
+          "sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3",
+          "upstream_path": "intl_pluralrules/LICENSE-MIT",
+          "url": "https://github.com/zbraniecki/pluralrules/blob/d0715d5b7cca72e228d6e6c4de154bd30dfdd06a/intl_pluralrules/LICENSE-MIT"
+        },
+        {
+          "git_blob_sha1": "1b5ec8b78e237b5c3b3d812a7c0a6589d0f7161d",
+          "path": "LICENSE-APACHE",
+          "sha256": "62c7a1e35f56406896d7aa7ca52d0cc0d272ac022b5d2796e7d6905db8a3636a",
+          "upstream_path": "intl_pluralrules/LICENSE-APACHE",
+          "url": "https://github.com/zbraniecki/pluralrules/blob/d0715d5b7cca72e228d6e6c4de154bd30dfdd06a/intl_pluralrules/LICENSE-APACHE"
+        }
+      ],
+      "license_expression": "Apache-2.0/MIT",
+      "locked_checksum": "078ea7b7c29a2b4df841a7f6ac8775ff6074020c6776d48491ce2268e068f972",
+      "name": "intl_pluralrules",
+      "path_in_vcs": "intl_pluralrules",
+      "registry_source": "registry+https://github.com/rust-lang/crates.io-index",
+      "repository": "https://github.com/zbraniecki/pluralrules",
+      "revision": "d0715d5b7cca72e228d6e6c4de154bd30dfdd06a",
+      "version": "7.0.2"
+    },
+    {
+      "files": [
+        {
+          "git_blob_sha1": "4434eb39e66b30090dab13a8587e734b94a07b29",
+          "path": "LICENSE",
+          "sha256": "0ba20a4b5d8188a85014c5f6d52b5407aec2077986c05f6ba686f9899b767b95",
+          "upstream_path": "README.md",
+          "url": "https://github.com/TheOnlyMrCat/io_tee/blob/8a7adecebf3429cbc58a0368751d1851dfaf58ed/README.md"
+        }
+      ],
+      "license_expression": "MIT OR Apache-2.0",
+      "locked_checksum": "4b3f7cef34251886990511df1c61443aa928499d598a9473929ab5a90a527304",
+      "name": "io_tee",
+      "path_in_vcs": "",
+      "registry_source": "registry+https://github.com/rust-lang/crates.io-index",
+      "repository": "https://github.com/TheOnlyMrCat/io_tee",
+      "revision": "8a7adecebf3429cbc58a0368751d1851dfaf58ed",
+      "version": "0.1.1"
+    },
+    {
+      "files": [
+        {
+          "git_blob_sha1": "d9e66dc90589bbf32cdf66d1431c03434d65bdf3",
+          "path": "LICENSE-MIT",
+          "sha256": "d09216dc1ea5f273997667935a8d6514d80f00b89fb6954ecc3a43e0a6e360de",
+          "upstream_path": "LICENSES/MIT.txt",
+          "url": "https://github.com/rust-bakery/cookie-factory/blob/d36b805dbd7dd65f2df947235c5bcc573afe2c76/LICENSES/MIT.txt"
+        }
+      ],
+      "license_expression": "MIT",
+      "locked_checksum": "9885fa71e26b8ab7855e2ec7cae6e9b380edff76cd052e07c683a0319d51b3a2",
+      "name": "cookie-factory",
+      "path_in_vcs": "",
+      "registry_source": "registry+https://github.com/rust-lang/crates.io-index",
+      "repository": "https://github.com/rust-bakery/cookie-factory",
+      "revision": "d36b805dbd7dd65f2df947235c5bcc573afe2c76",
+      "version": "0.3.3"
+    },
+    {
+      "files": [
+        {
+          "git_blob_sha1": "00ec7a238dcd2fb765a6abc64ae43d80f0514140",
+          "path": "LICENSE-MIT",
+          "sha256": "016fcc02048817d628b04b140c54db290fd9d29a5e8a55b77871194e810716ac",
+          "upstream_path": "LICENSE-MIT",
+          "url": "https://github.com/projectfluent/fluent-langneg-rs/blob/7fdc590466ea63ca2367ac10fb1b881fe561f1a8/LICENSE-MIT"
+        },
+        {
+          "git_blob_sha1": "8dada3edaf50dbc082c9a125058f25def75e625a",
+          "path": "LICENSE-APACHE",
+          "sha256": "b40930bbcf80744c86c46a12bc9da056641d722716c378f5659b9e555ef833e1",
+          "upstream_path": "LICENSE-APACHE",
+          "url": "https://github.com/projectfluent/fluent-langneg-rs/blob/7fdc590466ea63ca2367ac10fb1b881fe561f1a8/LICENSE-APACHE"
+        }
+      ],
+      "license_expression": "Apache-2.0 OR MIT",
+      "locked_checksum": "7eebbe59450baee8282d71676f3bfed5689aeab00b27545e83e5f14b1195e8b0",
+      "name": "fluent-langneg",
+      "path_in_vcs": "",
+      "registry_source": "registry+https://github.com/rust-lang/crates.io-index",
+      "repository": "https://github.com/projectfluent/fluent-langneg-rs",
+      "revision": "7fdc590466ea63ca2367ac10fb1b881fe561f1a8",
+      "version": "0.13.1"
     }
   ],
   "provenance_note": "Upstream files checked against the exact revisions in the locked crates .cargo_vcs_info.json and their package manifests. This is source provenance, not human legal or distribution clearance."
