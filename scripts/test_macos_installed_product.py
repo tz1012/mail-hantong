@@ -145,6 +145,11 @@ def main() -> int:
             raise RuntimeError("installed native binaries are missing")
         cleanup_core = (core, environment)
         run_cli(cli, environment)
+        subprocess.run(
+            [str(cli), "core", "status", "--json"], env=environment,
+            stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            timeout=15, check=True,
+        )
         database = app_root / "data" / "mail-hantong.db"
         if not app_root.is_dir() or not database.is_file() or database.stat().st_size == 0:
             raise RuntimeError("Core did not create the macOS application database")
