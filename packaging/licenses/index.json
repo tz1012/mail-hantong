@@ -52,6 +52,58 @@
       "repository": "https://github.com/duesee/imap-codec",
       "revision": "c9fe861bc220357cc04fa5041958cd5ee259f49c",
       "version": "2.0.0-alpha.7"
+    },
+    {
+      "files": [
+        {
+          "git_blob_sha1": "c775f6102aead463c9d606fd34d47a3c2218148f",
+          "path": "LICENSE-MIT",
+          "sha256": "fe56c030c2d8c3404a37fe711cebb27ebea13d0aacf7e3524db4198335ad8cd1",
+          "upstream_path": "LICENSE-MIT",
+          "url": "https://github.com/str4d/rage/blob/7a854c9c8c02dab2ebea19e02e6693a5730a8b2a/LICENSE-MIT"
+        },
+        {
+          "git_blob_sha1": "1e5006dc141e22213c898c27abaded8d936c32f0",
+          "path": "LICENSE-APACHE",
+          "sha256": "3708458dee7f359ac6c9c5558023ed481be87e5372c43ebd7f2ca7ad23c12026",
+          "upstream_path": "LICENSE-APACHE",
+          "url": "https://github.com/str4d/rage/blob/7a854c9c8c02dab2ebea19e02e6693a5730a8b2a/LICENSE-APACHE"
+        }
+      ],
+      "license_expression": "MIT OR Apache-2.0",
+      "locked_checksum": "fd290633c2482479f70f6d1d96ae0e9f52c6a26cd5859edd47ee1fe33fc89f26",
+      "name": "age",
+      "path_in_vcs": "age",
+      "registry_source": "registry+https://github.com/rust-lang/crates.io-index",
+      "repository": "https://github.com/str4d/rage",
+      "revision": "7a854c9c8c02dab2ebea19e02e6693a5730a8b2a",
+      "version": "0.12.1"
+    },
+    {
+      "files": [
+        {
+          "git_blob_sha1": "c775f6102aead463c9d606fd34d47a3c2218148f",
+          "path": "LICENSE-MIT",
+          "sha256": "fe56c030c2d8c3404a37fe711cebb27ebea13d0aacf7e3524db4198335ad8cd1",
+          "upstream_path": "LICENSE-MIT",
+          "url": "https://github.com/str4d/rage/blob/f6383f367e9aa514a3b5fbce7feede08a425d647/LICENSE-MIT"
+        },
+        {
+          "git_blob_sha1": "1e5006dc141e22213c898c27abaded8d936c32f0",
+          "path": "LICENSE-APACHE",
+          "sha256": "3708458dee7f359ac6c9c5558023ed481be87e5372c43ebd7f2ca7ad23c12026",
+          "upstream_path": "LICENSE-APACHE",
+          "url": "https://github.com/str4d/rage/blob/f6383f367e9aa514a3b5fbce7feede08a425d647/LICENSE-APACHE"
+        }
+      ],
+      "license_expression": "MIT OR Apache-2.0",
+      "locked_checksum": "01d4375964d1501e5f1b32aef2ead573913893ff238448d4e9fdf1522d828656",
+      "name": "age-core",
+      "path_in_vcs": "age-core",
+      "registry_source": "registry+https://github.com/rust-lang/crates.io-index",
+      "repository": "https://github.com/str4d/rage",
+      "revision": "f6383f367e9aa514a3b5fbce7feede08a425d647",
+      "version": "0.12.0"
     }
   ],
   "provenance_note": "Upstream files checked against the exact revisions in the locked crates .cargo_vcs_info.json and their package manifests. This is source provenance, not human legal or distribution clearance."

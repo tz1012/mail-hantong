@@ -159,9 +159,9 @@ pub fn peer_matches_current_image(peer: &UnixPeerContextV2) -> Result<bool, Erro
             std::str::from_utf8(&buffer[..length as usize]).map_err(|_| ErrorCode::AuthRequired)?,
         );
         let current = std::env::current_exe()
-            .and_then(|path| std::fs::canonicalize(path))
+            .and_then(std::fs::canonicalize)
             .map_err(|_| ErrorCode::AuthRequired)?;
-        return same_executable(&observed, &current);
+        same_executable(&observed, &current)
     }
 }
 

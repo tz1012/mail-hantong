@@ -1,0 +1,78 @@
+name: mail-hantong Unix packages
+
+on:
+  push:
+    branches: [feature/linux-product-20261104]
+    paths: [.github/workflows/unix-package.yml]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Release prerelease version to package
+        required: true
+        default: 0.1.0-beta.22
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  package-macos:
+    name: package macOS (${{ matrix.release_target }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15-intel
+            target: x86_64-apple-darwin
+            release_target: macos-x86_64
+          - runner: macos-15
+            target: aarch64-apple-darwin
+            release_target: macos-aarch64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    env:
+      PACKAGE_VERSION: ${{ inputs.version || '0.1.0-beta.22' }}
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v6.1.0
+        with:
+          persist-credentials: false
+      - name: Set up pinned Python
+        uses: actions/setup-python@v7.1.0
+        with:
+          python-version: '3.12'
+      - name: Install pinned Rust toolchain and target
+        run: |
+          rustup toolchain install 1.95.0 --profile minimal
+          rustup target add ${{ matrix.target }} --toolchain 1.95.0
+          rustup default 1.95.0
+      - name: Fetch locked dependencies
+        run: cargo fetch --locked
+      - name: Verify source traceability and license provenance
+        run: |
+          python -X utf8 scripts/traceability.py --check
+          test -s packaging/licenses/index.json
+      - name: Download and isolate reviewed publisher asset
+        env:
+          PUBLISHER_URL: https://github.com/tz1012/mail-hantong/releases/download/v0.1.0-beta.21/mail-hantong-cli-0.1.0-beta.21-windows-x86_64.zip
+          PUBLISHER_SHA256: b6d15b610ef74e63e17f881a4a01802ac22cecc49bf69b0059664142b3c370fc
+        run: |
+          archive="$RUNNER_TEMP/publisher-beta21.zip"
+          asset="$RUNNER_TEMP/google-desktop.json"
+          curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' \
+            --connect-timeout 15 --max-time 300 --max-filesize 268435456 "$PUBLISHER_URL" --output "$archive"
+          python -X utf8 scripts/prepare_public_publisher.py \
+            --archive "$archive" --output "$asset" --expected-sha256 "$PUBLISHER_SHA256"
+      - name: Build and package native Unix artifact
+        run: |
+          python -X utf8 scripts/package_unix.py \
+            --version "$PACKAGE_VERSION" \
+            --output-dir "$RUNNER_TEMP/artifacts" \
+            --publisher-config "$RUNNER_TEMP/google-desktop.json"
+      - name: Upload package artifact
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: mail-hantong-${{ env.PACKAGE_VERSION }}-${{ matrix.release_target }}
+          path: ${{ runner.temp }}/artifacts/${{ env.PACKAGE_VERSION }}/
+          if-no-files-found: error
+          retention-days: 14

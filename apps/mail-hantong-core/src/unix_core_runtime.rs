@@ -40,6 +40,7 @@ pub(crate) async fn serve(
     let setup_state = crate::unix_setup::State::new(google_state);
     let mut google_signer = load_signer(&store, secrets_root)?;
     let mut policy = ReadPolicy::new();
+    let shutdown = Rc::new(Cell::new(false));
     let server_future = serve_connections(
         &store,
         &mut server_signer,
@@ -50,6 +51,7 @@ pub(crate) async fn serve(
         secrets_root,
         &setup_state,
         &mut policy,
+        shutdown.clone(),
     );
     tokio::pin!(server_future);
     let folder_future = folder_worker.run();
@@ -83,6 +85,7 @@ async fn serve_connections(
     secrets_root: &Path,
     setup_state: &crate::unix_setup::State,
     policy: &mut ReadPolicy,
+    shutdown: Rc<Cell<bool>>,
 ) -> Result<(), ErrorCode> {
     let server = UnixLocalServer::bind()?;
     let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
@@ -106,6 +109,22 @@ async fn serve_connections(
                         let mut connection = connection;
                         let trusted = connection.peer_matches_current_image()?;
                         let first = read_first(&mut connection, if trusted { 1_050_112 } else { 131_072 }).await?;
+                        if first.method == "core.stop" {
+                            if !trusted || !exact_protocol_params(&first.params) {
+                                return Err(ErrorCode::AuthRequired);
+                            }
+                            let response = json!({
+                                "jsonrpc": "2.0",
+                                "id": first.id,
+                                "result": { "state": "stopping", "protocol_version": 1 }
+                            });
+                            // Do not begin shutdown until the updater has received the
+                            // bounded response and ACK. A dropped connection therefore
+                            // cannot stop the Core.
+                            send_value(&mut connection, &response).await?;
+                            shutdown.set(true);
+                            return Ok(());
+                        }
                         if matches!(first.method.as_str(), "system.readiness" | "system.version") {
                             let value = hantong_ipc_server::bootstrap::response(first);
                             return send_value(&mut connection, &value).await;
@@ -146,7 +165,10 @@ async fn serve_connections(
                     if future.as_mut().poll(cx).is_ready() { return std::task::Poll::Ready(index); }
                 }
                 std::task::Poll::Pending
-            }), if !active.is_empty() => { drop(active.swap_remove(index)); }
+            }), if !active.is_empty() => {
+                drop(active.swap_remove(index));
+                if shutdown.get() { return Ok(()); }
+            }
             _ = terminate.recv() => return Ok(()),
             signal = tokio::signal::ctrl_c() => {
                 signal.map_err(|_| ErrorCode::InternalError)?;
@@ -154,6 +176,13 @@ async fn serve_connections(
             }
         }
     }
+}
+
+fn exact_protocol_params(params: &Value) -> bool {
+    let Some(object) = params.as_object() else {
+        return false;
+    };
+    object.len() == 1 && object.get("protocol_version") == Some(&Value::from(1))
 }
 
 fn load_signer(

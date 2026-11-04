@@ -80,3 +80,7 @@ OS 저장소 항목은 프로필/계정/version과 일치해야 한다. 잠김·
 터미널 demo·cross-compile·stub 검사는 메일 지원 완료가 아니다. OS별 실제 실행,
 OS 저장소, 인증, SQLCipher migration, 합성 제공자 메일 흐름, 설치/업데이트/제거가
 모두 검증돼야 한다. Linux headless/SSH의 암호화 금고는 별도 제안과 검증이 필요하다.
+
+## Unix lifecycle stop request (proposal delta, 2026-11-04)
+
+On macOS, the updater stops a running Core through the existing verified Unix socket rather than sending a signal or accepting an arbitrary PID. The updater must first verify the installed Core image and the kernel-observed peer, then send exactly one bounded JSON-RPC `core.stop` first frame with `params: {"protocol_version":1}`. The Core accepts this unauthenticated control frame only from a peer whose current executable image matches the running Core and only with the exact parameter object. It returns `{ "state":"stopping", "protocol_version":1 }` with the matching request id; the updater sends the existing `0x06` response receipt. The Core sets its shutdown flag only after that response and receipt complete. Linux retains its existing verified pidfd stop path. No mail, profile, approval, signer, or secret operation is available through this lifecycle method.
