@@ -797,6 +797,39 @@ fn validate_terminal_secret(bytes: &[u8]) -> Result<(), SecretError> {
     Ok(())
 }
 
+/// Read one protected-input line without waiting for EOF. A terminal stays
+/// open after Enter, so the general bounded reader is unsuitable here.
+#[cfg(any(test, target_os = "linux", target_os = "macos"))]
+fn read_line_limited<R: Read>(mut reader: R, limit: usize) -> Result<SensitiveBuffer, SecretError> {
+    if limit > crate::MAX_SECRET {
+        return Err(SecretError::SecretTooLarge);
+    }
+    let mut output = SensitiveBuffer(vec![0; limit + 1]);
+    let mut used = 0;
+    loop {
+        let count = match reader.read(&mut output.0[used..used + 1]) {
+            Ok(0) => return Err(SecretError::InvalidCredential),
+            Ok(count) => count,
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(_) => return Err(SecretError::Io),
+        };
+        if count != 1 {
+            return Err(SecretError::Io);
+        }
+        if output.0[used] == b'\n' {
+            output.0.truncate(used);
+            if output.0.last() == Some(&b'\r') {
+                output.0.pop();
+            }
+            return Ok(output);
+        }
+        used += 1;
+        if used == limit + 1 {
+            return Err(SecretError::SecretTooLarge);
+        }
+    }
+}
+
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 fn linux_stage_passphrase(ticket: &TerminalSecretTicket) -> age::secrecy::SecretString {
     age::secrecy::SecretString::from(hantong_contracts::wire_hex::encode(&ticket.nonce))
@@ -943,14 +976,7 @@ pub(crate) fn read_masked_terminal_line() -> Result<SensitiveBuffer, SecretError
         }
     }
     let _restore = Restore { fd, mode: original };
-    let mut secret = SensitiveBuffer::read_limited(&mut tty, MAX_TERMINAL_SECRET)?;
-    while secret
-        .0
-        .last()
-        .is_some_and(|byte| *byte == b'\n' || *byte == b'\r')
-    {
-        secret.0.pop();
-    }
+    let secret = read_line_limited(&mut tty, MAX_TERMINAL_SECRET)?;
     validate_terminal_secret(secret.as_slice())?;
     Ok(secret)
 }
@@ -1041,6 +1067,47 @@ mod tests {
         assert!(validate_terminal_secret(b"secret\n").is_err());
         assert!(validate_terminal_secret(&vec![b'x'; MAX_TERMINAL_SECRET + 1]).is_err());
         assert!(validate_terminal_secret(b" exact ").is_ok());
+    }
+
+    #[test]
+    fn terminal_secret_line_reader_returns_at_newline_without_waiting_for_eof() {
+        struct StopsAfterNewline {
+            bytes: &'static [u8],
+            offset: usize,
+        }
+        impl Read for StopsAfterNewline {
+            fn read(&mut self, output: &mut [u8]) -> std::io::Result<usize> {
+                assert_eq!(output.len(), 1);
+                assert!(self.offset < self.bytes.len(), "reader used after newline");
+                output[0] = self.bytes[self.offset];
+                self.offset += 1;
+                Ok(1)
+            }
+        }
+        let value = read_line_limited(
+            StopsAfterNewline {
+                bytes: b"secret\n",
+                offset: 0,
+            },
+            MAX_TERMINAL_SECRET,
+        )
+        .unwrap();
+        assert_eq!(value.as_slice(), b"secret");
+    }
+
+    #[test]
+    fn terminal_secret_line_reader_rejects_eof_and_overflow() {
+        assert!(matches!(
+            read_line_limited(Cursor::new(b"secret"), MAX_TERMINAL_SECRET),
+            Err(SecretError::InvalidCredential)
+        ));
+        assert!(matches!(
+            read_line_limited(
+                Cursor::new(vec![b'x'; MAX_TERMINAL_SECRET + 2]),
+                MAX_TERMINAL_SECRET
+            ),
+            Err(SecretError::SecretTooLarge)
+        ));
     }
 
     #[test]
