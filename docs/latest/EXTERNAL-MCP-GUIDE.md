@@ -1,11 +1,10 @@
 # External MCP connection guide
 
-This document describes an unreleased post-beta.22 source candidate. The
-published beta.22 binaries expose the existing v2 external MCP flow only; they
-do not include `config`, `doctor`, v3 registration, external Trash, or receive
-events. Do not run the commands below against beta.22 unless you build the
-matching source candidate yourself. The release page is the authority for
-published assets.
+This document describes the beta.23 release scope.
+The published beta.22 binaries expose the existing v2 external MCP flow only;
+they do not include `config`, `doctor`, v3 registration, external Trash, or
+receive events. Use these instructions only with the matching beta.23 Core and
+MCP executable from the matching release. The release page is the authority for assets.
 
 This guide is for Claude Desktop, Claude Code, Codex-compatible hosts, and
 other desktop applications that can start a local MCP server. HanTong uses the
@@ -98,6 +97,10 @@ Replace `REQUEST_ID` with the ID returned by `register`. The first command only
 creates a pending request. Review shows the exact accounts and tools before the
 request can become active. `status` is read-only. If the request expires or is
 cancelled, create a new request; do not reuse a stale ID.
+
+After updating from beta.22, run the normal `hantong update` and then run
+`hantong` again before creating a v3 request. The updater handles the owned Core
+transition; do not submit the request while an older Core remains active.
 
 외부 호스트 권한은 내장 Codex·Claude 권한과 별도로 관리됩니다. `register`는
 대기 요청만 만들고, 같은 터미널의 `hantong review`에서 계정과 도구 범위를

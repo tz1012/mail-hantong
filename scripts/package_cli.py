@@ -327,6 +327,7 @@ def package(root: Path = ROOT, *, version: str = DEFAULT_VERSION, output_dir: Pa
         contents["publisher/google-desktop.json"] = config_bytes
     required = {"LICENSE": "LICENSE", "README.md": "README.md", "CLI-LAUNCH.md": "docs/latest/CLI-LAUNCH.md",
                 "GOOGLE-MAIL.md": "docs/latest/GOOGLE-MAIL.md",
+                "EXTERNAL-MCP-GUIDE.md": "docs/latest/EXTERNAL-MCP-GUIDE.md",
                 "install.ps1": "packaging/windows/install.ps1", "update.ps1": "install.ps1",
                 "uninstall.ps1": "packaging/windows/uninstall.ps1",
                 "package-common.ps1": "packaging/windows/package-common.ps1"}

@@ -1,7 +1,8 @@
-# mail-hantong CLI — beta.22
+# mail-hantong CLI - beta.23 release scope
 
-beta.22 keeps the Windows PowerShell update path, newest-compatible release
-selection and automatic downgrade protection. It also ships native macOS 15
+beta.23 keeps the Windows PowerShell update path, newest-compatible release
+selection and automatic downgrade protection. Published beta.22 remains the
+frozen v2 baseline. It also ships native macOS 15
 (Intel/ARM) and Linux x86_64 (glibc >= 2.39) packages. New accounts use the same read,
 body, compose and individually confirmed send flow as existing accounts. Google
 consent is followed by exact scope selection in the same terminal. Generic
@@ -19,7 +20,7 @@ and stable error code. Do not send credentials, database files or mail content.
 
 The command is `hantong`. English is the default; use `--lang ko` for Korean. The companion `mail-hantong-core` process handles encrypted local storage, mail operations and policy. The graphical mail application is not included in the CLI package.
 
-**Release: 0.1.0-beta.22.** Release assets are Windows x64, Linux x64, macOS Intel and macOS ARM; there is no Linux ARM asset. The source is pinned to `c50c01dd88fe75e2b643e580fb25ba85430639d6a4e9e55650cf7595c86332fd` from `feature/linux-product-20261104` at `3eabc14`. See [Unix installation and use](UNIX-INSTALL.md) for the pinned installer and headless flow. Human security review remains pending; macOS signing/notarization and real Unix provider login/send/Trash or AI conversation are not claimed.
+**Release: 0.1.0-beta.23.** Release assets are Windows x64, Linux x64, macOS Intel and macOS ARM; there is no Linux ARM asset. Use the published beta.23 release tag and SHA256SUMS from the matching release; no source commit is pinned here. See [Unix installation and use](UNIX-INSTALL.md) for the installer and headless flow. Human security review remains pending; macOS signing/notarization and real Unix provider login/send/Trash or AI conversation are not claimed.
 
 ## What works in this preview
 
@@ -33,7 +34,7 @@ The current beta includes guided installation/startup, Google account selection 
 | Bounded UID metadata collection, reconciliation and recovery | General attachment download and rich HTML display |
 | Local metadata lookup, bounded text body reading and immutable drafts | Scheduled sending, contacts, tag editing and rules |
 | SMTP setup and individually confirmed sending | Unattended sending or automatic resend |
-| Managed AI protocol/tool integration and the published v2 MCP mail tools (provider execution environment required) | v3 external Trash/events/config/doctor source candidate; Codex on hosts without MXC; Claude subscription OAuth in embedded/programmatic integrations |
+| Managed AI integration and external v3 MCP tools, config/doctor and opt-in receive hints (provider execution environment required) | Automatic model wake-up in every host; Codex on hosts without MXC; Claude subscription OAuth in embedded/programmatic integrations |
 | Core status, diagnostics and stable error/exit codes | Complete background mailbox synchronization |
 
 IMAP/SMTP and advanced Google setup use hidden credential input in the same console. Passwords are never accepted through command arguments or JSON. Core validates the complete pending request before applying the selected operation. Interactive steps require terminal input and output; `--no-input`, redirected output and JSON do not confirm an operation. Terminal confirmation expresses intent and does not provide Windows Hello human-presence verification.
@@ -42,7 +43,7 @@ IMAP/SMTP and advanced Google setup use hidden credential input in the same cons
 
 Beta.22 carries ordinary IMAP/SMTP onboarding and a provider-neutral one-message
 Trash flow. The real Daum authentication, synthetic Gmail send, and 17-mailbox
-catalog/body-read results are historical beta.20 evidence; beta.22 adds no new
+catalog/body-read results are historical beta.20 evidence; beta.23 adds no new
 real-account or real-mail test claim. Real Trash movement was not performed.
 
 Use the normal onboarding menus rather than assembling request IDs. At the first
@@ -129,7 +130,7 @@ headless vault, Keychain requirements and SSH/browser boundaries.
 Run in PowerShell on Windows x64:
 
 ```powershell
-irm https://raw.githubusercontent.com/tz1012/mail-hantong/3eabc14b9ed8463aa58db0304dbf86d6da00bb94/install.ps1 | iex
+irm https://raw.githubusercontent.com/tz1012/mail-hantong/v0.1.0-beta.23/install.ps1 | iex
 ```
 
 The installer selects the latest compatible published preview, verifies its ZIP against `SHA256SUMS`, and installs under the current user's local Programs directory. It adds the owned launcher directory to the user's PATH and the current terminal. Repeating the command updates the installation. It does not start Core, register accounts or log in to an AI provider. No Rust, Git, Python, Docker or WSL is required for the mail executables. The optional AI connections use separately installed official Codex or Claude Code executables.
@@ -305,13 +306,14 @@ Typed arguments such as `/provider claude`, `/model MODEL_ID`, `/mode high` also
 
 Built-in AI chat automatically connects mail tools after its first provider-specific setup when the provider execution environment is available. The same terminal shows all ready accounts, permitted tools and external mail-data transfer before you choose Connect or Cancel. Codex and Claude use separate registrations and consent. No manual registration command, request-ID copying or required `/agent on` is needed for this built-in flow. Startup does not upload the inbox; scoped tool results can be sent to the selected AI provider when used. `/agent off` disconnects tools and clears session context. Existing registrations are not silently expanded when new accounts are added.
 
-For an independent external MCP host, the published beta.22 registration remains
-the v2 workflow:
+External MCP remains separate from built-in AI. Existing beta.22 v2 registrations keep their old scope; new v3 registration is explicit:
 
-The v3 source candidate adds `config`, `doctor`, a reviewed Trash request and
-metadata-only receive events, but these are not included in the published
-beta.22 binaries. See the [external MCP connection guide](EXTERNAL-MCP-GUIDE.md)
-only when using that matching source candidate.
+Beta.23 adds `config`, `doctor`, a reviewed Trash request and metadata-only
+receive events. These features are in the beta.23 release scope and require the
+beta.23 Core and MCP executable together; do not submit a v3 request while an
+older Core remains active. Run the normal `hantong update`, then run `hantong`
+again before creating a new v3 request. The updater handles the owned Core
+transition.
 
 ```powershell
 hantong-mcp register
@@ -319,9 +321,9 @@ hantong review --kind registration --request-id REQUEST_ID
 hantong-mcp status REQUEST_ID
 ```
 
-Replace REQUEST_ID with the ID printed by `register`. Registration prepares a pending request; the explicit `hantong review` step completes it in the same terminal. External MCP hosts launch `hantong-mcp` without arguments over stdio and use the fixed external MCP profile; per-host identities are not yet available. The built-in AI setup does not expand these grants. Tool discovery returns current v2 grants; accounts are discovered through the authorized account-list tool. Send requests require separate terminal review; an AI cannot confirm them itself. Generic shell, filesystem and web tools are disabled in the integrated AI session. Revoked or missing account consent blocks mail disclosure. The v3 source candidate adds the separate resource and Trash flow described above, but beta.22 users do not have it.
+Replace REQUEST_ID with the ID printed by `register`. Registration prepares a pending request; the explicit `hantong review` step completes it in the same terminal. External MCP hosts launch `hantong-mcp` without arguments over stdio and use the fixed external MCP profile; per-host identities are not yet available. The built-in AI setup does not expand these grants. Tool discovery returns current v3 grants; accounts are discovered through the authorized account-list tool. Send requests require separate terminal review; an AI cannot confirm them itself. Generic shell, filesystem and web tools are disabled in the integrated AI session. Revoked or missing account consent blocks mail disclosure. The beta.23 release scope adds the separate resource and Trash flow described above.
 
-Built-in AI also exposes `mail.messages.trash.request` for moving one Gmail message to Trash. It requires an existing Google Modify grant and a final same-terminal preview and confirmation. Missing permissions are not granted automatically. Permanent deletion, batch deletion and deletion through other mail providers are not supported. An uncertain send or trash outcome is never automatically retried. JSON, redirected input/output and `--no-input` cannot perform the interactive confirmation.
+Built-in AI also exposes `mail.messages.trash.request` for moving one Gmail or IMAP message to Trash. Gmail requires an existing Modify grant; IMAP requires MOVE and exactly one selectable Trash mailbox. Both require a final same-terminal preview and confirmation. Missing permissions are not granted automatically. Permanent and batch deletion are not supported. An uncertain send or trash outcome is never automatically retried. JSON, redirected input/output and `--no-input` cannot perform the interactive confirmation.
 
 ## Update and remove
 
@@ -370,7 +372,7 @@ The package tool builds the terminal distribution and core, records versions and
 
 `hantong`은 터미널에서 사용하는 CLI입니다. `--lang ko`로 한국어를 선택하고 자동화에는 `--json`과 종료 코드를 사용합니다.
 
-현재 beta.22 후보는 `/help`, 내장 AI 메일 도구 자동 연결, Gmail과 일반 IMAP 계정의 메일 조회·본문 읽기·작성·개별 발송 확인, 한 통씩 휴지통 이동을 제공합니다. Unix 실제 제공자 로그인·발송·휴지통과 AI 대화는 아직 시험하지 않았습니다. 일반 첨부 다운로드·예약·주소록·규칙 자동화는 후속입니다.
+현재 beta.23 릴리스 범위는 `/help`, 내장 AI 메일 도구 자동 연결, Gmail과 일반 IMAP 계정의 메일 조회·본문 읽기·작성·개별 발송 확인, 한 통씩 휴지통 이동을 제공합니다. Unix 실제 제공자 로그인·발송·휴지통과 AI 대화는 아직 시험하지 않았습니다. 일반 첨부 다운로드·예약·주소록·규칙 자동화는 후속입니다.
 
 위 PowerShell 한 줄로 설치·업데이트한 뒤 `hantong --lang ko init`을 실행하세요. 코어는 필요할 때 자동으로 시작합니다. 계정 연결·기능 선택·숨김 입력·메일 전체 검토·보내기/취소는 같은 터미널에서 진행하며, Google 로그인·동의만 브라우저를 사용합니다. 계정 작업 메뉴 4번은 작성·보내기 활성화, 5번은 메일 작성입니다. AI는 별도 `hantong ai login codex`, `hantong ai chat codex` 명령으로 시작하고 `/provider`, `/model`, `/mode`, `/fast`, `/agent`로 지원 기능을 전환합니다. 현재 beta17 후보는 Windows Codex 0.163.0 named profile의 유효 root-read/temp-read 기능 거부를 감지하면 기존 등록을 보존한 채 현지화된 `CAPABILITY_UNSUPPORTED`로 종료합니다. UAC·설정 변경이나 넓은 레거시 프로필 대체는 하지 않으며, 실제 모델 turn·AI 메일 교환은 수행하지 않았습니다. 자세한 순서는 [홈페이지](https://tz1012.github.io/mail-hantong/)에 있습니다.
 

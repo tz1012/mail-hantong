@@ -39,7 +39,7 @@ class PackageCliTests(unittest.TestCase):
         self.target = self.root / "target"
         self.binary_dir = self.target / package.TARGET / "release"
         self.binary_dir.mkdir(parents=True)
-        for path in ("LICENSE", "README.md", "docs/latest/CLI-LAUNCH.md", "docs/latest/GOOGLE-MAIL.md", "install.ps1",
+        for path in ("LICENSE", "README.md", "docs/latest/CLI-LAUNCH.md", "docs/latest/GOOGLE-MAIL.md", "docs/latest/EXTERNAL-MCP-GUIDE.md", "install.ps1",
                      "packaging/windows/install.ps1", "packaging/windows/uninstall.ps1", "packaging/windows/package-common.ps1"):
             source = self.root / path
             source.parent.mkdir(parents=True, exist_ok=True)
@@ -108,6 +108,14 @@ class PackageCliTests(unittest.TestCase):
     def build(self, **kwargs):
         return package.package(self.root, output_dir=self.output, runner=self.runner,
                                host_system="nt", **kwargs)
+
+    def test_mcp01_release_includes_external_connection_guide_in_verified_manifest(self):
+        result = self.build(skip_build=True)
+        with zipfile.ZipFile(next(result.glob("*.zip"))) as archive:
+            data = archive.read("EXTERNAL-MCP-GUIDE.md")
+            manifest = json.loads(archive.read("release-manifest.json"))
+            record = next(row for row in manifest["files"] if row["path"] == "EXTERNAL-MCP-GUIDE.md")
+            self.assertEqual(record["sha256"], package.sha(data))
 
     def test_inst03_external_publisher_asset_is_opt_in_manifest_owned_and_path_redacted(self):
         with tempfile.TemporaryDirectory() as directory:

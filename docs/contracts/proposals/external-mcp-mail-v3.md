@@ -1,8 +1,8 @@
 # External MCP mail integration v3
 
-Status: implemented in the unreleased post-beta.22 source candidate after the
-user's 2026-11-04 explicit scope approval. Published beta.22 remains v2 and
-does not include these extensions. Human security review remains required.
+Status: included in the beta.23 release scope after the user's 2026-11-04
+explicit scope approval. Published beta.22 remains v2
+and does not include these extensions. Human security review remains required.
 
 ## 검토할 변경 범위
 
@@ -83,7 +83,8 @@ remain unavailable.
 The same v3 registration may opt in to metadata-only receive tracking through
 `mail.events.configure`. Core checks provider changes about every 60 seconds and
 commits observations with their durable event records. Events are retained for
-seven days with bounded per-account and cursor retention, and contain only the
+seven days with bounded per-account and cursor retention; expiry is enforced
+during delivery, observation, and read-time pruning, and contain only the
 event ID, account, mailbox identity and encoding, change kind, opaque cursor,
 and registration epoch. They never include bodies, subjects, sender or
 recipient addresses, attachments, or provider tokens.
@@ -98,7 +99,8 @@ acknowledges a cursor. `notify off` changes the shared tracking configuration;
 local MCP unsubscribe only stops that process's notifications.
 
 Revocation, epoch changes, or a failed authorization check stop disclosure.
-Expired cursors return `CURSOR_EXPIRED`; foreign cursors return `SCOPE_DENIED`.
+Expired or foreign opaque cursors return `CURSOR_EXPIRED`; `SCOPE_DENIED` is reserved for
+registration scope or authorization failure.
 No webhook, arbitrary shell callback, remote HTTP endpoint, or third-party
 message is invoked.
 
@@ -149,7 +151,7 @@ SEC-03 local IPC access control. They also update the external portion of
 does not change the existing Windows authentication format or the Unix Core
 relay design.
 
-The implementation covers the originally planned M7-01 event feed, M7-03
+The beta.23 implementation covers the originally planned M7-01 event feed, M7-03
 pending/ack, M7-07 MCP notifications and M7-11 retention, with review against
 MCP-01/M6-01 and MCP-03/M6-02. No new card or requirement is invented.
 

@@ -1,8 +1,7 @@
 # Receive event contract
 
-Availability: this contract is implemented only in the unreleased post-beta.22
-source candidate. Published beta.22 does not provide receive events, the MCP
-resource, or the related v3 registration scope.
+Availability: this contract is in the beta.23 release scope. Published beta.22 does not provide receive events, the MCP resource,
+or the related v3 registration scope.
 
 HanTong receive events are metadata-only hints for a v3 locally registered
 external agent. They contain an event ID, account identifier, mailbox identity
@@ -19,13 +18,15 @@ New provider observations are committed with their event record in the same
 database transaction. A registration may read pending events and acknowledge
 an opaque cursor; revocation or epoch changes immediately invalidate both.
 
-Events are retained for seven days and at most 10,000 rows per account.
+Events are retained for seven days and at most 10,000 rows per account;
+expiry is enforced during delivery, observation, and read-time pruning.
 Cursors are 32-byte random, persistently issued capabilities bound to the
 registration epoch and exact enabled account/mailbox scope. They are never
 derived from a sequence number and are rejected when unissued, expired, or
 when the referenced event was pruned. At most 10,000 live cursor rows are
-retained per registration epoch. Expired or foreign cursors return
-`CURSOR_EXPIRED` or `SCOPE_DENIED` before event data is returned. Reads are
+retained per registration epoch. Expired, pruned, or foreign opaque cursors return `CURSOR_EXPIRED` before
+event data is returned. `SCOPE_DENIED` is reserved for registration scope or
+authorization failure. Reads are
 bounded to 100 events through `mail.events.read`; acknowledgements use
 `mail.events.ack`. The MCP stdio client polls the durable feed about every five
 seconds while subscribed and sends only a coalesced

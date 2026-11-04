@@ -1,12 +1,12 @@
-# HanTong Unix CLI beta
+# HanTong Unix CLI beta.23 release scope
 
-Linux packages require x86_64 or aarch64 with glibc 2.39 or newer. macOS
+Linux packages target x86_64 with glibc 2.39 or newer. macOS
 packages target x86_64 and arm64. The archive contains native binaries: users
-do not need Rust, Python, Docker, WSL or Go. macOS packaging is covered by the
-release asset checks; native macOS runtime and real-provider integration still
-require an OS-specific release validation.
+do not need Rust, Python, Docker, WSL or Go. macOS packaging targets Intel and Apple Silicon. Native runtime CI smoke has
+passed for both CPUs; real-provider integration still requires OS-specific
+validation.
 
-Verify the release archive against its public SHA256SUMS, extract it to a new
+For installation, verify the release archive against its public SHA256SUMS, extract it to a new
 directory, and run `sh install.sh`. The installer creates versioned program
 files under `${XDG_DATA_HOME:-$HOME/.local/share}/mail-hantong-cli` and launchers
 under `$HOME/.local/bin`. It preserves mail data and credentials. Add that bin
@@ -31,5 +31,6 @@ a browser. Verify the release's exact tested flows before using real accounts.
 `uninstall.sh` to remove only unchanged owned files; unknown/modified files,
 other program versions and all account data are preserved.
 
-Security-sensitive Unix changes still require human security review. Installing
-a build or opening its TUI alone does not prove mail/account integration works.
+Human security
+review remains required. Installing a build or opening its TUI alone does not
+prove real provider mail/account integration works.

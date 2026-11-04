@@ -1,13 +1,13 @@
-# Unix installation and use — beta.22
+# Unix installation and use - beta.23 release scope
 
-beta.22 has native CLI/Core packages for macOS 15 (Intel and Apple Silicon) and
-Linux x86_64 with glibc >= 2.39. The four release assets are Windows x64,
-Linux x64, macOS Intel and macOS ARM. There is no Linux ARM asset. Download the
-matching archive from the [beta.22 release](https://github.com/tz1012/mail-hantong/releases/tag/v0.1.0-beta.22).
+Beta.23 release scope has native CLI/Core packages for macOS 15 (Intel and Apple
+Silicon) and Linux x86_64 with glibc >= 2.39. The four release assets are
+Windows x64, Linux x64, macOS Intel and macOS ARM. There is no Linux ARM asset.
+For installation, download the matching archive from the beta.23 release tag
+and verify its SHA256SUMS. Published beta.22 remains the frozen v2 baseline.
 
-The executable source hash is
-`c50c01dd88fe75e2b643e580fb25ba85430639d6a4e9e55650cf7595c86332fd` from
-branch `feature/linux-product-20261104` at source HEAD `3eabc14`. The installer below is pinned to that verified source; `main` may still contain an older installer.
+Release metadata and SHA256SUMS identify the exact beta.23 source and archive;
+this guide does not pin a moving source commit.
 
 ## Install
 
@@ -19,14 +19,14 @@ variables.
 Linux x86_64:
 
 ```sh
-curl -fsSLo install.sh https://raw.githubusercontent.com/tz1012/mail-hantong/3eabc14b9ed8463aa58db0304dbf86d6da00bb94/install.sh
+curl -fsSLo install.sh https://raw.githubusercontent.com/tz1012/mail-hantong/v0.1.0-beta.23/install.sh
 sh install.sh
 ```
 
 macOS 15 Intel or Apple Silicon:
 
 ```sh
-curl -fsSLo install.sh https://raw.githubusercontent.com/tz1012/mail-hantong/3eabc14b9ed8463aa58db0304dbf86d6da00bb94/install.sh
+curl -fsSLo install.sh https://raw.githubusercontent.com/tz1012/mail-hantong/v0.1.0-beta.23/install.sh
 sh install.sh
 ```
 
@@ -46,14 +46,13 @@ hantong init
 
 `hantong-t` provides the full-screen terminal client. Google login uses the
 provider browser. On SSH, Google login requires a secure loopback tunnel to a
-provider browser; ordinary IMAP/SMTP does not. Actual provider login, sending
-and Trash movement on Unix remain outside this synthetic/startup verification.
+provider browser; ordinary IMAP/SMTP does not. Actual provider login, sending and Trash movement on Unix remain outside this
+synthetic/startup verification. SSH Mac vault use is unsupported.
 
 ## Secrets and headless use
 
 On macOS, the product uses the user's real login Keychain. Do not test with an
-empty temporary `HOME`; a real `HOME` is required. macOS SSH vault use is not
-supported. Desktop Secret Service behavior on Linux is not claimed as verified
+empty temporary `HOME`; a real `HOME` is required. macOS SSH vault use is not supported. Desktop Secret Service behavior on Linux is not claimed as verified
 by this release.
 
 On Linux without Secret Service, the first startup offers `Secret storage: 1)
@@ -71,7 +70,7 @@ first-start/menu behavior, Core survival after CLI use, encrypted storage,
 verified stop and reopen. Separate engine integration tests used synthetic providers. Real Unix provider
 login/send/Trash and an AI conversation were not tested. AI use still requires
 installing and logging into the selected Codex/Claude provider and checking its
-capabilities; beta.22 makes no all-features claim. SMTP attachments are omitted,
+capabilities; beta.23 makes no all-features claim. SMTP attachments are omitted,
 and generic IMAP Trash requires server `MOVE` support and exactly one selectable mailbox advertised as `\Trash`.
 Advanced custom Google client configuration is unsupported on Unix; the
 ordinary bundled publisher path is supported.

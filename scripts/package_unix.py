@@ -86,6 +86,8 @@ def package(root: Path, version: str, output: Path, publisher: Path | None = Non
                                               root / "packaging/licenses")
     for destination, source in {
         "LICENSE": "LICENSE", "README.md": "packaging/unix/README.md",
+        "CLI-LAUNCH.md": "docs/latest/CLI-LAUNCH.md",
+        "EXTERNAL-MCP-GUIDE.md": "docs/latest/EXTERNAL-MCP-GUIDE.md",
         "install.sh": "packaging/unix/install.sh", "uninstall.sh": "packaging/unix/uninstall.sh",
         "update.sh": "install.sh",
     }.items():
