@@ -34,6 +34,55 @@ fn internal<T>(value: Result<T, impl std::fmt::Debug>) -> Result<T, DatabaseErro
     value.map_err(|_| DatabaseError::Internal)
 }
 
+#[derive(Clone, Copy)]
+enum StorageStage {
+    BackendInstall,
+    KeyRead,
+    KeyCreate,
+    KeyVerify,
+    OpenKeyed,
+    Configure,
+}
+
+impl StorageStage {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::BackendInstall => "backend_install",
+            Self::KeyRead => "key_read",
+            Self::KeyCreate => "key_create",
+            Self::KeyVerify => "key_verify",
+            Self::OpenKeyed => "open_keyed",
+            Self::Configure => "configure",
+        }
+    }
+}
+
+fn storage_failure(stage: StorageStage, code: &'static str) -> DatabaseError {
+    eprintln!(
+        "hantong_storage stage={} outcome=failed code={code}",
+        stage.as_str()
+    );
+    DatabaseError::Internal
+}
+
+const fn secret_error_code(error: UnixSecretError) -> &'static str {
+    match error {
+        UnixSecretError::InvalidSelector => "INVALID_SELECTOR",
+        UnixSecretError::InvalidSecret => "INVALID_SECRET",
+        UnixSecretError::SecretTooLarge => "SECRET_TOO_LARGE",
+        UnixSecretError::Unavailable => "UNAVAILABLE",
+        UnixSecretError::NotFound => "NOT_FOUND",
+        UnixSecretError::Ambiguous => "AMBIGUOUS",
+        UnixSecretError::StoreFailure => "STORE_FAILURE",
+        UnixSecretError::AlreadyExists => "ALREADY_EXISTS",
+        UnixSecretError::Conflict => "CONFLICT",
+    }
+}
+
+fn storage_secret_failure(stage: StorageStage, error: UnixSecretError) -> DatabaseError {
+    storage_failure(stage, secret_error_code(error))
+}
+
 trait KeySource {
     fn read(&mut self) -> Result<ProtectedBytes, UnixSecretError>;
     fn create(&mut self, bytes: &[u8]) -> Result<(), UnixSecretError>;
@@ -43,7 +92,8 @@ impl Database {
     pub(super) fn open(data: &Path, secrets: &Path) -> Result<Self, DatabaseError> {
         // The production key-store adapter is created only after root validation.
         let roots = prepare_roots(data, secrets)?;
-        internal(UnixSecretStore::install_platform_store())?;
+        UnixSecretStore::install_platform_store()
+            .map_err(|error| storage_secret_failure(StorageStage::BackendInstall, error))?;
         let store = UnixSecretStore::new();
         let selector = internal(UnixSecretSelector::new(
             UnixSecretKind::DatabaseKey,
@@ -108,26 +158,29 @@ impl Database {
         let existing = match data.open_existing_regular(DATABASE) {
             Ok(file) => {
                 if internal(file.metadata())?.len() == 0 {
-                    return Err(DatabaseError::Internal);
+                    return Err(storage_failure(StorageStage::KeyVerify, "INTERNAL"));
                 }
                 Some(file)
             }
             Err(hantong_contracts::ErrorCode::NotFound) => None,
-            Err(_) => return Err(DatabaseError::Internal),
+            Err(_) => return Err(storage_failure(StorageStage::KeyRead, "INTERNAL")),
         };
         let key = match keys.read() {
             Ok(key) => key,
             Err(UnixSecretError::NotFound) if existing.is_none() => {
                 let mut generated = SensitiveBuffer(vec![0; 32]);
-                internal(ring::rand::SystemRandom::new().fill(&mut generated.0))?;
-                internal(keys.create(generated.as_slice()))?;
+                internal(ring::rand::SystemRandom::new().fill(&mut generated.0))
+                    .map_err(|_| storage_failure(StorageStage::KeyCreate, "INTERNAL"))?;
+                keys.create(generated.as_slice())
+                    .map_err(|error| storage_secret_failure(StorageStage::KeyCreate, error))?;
                 // Re-read to validate OS item persistence and its exact kind/size.
-                internal(keys.read())?
+                keys.read()
+                    .map_err(|error| storage_secret_failure(StorageStage::KeyVerify, error))?
             }
-            Err(_) => return Err(DatabaseError::Internal),
+            Err(error) => return Err(storage_secret_failure(StorageStage::KeyRead, error)),
         };
         if key.as_bytes_in_secrets().len() != 32 {
-            return Err(DatabaseError::Internal);
+            return Err(storage_failure(StorageStage::KeyVerify, "INVALID_SECRET"));
         }
         let file = match existing {
             Some(file) => file,
@@ -135,9 +188,10 @@ impl Database {
         };
         let descriptor = descriptor_path(data, DATABASE)?;
         ensure_same_file(&file, &descriptor)?;
-        let connection = open_keyed(&descriptor, &key, false)?;
+        let connection = open_keyed(&descriptor, &key, false)
+            .map_err(|_| storage_failure(StorageStage::OpenKeyed, "INTERNAL"))?;
         ensure_same_file(&file, &descriptor)?;
-        configure(&connection)?;
+        configure(&connection).map_err(|_| storage_failure(StorageStage::Configure, "INTERNAL"))?;
         Ok(Opened {
             connection,
             key,
@@ -447,6 +501,8 @@ mod tests {
                 NEXT.fetch_add(1, Ordering::Relaxed)
             ));
             std::fs::create_dir_all(&root).unwrap();
+            #[cfg(target_os = "macos")]
+            let root = std::fs::canonicalize(root).unwrap();
             Self { root }
         }
         fn roots(&self) -> (PathBuf, PathBuf) {

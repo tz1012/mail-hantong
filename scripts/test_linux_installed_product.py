@@ -101,7 +101,7 @@ with tempfile.TemporaryDirectory(prefix='hantong-native-product-') as temporary:
         code, menu, output = console(cli, env, False)
         assert code == 0 and menu, (code, menu, output[-2048:])
         subprocess.run([str(core), 'unix-stop'], env=env, check=True, timeout=15)
-        result = subprocess.run([str(cli)], env=env, stdin=subprocess.DEVNULL,
+        result = subprocess.run([str(cli), 'init'], env=env, stdin=subprocess.DEVNULL,
                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=15)
         assert result.returncode != 0 and b'HUMAN_STEP_REQUIRED' in result.stderr
         assert phrase not in result.stdout + result.stderr

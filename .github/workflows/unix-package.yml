@@ -56,6 +56,7 @@ jobs:
       - name: Check native Unix integration
         run: |
           cargo clippy --workspace --all-targets --locked --offline -- -D warnings
+          cargo test -p hantong-secrets --lib --locked --offline unix_database::tests -- --test-threads=1
           cargo test -p mail-hantong-core --bin mail-hantong-core --locked --offline unix_core_runtime -- --test-threads=1
           cargo test -p hantong-secrets --lib --locked --offline terminal_secret_linux_stage_is_encrypted_and_cross_process_readable
           cargo test -p hantong-secrets --lib --locked --offline terminal_secret_line_reader

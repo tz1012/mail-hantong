@@ -69,7 +69,7 @@ def run_cli(executable: Path, environment: dict[str, str]) -> None:
                     fail("startup output exceeded its bound")
         if not menu_ready:
             diagnostics = re.findall(
-                rb"hantong_startup stage=[a-z_]+ outcome=failed code=[A-Z_]+|\b[A-Z]+(?:_[A-Z]+)+\b",
+                rb"hantong_(?:startup|storage) stage=[a-z_]+ outcome=failed code=[A-Z_]+|\b[A-Z]+(?:_[A-Z]+)+\b",
                 bytes(output),
             )
             fail(f"installed CLI did not present the English no-account menu; exit={process.returncode}; codes={diagnostics[-8:]}")
