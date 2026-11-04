@@ -160,8 +160,9 @@ def main() -> int:
     try:
         print(package(ROOT, args.version, args.output_dir.resolve(), args.publisher_config))
         return 0
-    except (PackageError, OSError, ValueError):
-        print("error: native Unix package prerequisites or validation failed", file=__import__("sys").stderr)
+    except (PackageError, OSError, ValueError) as error:
+        detail = str(error) if isinstance(error, PackageError) else "native Unix package prerequisites or validation failed"
+        print(f"error: {detail}", file=__import__("sys").stderr)
         return 2
 
 
