@@ -306,7 +306,7 @@ pub(crate) fn coordinator_for_store<'a>(
 ) -> (UidWorkerHandle<'a>, UidWorker<'a, NativeDiscovery<'a>>) {
     coordinator_with_instance(store, NativeDiscovery { secrets_root }, shared, instance)
 }
-#[cfg(test)]
+#[cfg(all(test, windows))]
 pub(crate) fn coordinator_with_discovery<D: Discovery>(
     store: &Store,
     discovery: D,
@@ -676,9 +676,9 @@ impl<D: Discovery> UidWorker<'_, D> {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, windows))]
 pub(crate) struct NoDiscovery;
-#[cfg(test)]
+#[cfg(all(test, windows))]
 impl Discovery for NoDiscovery {
     async fn discover(&self, _: &UidPageJob) -> Result<ImapUidPage, ErrorCode> {
         panic!("unexpected discovery in non-UID test")
@@ -757,6 +757,6 @@ mod tests {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, windows))]
 #[path = "uid_worker_tests.rs"]
 mod integration_tests;

@@ -310,7 +310,23 @@ pub fn snapshot_default(
                 parse_snapshot_response(&raw,id,&request)
             })
     }
-    #[cfg(not(windows))]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    {
+        let id = "diagnostic-snapshot-1";
+        let params = serde_json::json!({
+            "from_utc_ms":request.from_utc_ms(), "to_utc_ms":request.to_utc_ms(),
+            "max_executions":request.max_executions(),
+            "sections":request.sections().iter().map(|section|section.as_str()).collect::<Vec<_>>()
+        });
+        let response = crate::unix_relay::call(
+            crate::profile::ProfileSelector::Default,
+            id,
+            "app.diagnostics.snapshot",
+            &params,
+        )?;
+        parse_snapshot_response(&response, id, &request)
+    }
+    #[cfg(all(not(windows), not(any(target_os = "linux", target_os = "macos"))))]
     {
         let _ = request;
         Err(ErrorCode::CapabilityUnsupported)

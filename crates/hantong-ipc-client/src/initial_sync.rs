@@ -280,7 +280,7 @@ pub fn parse_current(
 pub fn current_default(
     request: UidCursorRequest,
 ) -> Result<Option<InitialSyncPlanSnapshot>, ErrorCode> {
-    #[cfg(windows)]
+    #[cfg(any(windows, unix))]
     {
         let params = json!({"action":"initial-current","account_id":request.account_id(),"wire_hex":request.mailbox().wire_hex(),"encoding":request.mailbox().encoding().as_str()});
         parse_current(
@@ -289,7 +289,7 @@ pub fn current_default(
             &request,
         )
     }
-    #[cfg(not(windows))]
+    #[cfg(all(not(windows), not(unix)))]
     {
         let _ = request;
         Err(ErrorCode::CapabilityUnsupported)
@@ -297,7 +297,7 @@ pub fn current_default(
 }
 
 pub fn prepare_request(request: InitialSyncRequest) -> Result<InitialSyncRequest, ErrorCode> {
-    #[cfg(windows)]
+    #[cfg(any(windows, unix))]
     {
         let hash = wire_hex::encode(&hantong_platform::sha256(&request.intent_bytes())?);
         let mutation =
@@ -328,13 +328,13 @@ pub fn prepare_request(request: InitialSyncRequest) -> Result<InitialSyncRequest
             ),
         }
     }
-    #[cfg(not(windows))]
+    #[cfg(all(not(windows), not(unix)))]
     {
         let _ = request;
         Err(ErrorCode::CapabilityUnsupported)
     }
 }
-#[cfg(any(windows, test))]
+#[cfg(any(windows, unix, test))]
 fn mutation_params(request: &InitialSyncRequest) -> Value {
     let mut params = json!({"action":request.action().as_str(),"account_id":request.account_id(),"wire_hex":request.mailbox().wire_hex(),
         "encoding":request.mailbox().encoding().as_str(),"operation_id":request.operation_id(),"idempotency_key":request.idempotency_key(),"intent_hash":request.intent_hash()});
@@ -356,7 +356,7 @@ fn mutation_params(request: &InitialSyncRequest) -> Value {
     params
 }
 pub fn mutate_default(request: InitialSyncRequest) -> Result<InitialSyncReceipt, ErrorCode> {
-    #[cfg(windows)]
+    #[cfg(any(windows, unix))]
     {
         if prepare_request(request.clone())?.intent_hash() != request.intent_hash() {
             return Err(ErrorCode::InvalidInput);
@@ -364,34 +364,34 @@ pub fn mutate_default(request: InitialSyncRequest) -> Result<InitialSyncReceipt,
         let raw = crate::uid_page::exchange(mutation_params(&request), request.account_id())?;
         parse_mutation_receipt(&raw, "uid-page-1", &request)
     }
-    #[cfg(not(windows))]
+    #[cfg(all(not(windows), not(unix)))]
     {
         let _ = request;
         Err(ErrorCode::CapabilityUnsupported)
     }
 }
 pub fn status_default(request: UidPageStatusRequest) -> Result<InitialSyncReceipt, ErrorCode> {
-    #[cfg(windows)]
+    #[cfg(any(windows, unix))]
     {
         let params = json!({"action":"initial-status","account_id":request.account_id(),"execution_id":wire_hex::encode(request.execution_id())});
         let raw = crate::uid_page::exchange(params, request.account_id())?;
         parse_status_receipt(&raw, "uid-page-1", &request)
     }
-    #[cfg(not(windows))]
+    #[cfg(all(not(windows), not(unix)))]
     {
         let _ = request;
         Err(ErrorCode::CapabilityUnsupported)
     }
 }
 pub fn plan_default(request: InitialSyncPlanRequest) -> Result<InitialSyncPlanSnapshot, ErrorCode> {
-    #[cfg(windows)]
+    #[cfg(any(windows, unix))]
     {
         let params = json!({"action":"initial-plan","account_id":request.account_id(),"wire_hex":request.mailbox().wire_hex(),
             "encoding":request.mailbox().encoding().as_str(),"plan_id":wire_hex::encode(request.plan_id())});
         let raw = crate::uid_page::exchange(params, request.account_id())?;
         parse_plan_snapshot(&raw, "uid-page-1", &request)
     }
-    #[cfg(not(windows))]
+    #[cfg(all(not(windows), not(unix)))]
     {
         let _ = request;
         Err(ErrorCode::CapabilityUnsupported)

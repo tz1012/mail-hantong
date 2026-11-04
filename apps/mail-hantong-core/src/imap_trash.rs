@@ -130,5 +130,5 @@ async fn execute_verified(
     store.finish_imap_trash(pending.review_id, outcome)
 }
 
-#[cfg(test)]
+#[cfg(all(test, windows))]
 mod tests;

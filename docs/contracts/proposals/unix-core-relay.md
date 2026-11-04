@@ -1,6 +1,8 @@
 # Proposed Unix Core relay for CLI/MCP authentication
 
-Status: **proposed and unapproved** (2026-11-04)
+Status: **implementation directed after presenting proposal** (2026-11-04);
+human security review pending. The user reiterated that Linux must be usable
+and instructed continued work instead of another proposal-only stop.
 
 This proposal extends the approved ADR-030 Unix runtime only at the client
 authentication boundary. It does not approve a new mail capability, a new

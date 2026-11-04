@@ -19,6 +19,25 @@ impl Fixture {
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
         std::fs::create_dir(&root).unwrap();
+        #[cfg(target_os = "linux")]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o700)).unwrap();
+            let _keys =
+                hantong_platform::unix_paths::UnixDirectoryGuard::prepare(&root.join("keys"))
+                    .unwrap();
+            let _data =
+                hantong_platform::unix_paths::UnixDirectoryGuard::prepare(&root.join("data"))
+                    .unwrap();
+            let vault = hantong_secrets::headless_vault::HeadlessVault::initialize(
+                &root.join("keys"),
+                "synthetic-send-passphrase".to_owned().into(),
+            )
+            .unwrap()
+            .into_shared();
+            hantong_secrets::unix_secret_store::UnixSecretStore::install_headless_backend(vault)
+                .unwrap();
+        }
         drop(Store::open(root.join("data"), root.join("keys")).unwrap());
         let mut key = [0; 72];
         key[..8].copy_from_slice(b"ECS1\x20\0\0\0");
@@ -51,6 +70,7 @@ impl Fixture {
     pub(crate) fn store(&self) -> &Store {
         self.store.as_ref().unwrap()
     }
+    #[cfg(windows)]
     pub(crate) fn secrets_root(&self) -> &std::path::Path {
         &self.root
     }
@@ -208,6 +228,12 @@ impl Drop for Fixture {
 
 #[test]
 fn apr01_smtp_preview_uses_the_persisted_transport_sender() {
+    #[cfg(target_os = "linux")]
+    if isolated_child(
+        "send_mail::integration_tests::apr01_smtp_preview_uses_the_persisted_transport_sender",
+    ) {
+        return;
+    }
     let f = Fixture::new();
     let pending = f.prepare();
     let preview = super::preview(&pending).unwrap();
@@ -239,6 +265,12 @@ fn run<F: std::future::Future>(future: F) -> F::Output {
 
 #[test]
 fn apr01_personal_confirmation_cannot_claim_helper_origin_smtp_or_poll_provider() {
+    #[cfg(target_os = "linux")]
+    if isolated_child(
+        "send_mail::integration_tests::apr01_personal_confirmation_cannot_claim_helper_origin_smtp_or_poll_provider",
+    ) {
+        return;
+    }
     let f = Fixture::new();
     let p = f.prepare();
     assert!(!f.store().can_confirm_personal_mail_send(&p).unwrap());
@@ -262,6 +294,12 @@ fn apr01_personal_confirmation_cannot_claim_helper_origin_smtp_or_poll_provider(
 
 #[test]
 fn apr01_personal_send_polls_once_only_after_durable_claim_and_never_replays() {
+    #[cfg(target_os = "linux")]
+    if isolated_child(
+        "send_mail::integration_tests::apr01_personal_send_polls_once_only_after_durable_claim_and_never_replays",
+    ) {
+        return;
+    }
     let f = Fixture::new();
     let p = f.prepare_personal();
     assert!(f.store().can_confirm_personal_mail_send(&p).unwrap());
@@ -309,6 +347,12 @@ fn apr01_personal_send_polls_once_only_after_durable_claim_and_never_replays() {
 
 #[test]
 fn apr01_smtp_future_first_polls_after_durable_claim_and_replay_never_polls() {
+    #[cfg(target_os = "linux")]
+    if isolated_child(
+        "send_mail::integration_tests::apr01_smtp_future_first_polls_after_durable_claim_and_replay_never_polls",
+    ) {
+        return;
+    }
     let f = Fixture::new();
     let p = f.prepare();
     let policy = Rc::new(RefCell::new(ReadPolicy::new()));
@@ -344,6 +388,10 @@ fn apr01_smtp_future_first_polls_after_durable_claim_and_replay_never_polls() {
 }
 #[test]
 fn apr01_shared_rate_denial_never_polls_smtp() {
+    #[cfg(target_os = "linux")]
+    if isolated_child("send_mail::integration_tests::apr01_shared_rate_denial_never_polls_smtp") {
+        return;
+    }
     let f = Fixture::new();
     let p = f.prepare();
     let policy = Rc::new(RefCell::new(ReadPolicy::new()));
@@ -371,6 +419,12 @@ fn apr01_shared_rate_denial_never_polls_smtp() {
 }
 #[test]
 fn sync07_changed_endpoint_cancels_inflight_future_and_records_unknown() {
+    #[cfg(target_os = "linux")]
+    if isolated_child(
+        "send_mail::integration_tests::sync07_changed_endpoint_cancels_inflight_future_and_records_unknown",
+    ) {
+        return;
+    }
     let f = Fixture::new();
     let p = f.prepare();
     let policy = Rc::new(RefCell::new(ReadPolicy::new()));
@@ -395,4 +449,35 @@ fn sync07_changed_endpoint_cancels_inflight_future_and_records_unknown() {
         .unwrap();
     assert_eq!(receipt.state, "unknown");
     assert_eq!(receipt.error, Some(ErrorCode::SendUnknown));
+}
+
+#[cfg(target_os = "linux")]
+fn isolated_child(name: &str) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    if std::env::var_os("HANTONG_SEND_TEST_CHILD").is_some() {
+        return false;
+    }
+    let root = std::env::temp_dir().join(format!(
+        "hantong-send-env-{}-{}",
+        std::process::id(),
+        hantong_contracts::wire_hex::encode(&hantong_platform::random_nonce().unwrap())
+    ));
+    std::fs::create_dir(&root).unwrap();
+    std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o700)).unwrap();
+    for directory in ["data", "config", "runtime"] {
+        std::fs::create_dir(root.join(directory)).unwrap();
+        std::fs::set_permissions(root.join(directory), std::fs::Permissions::from_mode(0o700))
+            .unwrap();
+    }
+    let status = std::process::Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", name, "--nocapture"])
+        .env("HANTONG_SEND_TEST_CHILD", "1")
+        .env("XDG_DATA_HOME", root.join("data"))
+        .env("XDG_CONFIG_HOME", root.join("config"))
+        .env("XDG_RUNTIME_DIR", root.join("runtime"))
+        .status()
+        .unwrap();
+    std::fs::remove_dir_all(root).unwrap();
+    assert!(status.success(), "isolated native send test failed: {name}");
+    true
 }

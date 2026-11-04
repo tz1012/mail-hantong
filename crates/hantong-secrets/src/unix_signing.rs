@@ -159,6 +159,48 @@ pub fn create_server_signing_key(
     OpaqueSigner::create(&store, &mutation, &selector, None)
 }
 
+/// Loads or creates the client signing key for one registration. Private key
+/// material remains inside the Unix credential store and the opaque signer.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub fn load_client_signing_key(
+    root: impl AsRef<Path>,
+    registration_id: [u8; 16],
+    expected_public_key: Option<[u8; PUBLIC_KEY_LEN]>,
+) -> Result<OpaqueSigner, UnixSecretError> {
+    let guard = hantong_platform::unix_paths::UnixDirectoryGuard::open(root.as_ref(), true)
+        .map_err(|_| UnixSecretError::Unavailable)?;
+    let store = crate::unix_secret_store::UnixSecretStore::new();
+    let key_id = hantong_platform::client_key_id_for_registration(registration_id)
+        .map_err(|_| UnixSecretError::InvalidSelector)?;
+    let selector = client_selector(key_id)?;
+    match expected_public_key {
+        Some(public) => OpaqueSigner::load(&store, &selector, public),
+        None => {
+            let mutation = crate::unix_secret_store::UnixSecretMutationGuard::lock(&guard)?;
+            match OpaqueSigner::create(&store, &mutation, &selector, None) {
+                Ok(key) => Ok(key),
+                Err(UnixSecretError::AlreadyExists) => {
+                    let existing = store.read(&selector)?;
+                    OpaqueSigner::from_pkcs8(existing)
+                }
+                Err(error) => Err(error),
+            }
+        }
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn client_selector(
+    key_id: [u8; 32],
+) -> Result<crate::unix_secret_store::UnixSecretSelector, UnixSecretError> {
+    let id = hantong_contracts::wire_hex::encode(&key_id);
+    crate::unix_secret_store::UnixSecretSelector::new(
+        crate::unix_secret_store::UnixSecretKind::ClientSigningKey,
+        Some(&id),
+        1,
+    )
+}
+
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 fn server_selector(
     key_id: [u8; 32],

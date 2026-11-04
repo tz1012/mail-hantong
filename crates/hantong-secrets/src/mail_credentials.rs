@@ -246,7 +246,10 @@ impl SecretStore {
             let protected = self
                 .unix_store
                 .read(&selector)
-                .map_err(|_| SecretError::CredentialMismatch)?;
+                .map_err(|error| match error {
+                    unix_secret_store::UnixSecretError::NotFound => SecretError::NotFound,
+                    _ => SecretError::Protection,
+                })?;
             let rest = protected
                 .as_bytes_in_secrets()
                 .strip_prefix(prefix.as_slice())

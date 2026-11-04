@@ -43,15 +43,18 @@ pub fn app_directories() -> Result<UnixAppDirectories, ErrorCode> {
 }
 
 /// Return the application socket directory.  Linux requires the kernel's
-/// per-user runtime directory; `/tmp` and caller-supplied alternatives are
-/// intentionally never accepted.
+/// per-user runtime directory when present. Headless sessions without one use
+/// a fixed private directory below the OS passwd home, never arbitrary `/tmp`.
 pub fn runtime_socket_dir() -> Result<PathBuf, ErrorCode> {
     #[cfg(target_os = "linux")]
     {
-        let root = std::env::var_os("XDG_RUNTIME_DIR").ok_or(ErrorCode::CapabilityUnsupported)?;
-        let root = absolute_clean(root)?;
-        validate_owned_private_dir(&root)?;
-        Ok(root.join(PRODUCT))
+        if let Some(root) = std::env::var_os("XDG_RUNTIME_DIR") {
+            let root = absolute_clean(root)?;
+            validate_owned_private_dir(&root)?;
+            return Ok(root.join(PRODUCT));
+        }
+        let home = passwd_home()?.ok_or(ErrorCode::CapabilityUnsupported)?;
+        headless_runtime_dir(&home)
     }
     #[cfg(target_os = "macos")]
     {
@@ -74,6 +77,16 @@ pub fn runtime_socket_dir() -> Result<PathBuf, ErrorCode> {
         validate_owned_private_dir(&root)?;
         Ok(root.join(PRODUCT))
     }
+}
+
+#[cfg(target_os = "linux")]
+fn headless_runtime_dir(home: &Path) -> Result<PathBuf, ErrorCode> {
+    let root =
+        absolute_clean(home.as_os_str().to_os_string())?.join(".local/state/mail-hantong/run");
+    // Creation is left to UnixDirectoryGuard::prepare, which pins each private
+    // directory and enforces UID/mode/no-follow before a socket can be bound.
+    validate_parent(&root)?;
+    Ok(root)
 }
 
 pub fn socket_path() -> Result<PathBuf, ErrorCode> {
@@ -539,6 +552,18 @@ mod tests {
         if let Some(home) = passwd {
             assert!(home.is_absolute());
         }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn sec03_headless_runtime_uses_fixed_passwd_home_subdirectory() {
+        assert!(headless_runtime_dir(Path::new("relative")).is_err());
+        assert!(headless_runtime_dir(Path::new("/tmp/../escape")).is_err());
+        let home = passwd_home().unwrap().unwrap();
+        assert_eq!(
+            headless_runtime_dir(&home).unwrap(),
+            home.join(".local/state/mail-hantong/run")
+        );
     }
 
     #[cfg(target_os = "linux")]

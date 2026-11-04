@@ -12,6 +12,8 @@ use std::path::{Path, PathBuf};
 
 mod database;
 pub mod google;
+#[cfg(target_os = "linux")]
+pub mod headless_vault;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod unix_database;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -148,6 +150,26 @@ pub struct SecretStore {
     unix_store: unix_secret_store::UnixSecretStore,
 }
 impl SecretStore {
+    /// Opens the explicitly selected Linux headless vault. The caller must
+    /// obtain the passphrase through Secrets-owned protected input and keep
+    /// the returned shared vault alive for the Core process lifetime.
+    #[cfg(target_os = "linux")]
+    pub fn open_headless(
+        root: impl AsRef<Path>,
+        vault: headless_vault::SharedHeadlessVault,
+    ) -> Result<Self, SecretError> {
+        let root = root.as_ref();
+        let unix_root = hantong_platform::unix_paths::UnixDirectoryGuard::open(root, true)
+            .map_err(|_| SecretError::InvalidRoot)?;
+        unix_secret_store::UnixSecretStore::install_headless_backend(vault)
+            .map_err(|_| SecretError::Protection)?;
+        Ok(Self {
+            root: root.to_path_buf(),
+            unix_root,
+            unix_store: unix_secret_store::UnixSecretStore::new(),
+        })
+    }
+
     pub fn open(root: impl AsRef<Path>) -> Result<Self, SecretError> {
         #[cfg(not(windows))]
         {
@@ -374,6 +396,26 @@ impl SecretStore {
         unix_secret_store::UnixSecretSelector::new(kind, Some(account), version)
             .map_err(|_| SecretError::InvalidCredential)
     }
+}
+
+/// Constructs an isolated synthetic Linux store for protocol tests. It never
+/// installs the process-global backend and uses only a fixture passphrase.
+#[cfg(all(test, target_os = "linux"))]
+pub(crate) fn test_headless_store(root: &Path) -> Result<SecretStore, SecretError> {
+    use age::secrecy::SecretString;
+    let vault = headless_vault::HeadlessVault::initialize(
+        root,
+        SecretString::from("synthetic-protocol-fixture".to_owned()),
+    )
+    .map_err(|_| SecretError::Protection)?
+    .into_shared();
+    let unix_root = hantong_platform::unix_paths::UnixDirectoryGuard::open(root, true)
+        .map_err(|_| SecretError::InvalidRoot)?;
+    Ok(SecretStore {
+        root: root.to_path_buf(),
+        unix_root,
+        unix_store: unix_secret_store::UnixSecretStore::new_headless(vault),
+    })
 }
 
 fn validate_account(v: &str) -> Result<(), SecretError> {

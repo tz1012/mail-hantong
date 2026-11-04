@@ -9,14 +9,7 @@ enum Command {
     Status(String, [u8; 32]),
 }
 fn generated_id() -> Result<String, ErrorCode> {
-    #[cfg(windows)]
-    {
-        Ok(wire_hex::encode(&hantong_platform::random_nonce()?))
-    }
-    #[cfg(not(windows))]
-    {
-        Err(ErrorCode::CapabilityUnsupported)
-    }
+    Ok(wire_hex::encode(&hantong_platform::random_nonce()?))
 }
 fn parse(command: &[String], options: &[(String, String)]) -> Result<Command, ErrorCode> {
     let action = match command {

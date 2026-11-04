@@ -138,7 +138,7 @@ pub(crate) fn coordinator_for_store<'a>(
 ) {
     coordinator_with_discovery_and_slot(store, NativeDiscovery { secrets_root }, shared_slot)
 }
-#[cfg(test)]
+#[cfg(all(test, windows))]
 pub(crate) fn coordinator_with_discovery<D: Discovery>(
     store: &Store,
     discovery: D,
@@ -237,9 +237,9 @@ impl<D: Discovery> FolderWorker<'_, D> {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, windows))]
 pub(crate) struct NoDiscovery;
-#[cfg(test)]
+#[cfg(all(test, windows))]
 impl Discovery for NoDiscovery {
     async fn discover(&self, _: &FolderRefreshJob) -> Result<ImapMailboxSnapshot, ErrorCode> {
         panic!("unexpected discovery in non-folder test")

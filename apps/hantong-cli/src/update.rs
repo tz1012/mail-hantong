@@ -25,13 +25,20 @@ pub(super) fn run(
     {
         return Some(super::emit_error(ErrorCode::HumanStepRequired, lang, json));
     }
-    #[cfg(not(windows))]
+    #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
     {
         Some(super::emit_error(
             ErrorCode::CapabilityUnsupported,
             lang,
             false,
         ))
+    }
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    {
+        Some(match run_unix_updater() {
+            Ok(()) => 0,
+            Err(code) => super::emit_error(code, lang, false),
+        })
     }
     #[cfg(windows)]
     {
@@ -43,6 +50,60 @@ pub(super) fn run(
             }
             Err(code) => super::emit_error(code, lang, false),
         })
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn run_unix_updater() -> Result<(), ErrorCode> {
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt;
+    use std::process::{Command, Stdio};
+    let core = hantong_platform::unix_release::verified_installed_core("hantong")?;
+    let version = core
+        .parent()
+        .and_then(std::path::Path::parent)
+        .ok_or(ErrorCode::CoreUnavailable)?;
+    let root = version
+        .parent()
+        .and_then(std::path::Path::parent)
+        .ok_or(ErrorCode::CoreUnavailable)?;
+    let old_version = version
+        .file_name()
+        .and_then(|v| v.to_str())
+        .ok_or(ErrorCode::CoreUnavailable)?
+        .to_owned();
+    let updater = version.join("update.sh");
+    let updater_meta = std::fs::metadata(&updater).map_err(|_| ErrorCode::CoreUnavailable)?;
+    if !updater_meta.is_file() || updater_meta.permissions().mode() & 0o111 == 0 {
+        return Err(ErrorCode::CoreUnavailable);
+    }
+    let status = Command::new(&updater)
+        .arg("--install-root")
+        .arg(root)
+        .stdin(Stdio::inherit())
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
+        .status()
+        .map_err(|_| ErrorCode::InternalError)?;
+    if !status.success() {
+        return Err(ErrorCode::InternalError);
+    }
+    let current = std::fs::read_to_string(root.join("current.txt"))
+        .map_err(|_| ErrorCode::CoreUnavailable)?;
+    if current.trim() == old_version {
+        return Ok(());
+    }
+    let stop = Command::new(&core)
+        .arg("unix-stop")
+        .stdin(Stdio::null())
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
+        .status()
+        .map_err(|_| ErrorCode::InternalError)?;
+    if stop.success() {
+        Ok(())
+    } else {
+        Err(ErrorCode::InternalError)
     }
 }
 

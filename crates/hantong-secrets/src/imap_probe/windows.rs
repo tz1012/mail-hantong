@@ -218,7 +218,7 @@ pub(super) async fn fetch_uid_observation(
     }
 }
 
-#[cfg(all(test, windows))]
+#[cfg(all(test, any(windows, target_os = "linux")))]
 pub(super) async fn run_uid_observation_connected<S>(
     source: Source<'_>,
     stream: S,
@@ -295,7 +295,7 @@ pub(super) async fn fetch_uid_recovery_page(
     }
 }
 
-#[cfg(all(test, windows))]
+#[cfg(all(test, any(windows, target_os = "linux")))]
 pub(super) async fn run_uid_recovery_connected<S>(
     source: Source<'_>,
     stream: S,
@@ -318,7 +318,7 @@ where
     }
 }
 
-#[cfg(all(test, windows))]
+#[cfg(all(test, any(windows, target_os = "linux")))]
 pub(super) async fn run_uid_reconcile_connected<S>(
     source: Source<'_>,
     stream: S,
@@ -341,7 +341,7 @@ where
     }
 }
 
-#[cfg(all(test, windows))]
+#[cfg(all(test, any(windows, target_os = "linux")))]
 pub(super) async fn run_uid_connected<S>(
     source: Source<'_>,
     stream: S,
@@ -364,7 +364,7 @@ where
     }
 }
 
-#[cfg(all(test, windows))]
+#[cfg(all(test, any(windows, target_os = "linux")))]
 pub(super) async fn run_discovery_connected<S>(
     source: Source<'_>,
     stream: S,
@@ -669,7 +669,7 @@ fn snapshot(caps: &[String]) -> ImapCapabilities {
         .filter_map(|(feature, enabled)| enabled.then_some(feature)),
     )
 }
-#[cfg(all(test, windows))]
+#[cfg(all(test, any(windows, target_os = "linux")))]
 pub(super) async fn run_connected<S>(
     source: Source<'_>,
     stream: S,
@@ -930,7 +930,7 @@ where
     Ok(receipt)
 }
 
-#[cfg(all(test, windows))]
+#[cfg(all(test, any(windows, target_os = "linux")))]
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn run_test_trash<S>(
     store: &SecretStore,

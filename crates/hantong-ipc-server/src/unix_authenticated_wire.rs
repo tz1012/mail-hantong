@@ -28,6 +28,21 @@ where
     let first = tokio::time::timeout(Duration::from_secs(5), read_request(&mut connection))
         .await
         .map_err(|_| ErrorCode::AuthRequired)??;
+    authenticate_after_begin(connection, first, server_signer, server_instance, lookup).await
+}
+
+/// Continues the unchanged v2 handshake after the server classified its first frame.
+pub async fn authenticate_after_begin<S, F>(
+    connection: UnixLocalConnection,
+    first: RpcRequest,
+    server_signer: &mut S,
+    server_instance: [u8; 32],
+    lookup: &mut F,
+) -> Result<AuthenticatedUnixConnection, ErrorCode>
+where
+    S: OpaqueSigner,
+    F: FnMut(&[u8; 16]) -> Result<Option<RegisteredUnixClient>, ErrorCode>,
+{
     let overall = tokio::time::Instant::now() + Duration::from_secs(30);
     let begin = unix_auth_wire::parse_begin(&first)?;
     let registration = lookup(&begin.registration_id)?.ok_or(ErrorCode::ClientNotRegistered)?;

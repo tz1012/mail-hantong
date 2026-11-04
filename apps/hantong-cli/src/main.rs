@@ -31,6 +31,8 @@ mod smtp_setup;
 mod startup;
 mod sync;
 mod terminal_workflows;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+mod unix_core_start;
 mod update;
 
 const EN_RESOURCES: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/resources/en.txt"));

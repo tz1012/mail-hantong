@@ -19,9 +19,13 @@ const MAX_MANIFEST: u64 = 4 * 1024 * 1024;
 const MAX_FILE: u64 = hantong_platform::MAX_RELEASE_FILE;
 
 pub(super) fn ensure_started() -> Result<(), ErrorCode> {
-    #[cfg(not(windows))]
+    #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
     {
         Err(ErrorCode::CapabilityUnsupported)
+    }
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    {
+        crate::unix_core_start::ensure_started()
     }
     #[cfg(windows)]
     {
@@ -48,10 +52,14 @@ pub(super) fn review(
         account_id.map(str::to_owned),
         payload_hash.unwrap_or([0; 32]),
     )?;
-    #[cfg(not(windows))]
+    #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
     {
         let _ = lang;
         Err(ErrorCode::CapabilityUnsupported)
+    }
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    {
+        crate::unix_core_start::review(kind, request_id, account_id, payload_hash, lang)
     }
     #[cfg(windows)]
     {
@@ -634,8 +642,8 @@ mod tests {
     }
 
     #[test]
-    fn cli_first_run_non_windows_is_explicitly_unsupported() {
-        #[cfg(not(windows))]
+    fn cli_first_run_unknown_platform_is_explicitly_unsupported() {
+        #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
         assert_eq!(ensure_started(), Err(ErrorCode::CapabilityUnsupported));
     }
 

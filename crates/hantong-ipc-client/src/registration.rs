@@ -246,10 +246,25 @@ pub fn exchange(command: RegistrationCommand) -> Result<RegistrationReceipt, Err
                 .map_err(|_| ErrorCode::CoreUnavailable)?
             })
     }
-    #[cfg(not(windows))]
+    #[cfg(all(not(windows), not(unix)))]
     {
         let _ = command;
         Err(ErrorCode::CapabilityUnsupported)
+    }
+    #[cfg(unix)]
+    {
+        let id = "registration-1";
+        let body = request(id, command)?;
+        let envelope: serde_json::Value =
+            serde_json::from_slice(&body).map_err(|_| ErrorCode::InvalidInput)?;
+        let method = envelope
+            .get("method")
+            .and_then(serde_json::Value::as_str)
+            .ok_or(ErrorCode::InvalidInput)?;
+        let params = envelope.get("params").ok_or(ErrorCode::InvalidInput)?;
+        let response =
+            crate::unix_relay::call(crate::profile::ProfileSelector::Default, id, method, params)?;
+        parse_response(&response, id, command)
     }
 }
 

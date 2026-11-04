@@ -17,6 +17,7 @@ pub(crate) struct Session {
     input: SmtpSetupInput,
     endpoint: SmtpEndpointConfig,
     account_version: u64,
+    #[cfg(windows)]
     created: i64,
     receipt: SmtpSetupReceipt,
 }
@@ -25,19 +26,13 @@ pub(crate) struct TerminalContext {
     pub account_id: String,
     pub endpoint: SmtpEndpointConfig,
     pub account_version: u64,
+    #[cfg(windows)]
     pub request_id: [u8; 32],
     pub payload_hash: [u8; 32],
     pub expires_at_utc_ms: i64,
 }
 fn request_nonce() -> Result<[u8; 32], ErrorCode> {
-    #[cfg(windows)]
-    {
-        hantong_platform::random_nonce()
-    }
-    #[cfg(not(windows))]
-    {
-        Err(ErrorCode::CapabilityUnsupported)
-    }
+    hantong_platform::random_nonce()
 }
 fn now() -> Result<i64, ErrorCode> {
     i64::try_from(
@@ -129,6 +124,7 @@ pub(crate) fn request(
             input,
             endpoint,
             account_version: version,
+            #[cfg(windows)]
             created,
             receipt,
         },
@@ -149,6 +145,7 @@ pub(crate) fn terminal_context(
         account_id: session.input.account_id().to_owned(),
         endpoint: session.endpoint,
         account_version: session.account_version,
+        #[cfg(windows)]
         request_id: session.receipt.request_id,
         payload_hash,
         expires_at_utc_ms: session.receipt.expires_at_utc_ms,
@@ -193,6 +190,19 @@ pub(crate) fn status(
     }
     Ok(s.receipt)
 }
+
+/// Cancels a pending Unix terminal credential review before any provider I/O.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub(crate) fn cancel(sessions: &Sessions, id: [u8; 32]) -> Result<(), ErrorCode> {
+    let mut map = sessions.borrow_mut();
+    let session = map.get_mut(&id).ok_or(ErrorCode::NotFound)?;
+    if session.receipt.state != SmtpSetupState::Pending {
+        return Err(ErrorCode::Conflict);
+    }
+    session.receipt.state = SmtpSetupState::Denied;
+    session.receipt.error_code = Some(ErrorCode::ApprovalDenied);
+    Ok(())
+}
 fn validate(store: &Store, s: &Session) -> Result<(), ErrorCode> {
     if now()? >= s.receipt.expires_at_utc_ms {
         return Err(ErrorCode::ApprovalExpired);
@@ -208,6 +218,7 @@ fn validate(store: &Store, s: &Session) -> Result<(), ErrorCode> {
     }
     Ok(())
 }
+#[cfg(windows)]
 pub(crate) async fn run(
     store: &Store,
     root: &Path,
@@ -232,6 +243,7 @@ pub(crate) async fn run(
     s.receipt.error_code = result.err();
     Ok(())
 }
+#[cfg(windows)]
 async fn finish(store: &Store, root: &Path, s: &Session) -> Result<(), ErrorCode> {
     validate(store, s)?;
     let hash = smtp_payload_hash(s.input.account_id(), &s.endpoint, 0)?;
@@ -391,6 +403,7 @@ mod tests {
                 input,
                 endpoint,
                 account_version: 1,
+                #[cfg(windows)]
                 created: now,
                 receipt,
             },

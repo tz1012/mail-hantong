@@ -17,7 +17,16 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+use hantong_platform::unix_paths::UnixDirectoryGuard;
+#[cfg(not(windows))]
+use ring::rand::SecureRandom;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+use std::io::Write;
+
 const MAX_TERMINAL_SECRET: usize = 16 * 1024;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+const MAX_STAGE_SCRYPT_WORK_FACTOR: u8 = 18;
 const OPAQUE_TICKET_BYTES: usize = 320;
 #[cfg(test)]
 const TICKET_TTL_MS: i64 = 60_000;
@@ -283,10 +292,11 @@ impl SecretStore {
             return Err(SecretError::CredentialMismatch);
         }
         let path = self.terminal_secret_path(&ticket.ticket_id);
-        if handle.ticket_id != ticket.ticket_id
-            || handle.path != path
-            || fs::symlink_metadata(&path).is_err()
-        {
+        if handle.ticket_id != ticket.ticket_id || handle.path != path {
+            return Err(SecretError::CredentialMismatch);
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+        if fs::symlink_metadata(&path).is_err() {
             return Err(SecretError::CredentialMismatch);
         }
         #[cfg(windows)]
@@ -303,8 +313,19 @@ impl SecretStore {
         }
         #[cfg(not(windows))]
         {
-            let _ = (path, store);
-            Err(SecretError::UnsupportedPlatform)
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            {
+                let secret = consume_linux_staged(&path, &ticket)?;
+                if secret.as_slice().is_empty() || secret.as_slice().len() > MAX_TERMINAL_SECRET {
+                    return Err(SecretError::InvalidCredential);
+                }
+                store(secret.as_slice())
+            }
+            #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+            {
+                let _ = (path, store);
+                Err(SecretError::UnsupportedPlatform)
+            }
         }
     }
 
@@ -321,6 +342,15 @@ impl SecretStore {
         }
         let path = self.terminal_secret_path(&opaque_id);
         validate_path(&self.root)?;
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        if fs::symlink_metadata(&path)
+            .ok()
+            .filter(|meta| meta.is_file() && !meta.file_type().is_symlink())
+            .is_none()
+        {
+            return Err(SecretError::CredentialMismatch);
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
         if fs::symlink_metadata(&path).is_err() {
             return Err(SecretError::CredentialMismatch);
         }
@@ -423,13 +453,90 @@ impl SecretStore {
     #[cfg(not(windows))]
     pub fn capture_terminal_secret(
         &self,
-        _ticket: &TerminalSecretTicket,
+        ticket: &TerminalSecretTicket,
     ) -> Result<TerminalSecretHandle, SecretError> {
-        Err(SecretError::UnsupportedPlatform)
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        {
+            if ticket.is_expired() {
+                return Err(SecretError::InputExpired);
+            }
+            let secret = read_masked_terminal_line()?;
+            self.stage_terminal_secret_bytes(ticket, secret)
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+        {
+            let _ = ticket;
+            Err(SecretError::UnsupportedPlatform)
+        }
+    }
+
+    /// Captures into the Secrets-owned encrypted stage without opening a
+    /// keyring backend. This is used by a separate foreground review helper
+    /// while the primary Core owns the headless vault lock.
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    pub fn capture_terminal_secret_at(
+        root: impl AsRef<std::path::Path>,
+        ticket: &TerminalSecretTicket,
+    ) -> Result<TerminalSecretHandle, SecretError> {
+        let root = root.as_ref();
+        validate_path(root)?;
+        if ticket.is_expired() {
+            return Err(SecretError::InputExpired);
+        }
+        let secret = read_masked_terminal_line()?;
+        Self::stage_terminal_secret_bytes_at(root, ticket, secret)
+    }
+
+    /// Removes one staged value after a cancelled or failed review. The
+    /// ticket id is the only selector accepted; no credential bytes leave
+    /// Secrets.
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    pub fn cancel_terminal_secret_at(
+        root: impl AsRef<std::path::Path>,
+        ticket: &TerminalSecretTicket,
+        opaque_id: [u8; 32],
+    ) -> Result<(), SecretError> {
+        let root = root.as_ref();
+        validate_path(root)?;
+        if ticket.is_expired() || opaque_id == [0; 32] || opaque_id != ticket.ticket_id {
+            return Err(SecretError::CredentialMismatch);
+        }
+        let path = root.join(format!(
+            "terminal-v1-{}.stage",
+            hantong_contracts::wire_hex::encode(&opaque_id)
+        ));
+        let metadata = fs::symlink_metadata(&path).map_err(|_| SecretError::NotFound)?;
+        if !metadata.is_file() || metadata.file_type().is_symlink() {
+            return Err(SecretError::CredentialMismatch);
+        }
+        let guard = UnixDirectoryGuard::open(root, true).map_err(|_| SecretError::Protection)?;
+        let file = guard
+            .open_existing_regular(&format!(
+                "terminal-v1-{}.stage",
+                hantong_contracts::wire_hex::encode(&opaque_id)
+            ))
+            .map_err(|_| SecretError::Protection)?;
+        guard
+            .unlink_owned(
+                &format!(
+                    "terminal-v1-{}.stage",
+                    hantong_contracts::wire_hex::encode(&opaque_id)
+                ),
+                &file,
+            )
+            .map_err(|_| SecretError::Protection)
     }
 
     fn stage_terminal_secret_bytes(
         &self,
+        ticket: &TerminalSecretTicket,
+        secret: SensitiveBuffer,
+    ) -> Result<TerminalSecretHandle, SecretError> {
+        Self::stage_terminal_secret_bytes_at(&self.root, ticket, secret)
+    }
+
+    fn stage_terminal_secret_bytes_at(
+        root: &std::path::Path,
         ticket: &TerminalSecretTicket,
         secret: SensitiveBuffer,
     ) -> Result<TerminalSecretHandle, SecretError> {
@@ -440,8 +547,12 @@ impl SecretStore {
             return Err(SecretError::InputExpired);
         }
         validate_terminal_secret(secret.as_slice())?;
-        let path = self.terminal_secret_path(&ticket.ticket_id);
-        validate_path(&self.root)?;
+        let path = root.join(format!(
+            "terminal-v1-{}.stage",
+            hantong_contracts::wire_hex::encode(&ticket.ticket_id)
+        ));
+        validate_path(root)?;
+        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
         if fs::symlink_metadata(&path).is_ok() {
             return Err(SecretError::CredentialMismatch);
         }
@@ -456,8 +567,19 @@ impl SecretStore {
         }
         #[cfg(not(windows))]
         {
-            let _ = (ticket, path, secret);
-            Err(SecretError::UnsupportedPlatform)
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            {
+                write_linux_staged(root, ticket, secret.as_slice())?;
+                Ok(TerminalSecretHandle {
+                    ticket_id: ticket.ticket_id,
+                    path,
+                })
+            }
+            #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+            {
+                let _ = (ticket, path, secret);
+                Err(SecretError::UnsupportedPlatform)
+            }
         }
     }
 
@@ -480,7 +602,11 @@ impl SecretStore {
         }
         validate_account(account_id)?;
         let path = self.terminal_secret_path(&ticket.ticket_id);
-        if handle.path != path || fs::symlink_metadata(&path).is_err() {
+        if handle.path != path {
+            return Err(SecretError::CredentialMismatch);
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+        if fs::symlink_metadata(&path).is_err() {
             return Err(SecretError::CredentialMismatch);
         }
         #[cfg(windows)]
@@ -499,8 +625,24 @@ impl SecretStore {
         }
         #[cfg(not(windows))]
         {
-            let _ = (ticket, handle, expected, account_id, kind);
-            Err(SecretError::UnsupportedPlatform)
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            {
+                if !ticket.binding.matches(&expected) || handle.ticket_id != ticket.ticket_id {
+                    return Err(SecretError::CredentialMismatch);
+                }
+                let secret = consume_linux_staged(&path, &ticket)?;
+                if secret.as_slice().is_empty() || secret.as_slice().len() > MAX_TERMINAL_SECRET {
+                    return Err(SecretError::InvalidCredential);
+                }
+                let target = self.handle(account_id, kind);
+                self.store_bytes(&target, account_id, kind, secret.as_slice())?;
+                Ok(target)
+            }
+            #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+            {
+                let _ = (ticket, handle, expected, account_id, kind);
+                Err(SecretError::UnsupportedPlatform)
+            }
         }
     }
 
@@ -655,6 +797,164 @@ fn validate_terminal_secret(bytes: &[u8]) -> Result<(), SecretError> {
     Ok(())
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn linux_stage_passphrase(ticket: &TerminalSecretTicket) -> age::secrecy::SecretString {
+    age::secrecy::SecretString::from(hantong_contracts::wire_hex::encode(&ticket.nonce))
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn write_linux_staged(
+    root: &std::path::Path,
+    ticket: &TerminalSecretTicket,
+    secret: &[u8],
+) -> Result<(), SecretError> {
+    let guard = UnixDirectoryGuard::open(root, true).map_err(|_| SecretError::Protection)?;
+    let name = format!(
+        "terminal-v1-{}.stage",
+        hantong_contracts::wire_hex::encode(&ticket.ticket_id)
+    );
+    let mut recipient = age::scrypt::Recipient::new(linux_stage_passphrase(ticket));
+    recipient.set_work_factor(MAX_STAGE_SCRYPT_WORK_FACTOR);
+    let encryptor =
+        age::Encryptor::with_recipients(std::iter::once(&recipient as &dyn age::Recipient))
+            .map_err(|_| SecretError::Protection)?;
+    let mut ciphertext = Vec::new();
+    let mut writer = encryptor
+        .wrap_output(&mut ciphertext)
+        .map_err(|_| SecretError::Protection)?;
+    writer
+        .write_all(secret)
+        .map_err(|_| SecretError::Protection)?;
+    writer.finish().map_err(|_| SecretError::Protection)?;
+    if ciphertext.len() > MAX_TERMINAL_SECRET * 2 {
+        return Err(SecretError::SecretTooLarge);
+    }
+    let tmp = format!(".{}.tmp-{}", name, std::process::id());
+    let mut file = guard
+        .create_new_regular(&tmp)
+        .map_err(|_| SecretError::Protection)?;
+    let result = (|| {
+        file.write_all(&ciphertext)
+            .map_err(|_| SecretError::Protection)?;
+        file.sync_all().map_err(|_| SecretError::Protection)?;
+        drop(file);
+        guard
+            .rename_under_lock(&tmp, &name)
+            .map_err(|_| SecretError::Protection)?;
+        sync_linux_directory(&guard)
+    })();
+    if result.is_err()
+        && let Ok(tmp_file) = guard.open_existing_regular(&tmp)
+    {
+        let _ = guard.unlink_owned(&tmp, &tmp_file);
+    }
+    result
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn consume_linux_staged(
+    path: &std::path::Path,
+    ticket: &TerminalSecretTicket,
+) -> Result<SensitiveBuffer, SecretError> {
+    let root = path.parent().ok_or(SecretError::CredentialMismatch)?;
+    let name = path
+        .file_name()
+        .and_then(|v| v.to_str())
+        .ok_or(SecretError::CredentialMismatch)?;
+    let guard =
+        UnixDirectoryGuard::open(root, true).map_err(|_| SecretError::CredentialMismatch)?;
+    let file = guard
+        .open_existing_readonly_regular(name)
+        .map_err(|_| SecretError::CredentialMismatch)?;
+    let meta = file
+        .metadata()
+        .map_err(|_| SecretError::CredentialMismatch)?;
+    if meta.len() == 0 || meta.len() > (MAX_TERMINAL_SECRET * 2) as u64 {
+        return Err(SecretError::CredentialMismatch);
+    }
+    let mut ciphertext = Vec::with_capacity(meta.len() as usize);
+    (&file)
+        .take((MAX_TERMINAL_SECRET * 2 + 1) as u64)
+        .read_to_end(&mut ciphertext)
+        .map_err(|_| SecretError::CredentialMismatch)?;
+    let decryptor =
+        age::Decryptor::new(ciphertext.as_slice()).map_err(|_| SecretError::CredentialMismatch)?;
+    let mut identity = age::scrypt::Identity::new(linux_stage_passphrase(ticket));
+    identity.set_max_work_factor(MAX_STAGE_SCRYPT_WORK_FACTOR);
+    let reader = decryptor
+        .decrypt(std::iter::once(&identity as &dyn age::Identity))
+        .map_err(|_| SecretError::CredentialMismatch)?;
+    let mut plaintext = SensitiveBuffer(Vec::new());
+    reader
+        .take((MAX_TERMINAL_SECRET + 1) as u64)
+        .read_to_end(&mut plaintext.0)
+        .map_err(|_| SecretError::CredentialMismatch)?;
+    if plaintext.0.len() > MAX_TERMINAL_SECRET {
+        return Err(SecretError::SecretTooLarge);
+    }
+    guard
+        .unlink_owned(name, &file)
+        .map_err(|_| SecretError::Protection)?;
+    sync_linux_directory(&guard)?;
+    Ok(plaintext)
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn sync_linux_directory(guard: &UnixDirectoryGuard) -> Result<(), SecretError> {
+    let fd = guard
+        .directory_fd()
+        .map_err(|_| SecretError::Protection)?
+        .try_clone_to_owned()
+        .map_err(|_| SecretError::Protection)?;
+    std::fs::File::from(fd)
+        .sync_all()
+        .map_err(|_| SecretError::Protection)
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[allow(unsafe_code)]
+pub(crate) fn read_masked_terminal_line() -> Result<SensitiveBuffer, SecretError> {
+    use std::os::fd::AsRawFd;
+
+    let mut tty = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open("/dev/tty")
+        .map_err(|_| SecretError::InvalidInputWindow)?;
+    let fd = tty.as_raw_fd();
+    let mut original = std::mem::MaybeUninit::<libc::termios>::uninit();
+    if unsafe { libc::tcgetattr(fd, original.as_mut_ptr()) } != 0 {
+        return Err(SecretError::InvalidInputWindow);
+    }
+    let original = unsafe { original.assume_init() };
+    let mut masked = original;
+    masked.c_lflag &= !libc::ECHO;
+    if unsafe { libc::tcsetattr(fd, libc::TCSANOW, &masked) } != 0 {
+        return Err(SecretError::InvalidInputWindow);
+    }
+    struct Restore {
+        fd: libc::c_int,
+        mode: libc::termios,
+    }
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            // SAFETY: fd and mode were obtained from the same live /dev/tty.
+            let _ = unsafe { libc::tcsetattr(self.fd, libc::TCSANOW, &self.mode) };
+        }
+    }
+    let _restore = Restore { fd, mode: original };
+    let mut secret = SensitiveBuffer::read_limited(&mut tty, MAX_TERMINAL_SECRET)?;
+    while secret
+        .0
+        .last()
+        .is_some_and(|byte| *byte == b'\n' || *byte == b'\r')
+    {
+        secret.0.pop();
+    }
+    validate_terminal_secret(secret.as_slice())?;
+    Ok(secret)
+}
+
 fn opaque_checksum(bytes: &[u8]) -> [u8; 8] {
     use std::hash::{Hash, Hasher};
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
@@ -676,8 +976,10 @@ fn random_bytes(bytes: &mut [u8]) -> Result<(), SecretError> {
 }
 
 #[cfg(not(windows))]
-fn random_bytes(_bytes: &mut [u8]) -> Result<(), SecretError> {
-    Err(SecretError::UnsupportedPlatform)
+fn random_bytes(bytes: &mut [u8]) -> Result<(), SecretError> {
+    ring::rand::SystemRandom::new()
+        .fill(bytes)
+        .map_err(|_| SecretError::Protection)
 }
 
 #[cfg(windows)]
@@ -761,6 +1063,150 @@ mod tests {
         tampered[0] = 0;
         assert!(TerminalSecretTicket::from_opaque(&tampered).is_err());
         assert!(TerminalSecretTicket::from_opaque(&encoded[..319]).is_err());
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn terminal_secret_linux_stage_is_encrypted_and_cross_process_readable() {
+        if let Some(root) = std::env::var_os("HANTONG_STAGE_CHILD_ROOT") {
+            let root = std::path::PathBuf::from(root);
+            let ticket = TerminalSecretTicket {
+                binding: binding(now_utc_ms() + TICKET_TTL_MS),
+                ticket_id: [9; 32],
+                nonce: [10; 32],
+            };
+            let path = root.join(format!(
+                "terminal-v1-{}.stage",
+                hantong_contracts::wire_hex::encode(&ticket.ticket_id)
+            ));
+            let recovered = consume_linux_staged(&path, &ticket).unwrap();
+            assert_eq!(recovered.as_slice(), b"synthetic-cross-process-secret");
+            assert!(!path.exists());
+            return;
+        }
+        let root = std::env::temp_dir().join(format!(
+            "hantong-terminal-linux-stage-{}-{}",
+            std::process::id(),
+            now_utc_ms()
+        ));
+        std::fs::create_dir(&root).unwrap();
+        std::fs::set_permissions(&root, std::os::unix::fs::PermissionsExt::from_mode(0o700))
+            .unwrap();
+        let ticket = TerminalSecretTicket {
+            binding: binding(now_utc_ms() + TICKET_TTL_MS),
+            ticket_id: [9; 32],
+            nonce: [10; 32],
+        };
+        let handle = SecretStore::stage_terminal_secret_bytes_at(
+            &root,
+            &ticket,
+            SensitiveBuffer(b"synthetic-cross-process-secret".to_vec()),
+        )
+        .unwrap();
+        let bytes = std::fs::read(&handle.path).unwrap();
+        assert!(
+            !bytes
+                .windows(b"synthetic-cross-process-secret".len())
+                .any(|window| window == b"synthetic-cross-process-secret")
+        );
+        let status = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "terminal_secret::tests::terminal_secret_linux_stage_is_encrypted_and_cross_process_readable",
+                "--nocapture",
+            ])
+            .env("HANTONG_STAGE_CHILD_ROOT", &root)
+            .status()
+            .unwrap();
+        assert!(status.success());
+        assert!(
+            !handle.path.exists(),
+            "the child must consume the staged file"
+        );
+        std::fs::remove_dir(root).unwrap();
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn terminal_secret_linux_wrong_binding_preserves_stage_and_replay_is_rejected() {
+        use hantong_domain::mail_connection::MailConnectionConfig;
+        use std::io::Cursor;
+
+        let root = std::env::temp_dir().join(format!(
+            "hantong-terminal-secret-linux-{}-{}",
+            std::process::id(),
+            now_utc_ms()
+        ));
+        std::fs::create_dir(&root).unwrap();
+        std::fs::set_permissions(&root, std::os::unix::fs::PermissionsExt::from_mode(0o700))
+            .unwrap();
+        let store = crate::test_headless_store(&root).unwrap();
+        let endpoint = MailConnectionConfig::from_json(
+            &serde_json::to_vec(&serde_json::json!({
+                "schema_version": 1,
+                "account_id": "fixture",
+                "imap": {
+                    "settings_version": 1,
+                    "host": "mail.example.test",
+                    "port": 993,
+                    "tls": "implicit_tls",
+                    "login_name": "fixture@example.test",
+                    "authentication": "app_password"
+                },
+                "smtp": {
+                    "settings_version": 1,
+                    "host": "mail.example.test",
+                    "port": 465,
+                    "tls": "implicit_tls",
+                    "login_name": "fixture@example.test",
+                    "authentication": "app_password"
+                }
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        let expected = binding(now_utc_ms() + TICKET_TTL_MS);
+        let ticket = store.issue_terminal_secret_ticket(expected).unwrap();
+        let nonce = ticket.nonce;
+        let handle = store
+            .stage_terminal_secret(&ticket, Cursor::new(b"synthetic-secret"))
+            .unwrap();
+        let opaque = handle.opaque_id();
+        let mut wrong = expected;
+        wrong.payload_hash = [9; 32];
+        assert_eq!(
+            store.consume_terminal_imap_credential(
+                ticket,
+                handle,
+                wrong,
+                "fixture",
+                endpoint.imap(),
+            ),
+            Err(SecretError::CredentialMismatch)
+        );
+        let ticket = TerminalSecretTicket {
+            binding: expected,
+            ticket_id: opaque,
+            nonce,
+        };
+        let handle = store
+            .terminal_secret_handle_from_opaque(&ticket, opaque)
+            .unwrap();
+        let replay_ticket = TerminalSecretTicket {
+            binding: ticket.binding,
+            ticket_id: ticket.ticket_id,
+            nonce: ticket.nonce,
+        };
+        store
+            .consume_terminal_imap_credential(ticket, handle, expected, "fixture", endpoint.imap())
+            .unwrap();
+        assert!(
+            store
+                .terminal_secret_handle_from_opaque(&replay_ticket, opaque)
+                .is_err()
+        );
+        drop(store);
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[cfg(windows)]

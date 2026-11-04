@@ -66,6 +66,35 @@ impl Database {
         })
     }
 
+    #[cfg(target_os = "linux")]
+    pub(super) fn open_headless(
+        data: &Path,
+        secrets: &Path,
+        vault: crate::headless_vault::SharedHeadlessVault,
+    ) -> Result<Self, DatabaseError> {
+        let roots = prepare_roots(data, secrets)?;
+        let store = UnixSecretStore::new_headless(vault);
+        let selector = internal(UnixSecretSelector::new(
+            UnixSecretKind::DatabaseKey,
+            None,
+            1,
+        ))?;
+        let mut source = OsKeys {
+            store,
+            selector,
+            root: &roots.1,
+        };
+        Self::open_prepared(&roots.0, &mut source).map(|opened| Self {
+            connection: opened.connection,
+            key: opened.key,
+            _file: opened.file,
+            _database_lock: opened.database_lock,
+            _key_lock: opened.key_lock,
+            data: roots.0,
+            _secrets: roots.1,
+        })
+    }
+
     fn open_prepared(
         data: &UnixDirectoryGuard,
         keys: &mut impl KeySource,

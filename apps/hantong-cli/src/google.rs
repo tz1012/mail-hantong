@@ -576,6 +576,20 @@ fn login_inner(
             if let Some(key) = setup_stage_message(&receipt.state) {
                 println!("{}", resource(lang, key));
             }
+            #[cfg(unix)]
+            if receipt.state == "awaiting_browser" {
+                let url = receipt
+                    .login_url
+                    .as_deref()
+                    .ok_or(ErrorCode::InvalidInput)?;
+                hantong_platform::google_browser::validate_google_authorization_url(url)?;
+                println!("{}\n{}", resource(lang, "browser_url"), url);
+                // The same foreground displays the URL when no desktop browser is available.
+                match hantong_platform::google_browser::open_google_authorization_url(url) {
+                    Ok(()) | Err(ErrorCode::HumanStepRequired) => {}
+                    Err(error) => return Err(error),
+                }
+            }
             show_deadline(lang, receipt.expires_at_utc_ms)?;
             let now = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)

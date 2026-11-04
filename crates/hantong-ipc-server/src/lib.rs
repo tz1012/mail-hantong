@@ -178,11 +178,25 @@ impl StrictValue {
 
 /// Decode one complete little-endian length-prefixed JSON-RPC request frame.
 pub fn decode_request(frame: &[u8]) -> Result<RpcRequest, ErrorCode> {
+    decode_bounded_request(frame, MAX_FRAME_SIZE)
+}
+
+/// Only for a kernel-verified Core peer; ordinary IPC retains its existing cap.
+#[cfg(unix)]
+pub fn decode_core_relay_request(frame: &[u8]) -> Result<RpcRequest, ErrorCode> {
+    let request = decode_bounded_request(frame, 1_050_112)?;
+    if request.method != "core.relay" {
+        return Err(ErrorCode::InvalidInput);
+    }
+    Ok(request)
+}
+
+fn decode_bounded_request(frame: &[u8], limit: usize) -> Result<RpcRequest, ErrorCode> {
     if frame.len() < 4 {
         return Err(ErrorCode::InvalidInput);
     }
     let declared = u32::from_le_bytes([frame[0], frame[1], frame[2], frame[3]]) as usize;
-    if !(1..=MAX_FRAME_SIZE).contains(&declared) || frame.len() != declared + 4 {
+    if !(1..=limit).contains(&declared) || frame.len() != declared + 4 {
         return Err(ErrorCode::InvalidInput);
     }
     let payload = &frame[4..];
@@ -257,6 +271,30 @@ mod tests {
         frame(
             r#"{"jsonrpc":"2.0","id":"req-1","method":"mail.messages.search","params":{"q":"한글"}}"#,
         )
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn sec03_core_relay_larger_cap_does_not_widen_ordinary_ipc() {
+        let body = serde_json::json!({"jsonrpc":"2.0","id":"relay","method":"core.relay","params":{"padding":"x".repeat(MAX_FRAME_SIZE)}}).to_string();
+        let bytes = frame(&body);
+        assert_eq!(decode_request(&bytes), Err(ErrorCode::InvalidInput));
+        assert!(decode_core_relay_request(&bytes).is_ok());
+        let wrong_method = body.replace("core.relay", "mail.testx");
+        assert_eq!(
+            decode_core_relay_request(&frame(&wrong_method)),
+            Err(ErrorCode::InvalidInput)
+        );
+        let duplicate = r#"{"jsonrpc":"2.0","id":"relay","method":"core.relay","params":{"profile":"default","profile":"mcp"}}"#;
+        assert_eq!(
+            decode_core_relay_request(&frame(duplicate)),
+            Err(ErrorCode::InvalidInput)
+        );
+        let oversized = " ".repeat(1_050_113);
+        assert_eq!(
+            decode_core_relay_request(&frame(&oversized)),
+            Err(ErrorCode::InvalidInput)
+        );
     }
 
     #[test]

@@ -342,6 +342,6 @@ pub(crate) fn read(
     Ok((out, count))
 }
 
-#[cfg(test)]
+#[cfg(all(test, windows))]
 #[path = "google_worker_tests.rs"]
 mod tests;

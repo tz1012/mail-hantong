@@ -79,7 +79,7 @@ pub fn inspection_json(v: &UidInspectionSnapshot) -> String {
     json!({"schema_version":1,"ok":true,"account_id":v.account_id(),"wire_hex":v.mailbox().wire_hex(),"encoding":v.mailbox().encoding().as_str(),"catalog_generation":v.catalog_generation(),"binding_current":v.binding_current(),"observation":observation}).to_string()
 }
 pub fn inspect_default(request: UidCursorRequest) -> Result<UidInspectionSnapshot, ErrorCode> {
-    #[cfg(windows)]
+    #[cfg(any(windows, unix))]
     {
         let params = json!({"action":"inspect","account_id":request.account_id(),"wire_hex":request.mailbox().wire_hex(),"encoding":request.mailbox().encoding().as_str()});
         parse_inspection_snapshot(
@@ -88,7 +88,7 @@ pub fn inspect_default(request: UidCursorRequest) -> Result<UidInspectionSnapsho
             &request,
         )
     }
-    #[cfg(not(windows))]
+    #[cfg(all(not(windows), not(unix)))]
     {
         let _ = request;
         Err(ErrorCode::CapabilityUnsupported)

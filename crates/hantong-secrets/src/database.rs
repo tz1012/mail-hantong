@@ -31,6 +31,21 @@ impl fmt::Debug for KeyedConnection {
     }
 }
 impl KeyedConnection {
+    #[cfg(target_os = "linux")]
+    pub fn open_headless(
+        data_root: impl AsRef<Path>,
+        key_root: impl AsRef<Path>,
+        vault: crate::headless_vault::SharedHeadlessVault,
+    ) -> Result<Self, DatabaseError> {
+        Ok(Self {
+            inner: crate::unix_database::Database::open_headless(
+                data_root.as_ref(),
+                key_root.as_ref(),
+                vault,
+            )?,
+        })
+    }
+
     pub fn open(
         data_root: impl AsRef<Path>,
         key_root: impl AsRef<Path>,

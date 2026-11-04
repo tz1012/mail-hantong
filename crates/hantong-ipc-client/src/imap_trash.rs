@@ -120,7 +120,15 @@ fn exchange(
             expected_id,
         )
     }
-    #[cfg(not(windows))]
+    #[cfg(unix)]
+    {
+        parse(
+            &crate::mail_send::exchange(account, TRASH_REQUEST_TOOL, params)?,
+            account,
+            expected_id,
+        )
+    }
+    #[cfg(all(not(windows), not(unix)))]
     {
         let _ = (account, params, expected_id, TRASH_REQUEST_TOOL);
         Err(ErrorCode::CapabilityUnsupported)

@@ -90,7 +90,14 @@ fn exchange(
             id,
         )
     }
-    #[cfg(not(windows))]
+    #[cfg(unix)]
+    {
+        parse(
+            &crate::mail_send::exchange(account, REQUEST_TOOL, params)?,
+            id,
+        )
+    }
+    #[cfg(all(not(windows), not(unix)))]
     {
         let _ = (account, params, id, REQUEST_TOOL);
         Err(ErrorCode::CapabilityUnsupported)

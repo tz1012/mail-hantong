@@ -12,6 +12,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import traceback
 import unittest
 from ctypes import wintypes
 from pathlib import Path
@@ -23,7 +24,7 @@ EXE_CANDIDATES = tuple(
     for p in (
         Path(os.environ["HANTONG_T_EXE"]) if os.environ.get("HANTONG_T_EXE") else None,
         ROOT / "target" / "retro-tui-build" / "debug" / "hantong-t.exe",
-        Path(r"D:\BuildCache\cargo-target\debug\hantong-t.exe"),
+        Path(os.environ["CARGO_TARGET_DIR"]) / "debug" / "hantong-t.exe" if os.environ.get("CARGO_TARGET_DIR") else None,
         ROOT / "target" / "debug" / "hantong-t.exe",
     )
     if p is not None
@@ -201,7 +202,9 @@ def _worker(exe, result_path):
         text, attrs, _ = _snapshot(api, h_out)
         _, _, startup_info = _snapshot(api, h_out)
         checks["startup"] = "한통" in text and "reader@example.invalid" in text
-        (ROOT / "target" / "retro-tui-console-frame.json").write_text(
+        frame_path = ROOT / "target" / "retro-tui-console-frame.json"
+        frame_path.parent.mkdir(parents=True, exist_ok=True)
+        frame_path.write_text(
             json.dumps({
                 "synthetic": True,
                 "width": startup_info.srWindow.Right - startup_info.srWindow.Left + 1,
@@ -324,7 +327,7 @@ if __name__ == "__main__":
         try:
             _worker(Path(sys.argv[sys.argv.index("--worker") + 1]), result_file)
         except BaseException as exc:
-            result_file.write_text(json.dumps({"error": repr(exc)}), encoding="utf-8")
+            result_file.write_text(json.dumps({"error": repr(exc), "traceback": traceback.format_exc()}), encoding="utf-8")
             raise
     else:
         unittest.main()

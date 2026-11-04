@@ -198,7 +198,7 @@ pub fn parse_review(
     })
 }
 
-#[cfg(any(windows, test))]
+#[cfg(any(windows, unix, test))]
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct PersonalAttachmentWire {
@@ -207,7 +207,7 @@ struct PersonalAttachmentWire {
     size: u64,
     sha256: String,
 }
-#[cfg(any(windows, test))]
+#[cfg(any(windows, unix, test))]
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct PersonalPreviewWire {
@@ -220,7 +220,7 @@ struct PersonalPreviewWire {
     draft_id: String,
     version: u64,
 }
-#[cfg(any(windows, test))]
+#[cfg(any(windows, unix, test))]
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct PersonalPrepareWire {
@@ -233,7 +233,7 @@ struct PersonalPrepareWire {
     preview: Option<PersonalPreviewWire>,
 }
 
-#[cfg(any(windows, test))]
+#[cfg(any(windows, unix, test))]
 fn parse_personal_prepare(
     bytes: &[u8],
     id: &str,
@@ -350,7 +350,7 @@ fn parse_personal_prepare(
     Ok(PersonalPrepareResponse { receipt, preview })
 }
 
-#[cfg(any(windows, test))]
+#[cfg(any(windows, unix, test))]
 fn valid_address(value: &str) -> bool {
     !value.is_empty()
         && value.len() <= 320
@@ -381,12 +381,12 @@ pub fn prepare_default_draft(
         0,
         [0; 32],
     )?;
-    #[cfg(windows)]
+    #[cfg(any(windows, unix))]
     {
         let hash = hantong_platform::sha256_storage_payload(&raw.canonical_payload())?;
         DraftCreateRequest::new(account, to, subject, body, operation, key, 0, hash)
     }
-    #[cfg(not(windows))]
+    #[cfg(all(not(windows), not(unix)))]
     {
         let _ = raw;
         Err(ErrorCode::CapabilityUnsupported)
@@ -403,6 +403,19 @@ pub(crate) fn exchange(
   if !profile.scope().permits_account(account,tool){return Err(ErrorCode::ScopeDenied)}
   profile.exchange("mail-write-1",tool,&serde_json::json!({"schema_version":1,"request_id":"mail-write-1","tool":tool,"params":params})).await
  })
+}
+#[cfg(unix)]
+pub(crate) fn exchange(
+    account: &str,
+    tool: &str,
+    params: serde_json::Value,
+) -> Result<Vec<u8>, ErrorCode> {
+    let profile = hantong_platform::load_default_client_profile()?;
+    let parsed = crate::profile::ParsedClientProfile::from_json(profile.bytes())?;
+    if !parsed.scope().permits_account(account, tool) {
+        return Err(ErrorCode::ScopeDenied);
+    }
+    crate::unix_relay::call(parsed.profile(), "mail-write-1", tool, &params)
 }
 pub fn create_default(request: &DraftCreateRequest) -> Result<DraftResponse, ErrorCode> {
     create_compose_default(&request.clone().into())
@@ -422,7 +435,7 @@ pub fn prepare_compose(
 ) -> Result<hantong_contracts::google_write::ComposeSnapshot, ErrorCode> {
     use hantong_contracts::google_write::ComposeSnapshot;
     let raw = ComposeSnapshot::new(draft, attachments)?;
-    #[cfg(windows)]
+    #[cfg(any(windows, unix))]
     {
         let hash = hantong_platform::sha256_storage_payload(&raw.canonical_payload())?;
         let draft = DraftCreateRequest::new(
@@ -437,7 +450,7 @@ pub fn prepare_compose(
         )?;
         ComposeSnapshot::new(draft, raw.attachments().to_vec())
     }
-    #[cfg(not(windows))]
+    #[cfg(all(not(windows), not(unix)))]
     {
         let _ = raw;
         Err(ErrorCode::CapabilityUnsupported)
@@ -446,13 +459,13 @@ pub fn prepare_compose(
 pub fn create_compose_default(
     request: &hantong_contracts::google_write::ComposeSnapshot,
 ) -> Result<DraftResponse, ErrorCode> {
-    #[cfg(windows)]
+    #[cfg(any(windows, unix))]
     {
         let params = compose_params(request);
         let bytes = exchange(request.account_id(), "mail.drafts.create", params)?;
         parse_draft(&bytes, "mail-write-1", request)
     }
-    #[cfg(not(windows))]
+    #[cfg(all(not(windows), not(unix)))]
     {
         let _ = request;
         Err(ErrorCode::CapabilityUnsupported)
@@ -481,7 +494,19 @@ pub fn verify_default_send(account: &str) -> Result<bool, ErrorCode> {
                 .all(|tool| profile.scope().permits_account(account, tool)))
             })
     }
-    #[cfg(not(windows))]
+    #[cfg(unix)]
+    {
+        let profile = hantong_platform::load_default_client_profile()?;
+        let parsed = crate::profile::ParsedClientProfile::from_json(profile.bytes())?;
+        Ok([
+            "mail.drafts.create",
+            "mail.send.request",
+            "mail.send.execute",
+        ]
+        .into_iter()
+        .all(|tool| parsed.scope().permits_account(account, tool)))
+    }
+    #[cfg(all(not(windows), not(unix)))]
     {
         let _ = account;
         Err(ErrorCode::CapabilityUnsupported)
@@ -489,13 +514,13 @@ pub fn verify_default_send(account: &str) -> Result<bool, ErrorCode> {
 }
 
 pub fn request_default(request: &SendReviewRequest) -> Result<ReviewResponse, ErrorCode> {
-    #[cfg(windows)]
+    #[cfg(any(windows, unix))]
     {
         let params = serde_json::json!({"mode":"request","account_id":request.account_id(),"draft_id":wire_hex::encode(request.draft_id()),"expected_version":request.expected_version(),"operation_id":request.operation_id(),"idempotency_key":request.idempotency_key(),"payload_hash":wire_hex::encode(request.payload_hash())});
         let bytes = exchange(request.account_id(), "mail.send.request", params)?;
         parse_review(&bytes, "mail-write-1", request.account_id(), None)
     }
-    #[cfg(not(windows))]
+    #[cfg(all(not(windows), not(unix)))]
     {
         let _ = request;
         Err(ErrorCode::CapabilityUnsupported)
@@ -504,13 +529,13 @@ pub fn request_default(request: &SendReviewRequest) -> Result<ReviewResponse, Er
 
 /// Prepare the immutable personal preview. This does not queue a send job.
 pub fn prepare_default(request: &SendReviewRequest) -> Result<PersonalPrepareResponse, ErrorCode> {
-    #[cfg(windows)]
+    #[cfg(any(windows, unix))]
     {
         let params = serde_json::json!({"mode":"prepare","account_id":request.account_id(),"draft_id":wire_hex::encode(request.draft_id()),"expected_version":request.expected_version(),"operation_id":request.operation_id(),"idempotency_key":request.idempotency_key(),"payload_hash":wire_hex::encode(request.payload_hash())});
         let bytes = exchange(request.account_id(), "mail.send.request", params)?;
         parse_personal_prepare(&bytes, "mail-write-1", request)
     }
-    #[cfg(not(windows))]
+    #[cfg(all(not(windows), not(unix)))]
     {
         let _ = request;
         Err(ErrorCode::CapabilityUnsupported)
@@ -519,7 +544,7 @@ pub fn prepare_default(request: &SendReviewRequest) -> Result<PersonalPrepareRes
 
 /// Confirm exactly one already displayed personal preview.
 pub fn confirm_default(request: &PersonalSendConfirmRequest) -> Result<ReviewResponse, ErrorCode> {
-    #[cfg(windows)]
+    #[cfg(any(windows, unix))]
     {
         let params = serde_json::json!({"mode":"confirm","account_id":request.account_id,"review_id":wire_hex::encode(&request.review_id),"payload_hash":wire_hex::encode(&request.payload_hash)});
         let bytes = exchange(&request.account_id, "mail.send.request", params)?;
@@ -530,7 +555,7 @@ pub fn confirm_default(request: &PersonalSendConfirmRequest) -> Result<ReviewRes
             Some(request.review_id),
         )
     }
-    #[cfg(not(windows))]
+    #[cfg(all(not(windows), not(unix)))]
     {
         let _ = request;
         Err(ErrorCode::CapabilityUnsupported)
@@ -538,7 +563,7 @@ pub fn confirm_default(request: &PersonalSendConfirmRequest) -> Result<ReviewRes
 }
 
 pub fn cancel_default(request: &SendReviewStatusRequest) -> Result<ReviewResponse, ErrorCode> {
-    #[cfg(windows)]
+    #[cfg(any(windows, unix))]
     {
         let params = serde_json::json!({"mode":"cancel","account_id":request.account_id,"review_id":wire_hex::encode(&request.review_id)});
         let bytes = exchange(&request.account_id, "mail.send.request", params)?;
@@ -549,14 +574,14 @@ pub fn cancel_default(request: &SendReviewStatusRequest) -> Result<ReviewRespons
             Some(request.review_id),
         )
     }
-    #[cfg(not(windows))]
+    #[cfg(all(not(windows), not(unix)))]
     {
         let _ = request;
         Err(ErrorCode::CapabilityUnsupported)
     }
 }
 pub fn status_default(request: &SendReviewStatusRequest) -> Result<ReviewResponse, ErrorCode> {
-    #[cfg(windows)]
+    #[cfg(any(windows, unix))]
     {
         let bytes = exchange(
             &request.account_id,
@@ -570,7 +595,7 @@ pub fn status_default(request: &SendReviewStatusRequest) -> Result<ReviewRespons
             Some(request.review_id),
         )
     }
-    #[cfg(not(windows))]
+    #[cfg(all(not(windows), not(unix)))]
     {
         let _ = request;
         Err(ErrorCode::CapabilityUnsupported)

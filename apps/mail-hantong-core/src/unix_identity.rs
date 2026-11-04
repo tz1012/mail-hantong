@@ -20,7 +20,8 @@ fn map_secret_error(error: UnixSecretError) -> ErrorCode {
         | UnixSecretError::Unavailable
         | UnixSecretError::Ambiguous
         | UnixSecretError::StoreFailure
-        | UnixSecretError::AlreadyExists => ErrorCode::InternalError,
+        | UnixSecretError::AlreadyExists
+        | UnixSecretError::Conflict => ErrorCode::InternalError,
     }
 }
 

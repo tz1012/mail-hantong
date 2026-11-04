@@ -142,7 +142,27 @@ pub fn get_default(request: &MessageBodyRequest) -> Result<BodyResponse, ErrorCo
    parse_response(&bytes,id,request)
   })
     }
-    #[cfg(not(windows))]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    {
+        let profile = hantong_platform::load_default_client_profile()?;
+        let parsed = crate::profile::ParsedClientProfile::from_json(profile.bytes())?;
+        if !parsed
+            .scope()
+            .permits_account(request.account_id(), "mail.messages.get")
+        {
+            return Err(ErrorCode::ScopeDenied);
+        }
+        let id = "body-read-1";
+        let params = serde_json::json!({
+            "mode":"imap_body", "account_id":request.account_id(),
+            "mailbox_wire_hex":request.mailbox().wire_hex(),
+            "mailbox_encoding":request.mailbox().encoding().as_str(),
+            "uidvalidity":request.uidvalidity(), "uid":request.uid(), "max_bytes":request.max_bytes()
+        });
+        let raw = crate::unix_relay::call(parsed.profile(), id, "mail.messages.get", &params)?;
+        parse_response(&raw, id, request)
+    }
+    #[cfg(all(not(windows), not(any(target_os = "linux", target_os = "macos"))))]
     {
         let _ = request;
         Err(ErrorCode::CapabilityUnsupported)

@@ -7,7 +7,7 @@ use serde::{
     de::{self, MapAccess, SeqAccess, Visitor},
 };
 use serde_json::{Map, Value};
-#[cfg(any(windows, test))]
+#[cfg(any(windows, unix, test))]
 use std::collections::BTreeSet;
 use std::fmt;
 
@@ -375,7 +375,22 @@ pub fn call_default(tool: &str, params: Value) -> Result<Value, ErrorCode> {
             parse_response(&bytes,id,&request)
         })
     }
-    #[cfg(not(windows))]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    {
+        let profile = hantong_platform::load_default_client_profile()?;
+        let parsed = crate::profile::ParsedClientProfile::from_json(profile.bytes())?;
+        if !request
+            .account_ids()
+            .iter()
+            .all(|account| parsed.scope().permits_account(account, tool))
+        {
+            return Err(ErrorCode::ScopeDenied);
+        }
+        let id = "gmail-read-1";
+        let raw = crate::unix_relay::call(parsed.profile(), id, tool, &params)?;
+        parse_response(&raw, id, &request)
+    }
+    #[cfg(all(not(windows), not(any(target_os = "linux", target_os = "macos"))))]
     {
         let _ = (tool, params, request);
         Err(ErrorCode::CapabilityUnsupported)
@@ -436,7 +451,13 @@ mod tests {
 /// errors, including protected-path SCOPE_DENIED, remain errors, never grants.
 pub fn verify_default_readonly(account: &str) -> Result<bool, ErrorCode> {
     validate_google_account_id(account)?;
-    #[cfg(not(windows))]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    {
+        let loaded = hantong_platform::load_default_client_profile()?;
+        let profile = crate::profile::ParsedClientProfile::from_json(loaded.bytes())?;
+        Ok(readonly_scope(profile.scope(), account))
+    }
+    #[cfg(all(not(windows), not(any(target_os = "linux", target_os = "macos"))))]
     {
         Err(ErrorCode::CapabilityUnsupported)
     }
@@ -460,7 +481,13 @@ pub fn verify_default_personal(
     if profile.access_mode().is_none() {
         return Err(ErrorCode::InvalidInput);
     }
-    #[cfg(not(windows))]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    {
+        let loaded = hantong_platform::load_default_client_profile()?;
+        let profile_data = crate::profile::ParsedClientProfile::from_json(loaded.bytes())?;
+        Ok(personal_scope(profile_data.scope(), account, profile))
+    }
+    #[cfg(all(not(windows), not(any(target_os = "linux", target_os = "macos"))))]
     {
         Err(ErrorCode::CapabilityUnsupported)
     }
@@ -480,7 +507,13 @@ pub fn verify_default_personal(
 /// terminal scope request; it never grants or enumerates ready accounts.
 pub fn default_google_account_union(account: &str) -> Result<Vec<String>, ErrorCode> {
     validate_google_account_id(account)?;
-    #[cfg(not(windows))]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    {
+        let loaded = hantong_platform::load_default_client_profile()?;
+        let profile = crate::profile::ParsedClientProfile::from_json(loaded.bytes())?;
+        account_union(profile.scope(), account)
+    }
+    #[cfg(all(not(windows), not(any(target_os = "linux", target_os = "macos"))))]
     {
         Err(ErrorCode::CapabilityUnsupported)
     }
@@ -501,7 +534,13 @@ pub fn default_google_account_union(account: &str) -> Result<Vec<String>, ErrorC
 /// provider-neutral; it is only an input to the terminal manage review.
 pub fn default_registered_account_union(account: &str) -> Result<Vec<String>, ErrorCode> {
     hantong_contracts::scope_refresh::ManageAccounts::parse(&[account.to_owned()])?;
-    #[cfg(not(windows))]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    {
+        let loaded = hantong_platform::load_default_client_profile()?;
+        let profile = crate::profile::ParsedClientProfile::from_json(loaded.bytes())?;
+        generic_account_union(profile.scope(), account)
+    }
+    #[cfg(all(not(windows), not(any(target_os = "linux", target_os = "macos"))))]
     {
         Err(ErrorCode::CapabilityUnsupported)
     }
@@ -522,7 +561,14 @@ pub fn default_registered_account_union(account: &str) -> Result<Vec<String>, Er
 /// Core; this is only a post-review scope probe.
 pub fn verify_default_manage_accounts(account: &str) -> Result<bool, ErrorCode> {
     hantong_contracts::scope_refresh::ManageAccounts::parse(&[account.to_owned()])?;
-    #[cfg(not(windows))]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    {
+        let loaded = hantong_platform::load_default_client_profile()?;
+        let profile = crate::profile::ParsedClientProfile::from_json(loaded.bytes())?;
+        let accounts = generic_account_union(profile.scope(), account)?;
+        Ok(manage_scope(profile.scope(), &accounts))
+    }
+    #[cfg(all(not(windows), not(any(target_os = "linux", target_os = "macos"))))]
     {
         Err(ErrorCode::CapabilityUnsupported)
     }
@@ -541,7 +587,13 @@ pub fn verify_default_manage_accounts(account: &str) -> Result<bool, ErrorCode> 
 /// Verifies the exact send toolset over the bounded current-account union.
 pub fn verify_default_personal_accounts(account: &str) -> Result<bool, ErrorCode> {
     validate_google_account_id(account)?;
-    #[cfg(not(windows))]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    {
+        let loaded = hantong_platform::load_default_client_profile()?;
+        let profile = crate::profile::ParsedClientProfile::from_json(loaded.bytes())?;
+        personal_send_eligible(profile.scope(), account)
+    }
+    #[cfg(all(not(windows), not(any(target_os = "linux", target_os = "macos"))))]
     {
         Err(ErrorCode::CapabilityUnsupported)
     }
@@ -562,7 +614,7 @@ pub fn verify_default_personal_accounts(account: &str) -> Result<bool, ErrorCode
             personal_send_eligible(connection.scope(), account)
         })
 }
-#[cfg(any(windows, test))]
+#[cfg(any(windows, unix, test))]
 fn personal_scope(
     scope: &hantong_contracts::auth::RequestedScope,
     account: &str,
@@ -577,7 +629,7 @@ fn personal_scope(
     };
     scope.accounts() == [account] && scope.tools() == tools
 }
-#[cfg(any(windows, test))]
+#[cfg(any(windows, unix, test))]
 fn account_union(
     scope: &hantong_contracts::auth::RequestedScope,
     selected: &str,
@@ -594,7 +646,7 @@ fn account_union(
     }
     Ok(accounts.into_iter().collect())
 }
-#[cfg(any(windows, test))]
+#[cfg(any(windows, unix, test))]
 fn generic_account_union(
     scope: &hantong_contracts::auth::RequestedScope,
     selected: &str,
@@ -611,18 +663,18 @@ fn generic_account_union(
     )
     .map(|accounts| accounts.accounts())
 }
-#[cfg(any(windows, test))]
+#[cfg(any(windows, unix, test))]
 fn manage_scope(scope: &hantong_contracts::auth::RequestedScope, accounts: &[String]) -> bool {
     scope.accounts() == accounts
         && hantong_contracts::auth::is_supported_default_cli_manage_toolset(scope.tools())
 }
-#[cfg(any(windows, test))]
+#[cfg(any(windows, unix, test))]
 fn send_scope(scope: &hantong_contracts::auth::RequestedScope, accounts: &[String]) -> bool {
     scope.accounts() == accounts
         && (scope.tools() == hantong_contracts::auth::default_cli_send_tools()
             || scope.tools() == hantong_contracts::auth::default_cli_manage_tools())
 }
-#[cfg(any(windows, test))]
+#[cfg(any(windows, unix, test))]
 fn personal_send_eligible(
     scope: &hantong_contracts::auth::RequestedScope,
     selected: &str,
@@ -637,7 +689,7 @@ fn personal_send_eligible(
     let accounts = account_union(scope, selected)?;
     Ok(send_scope(scope, &accounts))
 }
-#[cfg(any(windows, test))]
+#[cfg(any(windows, unix, test))]
 fn readonly_scope(scope: &hantong_contracts::auth::RequestedScope, account: &str) -> bool {
     scope.accounts().iter().any(|a| a == account)
         && hantong_contracts::auth::default_cli_body_tools()
@@ -664,7 +716,7 @@ mod onboarding_tests {
             assert!(!personal_scope(&scope, &account, None));
         }
     }
-    #[cfg(not(windows))]
+    #[cfg(all(not(windows), not(any(target_os = "linux", target_os = "macos"))))]
     #[test]
     fn acc02_readonly_probe_without_windows_is_explicitly_unsupported() {
         let account = format!("google_{}", "a".repeat(64));

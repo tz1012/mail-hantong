@@ -7,46 +7,64 @@ use std::io::{self, Write};
 mod authentication_tests;
 #[cfg(windows)]
 mod execution_adapter;
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 mod folder_worker;
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 mod google_mutation;
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 mod google_worker;
 #[cfg(windows)]
 mod identity;
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 mod imap_trash;
 #[cfg(windows)]
 mod registration;
 #[cfg(windows)]
 mod scope_refresh;
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 mod send_mail;
 #[cfg(windows)]
 mod setup_google;
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 mod setup_imap;
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 mod setup_smtp;
 #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 mod storage;
 #[cfg(windows)]
 mod terminal_google;
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 mod terminal_review;
 #[cfg(windows)]
 mod terminal_review_frontend;
 #[cfg(windows)]
 mod terminal_secret_input;
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 mod uid_worker;
 #[cfg(all(test, target_os = "linux"))]
 mod unix_authentication_tests;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod unix_core_runtime;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
+mod unix_execution_adapter;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+mod unix_google;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 pub mod unix_identity;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+mod unix_registered_profiles;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+mod unix_registration;
+#[cfg(unix)]
+mod unix_relay_helper;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+mod unix_scope_refresh;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+mod unix_setup;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+mod unix_stop;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+mod unix_terminal_review_frontend;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Lang {
@@ -224,10 +242,39 @@ fn startup_step<T>(stage: &'static str, result: Result<T, ErrorCode>) -> Result<
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 fn start() -> Result<(), ErrorCode> {
     let directories = startup_step("directories", hantong_platform::app_directories())?;
+    let _secrets_directory = startup_step(
+        "secrets_directory",
+        hantong_platform::unix_paths::UnixDirectoryGuard::prepare(&directories.secrets),
+    )?;
+    let _data_directory = startup_step(
+        "data_directory",
+        hantong_platform::unix_paths::UnixDirectoryGuard::prepare(&directories.data),
+    )?;
+    #[cfg(target_os = "linux")]
+    startup_step(
+        "secret_backend",
+        hantong_secrets::headless_vault::prepare_backend(&directories.secrets, &directories.data)
+            .map_err(|error| match error {
+                hantong_secrets::SecretError::InvalidInputWindow => ErrorCode::HumanStepRequired,
+                _ => ErrorCode::InternalError,
+            }),
+    )?;
     let store = startup_step("storage", storage::initialize_storage(&directories))?;
-    let server_identity = startup_step(
+    let mut server_identity = startup_step(
         "identity",
         unix_identity::initialize_server_identity(&store, &directories.secrets),
+    )?;
+    startup_step(
+        "registration_recovery",
+        unix_registered_profiles::recover_startup(
+            &store,
+            &directories.secrets,
+            &mut server_identity,
+        ),
+    )?;
+    startup_step(
+        "workflow_recovery",
+        unix_registration::recover_startup(&store, &directories.secrets, &mut server_identity),
     )?;
     let server_instance = startup_step("instance", hantong_platform::random_nonce())?;
     let runtime = startup_step(
@@ -245,19 +292,45 @@ fn start() -> Result<(), ErrorCode> {
             store,
             server_identity,
             server_instance,
+            &directories.secrets,
         )),
     )
 }
 
 fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> i32 {
     let args: Vec<_> = args.into_iter().collect();
+    #[cfg(unix)]
+    if args.first().and_then(|v| v.to_str()) == Some("unix-relay") {
+        if args.len() != 1 {
+            return emit_error(ErrorCode::InvalidInput, Lang::En);
+        }
+        return match unix_relay_helper::run() {
+            Ok(()) => 0,
+            Err(code) => emit_error(code, Lang::En),
+        };
+    }
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    if args.first().and_then(|v| v.to_str()) == Some("unix-stop") {
+        if args.len() != 1 {
+            return emit_error(ErrorCode::InvalidInput, Lang::En);
+        }
+        return match unix_stop::run() {
+            Ok(()) => 0,
+            Err(code) => emit_error(code, Lang::En),
+        };
+    }
     if args.first().and_then(|v| v.to_str()) == Some("terminal-review") {
         #[cfg(windows)]
         return match terminal_review_frontend::run(&args[1..], false) {
             Ok(()) => 0,
             Err(code) => emit_error(code, Lang::En),
         };
-        #[cfg(not(windows))]
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        return match unix_terminal_review_frontend::run(&args[1..]) {
+            Ok(()) => 0,
+            Err(code) => emit_error(code, Lang::En),
+        };
+        #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
         return emit_error(ErrorCode::CapabilityUnsupported, Lang::En);
     }
     let mut lang = Lang::En;

@@ -3,7 +3,7 @@ use hantong_contracts::{ErrorCode, uid_page::*};
 use serde::Deserialize;
 use serde_json::{Value, json};
 const MAX_FRAME: usize = 8192;
-#[cfg(any(windows, test))]
+#[cfg(any(windows, unix, test))]
 const TOOL: &str = "mail.sync.page";
 
 #[derive(Deserialize)]
@@ -200,7 +200,7 @@ pub fn prepare_page_request(
         cursor_version,
         &"00".repeat(32),
     )?;
-    #[cfg(windows)]
+    #[cfg(any(windows, unix))]
     {
         let hash = hantong_contracts::wire_hex::encode(&hantong_platform::sha256(
             &request.intent_bytes(),
@@ -215,13 +215,13 @@ pub fn prepare_page_request(
             &hash,
         )
     }
-    #[cfg(not(windows))]
+    #[cfg(all(not(windows), not(unix)))]
     {
         let _ = request;
         Err(ErrorCode::CapabilityUnsupported)
     }
 }
-#[cfg(any(windows, test))]
+#[cfg(any(windows, unix, test))]
 fn authorize(
     scope: &hantong_contracts::auth::RequestedScope,
     account: &str,
@@ -254,8 +254,15 @@ pub(super) fn exchange(params: Value, account: &str) -> Result<Vec<u8>, ErrorCod
             Ok(bytes)
         })
 }
+#[cfg(unix)]
+pub(super) fn exchange(params: Value, account: &str) -> Result<Vec<u8>, ErrorCode> {
+    let profile = hantong_platform::load_default_client_profile()?;
+    let parsed = crate::profile::ParsedClientProfile::from_json(profile.bytes())?;
+    authorize(parsed.scope(), account)?;
+    crate::unix_relay::call(parsed.profile(), "uid-page-1", TOOL, &params)
+}
 pub fn page_default(request: UidPageRequest) -> Result<UidPageReceipt, ErrorCode> {
-    #[cfg(windows)]
+    #[cfg(any(windows, unix))]
     {
         let expected = prepare_page_request(
             request.account_id(),
@@ -275,14 +282,14 @@ pub fn page_default(request: UidPageRequest) -> Result<UidPageReceipt, ErrorCode
             &request,
         )
     }
-    #[cfg(not(windows))]
+    #[cfg(all(not(windows), not(unix)))]
     {
         let _ = request;
         Err(ErrorCode::CapabilityUnsupported)
     }
 }
 pub fn cursor_default(request: UidCursorRequest) -> Result<UidCursorSnapshot, ErrorCode> {
-    #[cfg(windows)]
+    #[cfg(any(windows, unix))]
     {
         let params = json!({"action":"cursor","account_id":request.account_id(),"wire_hex":request.mailbox().wire_hex(),"encoding":request.mailbox().encoding().as_str()});
         parse_cursor_snapshot(
@@ -291,14 +298,14 @@ pub fn cursor_default(request: UidCursorRequest) -> Result<UidCursorSnapshot, Er
             &request,
         )
     }
-    #[cfg(not(windows))]
+    #[cfg(all(not(windows), not(unix)))]
     {
         let _ = request;
         Err(ErrorCode::CapabilityUnsupported)
     }
 }
 pub fn status_default(request: UidPageStatusRequest) -> Result<UidPageReceipt, ErrorCode> {
-    #[cfg(windows)]
+    #[cfg(any(windows, unix))]
     {
         let params = json!({"action":"status","account_id":request.account_id(),"execution_id":hantong_contracts::wire_hex::encode(request.execution_id())});
         parse_status_receipt(
@@ -307,7 +314,7 @@ pub fn status_default(request: UidPageStatusRequest) -> Result<UidPageReceipt, E
             &request,
         )
     }
-    #[cfg(not(windows))]
+    #[cfg(all(not(windows), not(unix)))]
     {
         let _ = request;
         Err(ErrorCode::CapabilityUnsupported)

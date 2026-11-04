@@ -16,7 +16,15 @@ pub fn open_google_authorization_url(url: &str) -> Result<(), ErrorCode> {
     {
         native::open(url)
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "linux")]
+    {
+        unix::open(url)
+    }
+    #[cfg(target_os = "macos")]
+    {
+        unix::open(url)
+    }
+    #[cfg(all(not(windows), not(any(target_os = "linux", target_os = "macos"))))]
     {
         Err(ErrorCode::CapabilityUnsupported)
     }
@@ -43,6 +51,29 @@ mod native {
         } else {
             Ok(())
         }
+    }
+}
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+mod unix {
+    use super::*;
+    use std::process::Command;
+
+    pub(super) fn open(url: &str) -> Result<(), ErrorCode> {
+        #[cfg(target_os = "linux")]
+        const LAUNCHER: &str = "/usr/bin/xdg-open";
+        #[cfg(target_os = "macos")]
+        const LAUNCHER: &str = "/usr/bin/open";
+
+        if !std::path::Path::new(LAUNCHER).is_file() {
+            return Err(ErrorCode::HumanStepRequired);
+        }
+        Command::new(LAUNCHER)
+            .arg(url)
+            .status()
+            .map_err(|_| ErrorCode::HumanStepRequired)?
+            .success()
+            .then_some(())
+            .ok_or(ErrorCode::HumanStepRequired)
     }
 }
 #[cfg(test)]

@@ -18,6 +18,113 @@ pub use trusted_profile::{
     authenticate_default_app_read, authenticate_gui, authenticate_mcp, verify_ai, verify_default,
 };
 
+/// Verifies the active Unix default profile through the Core-owned relay.
+/// The profile loader and relay perform the fixed-path and registration
+/// checks; this probe does not expose credentials or establish a second
+/// client-side signing path.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub fn verify_default() -> Result<(), ErrorCode> {
+    accounts::list_default_accounts(false).map(|_| ())
+}
+
+/// Unix relay-backed profile used by the MCP and built-in AI clients.  The
+/// client loads only the fixed public profile selector and scope; Core owns
+/// authentication, consent, and all private signing material.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub struct AuthenticatedDefaultProfile {
+    selector: profile::ProfileSelector,
+    accounts: Vec<String>,
+    scope: RequestedScope,
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+impl AuthenticatedDefaultProfile {
+    pub fn accounts(&self) -> &[String] {
+        &self.accounts
+    }
+
+    pub fn scope(&self) -> &RequestedScope {
+        &self.scope
+    }
+
+    pub fn tools(&self) -> &[String] {
+        self.scope.tools()
+    }
+
+    pub async fn exchange(
+        self,
+        id: &str,
+        method: &str,
+        params: &serde_json::Value,
+    ) -> Result<Vec<u8>, ErrorCode> {
+        unix_call(self.selector, id, method, params).await
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub async fn authenticate_mcp() -> Result<AuthenticatedDefaultProfile, ErrorCode> {
+    authenticate_unix_profile(profile::ProfileSelector::Mcp).await
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub async fn authenticate_ai(
+    provider: AiProvider,
+) -> Result<AuthenticatedDefaultProfile, ErrorCode> {
+    authenticate_unix_profile(match provider {
+        AiProvider::Codex => profile::ProfileSelector::AiCodex,
+        AiProvider::Claude => profile::ProfileSelector::AiClaude,
+    })
+    .await
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+async fn authenticate_unix_profile(
+    selector: profile::ProfileSelector,
+) -> Result<AuthenticatedDefaultProfile, ErrorCode> {
+    let loaded = match selector {
+        profile::ProfileSelector::Mcp => hantong_platform::load_mcp_client_profile()?,
+        profile::ProfileSelector::AiCodex => hantong_platform::load_ai_codex_client_profile()?,
+        profile::ProfileSelector::AiClaude => hantong_platform::load_ai_claude_client_profile()?,
+        _ => return Err(ErrorCode::ScopeDenied),
+    };
+    let parsed = profile::ParsedClientProfile::from_json(loaded.bytes())?;
+    if parsed.profile() != selector || parsed.scope().accounts().is_empty() {
+        return Err(ErrorCode::AuthRequired);
+    }
+    let request_id = match selector {
+        profile::ProfileSelector::Mcp => "mcp-profile-accounts-probe-1",
+        profile::ProfileSelector::AiCodex => "ai-codex-accounts-probe-1",
+        profile::ProfileSelector::AiClaude => "ai-claude-accounts-probe-1",
+        _ => return Err(ErrorCode::ScopeDenied),
+    };
+    let params = serde_json::json!({
+        "account_ids": parsed.scope().accounts(),
+        "include_capabilities": true,
+    });
+    let response = unix_call(selector, request_id, "mail.accounts.list", &params).await?;
+    accounts::parse_account_list_response(&response, request_id, parsed.scope().accounts(), true)?;
+    Ok(AuthenticatedDefaultProfile {
+        selector,
+        accounts: parsed.scope().accounts().to_vec(),
+        scope: parsed.scope().clone(),
+    })
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+async fn unix_call(
+    selector: profile::ProfileSelector,
+    id: &str,
+    method: &str,
+    params: &serde_json::Value,
+) -> Result<Vec<u8>, ErrorCode> {
+    let id = id.to_owned();
+    let method = method.to_owned();
+    let params = params.clone();
+    tokio::task::spawn_blocking(move || unix_relay::call(selector, &id, &method, &params))
+        .await
+        .map_err(|_| ErrorCode::CoreUnavailable)?
+}
+
 pub mod accounts;
 pub mod auth_wire;
 pub mod diagnostic_snapshot;
@@ -41,13 +148,75 @@ pub mod unix_auth;
 pub mod unix_auth_wire;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 pub mod unix_authenticated_wire;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub mod unix_relay;
 
 use hantong_contracts::ErrorCode;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+use hantong_contracts::{auth::RequestedScope, registration::AiProvider};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
 const MAX_RESPONSE: usize = 16_384;
 const PROTOCOL_VERSION: u64 = 1;
+
+/// Verifies a provider-qualified built-in AI profile through the Core relay.
+/// Only the fixed public profile is loaded here; credentials and signing keys
+/// remain in Core's protected path.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub fn verify_ai(provider: AiProvider) -> Result<(), ErrorCode> {
+    let (selector, loaded) = match provider {
+        AiProvider::Codex => (
+            profile::ProfileSelector::AiCodex,
+            hantong_platform::load_ai_codex_client_profile()?,
+        ),
+        AiProvider::Claude => (
+            profile::ProfileSelector::AiClaude,
+            hantong_platform::load_ai_claude_client_profile()?,
+        ),
+    };
+    let profile = profile::ParsedClientProfile::from_json(loaded.bytes())?;
+    if profile.profile() != selector || profile.scope().accounts().is_empty() {
+        return Err(ErrorCode::AuthRequired);
+    }
+    let request_id = match provider {
+        AiProvider::Codex => "ai-codex-accounts-probe-1",
+        AiProvider::Claude => "ai-claude-accounts-probe-1",
+    };
+    let params = serde_json::json!({
+        "account_ids": profile.scope().accounts(),
+        "include_capabilities": true,
+    });
+    let response = unix_relay::call(selector, request_id, "mail.accounts.list", &params)?;
+    let value: serde_json::Value =
+        serde_json::from_slice(&response).map_err(|_| ErrorCode::InvalidInput)?;
+    let object = value.as_object().ok_or(ErrorCode::InvalidInput)?;
+    if object.get("jsonrpc") != Some(&serde_json::Value::String("2.0".into()))
+        || object.get("id") != Some(&serde_json::Value::String(request_id.into()))
+    {
+        return Err(ErrorCode::InvalidInput);
+    }
+    if let Some(error) = object.get("error") {
+        let code = error
+            .get("code")
+            .and_then(serde_json::Value::as_str)
+            .and_then(|value| {
+                ErrorCode::ALL
+                    .into_iter()
+                    .find(|code| code.as_str() == value)
+            })
+            .ok_or(ErrorCode::InternalError)?;
+        return Err(code);
+    }
+    if object
+        .get("result")
+        .and_then(serde_json::Value::as_object)
+        .is_none()
+    {
+        return Err(ErrorCode::InvalidInput);
+    }
+    Ok(())
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Readiness {
@@ -232,7 +401,31 @@ pub fn readiness_json(status: &Readiness) -> String {
     .to_string()
 }
 
-#[cfg(not(windows))]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub fn core_status() -> Result<Readiness, ErrorCode> {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_io()
+        .enable_time()
+        .build()
+        .map_err(|_| ErrorCode::CoreUnavailable)?
+        .block_on(async {
+            use hantong_platform::unix_transport::connect;
+            tokio::time::timeout(tokio::time::Duration::from_secs(5), async {
+                let connection = connect().await.map_err(|error| {
+                    if error == ErrorCode::NotFound {
+                        ErrorCode::CoreUnavailable
+                    } else {
+                        error
+                    }
+                })?;
+                exchange_readiness(connection, "core-status-1").await
+            })
+            .await
+            .map_err(|_| ErrorCode::CoreUnavailable)?
+        })
+}
+
+#[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
 pub fn core_status() -> Result<Readiness, ErrorCode> {
     Err(ErrorCode::CapabilityUnsupported)
 }
@@ -259,7 +452,7 @@ async fn core_status_async() -> Result<Readiness, ErrorCode> {
     .map_err(|_| ErrorCode::CoreUnavailable)?
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 async fn exchange_readiness<T>(mut pipe: T, id: &str) -> Result<Readiness, ErrorCode>
 where
     T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
@@ -387,3 +580,33 @@ pub mod google_mail;
 pub mod google_setup;
 pub mod smtp_setup;
 pub mod terminal_review;
+
+#[cfg(all(test, target_os = "linux"))]
+mod unix_core_status_tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+    use std::process::Command;
+
+    #[test]
+    fn cli07_missing_runtime_socket_maps_to_core_unavailable() {
+        if std::env::var_os("HANTONG_CORE_STATUS_CHILD").is_some() {
+            assert_eq!(core_status(), Err(ErrorCode::CoreUnavailable));
+            return;
+        }
+        let root = std::env::temp_dir().join(format!("hantong-core-status-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir(&root).expect("runtime root");
+        std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o700))
+            .expect("private runtime root");
+        let status = Command::new(std::env::current_exe().expect("test executable"))
+            .arg("--exact")
+            .arg("unix_core_status_tests::cli07_missing_runtime_socket_maps_to_core_unavailable")
+            .arg("--nocapture")
+            .env("HANTONG_CORE_STATUS_CHILD", "1")
+            .env("XDG_RUNTIME_DIR", &root)
+            .status()
+            .expect("child test");
+        let _ = std::fs::remove_dir_all(root);
+        assert!(status.success());
+    }
+}

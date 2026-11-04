@@ -147,6 +147,6 @@ where
     }
 }
 
-#[cfg(all(test, windows))]
+#[cfg(all(test, any(windows, target_os = "linux")))]
 #[path = "windows_tests.rs"]
 mod tests;

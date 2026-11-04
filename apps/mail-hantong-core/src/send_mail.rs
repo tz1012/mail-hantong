@@ -121,7 +121,7 @@ pub(crate) async fn run_job(
         if let hantong_contracts::google_write::MailSendTarget::Gmail { binding, sender } =
             &p.endpoint
         {
-            #[cfg(windows)]
+            #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
             {
                 use std::sync::{
                     Arc,
@@ -162,11 +162,6 @@ pub(crate) async fn run_job(
                     | Ok(Err(_)) => SendOutcome::Failed,
                     _ => SendOutcome::Unknown,
                 };
-            }
-            #[cfg(not(windows))]
-            {
-                let _ = (binding, sender);
-                return SendOutcome::Failed;
             }
         }
         match hantong_secrets::SecretStore::open(secrets_root) {
@@ -295,6 +290,6 @@ mod tests {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, any(windows, target_os = "linux")))]
 #[path = "send_mail/tests.rs"]
 pub(crate) mod integration_tests;

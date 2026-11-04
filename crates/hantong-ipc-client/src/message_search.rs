@@ -366,7 +366,27 @@ pub fn search_default(
                 parse_search_response(&raw,id,&request)
             })
     }
-    #[cfg(not(windows))]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    {
+        let profile = hantong_platform::load_default_client_profile()?;
+        let parsed = crate::profile::ParsedClientProfile::from_json(profile.bytes())?;
+        if !parsed
+            .scope()
+            .permits_account(request.account_id(), "mail.messages.search")
+        {
+            return Err(ErrorCode::ScopeDenied);
+        }
+        let id = "message-search-1";
+        let params = serde_json::json!({
+            "mode":"imap_metadata", "account_id":request.account_id(),
+            "wire_hex":request.mailbox().wire_hex(), "encoding":request.mailbox().encoding().as_str(),
+            "filter":request.filter().as_str(), "limit":request.limit(),
+            "cursor":request.cursor().map(|c| c.encode())
+        });
+        let raw = crate::unix_relay::call(parsed.profile(), id, "mail.messages.search", &params)?;
+        parse_search_response(&raw, id, &request)
+    }
+    #[cfg(all(not(windows), not(any(target_os = "linux", target_os = "macos"))))]
     {
         let _ = request;
         Err(ErrorCode::CapabilityUnsupported)

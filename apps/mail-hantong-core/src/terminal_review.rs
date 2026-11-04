@@ -3,16 +3,24 @@
 //! Tickets are deliberately kept in the running Core and are consumed once.
 //! The pipe layer supplies the observed peer context; values in the JSON
 //! request are never treated as OS identity or approval evidence.
+use hantong_contracts::{ErrorCode, terminal_review::TerminalReviewField};
+#[cfg(windows)]
 use hantong_contracts::{
-    ErrorCode,
     auth::PeerContext,
-    terminal_review::{TerminalReviewField, TerminalReviewKind, TerminalReviewReceipt},
+    terminal_review::{TerminalReviewKind, TerminalReviewReceipt},
 };
+#[cfg(windows)]
 use hantong_platform::random_nonce;
-use hantong_secrets::{TerminalSecretBinding, TerminalSecretHandle, TerminalSecretTicket};
+#[cfg(windows)]
+use hantong_secrets::TerminalSecretTicket;
+#[cfg(windows)]
+use hantong_secrets::{TerminalSecretBinding, TerminalSecretHandle};
+#[cfg(windows)]
 use hantong_store::mail_send::PendingSend;
+#[cfg(windows)]
 use std::collections::BTreeMap;
 
+#[cfg(windows)]
 pub(crate) struct Entry {
     pub kind: TerminalReviewKind,
     pub request_id: [u8; 32],
@@ -25,6 +33,7 @@ pub(crate) struct Entry {
     pub secret_ticket: Option<TerminalSecretTicket>,
 }
 
+#[cfg(windows)]
 pub(crate) enum TerminalCapture {
     Imap {
         id: [u8; 32],
@@ -40,6 +49,7 @@ pub(crate) enum TerminalCapture {
     },
 }
 
+#[cfg(windows)]
 pub(crate) fn make_ticket(
     map: &mut BTreeMap<[u8; 32], Entry>,
     pending: &PendingSend,
@@ -67,6 +77,7 @@ pub(crate) fn make_ticket(
 
 // Keep every independently validated binding explicit at the ticket boundary.
 #[allow(clippy::too_many_arguments)]
+#[cfg(windows)]
 pub(crate) fn make_entry_ticket(
     map: &mut BTreeMap<[u8; 32], Entry>,
     ticket: [u8; 32],
@@ -120,6 +131,7 @@ pub(crate) fn make_entry_ticket(
     })
 }
 
+#[cfg(windows)]
 pub(crate) fn prune_expired(map: &mut BTreeMap<[u8; 32], Entry>, now: i64) {
     map.retain(|_, entry| entry.expires_at_utc_ms > now);
 }
@@ -128,7 +140,7 @@ pub(crate) fn field(label: &str, value: String) -> Result<TerminalReviewField, E
     TerminalReviewField::new(label.into(), value)
 }
 
-#[cfg(test)]
+#[cfg(all(test, windows))]
 mod tests {
     use super::*;
 

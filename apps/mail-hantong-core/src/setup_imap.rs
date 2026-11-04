@@ -54,7 +54,7 @@ fn endpoint(
         .clone())
 }
 
-pub(super) fn create(store: &Store, input: &ImapSetupInput) -> Result<ImapSetupRequest, ErrorCode> {
+pub(crate) fn create(store: &Store, input: &ImapSetupInput) -> Result<ImapSetupRequest, ErrorCode> {
     let request = intent(
         input,
         hantong_platform::random_nonce()?,
@@ -89,6 +89,7 @@ fn stage(store: &Store, request: &ImapSetupRequest) -> Result<ImapSetupRequest, 
         store.stage_imap_setup_request(request)
     }
 }
+#[cfg(any(windows, test))]
 fn review_snapshot(
     request: &ImapSetupRequest,
     nonce: [u8; 32],
@@ -109,6 +110,7 @@ fn review_snapshot(
         request.expires_at_utc_ms(),
     )
 }
+#[cfg(windows)]
 pub(super) fn matches(
     request: &ImapSetupRequest,
     input: &ImapSetupInput,
@@ -134,7 +136,7 @@ fn now() -> Result<i64, ErrorCode> {
     )
     .map_err(|_| ErrorCode::InternalError)
 }
-pub(super) fn status(
+pub(crate) fn status(
     store: &Store,
     id: [u8; 32],
     active: bool,
@@ -203,6 +205,7 @@ fn progress(
 
 // Only Core's consumed native pending reaches the production implementation.
 // Test doubles exercise ordering without constructing native verification.
+#[cfg(any(windows, test))]
 trait Effects {
     type Pending;
     fn load(&self, id: [u8; 32]) -> Result<ImapSetupRequest, ErrorCode>;
@@ -226,6 +229,7 @@ trait Effects {
         outcome: &InitialImapProbeOutcome,
     ) -> Result<ImapSetupRequest, ErrorCode>;
 }
+#[cfg(any(windows, test))]
 async fn finish_verified<E: Effects>(
     effects: &E,
     expected: &ImapSetupRequest,
@@ -258,10 +262,12 @@ fn secret_error(error: hantong_secrets::SecretError) -> ErrorCode {
         _ => ErrorCode::InternalError,
     }
 }
+#[cfg(windows)]
 struct Native<'a> {
     store: &'a Store,
     secrets_root: &'a std::path::Path,
 }
+#[cfg(windows)]
 impl Effects for Native<'_> {
     type Pending = hantong_secrets::PendingImapCredential;
     fn load(&self, id: [u8; 32]) -> Result<ImapSetupRequest, ErrorCode> {
@@ -334,6 +340,7 @@ fn probe_outcome(
         _ => InitialImapProbeOutcome::Error,
     }
 }
+#[cfg(windows)]
 pub(super) async fn review(
     store: &Store,
     secrets_root: &std::path::Path,

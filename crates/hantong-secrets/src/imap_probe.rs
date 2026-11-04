@@ -11,7 +11,7 @@ use hantong_domain::mail_connection::ImapEndpointConfig;
 mod gate;
 #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 mod list_gate;
-#[cfg(all(windows, test))]
+#[cfg(all(test, any(windows, target_os = "linux")))]
 mod tests;
 #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 mod uid_page_gate;

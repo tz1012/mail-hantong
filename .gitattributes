@@ -40,3 +40,6 @@ scripts/traceability text eol=lf
 scripts/traceability.ps1 text eol=lf
 scripts/test-mail-server text eol=lf
 scripts/test-mail-server.ps1 text eol=lf
+
+# Unix entry scripts must execute after Windows checkouts too.
+install.sh text eol=lf

@@ -40,6 +40,11 @@ pub(crate) fn fixture() -> (Cleanup, SecretStore) {
         NEXT.fetch_add(1, Ordering::Relaxed)
     ));
     fs::create_dir(&root).unwrap();
+    #[cfg(target_os = "linux")]
+    std::fs::set_permissions(&root, std::os::unix::fs::PermissionsExt::from_mode(0o700)).unwrap();
+    #[cfg(target_os = "linux")]
+    let store = crate::test_headless_store(&root).unwrap();
+    #[cfg(windows)]
     let store = SecretStore::open(&root).unwrap();
     (Cleanup(root), store)
 }

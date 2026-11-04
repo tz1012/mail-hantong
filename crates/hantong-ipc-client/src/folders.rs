@@ -380,7 +380,23 @@ let params=serde_json::json!({"schema_version":1,"request_id":id,"tool":"mail.fo
 let raw=profile.exchange(id,"mail.folders.list",&params).await?;
 parse_folder_page(&raw,id,&request) })
     }
-    #[cfg(not(windows))]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    {
+        let profile = hantong_platform::load_default_client_profile()?;
+        let parsed = crate::profile::ParsedClientProfile::from_json(profile.bytes())?;
+        authorize_folder(parsed.scope(), request.account_id(), "mail.folders.list")?;
+        let id = "folders-list-1";
+        let mut arguments = serde_json::json!({
+            "account_id": request.account_id(),
+            "limit": request.limit()
+        });
+        if let Some(cursor) = request.cursor() {
+            arguments["cursor"] = serde_json::json!(cursor.encode());
+        }
+        let raw = crate::unix_relay::call(parsed.profile(), id, "mail.folders.list", &arguments)?;
+        parse_folder_page(&raw, id, &request)
+    }
+    #[cfg(all(not(windows), not(any(target_os = "linux", target_os = "macos"))))]
     {
         let _ = request;
         Err(ErrorCode::CapabilityUnsupported)
@@ -402,7 +418,12 @@ pub fn list_gui_folders(request: FolderListRequest) -> Result<FolderPage, ErrorC
                 parse_folder_page(&raw,id,&request)
             })
     }
-    #[cfg(not(windows))]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    {
+        let _ = request;
+        Err(ErrorCode::CapabilityUnsupported)
+    }
+    #[cfg(all(not(windows), not(any(target_os = "linux", target_os = "macos"))))]
     {
         let _ = request;
         Err(ErrorCode::CapabilityUnsupported)
@@ -538,20 +559,20 @@ pub fn prepare_refresh_request(
     generation: u64,
 ) -> Result<FolderRefreshRequest, ErrorCode> {
     let request = FolderRefreshRequest::new(account, operation, key, generation, &"0".repeat(64))?;
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
     {
         let hash = hantong_contracts::wire_hex::encode(&hantong_platform::sha256(
             &request.intent_bytes(),
         )?);
         FolderRefreshRequest::new(account, operation, key, generation, &hash)
     }
-    #[cfg(not(windows))]
+    #[cfg(all(not(windows), not(any(target_os = "linux", target_os = "macos"))))]
     {
         let _ = request;
         Err(ErrorCode::CapabilityUnsupported)
     }
 }
-#[cfg(any(windows, test))]
+#[cfg(any(windows, unix, test))]
 fn authorize_folder(
     scope: &hantong_contracts::auth::RequestedScope,
     account: &str,
@@ -577,7 +598,30 @@ let params=serde_json::json!({"schema_version":1,"request_id":id,"tool":"mail.fo
 let raw=profile.exchange(id,"mail.folders.refresh",&params).await?;
 parse_refresh_receipt(&raw,id,request.account_id()) })
     }
-    #[cfg(not(windows))]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    {
+        let expected = prepare_refresh_request(
+            request.account_id(),
+            request.operation_id(),
+            request.idempotency_key(),
+            request.expected_generation(),
+        )?;
+        if expected.payload_hash() != request.payload_hash() {
+            return Err(ErrorCode::InvalidInput);
+        }
+        let profile = hantong_platform::load_default_client_profile()?;
+        let parsed = crate::profile::ParsedClientProfile::from_json(profile.bytes())?;
+        authorize_folder(parsed.scope(), request.account_id(), "mail.folders.refresh")?;
+        let id = "folders-refresh-1";
+        let params = serde_json::json!({
+            "action":"request", "account_id":request.account_id(),
+            "operation_id":request.operation_id(), "idempotency_key":request.idempotency_key(),
+            "expected_generation":request.expected_generation(), "payload_hash":request.payload_hash()
+        });
+        let raw = crate::unix_relay::call(parsed.profile(), id, "mail.folders.refresh", &params)?;
+        parse_refresh_receipt(&raw, id, request.account_id())
+    }
+    #[cfg(all(not(windows), not(any(target_os = "linux", target_os = "macos"))))]
     {
         let _ = request;
         Err(ErrorCode::CapabilityUnsupported)
@@ -596,7 +640,20 @@ let params=serde_json::json!({"schema_version":1,"request_id":id,"tool":"mail.fo
 let raw=profile.exchange(id,"mail.folders.refresh",&params).await?;
 parse_refresh_receipt_for_status(&raw,id,&request) })
     }
-    #[cfg(not(windows))]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    {
+        let profile = hantong_platform::load_default_client_profile()?;
+        let parsed = crate::profile::ParsedClientProfile::from_json(profile.bytes())?;
+        authorize_folder(parsed.scope(), request.account_id(), "mail.folders.refresh")?;
+        let id = "folders-refresh-status-1";
+        let params = serde_json::json!({
+            "action":"status", "account_id":request.account_id(),
+            "execution_id":hantong_contracts::wire_hex::encode(request.execution_id())
+        });
+        let raw = crate::unix_relay::call(parsed.profile(), id, "mail.folders.refresh", &params)?;
+        parse_refresh_receipt_for_status(&raw, id, &request)
+    }
+    #[cfg(all(not(windows), not(any(target_os = "linux", target_os = "macos"))))]
     {
         let _ = request;
         Err(ErrorCode::CapabilityUnsupported)

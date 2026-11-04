@@ -69,7 +69,7 @@ struct Native {
 }
 impl Backend for Native {
     fn allowed(&mut self) -> Result<Vec<String>, ErrorCode> {
-        #[cfg(windows)]
+        #[cfg(any(windows, unix))]
         {
             runtime()?.block_on(async {
                 match self.provider {
@@ -84,7 +84,7 @@ impl Backend for Native {
                 }
             })
         }
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows, unix)))]
         {
             Err(ErrorCode::CapabilityUnsupported)
         }
@@ -96,7 +96,7 @@ impl Backend for Native {
             self.provider.is_some(),
             self.review_allowed,
         )?;
-        #[cfg(windows)]
+        #[cfg(any(windows, unix))]
         {
             let account = trash_account(&arguments);
             let requested = arguments.get("mode").and_then(Value::as_str) == Some("request");
@@ -142,9 +142,8 @@ impl Backend for Native {
             }
             Ok(value)
         }
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows, unix)))]
         {
-            let _ = (name, arguments);
             Err(ErrorCode::CapabilityUnsupported)
         }
     }
@@ -164,7 +163,7 @@ fn validate_review_mode(
     }
     Ok(())
 }
-#[cfg(any(windows, test))]
+#[cfg(any(windows, unix, test))]
 fn review_pending(name: &str, value: &Value) -> bool {
     matches!(name, "mail.send.request" | "mail.messages.trash.request")
         && value["state"] == "pending"
@@ -221,7 +220,62 @@ fn review_in_console(name: &str, receipt: &Value, account: &str) -> Result<(), E
             .unwrap_or(ErrorCode::InternalError))
     }
 }
-#[cfg(any(windows, test))]
+
+#[cfg(unix)]
+fn review_in_console(name: &str, receipt: &Value, account: &str) -> Result<(), ErrorCode> {
+    use std::{
+        fs::OpenOptions,
+        io::IsTerminal,
+        process::{Command, Stdio},
+    };
+    let id = receipt["review_id"]
+        .as_str()
+        .ok_or(ErrorCode::InvalidInput)?;
+    let review_args = terminal_review_args(name, id, account, receipt["provider"].as_str())?;
+    let kind = review_args
+        .windows(2)
+        .find(|pair| pair[0] == "--kind")
+        .and_then(|pair| pair.get(1))
+        .ok_or(ErrorCode::InvalidInput)?;
+    let input = OpenOptions::new()
+        .read(true)
+        .open("/dev/tty")
+        .map_err(|_| ErrorCode::HumanStepRequired)?;
+    let output = OpenOptions::new()
+        .write(true)
+        .open("/dev/tty")
+        .map_err(|_| ErrorCode::HumanStepRequired)?;
+    if !input.is_terminal() || !output.is_terminal() {
+        return Err(ErrorCode::HumanStepRequired);
+    }
+    let core = hantong_platform::unix_release::verified_installed_core("hantong-mcp")?;
+    let status = Command::new(core)
+        .args([
+            "terminal-review",
+            "--kind",
+            kind.as_str(),
+            "--request-id",
+            id,
+            "--account-id",
+            account,
+        ])
+        .stdin(Stdio::from(input))
+        .stdout(Stdio::from(
+            output.try_clone().map_err(|_| ErrorCode::CoreUnavailable)?,
+        ))
+        .stderr(Stdio::from(output))
+        .status()
+        .map_err(|_| ErrorCode::CoreUnavailable)?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(ErrorCode::ALL
+            .into_iter()
+            .find(|e| Some(e.exit_code()) == status.code())
+            .unwrap_or(ErrorCode::InternalError))
+    }
+}
+#[cfg(any(windows, unix, test))]
 fn terminal_review_args(
     name: &str,
     id: &str,
@@ -259,20 +313,8 @@ fn terminal_review_args(
     .map(str::to_owned)
     .collect())
 }
-#[cfg(windows)]
-async fn exchange_profile<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin>(
-    profile: hantong_ipc_client::AuthenticatedDefaultProfile<S>,
-    name: &str,
-    arguments: Value,
-) -> Result<Value, ErrorCode> {
-    if !profile.tools().iter().any(|tool| tool == name) {
-        return Err(ErrorCode::ScopeDenied);
-    }
-    let arguments = bound_arguments(name, arguments, profile.accounts())?;
-    let id = "mcp-tool-1";
-    let request = json!({"schema_version":1,"request_id":id,"tool":name,"params":arguments});
-    let raw = profile.exchange(id, name, &request).await?;
-    let response = strict(&raw).map_err(|_| ErrorCode::CoreUnavailable)?;
+fn parse_tool_response(raw: &[u8], id: &str) -> Result<Value, ErrorCode> {
+    let response = strict(raw).map_err(|_| ErrorCode::CoreUnavailable)?;
     if response["id"] != id || response["jsonrpc"] != "2.0" {
         return Err(ErrorCode::CoreUnavailable);
     }
@@ -287,8 +329,7 @@ async fn exchange_profile<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpi
             return Err(ErrorCode::CoreUnavailable);
         }
         return Err(ErrorCode::ALL
-            .iter()
-            .copied()
+            .into_iter()
             .find(|e| e.as_str() == code)
             .unwrap_or(ErrorCode::CoreUnavailable));
     }
@@ -301,7 +342,38 @@ async fn exchange_profile<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpi
     }
     Ok(value.clone())
 }
+
 #[cfg(windows)]
+async fn exchange_profile<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin>(
+    profile: hantong_ipc_client::AuthenticatedDefaultProfile<S>,
+    name: &str,
+    arguments: Value,
+) -> Result<Value, ErrorCode> {
+    if !profile.tools().iter().any(|tool| tool == name) {
+        return Err(ErrorCode::ScopeDenied);
+    }
+    let arguments = bound_arguments(name, arguments, profile.accounts())?;
+    let id = "mcp-tool-1";
+    let request = json!({"schema_version":1,"request_id":id,"tool":name,"params":arguments});
+    let raw = profile.exchange(id, name, &request).await?;
+    parse_tool_response(&raw, id)
+}
+#[cfg(unix)]
+async fn exchange_profile(
+    profile: hantong_ipc_client::AuthenticatedDefaultProfile,
+    name: &str,
+    arguments: Value,
+) -> Result<Value, ErrorCode> {
+    if !profile.tools().iter().any(|tool| tool == name) {
+        return Err(ErrorCode::ScopeDenied);
+    }
+    let arguments = bound_arguments(name, arguments, profile.accounts())?;
+    let id = "mcp-tool-1";
+    let request = json!({"schema_version":1,"request_id":id,"tool":name,"params":arguments});
+    let raw = profile.exchange(id, name, &request).await?;
+    parse_tool_response(&raw, id)
+}
+#[cfg(any(windows, unix))]
 fn runtime() -> Result<tokio::runtime::Runtime, ErrorCode> {
     tokio::runtime::Builder::new_current_thread()
         .enable_io()
@@ -453,7 +525,7 @@ impl<B: Backend> Server<B> {
         }
     }
 }
-#[cfg(any(windows, test))]
+#[cfg(any(windows, unix, test))]
 fn bound_arguments(name: &str, arguments: Value, accounts: &[String]) -> Result<Value, ErrorCode> {
     if name == "mail.messages.trash.request" && arguments["mode"] == "request" {
         return trash_arguments(arguments, accounts);
@@ -479,7 +551,7 @@ fn bound_arguments(name: &str, arguments: Value, accounts: &[String]) -> Result<
     Ok(json!({"account_ids":accounts,"include_capabilities":capabilities}))
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, unix))]
 fn trash_arguments(mut value: Value, accounts: &[String]) -> Result<Value, ErrorCode> {
     let map = value.as_object().ok_or(ErrorCode::InvalidInput)?;
     let operation_id = wire_hex::encode(&hantong_platform::random_nonce()?);
@@ -550,7 +622,7 @@ fn trash_arguments(mut value: Value, accounts: &[String]) -> Result<Value, Error
     object.insert("payload_hash".into(), json!(wire_hex::encode(&hash)));
     Ok(value)
 }
-#[cfg(all(test, not(windows)))]
+#[cfg(all(test, not(any(windows, unix))))]
 fn trash_arguments(_: Value, _: &[String]) -> Result<Value, ErrorCode> {
     Err(ErrorCode::CapabilityUnsupported)
 }
@@ -597,7 +669,7 @@ fn remove_generated_trash_fields(variant: &mut Value) {
     }
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, unix))]
 fn compose_arguments(mut value: Value) -> Result<Value, ErrorCode> {
     let map = value.as_object().ok_or(ErrorCode::InvalidInput)?;
     let mut fields = vec![
@@ -678,7 +750,7 @@ fn compose_arguments(mut value: Value) -> Result<Value, ErrorCode> {
     )?));
     Ok(value)
 }
-#[cfg(all(not(windows), test))]
+#[cfg(all(not(any(windows, unix)), test))]
 fn compose_arguments(value: Value) -> Result<Value, ErrorCode> {
     let _ = value;
     Err(ErrorCode::CapabilityUnsupported)
@@ -879,6 +951,35 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mcp_response_parser_rejects_mismatched_id() {
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": "other-request",
+            "result": {"schema_version": 1, "ok": true}
+        });
+        let raw = serde_json::to_vec(&response).unwrap();
+        assert_eq!(
+            parse_tool_response(&raw, "expected-request"),
+            Err(ErrorCode::CoreUnavailable)
+        );
+    }
+
+    #[test]
+    fn mcp_response_parser_rejects_malformed_error_envelope() {
+        let response = json!({
+            "jsonrpc": "2.0",
+            "id": "request",
+            "error": {"code": "CORE_UNAVAILABLE", "message": "different"}
+        });
+        let raw = serde_json::to_vec(&response).unwrap();
+        assert_eq!(
+            parse_tool_response(&raw, "request"),
+            Err(ErrorCode::CoreUnavailable)
+        );
+    }
+
     #[test]
     fn ai07_builtin_discovery_includes_trash_but_never_confirmation_or_execution() {
         struct Ai;

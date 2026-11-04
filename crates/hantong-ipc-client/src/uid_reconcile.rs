@@ -122,7 +122,7 @@ pub fn prepare_reconcile_request(
         cursor_version,
         &"00".repeat(32),
     )?;
-    #[cfg(windows)]
+    #[cfg(any(windows, unix))]
     {
         let hash = hantong_contracts::wire_hex::encode(&hantong_platform::sha256(
             &request.intent_bytes(),
@@ -137,14 +137,14 @@ pub fn prepare_reconcile_request(
             &hash,
         )
     }
-    #[cfg(not(windows))]
+    #[cfg(all(not(windows), not(unix)))]
     {
         let _ = request;
         Err(ErrorCode::CapabilityUnsupported)
     }
 }
 pub fn reconcile_default(request: UidReconcileRequest) -> Result<UidReconcileReceipt, ErrorCode> {
-    #[cfg(windows)]
+    #[cfg(any(windows, unix))]
     {
         let expected = prepare_reconcile_request(
             request.account_id(),
@@ -164,14 +164,14 @@ pub fn reconcile_default(request: UidReconcileRequest) -> Result<UidReconcileRec
             &request,
         )
     }
-    #[cfg(not(windows))]
+    #[cfg(all(not(windows), not(unix)))]
     {
         let _ = request;
         Err(ErrorCode::CapabilityUnsupported)
     }
 }
 pub fn status_default(request: UidPageStatusRequest) -> Result<UidReconcileReceipt, ErrorCode> {
-    #[cfg(windows)]
+    #[cfg(any(windows, unix))]
     {
         let params = json!({"action":"reconcile-status","account_id":request.account_id(),"execution_id":hantong_contracts::wire_hex::encode(request.execution_id())});
         parse_status_receipt(
@@ -180,7 +180,7 @@ pub fn status_default(request: UidPageStatusRequest) -> Result<UidReconcileRecei
             &request,
         )
     }
-    #[cfg(not(windows))]
+    #[cfg(all(not(windows), not(unix)))]
     {
         let _ = request;
         Err(ErrorCode::CapabilityUnsupported)

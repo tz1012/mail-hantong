@@ -123,7 +123,12 @@ mod unix {
                 other => other,
             },
         )?;
-        let file = directory.open_existing_readonly_regular(name)?;
+        let file = directory
+            .open_existing_readonly_regular(name)
+            .map_err(|error| match error {
+                ErrorCode::NotFound => ErrorCode::ClientNotRegistered,
+                other => other,
+            })?;
         let metadata = file.metadata().map_err(|_| ErrorCode::ScopeDenied)?;
         if metadata.len() > MAX_PROFILE_BYTES as u64 {
             return Err(ErrorCode::InvalidInput);
@@ -1009,5 +1014,29 @@ mod unix_tests {
             ErrorCode::InvalidInput
         );
         let _ = std::fs::remove_dir_all(root);
+    }
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod unix_profile_tests {
+    use super::*;
+    #[test]
+    fn cli07_missing_profile_in_existing_private_directory_requires_registration() {
+        let root = std::env::temp_dir().join(format!(
+            "hantong-missing-profile-{}-{}",
+            std::process::id(),
+            crate::random_nonce()
+                .unwrap()
+                .iter()
+                .map(|v| format!("{v:02x}"))
+                .collect::<String>()
+        ));
+        let directory = crate::unix_paths::UnixDirectoryGuard::prepare(&root).unwrap();
+        assert_eq!(
+            unix::load(&root, "default.json").unwrap_err(),
+            ErrorCode::ClientNotRegistered
+        );
+        drop(directory);
+        std::fs::remove_dir(root).unwrap();
     }
 }

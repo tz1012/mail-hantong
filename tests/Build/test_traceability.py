@@ -37,6 +37,14 @@ class TraceabilityTests(unittest.TestCase):
         resource.write_bytes(b"<p>Changed</p>\n")
         self.assertNotEqual(original, traceability.source_hash(root))
 
+    def test_INST01_source_hash_binds_public_unix_installer(self):
+        temp, root = self.fixture(); self.addCleanup(temp.cleanup)
+        installer = root / "install.sh"
+        installer.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        before = traceability.source_hash(root)
+        installer.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+        self.assertNotEqual(before, traceability.source_hash(root))
+
     def fixture(self):
         temp = tempfile.TemporaryDirectory()
         root = Path(temp.name)

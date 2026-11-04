@@ -4,7 +4,7 @@
 
 ## 공개 경계
 
-`SecretStore::probe_imap(account_id, &ImapEndpointConfig)`는 Windows에서 한 번 연결·TLS·인증·기능 조회·LOGOUT을 수행한다. 성공 receipt는 settings_version과 알려진 IMAP 기능의 boolean만 반환한다. 원문 응답·알 수 없는 capability·주소·socket/session·임의 command·credential callback을 노출하지 않는다. 비밀 해제와 인증 코드는 Secrets 안에만 둔다. 다른 OS에서는 UnsupportedPlatform이다. CLI/MCP·공통 정책/UI 연결은 후속이며 이 API는 등록/발송/쓰기 권한을 발급하지 않는다.
+`SecretStore::probe_imap(account_id, &ImapEndpointConfig)`는 Windows·Linux·macOS에서 한 번 연결·TLS·인증·기능 조회·LOGOUT을 수행한다. Unix 확장은 2026-11-04 ADR-030 구현 승인 범위이며 사람 보안 검토·native macOS 검증은 별도다. 성공 receipt는 settings_version과 알려진 IMAP 기능의 boolean만 반환한다. 원문 응답·알 수 없는 capability·주소·socket/session·임의 command·credential callback을 노출하지 않는다. 비밀 해제와 인증 코드는 Secrets 안에만 둔다. 다른 미지원 OS에서는 UnsupportedPlatform이다. 공통 정책과 터미널 확인을 거치는 Core가 연결하며 이 API는 등록/발송/쓰기 권한을 발급하지 않는다.
 
 ## 실행 순서
 

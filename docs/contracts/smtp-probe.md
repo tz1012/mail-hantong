@@ -6,7 +6,7 @@
 
 `SecretStore::probe_smtp(account_id, &SmtpEndpointConfig)`는 비동기 일회성 연결 검사다. 성공하면 입력 settings_version, 고정 `SmtpCapabilities`, 실제 선택되어 성공한 `SmtpAuthMechanism`을 담은 `SmtpProbeReceipt`를 반환한다. 실제 서버 응답, 주소, 자격 증명, socket, connection/session, 임의 command, callback은 반환하거나 받지 않는다. 발송·승인 권한을 만들지 않는다. MAIL/RCPT/DATA와 메시지 제출은 구현하지 않는다. IMAP은 별도 후속 서비스다.
 
-Windows의 고정 OS 신뢰 검증기를 사용한다. 테스트 CA·임의 transport·timeout·credential loader를 caller가 주입하는 제품 API는 없다. 다른 OS는 현재 UnsupportedPlatform이다. 신뢰 UI와 공통 정책을 거치는 Core 연결은 후속이며 이 메서드의 존재만으로 CLI/MCP에서 사용할 수 없다.
+Windows·Linux·macOS의 고정 OS 신뢰 검증기를 사용한다. Unix 확장은 2026-11-04 ADR-030 구현 승인 범위이며 사람 보안 검토·native macOS 검증은 별도다. 테스트 CA·임의 transport·timeout·credential loader를 caller가 주입하는 제품 API는 없다. 다른 미지원 OS는 UnsupportedPlatform이다. 공통 정책과 터미널 확인을 거치는 Core가 연결하며 이 메서드만으로 CLI/MCP 권한을 발급하지 않는다.
 
 ## 실행 순서
 

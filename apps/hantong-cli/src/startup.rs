@@ -4,12 +4,12 @@
 //! credentials, or change any account, registration, or provider state.
 
 use hantong_contracts::ErrorCode;
-#[cfg(windows)]
+#[cfg(any(windows, unix))]
 use std::io::Read;
 use std::io::{self, IsTerminal, Write};
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
-#[cfg(windows)]
+#[cfg(any(windows, unix))]
 use std::process::{Command, Stdio};
 use std::sync::mpsc;
 use std::time::Duration;
@@ -125,7 +125,8 @@ pub(super) fn with_animation<T>(
     lang: super::Lang,
     work: impl FnOnce() -> Result<T, ErrorCode>,
 ) -> Result<T, ErrorCode> {
-    if !io::stdin().is_terminal() || !io::stdout().is_terminal() {
+    // Unix startup may collect a Secrets-owned passphrase on this same terminal.
+    if cfg!(unix) || !io::stdin().is_terminal() || !io::stdout().is_terminal() {
         return work();
     }
 
@@ -209,18 +210,39 @@ impl UpdateFetch {
     }
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, unix)))]
 fn fetch_latest_release() -> Option<String> {
     None
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, unix))]
 fn fetch_latest_release() -> Option<String> {
+    #[cfg(windows)]
     let powershell = hantong_platform::system_powershell().ok()?;
+    #[cfg(windows)]
     let script = r#"$ProgressPreference='SilentlyContinue'; (Invoke-WebRequest -UseBasicParsing -Uri 'https://github.com/tz1012/mail-hantong/releases.atom' -TimeoutSec 4).Content"#;
+    #[cfg(windows)]
     let mut child = Command::new(powershell)
         .args(["-NoProfile", "-NonInteractive", "-Command", script])
         .creation_flags(0x0800_0000)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .stdin(Stdio::null())
+        .spawn()
+        .ok()?;
+    #[cfg(unix)]
+    let mut child = Command::new("/usr/bin/curl")
+        .args([
+            "--fail",
+            "--silent",
+            "--proto",
+            "=https",
+            "--max-time",
+            "4",
+            "--max-filesize",
+            "65536",
+            "https://github.com/tz1012/mail-hantong/releases.atom",
+        ])
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .stdin(Stdio::null())

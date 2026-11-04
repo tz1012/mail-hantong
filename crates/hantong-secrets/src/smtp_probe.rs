@@ -4,7 +4,7 @@ use hantong_domain::mail_connection::SmtpEndpointConfig;
 pub use hantong_domain::smtp_capabilities::{SmtpAuthMechanism, SmtpCapabilities};
 use std::fmt;
 
-#[cfg(all(windows, test))]
+#[cfg(all(test, any(windows, target_os = "linux")))]
 pub(crate) mod tests;
 #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 pub(crate) mod windows;

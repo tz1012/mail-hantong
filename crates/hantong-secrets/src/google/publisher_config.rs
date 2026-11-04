@@ -4,29 +4,29 @@
 //! Google client JSON into the opaque client credential used by OAuth.
 
 use super::GoogleClientSecret;
-#[cfg(any(windows, test))]
+#[cfg(any(windows, unix, test))]
 use super::SecretJson;
-#[cfg(any(windows, test))]
+#[cfg(any(windows, unix, test))]
 use crate::SensitiveBuffer;
 use hantong_contracts::ErrorCode;
-#[cfg(any(windows, test))]
+#[cfg(any(windows, unix, test))]
 use serde_json::Value;
-#[cfg(any(windows, test))]
+#[cfg(any(windows, unix, test))]
 use std::collections::BTreeSet;
-#[cfg(any(windows, test))]
+#[cfg(any(windows, unix, test))]
 use std::fs;
-#[cfg(any(windows, test))]
+#[cfg(any(windows, unix, test))]
 use std::io::Read;
-#[cfg(any(windows, test))]
+#[cfg(any(windows, unix, test))]
 use std::path::{Path, PathBuf};
 
-#[cfg(any(windows, test))]
+#[cfg(any(windows, unix, test))]
 const ASSET: &str = "publisher/google-desktop.json";
-#[cfg(any(windows, test))]
+#[cfg(any(windows, unix, test))]
 const MANIFEST: &str = "release-manifest.json";
-#[cfg(any(windows, test))]
+#[cfg(any(windows, unix, test))]
 const MAX_MANIFEST: u64 = 4 * 1024 * 1024;
-#[cfg(any(windows, test))]
+#[cfg(any(windows, unix, test))]
 const MAX_ASSET: u64 = 16 * 1024;
 
 pub struct InstalledGooglePublisher {
@@ -45,25 +45,40 @@ impl std::fmt::Debug for InstalledGooglePublisher {
 /// not opt in. A present but invalid asset fails closed.
 pub fn load_installed_publisher_configuration()
 -> Result<Option<InstalledGooglePublisher>, ErrorCode> {
-    #[cfg(not(any(windows, test)))]
+    #[cfg(all(not(windows), not(unix), not(test)))]
     {
         Ok(None)
     }
-    #[cfg(any(windows, test))]
+    #[cfg(any(windows, unix, test))]
     {
-        let exe = std::env::current_exe().map_err(|_| ErrorCode::CoreUnavailable)?;
-        let bin = exe.parent().ok_or(ErrorCode::CoreUnavailable)?;
-        if exe.file_name().and_then(|name| name.to_str()) != Some("mail-hantong-core.exe")
-            || bin.file_name().and_then(|name| name.to_str()) != Some("bin")
+        #[cfg(unix)]
         {
-            return Ok(None);
+            let core =
+                hantong_platform::unix_release::verified_installed_core("mail-hantong-core")?;
+            let bin = core.parent().ok_or(ErrorCode::CoreUnavailable)?;
+            if core.file_name().and_then(|name| name.to_str()) != Some("mail-hantong-core")
+                || bin.file_name().and_then(|name| name.to_str()) != Some("bin")
+            {
+                return Ok(None);
+            }
+            load_from_root(bin.parent().ok_or(ErrorCode::CoreUnavailable)?)
         }
-        let root = bin.parent().ok_or(ErrorCode::CoreUnavailable)?;
-        load_from_root(root)
+        #[cfg(windows)]
+        {
+            let exe = std::env::current_exe().map_err(|_| ErrorCode::CoreUnavailable)?;
+            let bin = exe.parent().ok_or(ErrorCode::CoreUnavailable)?;
+            if exe.file_name().and_then(|name| name.to_str()) != Some("mail-hantong-core.exe")
+                || bin.file_name().and_then(|name| name.to_str()) != Some("bin")
+            {
+                return Ok(None);
+            }
+            let root = bin.parent().ok_or(ErrorCode::CoreUnavailable)?;
+            load_from_root(root)
+        }
     }
 }
 
-#[cfg(any(windows, test))]
+#[cfg(any(windows, unix, test))]
 fn load_from_root(root: &Path) -> Result<Option<InstalledGooglePublisher>, ErrorCode> {
     validate_ancestors(root)?;
     validate_ancestors(&root.join("publisher"))?;
@@ -94,7 +109,7 @@ fn load_from_root(root: &Path) -> Result<Option<InstalledGooglePublisher>, Error
             .get("package_version")
             .and_then(Value::as_str)
             .is_none()
-        || manifest_object.get("target").and_then(Value::as_str) != Some("windows-x86_64")
+        || manifest_object.get("target").and_then(Value::as_str) != Some(expected_target())
     {
         return Err(ErrorCode::CoreUnavailable);
     }
@@ -145,7 +160,24 @@ fn load_from_root(root: &Path) -> Result<Option<InstalledGooglePublisher>, Error
     parse_installed(bytes.as_slice()).map(Some)
 }
 
-#[cfg(any(windows, test))]
+#[cfg(any(windows, unix, test))]
+fn expected_target() -> &'static str {
+    if cfg!(windows) {
+        "windows-x86_64"
+    } else if cfg!(all(target_os = "linux", target_arch = "x86_64")) {
+        "linux-x86_64"
+    } else if cfg!(all(target_os = "linux", target_arch = "aarch64")) {
+        "linux-aarch64"
+    } else if cfg!(all(target_os = "macos", target_arch = "x86_64")) {
+        "macos-x86_64"
+    } else if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
+        "macos-aarch64"
+    } else {
+        "unix-unknown"
+    }
+}
+
+#[cfg(any(windows, unix, test))]
 fn parse_installed(bytes: &[u8]) -> Result<InstalledGooglePublisher, ErrorCode> {
     if bytes.len() as u64 > MAX_ASSET {
         return Err(ErrorCode::QuotaExceeded);
@@ -213,7 +245,7 @@ fn parse_installed(bytes: &[u8]) -> Result<InstalledGooglePublisher, ErrorCode> 
     })
 }
 
-#[cfg(any(windows, test))]
+#[cfg(any(windows, unix, test))]
 fn validate_regular(path: &Path) -> Result<(), ErrorCode> {
     let meta = fs::symlink_metadata(path).map_err(|_| ErrorCode::CoreUnavailable)?;
     if !meta.file_type().is_file() || meta.file_type().is_symlink() {
@@ -229,7 +261,7 @@ fn validate_regular(path: &Path) -> Result<(), ErrorCode> {
     Ok(())
 }
 
-#[cfg(any(windows, test))]
+#[cfg(any(windows, unix, test))]
 fn validate_ancestors(path: &Path) -> Result<(), ErrorCode> {
     let mut current = PathBuf::new();
     for component in path.components() {
@@ -251,7 +283,7 @@ fn validate_ancestors(path: &Path) -> Result<(), ErrorCode> {
     Ok(())
 }
 
-#[cfg(any(windows, test))]
+#[cfg(any(windows, unix, test))]
 fn read_public_bounded(path: &Path, limit: u64) -> Result<Vec<u8>, ErrorCode> {
     validate_regular(path)?;
     let mut file = fs::File::open(path).map_err(|_| ErrorCode::CoreUnavailable)?;
@@ -276,7 +308,7 @@ fn read_public_bounded(path: &Path, limit: u64) -> Result<Vec<u8>, ErrorCode> {
     Ok(bytes)
 }
 
-#[cfg(any(windows, test))]
+#[cfg(any(windows, unix, test))]
 fn read_secret_bounded(path: &Path, limit: u64) -> Result<SensitiveBuffer, ErrorCode> {
     validate_regular(path)?;
     let mut file = fs::File::open(path).map_err(|_| ErrorCode::CoreUnavailable)?;
@@ -299,14 +331,14 @@ fn read_secret_bounded(path: &Path, limit: u64) -> Result<SensitiveBuffer, Error
     Ok(bytes)
 }
 
-#[cfg(any(windows, test))]
+#[cfg(any(windows, unix, test))]
 fn is_sha256(v: &str) -> bool {
     v.len() == 64 && v.bytes().all(|b| b.is_ascii_hexdigit())
 }
 
 // serde_json follows the last duplicate member. Release metadata and secret
 // input must reject that ambiguity instead.
-#[cfg(any(windows, test))]
+#[cfg(any(windows, unix, test))]
 fn reject_duplicate_keys(bytes: &[u8]) -> Result<(), ErrorCode> {
     // Dynamic parsing cannot reveal duplicates, so inspect raw object members
     // with a small lexical pass that records keys at every object depth.
@@ -364,8 +396,9 @@ mod tests {
             &super::super::crypto::sha256(body.as_bytes()).unwrap(),
         );
         let manifest = format!(
-            r#"{{"format_version":1,"version":"0.1.0","package_version":"0.1.0","target":"windows-x86_64","files":[{{"path":"{ASSET}","sha256":"{hash}","size":{}}}]}}"#,
-            body.len()
+            r#"{{"format_version":1,"version":"0.1.0","package_version":"0.1.0","target":"{target}","files":[{{"path":"{ASSET}","sha256":"{hash}","size":{size}}}]}}"#,
+            target = expected_target(),
+            size = body.len()
         );
         fs::write(root.join(MANIFEST), manifest).unwrap();
     }

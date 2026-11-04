@@ -17,11 +17,15 @@ pub mod ui_preferences;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod unix_crypto;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
+pub mod unix_lifecycle;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 pub mod unix_paths;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 pub mod unix_peer;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 pub mod unix_profile_publication;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub mod unix_release;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 pub mod unix_socket;
 #[cfg(any(target_os = "linux", target_os = "macos"))]

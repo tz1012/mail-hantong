@@ -13,6 +13,10 @@ use hantong_platform::unix_paths::UnixDirectoryGuard;
 #[cfg(target_os = "linux")]
 const PROTECTED_LABEL: &str = "mail-hantong protected item";
 
+#[cfg(target_os = "linux")]
+static HEADLESS_BACKEND: std::sync::OnceLock<crate::headless_vault::SharedHeadlessVault> =
+    std::sync::OnceLock::new();
+
 pub const SERVICE: &str = "mail-hantong.local-security.v1";
 const MAX_PKCS8: usize = 4096;
 const MAX_GENERAL: usize = 65_536;
@@ -54,6 +58,7 @@ pub enum UnixSecretError {
     Ambiguous,
     StoreFailure,
     AlreadyExists,
+    Conflict,
 }
 
 impl std::fmt::Display for UnixSecretError {
@@ -67,6 +72,7 @@ impl std::fmt::Display for UnixSecretError {
             Self::Ambiguous => "protected secret selector is ambiguous",
             Self::StoreFailure => "host credential store operation failed",
             Self::AlreadyExists => "protected secret already exists",
+            Self::Conflict => "protected secret store changed concurrently",
         })
     }
 }
@@ -139,7 +145,7 @@ impl UnixSecretSelector {
         Ok(Self { kind, value })
     }
 
-    fn as_str(&self) -> &str {
+    pub(crate) fn as_str(&self) -> &str {
         &self.value
     }
 
@@ -184,7 +190,10 @@ impl Drop for ProtectedBytes {
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-pub struct UnixSecretStore;
+pub struct UnixSecretStore {
+    #[cfg(target_os = "linux")]
+    headless: Option<crate::headless_vault::SharedHeadlessVault>,
+}
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 impl UnixSecretStore {
@@ -195,6 +204,10 @@ impl UnixSecretStore {
     /// the protected-data store is intentionally not selected here.
     pub fn install_platform_store() -> Result<(), UnixSecretError> {
         #[cfg(target_os = "linux")]
+        if HEADLESS_BACKEND.get().is_some() {
+            return Ok(());
+        }
+        #[cfg(target_os = "linux")]
         let store = zbus_secret_service_keyring_store::Store::new()
             .map_err(|_| UnixSecretError::Unavailable)?;
         #[cfg(target_os = "macos")]
@@ -204,8 +217,27 @@ impl UnixSecretStore {
         Ok(())
     }
 
-    pub const fn new() -> Self {
-        Self
+    pub fn new() -> Self {
+        Self {
+            #[cfg(target_os = "linux")]
+            headless: HEADLESS_BACKEND.get().cloned(),
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    pub fn new_headless(vault: crate::headless_vault::SharedHeadlessVault) -> Self {
+        Self {
+            headless: Some(vault),
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    pub fn install_headless_backend(
+        vault: crate::headless_vault::SharedHeadlessVault,
+    ) -> Result<(), UnixSecretError> {
+        HEADLESS_BACKEND
+            .set(vault)
+            .map_err(|_| UnixSecretError::Conflict)
     }
 
     fn entry(selector: &UnixSecretSelector) -> Result<Entry, UnixSecretError> {
@@ -225,6 +257,11 @@ impl UnixSecretStore {
     }
 
     pub fn read(&self, selector: &UnixSecretSelector) -> Result<ProtectedBytes, UnixSecretError> {
+        #[cfg(target_os = "linux")]
+        if let Some(vault) = &self.headless {
+            let vault = vault.lock().map_err(|_| UnixSecretError::Unavailable)?;
+            return vault.read(selector.as_str());
+        }
         let entry = Self::entry(selector)?;
         let bytes = entry.get_secret().map_err(map_keyring_error)?;
         let protected = ProtectedBytes::from_backend(bytes)?;
@@ -247,6 +284,20 @@ impl UnixSecretStore {
         secret: &[u8],
         kind: UnixSecretKind,
     ) -> Result<(), UnixSecretError> {
+        #[cfg(target_os = "linux")]
+        if let Some(vault) = &self.headless {
+            validate_secret(secret, kind)?;
+            if selector.kind() != kind {
+                return Err(UnixSecretError::InvalidSelector);
+            }
+            let vault = vault.lock().map_err(|_| UnixSecretError::Unavailable)?;
+            let current = vault.generation()?;
+            if vault.read(selector.as_str()).is_ok() {
+                return Err(UnixSecretError::AlreadyExists);
+            }
+            vault.replace(selector.as_str(), secret, current)?;
+            return Ok(());
+        }
         validate_secret(secret, kind)?;
         if selector.kind() != kind {
             return Err(UnixSecretError::InvalidSelector);
@@ -271,6 +322,17 @@ impl UnixSecretStore {
         secret: &[u8],
         kind: UnixSecretKind,
     ) -> Result<(), UnixSecretError> {
+        #[cfg(target_os = "linux")]
+        if let Some(vault) = &self.headless {
+            validate_secret(secret, kind)?;
+            if selector.kind() != kind {
+                return Err(UnixSecretError::InvalidSelector);
+            }
+            let vault = vault.lock().map_err(|_| UnixSecretError::Unavailable)?;
+            let current = vault.generation()?;
+            vault.replace(selector.as_str(), secret, current)?;
+            return Ok(());
+        }
         validate_secret(secret, kind)?;
         if selector.kind() != kind {
             return Err(UnixSecretError::InvalidSelector);
@@ -292,6 +354,13 @@ impl UnixSecretStore {
         _guard: &UnixSecretMutationGuard,
         selector: &UnixSecretSelector,
     ) -> Result<(), UnixSecretError> {
+        #[cfg(target_os = "linux")]
+        if let Some(vault) = &self.headless {
+            let vault = vault.lock().map_err(|_| UnixSecretError::Unavailable)?;
+            let current = vault.generation()?;
+            vault.delete(selector.as_str(), current)?;
+            return Ok(());
+        }
         Self::entry(selector)?
             .delete_credential()
             .map_err(map_keyring_error)

@@ -1,5 +1,17 @@
 # 보호된 IMAP 앱 비밀번호 입력 v1
 
+## 승인된 Unix 구현 보완 (2026-11-04)
+
+ADR-030 사용자 구현 승인과 전체 터미널 계약에 따라 Linux/macOS는 Secrets가
+`/dev/tty`에서 echo 없는 입력을 소유한다. 아래 Win32 EDIT 설명은 Windows 전용이다.
+Unix에서는 원래 요청·계정·endpoint·payload hash·만료에 결속된 opaque ticket과
+암호화한 짧은 수명 stage로 foreground Core와 주 Core 사이를 연결한다. 평문은
+Secrets 밖으로 반환하지 않는다. stage는 소유자·mode·파일 identity를 FD로 검증하고,
+복호화 후 checked unlink와 directory fsync가 성공해야 한 번 소비한다. 취소·만료·
+결속 불일치는 설정 저장이나 probe 권한을 만들지 않는다. macOS 장기 비밀은
+Keychain을 유지하며 Linux headless 저장 방식은 별도 제안을 따른다. 이 보완은
+사람 보안 검토나 native macOS 이용 검증 완료를 뜻하지 않는다.
+
 상태: M2-01·INST-05·ACC-03의 네이티브 설정 선행 경계. 연속 개발 위임에 따른 구현 기준, **사람 검토 필요**. 실제 계정 입력·Hello·로그인을 개발 중 자동 실행하지 않는다.
 
 ## 소유권과 수명
@@ -36,7 +48,7 @@ UTF-16·UTF-8·내부 복사본은 소유 buffer Drop에서 volatile wipe한다.
 
 ## 검사와 근거
 
-순수 target/만료/UTF 변환 시험과 Secrets 내부 합성값을 쓰는 숨겨진 Win32 fixture로 소유 thread, style/limit, teardown/NCDESTROY/handle 재사용, invalid input, DPAPI 저장 결속, cancel/drop을 검증한다. 실제 사용자 창의 값을 읽거나 실제 계정으로 접속하지 않는다. 비 Windows는 보호 입력을 제공하지 않으며 UnsupportedPlatform이다. 숨겨진 합성 fixture 검사는 사용자 시각·키보드·IME·Hello 시험을 대신하지 않는다.
+순수 target/만료/UTF 변환 시험과 Secrets 내부 합성값을 쓰는 숨겨진 Win32 fixture로 소유 thread, style/limit, teardown/NCDESTROY/handle 재사용, invalid input, DPAPI 저장 결속, cancel/drop을 검증한다. 실제 사용자 창의 값을 읽거나 실제 계정으로 접속하지 않는다. Linux/macOS 보호 입력은 위 Unix 보완을 따르며 다른 미지원 OS는 UnsupportedPlatform이다. 숨겨진 합성 fixture 검사는 사용자 시각·키보드·IME·Hello 시험을 대신하지 않는다.
 
 기존 windows-sys 0.61.2의 UI/Controls/Shell/Threading 기능만 추가하며 새 외부 package/version은 도입하지 않는다. native 승인 UI 연결 시 approval-windows→Secrets 단방향 의존과 아키텍처 검사를 함께 갱신한다.
 

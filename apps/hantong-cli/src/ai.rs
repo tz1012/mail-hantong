@@ -43,7 +43,7 @@ fn emit(value: Value) {
     println!("{value}");
 }
 
-#[cfg(any(windows, test))]
+#[cfg(any(windows, target_os = "linux", target_os = "macos", test))]
 fn ensure_mail_access_with(
     interactive: bool,
     mut ready: impl FnMut() -> Result<bool, ErrorCode>,
@@ -64,7 +64,7 @@ fn ensure_mail_access_with(
 }
 
 fn ensure_mail_access(provider: Provider, ko: bool, no_input: bool) -> Result<(), ErrorCode> {
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
     {
         use hantong_contracts::registration::{
             AiProvider, RegistrationCommand, RegistrationProgress,
@@ -97,7 +97,7 @@ fn ensure_mail_access(provider: Provider, ko: bool, no_input: bool) -> Result<()
             },
         )
     }
-    #[cfg(not(windows))]
+    #[cfg(all(not(windows), not(any(target_os = "linux", target_os = "macos"))))]
     {
         let _ = (provider, ko, no_input);
         Err(ErrorCode::CapabilityUnsupported)

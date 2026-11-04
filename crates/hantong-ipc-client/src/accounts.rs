@@ -476,7 +476,29 @@ pub fn list_default_accounts(include_capabilities: bool) -> Result<AccountListRe
             parse_account_list_response(&raw, request_id, &ids, include_capabilities)
         })
 }
-#[cfg(not(windows))]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub fn list_default_accounts(include_capabilities: bool) -> Result<AccountListResponse, ErrorCode> {
+    let profile = hantong_platform::load_default_client_profile()?;
+    let parsed = crate::profile::ParsedClientProfile::from_json(profile.bytes())?;
+    let ids = parsed.scope().accounts().to_vec();
+    if ids.is_empty() {
+        return Err(ErrorCode::ScopeDenied);
+    }
+    let request_id = "accounts-list-1";
+    let request = serde_json::json!({
+        "schema_version":1,"request_id":request_id,"tool":"mail.accounts.list",
+        "params":{"account_ids":ids,"include_capabilities":include_capabilities}
+    });
+    let raw = crate::unix_relay::call(
+        parsed.profile(),
+        request_id,
+        "mail.accounts.list",
+        &request["params"],
+    )?;
+    parse_account_list_response(&raw, request_id, &ids, include_capabilities)
+}
+
+#[cfg(all(not(windows), not(any(target_os = "linux", target_os = "macos"))))]
 pub fn list_default_accounts(_: bool) -> Result<AccountListResponse, ErrorCode> {
     Err(ErrorCode::CapabilityUnsupported)
 }

@@ -125,7 +125,11 @@ pub fn get_default() -> Result<CliDisplaySettings, ErrorCode> {
             .map_err(|_| ErrorCode::CoreUnavailable)?
             .block_on(get_default_async())
     }
-    #[cfg(not(windows))]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    {
+        get_default_async_blocking()
+    }
+    #[cfg(all(not(windows), not(any(target_os = "linux", target_os = "macos"))))]
     {
         Err(ErrorCode::CapabilityUnsupported)
     }
@@ -148,10 +152,30 @@ pub async fn get_default_async() -> Result<CliDisplaySettings, ErrorCode> {
         .await
         .map_err(|_| ErrorCode::CoreUnavailable)?
     }
-    #[cfg(not(windows))]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    {
+        let response = crate::unix_relay::call(
+            crate::profile::ProfileSelector::Default,
+            "display-settings-1",
+            "app.settings.display.get",
+            &serde_json::json!({}),
+        )?;
+        parse_display_settings_response(&response, "display-settings-1")
+    }
+    #[cfg(all(not(windows), not(any(target_os = "linux", target_os = "macos"))))]
     {
         Err(ErrorCode::CapabilityUnsupported)
     }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn get_default_async_blocking() -> Result<CliDisplaySettings, ErrorCode> {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_io()
+        .enable_time()
+        .build()
+        .map_err(|_| ErrorCode::CoreUnavailable)?
+        .block_on(get_default_async())
 }
 
 #[cfg(test)]

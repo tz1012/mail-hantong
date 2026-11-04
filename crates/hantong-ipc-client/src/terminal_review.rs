@@ -156,7 +156,37 @@ pub fn parse_response(
 
 /// Restricted to the verified sibling Core foreground process by both ends.
 pub fn exchange(command: &TerminalReviewCommand) -> Result<TerminalReviewReceipt, ErrorCode> {
-    #[cfg(not(windows))]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    {
+        let body = request(command)?;
+        let envelope: serde_json::Value =
+            serde_json::from_slice(&body).map_err(|_| ErrorCode::InvalidInput)?;
+        let method = envelope
+            .get("method")
+            .and_then(serde_json::Value::as_str)
+            .ok_or(ErrorCode::InvalidInput)?;
+        let params = envelope.get("params").ok_or(ErrorCode::InvalidInput)?;
+        let caller = std::env::current_exe()
+            .map_err(|_| ErrorCode::CoreUnavailable)?
+            .file_name()
+            .and_then(|name| name.to_str())
+            .ok_or(ErrorCode::CoreUnavailable)?
+            .to_ascii_lowercase();
+        let response = if caller == "mail-hantong-core" {
+            crate::unix_relay::call(
+                crate::profile::ProfileSelector::Default,
+                "terminal-1",
+                method,
+                params,
+            )?
+        } else {
+            let profile = hantong_platform::load_default_client_profile()?;
+            let parsed = crate::profile::ParsedClientProfile::from_json(profile.bytes())?;
+            crate::unix_relay::call(parsed.profile(), "terminal-1", method, params)?
+        };
+        parse_response(&response, command)
+    }
+    #[cfg(all(not(windows), not(any(target_os = "linux", target_os = "macos"))))]
     {
         let _ = command;
         Err(ErrorCode::CapabilityUnsupported)
