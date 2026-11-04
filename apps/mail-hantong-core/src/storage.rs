@@ -10,7 +10,7 @@ pub(super) fn initialize_storage(directories: &AppDirectories) -> Result<Store, 
     Ok(store)
 }
 
-#[cfg(test)]
+#[cfg(all(test, windows))]
 mod tests {
     use super::*;
     use hantong_platform::ServerSigningKey;

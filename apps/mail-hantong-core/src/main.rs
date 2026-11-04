@@ -29,7 +29,7 @@ mod setup_google;
 mod setup_imap;
 #[cfg(windows)]
 mod setup_smtp;
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 mod storage;
 #[cfg(windows)]
 mod terminal_google;
@@ -43,6 +43,8 @@ mod terminal_secret_input;
 mod uid_worker;
 #[cfg(all(test, target_os = "linux"))]
 mod unix_authentication_tests;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+mod unix_core_runtime;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 pub mod unix_identity;
 
@@ -208,7 +210,7 @@ fn start() -> Result<(), ErrorCode> {
 
 // Only compile-time stage names and stable error codes reach diagnostics.
 // Never print paths, underlying errors, database content or credentials here.
-#[cfg(any(windows, test))]
+#[cfg(any(windows, unix, test))]
 fn startup_step<T>(stage: &'static str, result: Result<T, ErrorCode>) -> Result<T, ErrorCode> {
     result.inspect_err(|code| {
         let _ = writeln!(
@@ -219,9 +221,32 @@ fn startup_step<T>(stage: &'static str, result: Result<T, ErrorCode>) -> Result<
     })
 }
 
-#[cfg(not(windows))]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn start() -> Result<(), ErrorCode> {
-    Err(ErrorCode::CapabilityUnsupported)
+    let directories = startup_step("directories", hantong_platform::app_directories())?;
+    let store = startup_step("storage", storage::initialize_storage(&directories))?;
+    let server_identity = startup_step(
+        "identity",
+        unix_identity::initialize_server_identity(&store, &directories.secrets),
+    )?;
+    let server_instance = startup_step("instance", hantong_platform::random_nonce())?;
+    let runtime = startup_step(
+        "runtime",
+        tokio::runtime::Builder::new_current_thread()
+            .enable_io()
+            .enable_time()
+            .enable_all()
+            .build()
+            .map_err(|_| ErrorCode::InternalError),
+    )?;
+    startup_step(
+        "transport",
+        runtime.block_on(unix_core_runtime::serve(
+            store,
+            server_identity,
+            server_instance,
+        )),
+    )
 }
 
 fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> i32 {
