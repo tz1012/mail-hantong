@@ -1,7 +1,10 @@
 # Windows·macOS·Linux CLI/TUI 지원 구현과 검증
 
+**Beta 21 release decision.** Deploy Windows x64 first. Mac/Linux integration is deferred until Ponytail. Unix code and Linux synthetic checks are experimental and inactive in the Windows product path; simple builds or TUI demos do not establish product mail support. No Mac/Linux mail package is advertised.
+
+
 2026-11-04 사용자 지시: 기존 지원 대상인 Mac·Linux도 실제로 이용할 수 있도록 구현한다.
-현재 공개 제품은 Windows beta.20이다. 아래 작업은 진행 중이며 완료 표시가 없는
+현재 공개 제품은 Windows beta.21이다. 아래 작업은 진행 중이며 완료 표시가 없는
 OS에서 단순 빌드·TUI demo 성공을 메일 지원 완료로 안내하지 않는다.
 
 ## 공통 완료 조건

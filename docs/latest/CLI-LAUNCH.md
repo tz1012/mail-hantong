@@ -1,6 +1,6 @@
-# mail-hantong CLI — Windows beta.20
+# mail-hantong CLI — Windows beta.21
 
-beta.20 keeps the Windows PowerShell update path, newest-compatible release
+beta.21 keeps the Windows PowerShell update path, newest-compatible release
 selection and automatic downgrade protection. New accounts use the same read,
 body, compose and individually confirmed send flow as existing accounts. Google
 consent is followed by exact scope selection in the same terminal. Generic
@@ -12,12 +12,13 @@ uses minimal ancestor traversal access. Existing storage ACLs, accounts and keys
 are preserved. GitHub API rate limiting falls back to the public release feed.
 An affected PC recovered access through a separately approved targeted repair;
 this update does not automatically repair existing folder permissions.
+Beta.21 also includes the Windows package-path fix for external publisher configuration under 8.3 aliases and long paths. Existing Windows v1 accounts, encrypted databases and keys remain intact.
 If startup still fails after updating, report the fixed `hantong_startup stage`
 and stable error code. Do not send credentials, database files or mail content.
 
 The command is `hantong`. English is the default; use `--lang ko` for Korean. The companion `mail-hantong-core` process handles encrypted local storage, mail operations and policy. The graphical mail application is not included in the CLI package.
 
-**Release: 0.1.0-beta.20.** The [Korean website guide](https://tz1012.github.io/mail-hantong/) covers installation, mail and AI feature switching. Release downloads include checksums and build metadata. The preceding baseline passed 1,906 full-check test executions; this candidate uses affected-package regression checks and does not claim that old count as a new full-suite result. Earlier affected-package evidence covers Store/Core IMAP Trash, migration, SMTP endpoint, CLI setup and terminal-flow behavior. Real Daum IMAP and SMTP authentication completed in the preceding candidate flow. One synthetic message was sent through the immutable same-terminal preview and its sent status was verified against exactly one matching Gmail message. The Daum IMAP catalog contained 17 mailboxes; two recent pages completed, repeated refresh succeeded, and body reads were verified on both runs. Human security review, clean Windows VM testing and Google publisher verification remain separate open gates. A synthetic Codex model reply was verified with mail tools disconnected; Claude login status was verified. Real Claude inference and real Trash movement were not tested. This candidate migrates local storage to schema 26; do not run an older core against migrated data. macOS mail operations are not available yet. Final console and package verification remain pending.
+**Release: 0.1.0-beta.21.** The [Korean website guide](https://tz1012.github.io/mail-hantong/) covers installation, mail and AI feature switching. Release downloads include checksums and build metadata. Beta.21 is a Windows x64 beta release with targeted regression and package checks. The earlier baseline passed 1,906 full-check test executions; beta.21 does not claim that old count as a new full-suite result. The real Daum authentication, synthetic Gmail send, and 17-mailbox catalog/body-read results are historical beta.20 evidence, not new beta.21 tests. Beta.20 also recorded two synthetic Codex and Claude conversation turns; beta.21 adds no new provider-turn claim. AI code and schema 26 behavior are unchanged. Real Trash movement, AI-driven mail mutations, human security review, clean Windows VM testing and Google publisher verification remain separate open gates. macOS and Linux mail operations are not available in this release. Final beta.21 package verification is recorded separately.
 
 ## What works in this preview
 
@@ -38,13 +39,10 @@ IMAP/SMTP and advanced Google setup use hidden credential input in the same cons
 
 ### Generic IMAP/SMTP and Trash
 
-The beta includes ordinary IMAP/SMTP onboarding and a provider-neutral
-one-message Trash flow. Integration checks pass, and real Daum IMAP and SMTP
-authentication completed. One synthetic message was sent through the immutable
-same-terminal preview and its sent status was verified against exactly one
-matching Gmail message. The Daum IMAP catalog contained 17 mailboxes; two
-recent pages completed, repeated refresh succeeded, and body reads were
-verified on both runs. Real Trash movement was not performed.
+Beta.21 carries ordinary IMAP/SMTP onboarding and a provider-neutral one-message
+Trash flow. The real Daum authentication, synthetic Gmail send, and 17-mailbox
+catalog/body-read results are historical beta.20 evidence; beta.21 adds no new
+real-account or real-mail test claim. Real Trash movement was not performed.
 
 Use the normal onboarding menus rather than assembling request IDs. At the first
 menu, enter `3` to connect an IMAP/SMTP account. When accounts already exist,
@@ -275,7 +273,7 @@ hantong ai chat claude
 
 Provider tools manage browser login and credentials. mail-hantong does not read their token files. Claude connects through Console/API billing; third-party use of a Claude subscription login is not supported. Provider authentication and paid inference were not exercised in development tests.
 
-The beta17 candidate does not claim that `hantong ai chat codex` is usable on
+The beta21 candidate does not claim that `hantong ai chat codex` is usable on
 the current Windows provider environment. Codex 0.163.0 named profiles can
 reject the required effective root-read/temp-read capability even when an
 elevated backend is already configured. HanTong returns localized
@@ -362,7 +360,7 @@ The package tool builds the terminal distribution and core, records versions and
 
 `hantong`은 터미널에서 사용하는 CLI입니다. `--lang ko`로 한국어를 선택하고 자동화에는 `--json`과 종료 코드를 사용합니다.
 
-현재 beta.20 후보는 `/help`, 내장 AI 메일 도구 자동 연결, Gmail과 일반 IMAP 계정의 메일 조회·본문 읽기·작성·개별 발송 확인, 한 통씩 휴지통 이동을 제공합니다. AI 최초 이용에는 같은 터미널에서 제공자별 계정·도구·외부 전송 범위를 확인하며, 설정 후 수동 MCP 등록이나 필수 `/agent on` 없이 연결합니다. 발송·휴지통 이동은 매번 같은 터미널에서 최종 확인합니다. Gmail 휴지통 이동에는 Google Modify 권한이 필요하며 영구·대량 삭제는 지원하지 않습니다. 업데이트만으로 권한을 부여하지 않으며 과거 중단 요청의 범위도 바꾸지 않습니다. 일반 첨부 다운로드·예약·주소록·규칙 자동화와 Mac 제품은 후속입니다.
+현재 beta.21 후보는 `/help`, 내장 AI 메일 도구 자동 연결, Gmail과 일반 IMAP 계정의 메일 조회·본문 읽기·작성·개별 발송 확인, 한 통씩 휴지통 이동을 제공합니다. AI 최초 이용에는 같은 터미널에서 제공자별 계정·도구·외부 전송 범위를 확인하며, 설정 후 수동 MCP 등록이나 필수 `/agent on` 없이 연결합니다. 발송·휴지통 이동은 매번 같은 터미널에서 최종 확인합니다. Gmail 휴지통 이동에는 Google Modify 권한이 필요하며 영구·대량 삭제는 지원하지 않습니다. 업데이트만으로 권한을 부여하지 않으며 과거 중단 요청의 범위도 바꾸지 않습니다. 일반 첨부 다운로드·예약·주소록·규칙 자동화와 Mac 제품은 후속입니다.
 
 위 PowerShell 한 줄로 설치·업데이트한 뒤 `hantong --lang ko init`을 실행하세요. 코어는 필요할 때 자동으로 시작합니다. 계정 연결·기능 선택·숨김 입력·메일 전체 검토·보내기/취소는 같은 터미널에서 진행하며, Google 로그인·동의만 브라우저를 사용합니다. 계정 작업 메뉴 4번은 작성·보내기 활성화, 5번은 메일 작성입니다. AI는 별도 `hantong ai login codex`, `hantong ai chat codex` 명령으로 시작하고 `/provider`, `/model`, `/mode`, `/fast`, `/agent`로 지원 기능을 전환합니다. 현재 beta17 후보는 Windows Codex 0.163.0 named profile의 유효 root-read/temp-read 기능 거부를 감지하면 기존 등록을 보존한 채 현지화된 `CAPABILITY_UNSUPPORTED`로 종료합니다. UAC·설정 변경이나 넓은 레거시 프로필 대체는 하지 않으며, 실제 모델 turn·AI 메일 교환은 수행하지 않았습니다. 자세한 순서는 [홈페이지](https://tz1012.github.io/mail-hantong/)에 있습니다.
 
@@ -406,7 +404,7 @@ Other registered profiles and protected settings retain their existing identity
 checks. Cancelling does not send; unknown is never automatically retried.
 
 
-### Windows provider connection behavior (beta.20)
+### Windows provider connection behavior (beta.21; beta.20 evidence)
 
 Codex selects MXC for the current thread only, with root-deny/minimal-runtime-read
 and exact temporary cwd read; no global configuration or UAC change is made.
@@ -418,6 +416,5 @@ with explicit HanTong MCP settings in the same terminal. The native CLI owns
 input/output and authentication; Ctrl+C twice returns to HanTong. Custom commands
 are disabled in this restricted native session. API billing modes
 retain embedded chat. Headless prompt/JSON requests never fall back to OAuth
-interactive mode. Both providers completed two synthetic turns with follow-up
-context. No mail content was requested; real AI-driven send/Trash remains
+interactive mode. Beta.20 evidence recorded two synthetic turns with follow-up context for both providers; beta.21 adds no new provider-turn claim. No mail content was requested; real AI-driven send/Trash remains
 unverified.

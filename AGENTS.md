@@ -1,5 +1,14 @@
 # AGENTS.md
 
+## 2026-11-04 Windows 배포 우선·Ponytail 적용 뒤 Unix 검증
+
+사용자는 현재 Windows 버전을 먼저 배포한 뒤 Go 기본 백엔드와 Rust 핵심 컴포넌트의
+하이브리드 적용 가능성을 검토하고, 이후 개발에 DietrichGebert/ponytail을 활용하라고
+지시했다. 이 지시는 Go로의 재작성 승인이나 기존 Rust 보안 경계 폐기 승인이 아니다.
+Mac·Linux 통합 검증은 Ponytail 적용 뒤 재개한다. 진행 중이던 Unix native CI는
+취소하고, 그 전까지 배포 CI는 Windows만 실행한다. Unix 구현 파일과 승인된
+ADR-030 작업은 보존하며 지원 완료·Unix 패키지 배포로 표시하지 않는다.
+
 ## 2026-11-04 macOS·Linux 실제 제품 지원 구현 승인
 
 사용자는 Mac·Linux도 기존 지원 대상임을 확인하고 CLI/TUI를 실제로 이용할 수 있도록

@@ -1,5 +1,8 @@
 # mail-hantong 기능 범위와 승인된 보완
 
+**Beta 21 release scope.** Windows x64 is the released product target. Unix foundation code is experimental and inactive in the Windows product path. Mac/Linux mail operations, installation, update, and native secret-store validation are deferred until the Ponytail integration work; no Unix mail release is advertised here. The beta.20 real-account and synthetic-mail results remain historical evidence and are not new beta.21 tests.
+
+
 제품·솔루션 이름은 `mail-hantong`, CLI 명령은 `hantong`이다. 아래 지원 조건도 처음부터 P0로 제공한다.
 
 | 지원 조건 | 요건 | 완료 기준 |
@@ -25,7 +28,7 @@
 ## 승인된 Mac 후속 지원 방향
 
 현재 배포 상태 정정(2026-11-04): Mac과 Linux를 지원 대상에서 제외한 것이 아니다.
-공개 beta.20의 실행·설치 패키지는 Windows x64용이며, Mac 제품 구현과
+공개 beta.21의 실행·설치 패키지는 Windows x64용이며, Mac 제품 구현과
 기준 요건 HOST-02의 Linux 크로스플랫폼 코어 구현·배포 검증이 남아 있다.
 OS별 정적 검사·개발용 stub·공통 Rust 빌드를 해당 OS 제품 지원 완료로 표시하지 않는다.
 Mac·Linux용 실제 계정 연결, 비밀 저장소, IPC, 메일 이용, 설치·업데이트가

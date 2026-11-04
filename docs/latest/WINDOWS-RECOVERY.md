@@ -1,5 +1,8 @@
 # Windows 업데이트 복구와 프로그램 재설치
 
+**Beta 21 scope.** This recovery guide applies to the Windows x64 release. Mac/Linux remain support targets, but their product mail operations, installation, update, and native validation are deferred until Ponytail integration. Unix foundation code is experimental and inactive in the Windows release.
+
+
 ## `update hantong`에서 `Join-Path` 오류가 날 때
 
 `drive` 인수가 null이라는 메시지는 설치 폴더가 없다는 뜻으로 단정할 수 없습니다.
@@ -63,7 +66,7 @@ hantong
 
 ## Mac과 Linux의 현재 상태
 
-Mac과 Linux는 지원 계획에 포함되어 있습니다. 현재 배포된 beta.20 설치 패키지는
+Mac과 Linux는 지원 계획에 포함되어 있습니다. 현재 배포된 beta.21 설치 패키지는
 Windows x64용이며, Mac·Linux의 제품용 계정 연결·메일 이용·설치·업데이트는
 아직 구현과 검증이 완료되지 않았습니다. Windows 설치 명령은 두 OS에서 사용할 수 없습니다.
 

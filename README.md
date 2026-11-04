@@ -2,7 +2,7 @@
 
 A multi-account mail hub for Windows, with a shared core service, the `hantong` CLI, MCP access, and an optional GUI. GUI languages are Korean and English; themes are light, dark, and system. The CLI defaults to English and supports Korean.
 
-**Current Windows CLI release: 0.1.0-beta.20.** Start with the [Korean installation and feature guide](https://tz1012.github.io/mail-hantong/). Account setup, feature selection, composing, Trash review and Send/Cancel use the same terminal without a separate HanTong window or Windows Hello. Google OAuth opens its standard provider browser. See the [CLI usage guide](docs/latest/CLI-LAUNCH.md) for mail, AI sessions, MCP tools and remaining limitations.
+**Current Windows CLI release: 0.1.0-beta.21.** Start with the [Korean installation and feature guide](https://tz1012.github.io/mail-hantong/). Account setup, feature selection, composing, Trash review and Send/Cancel use the same terminal without a separate HanTong window or Windows Hello. Google OAuth opens its standard provider browser. See the [CLI usage guide](docs/latest/CLI-LAUNCH.md) for mail, AI sessions, MCP tools and remaining limitations.
 
 macOS and Linux remain support targets; product packages and end-to-end mail
 support for those systems are still unfinished. Current release assets are
@@ -47,7 +47,7 @@ remaining width to the body on wide windows. Startup shows a short preparation
 animation while the existing startup work runs, then returns to the normal
 accounts/version/update notice prompt. It never installs an update by itself.
 
-beta.20 keeps the PowerShell update path, newest-compatible release selection
+beta.21 keeps the PowerShell update path, newest-compatible release selection
 and automatic downgrade protection. New accounts can use the same read, body,
 compose and individually confirmed send flow as existing accounts. Google
 account selection requests the required consent and the same terminal confirms
@@ -56,13 +56,10 @@ The selected sending-account scope is bounded at 128 accounts.
 
 ## Generic IMAP/SMTP and Trash
 
-The candidate includes ordinary IMAP/SMTP onboarding and one-message Trash moves in
-the CLI and `hantong-t` view. Integration checks pass, and a real Daum IMAP
-authentication and SMTP authentication have been completed. One synthetic
-message was sent through the immutable same-terminal preview and its sent
-status was verified against exactly one matching Gmail message. The Daum IMAP
-catalog contained 17 mailboxes; two recent pages completed, repeated refresh
-succeeded, and body reads were verified on both runs.
+beta.21 carries the ordinary IMAP/SMTP onboarding and one-message Trash implementation in
+the CLI and `hantong-t` view. The real Daum authentication, synthetic Gmail send,
+and 17-mailbox catalog/body-read results below are historical beta.20 evidence;
+beta.21 adds no new real-account or real-mail test claim.
 
 In the normal `hantong` flow, enter `3` at the first account menu or `imap` in
 the existing-account menu to add a generic account. After the account is
@@ -101,6 +98,7 @@ storage ACLs, databases and keys are preserved. The installer also handles
 GitHub API rate limiting through the public release feed. An affected PC's existing storage access was restored through a separately
 approved, targeted repair.
 This release does not automatically repair existing folder permissions.
+Beta.21 also includes the Windows package-path fix for external publisher configuration under 8.3 aliases and long paths. Existing Windows v1 accounts, encrypted databases and keys remain intact.
 
 Install or update from PowerShell on Windows x64:
 
@@ -116,7 +114,7 @@ to add these commands. Installation displays phase progress and percentages.
 Choosing Connect Google account opens the browser directly for account selection
 and Google read/write/send consent; confirm the selected account scope in the terminal.
 
-The candidate includes publisher Google Desktop configuration; ordinary users do not configure Google Cloud. The preceding baseline passed 1,906 full-check test executions; the current candidate uses affected-package regression checks and does not claim that old count as a new full-suite result. Earlier affected-package evidence covers Store/Core IMAP Trash, migration, SMTP endpoint, CLI setup and terminal-flow behavior. This unsigned candidate still needs final package verification, human security review, clean Windows VM testing and Google publisher verification. Real Trash movement was not performed. Schema 26 migration preserves existing data; do not downgrade after migration. See [Google commands](docs/latest/GOOGLE-MAIL.md) and [PROGRESS.md](docs/latest/PROGRESS.md).
+The candidate includes publisher Google Desktop configuration; ordinary users do not configure Google Cloud. The preceding beta.20 baseline passed 1,906 full-check test executions. Beta.21 uses affected-package regression checks and does not claim that old count as a new full-suite result. Earlier affected-package evidence covers Store/Core IMAP Trash, migration, SMTP endpoint, CLI setup and terminal-flow behavior. This unsigned candidate still needs final package verification, human security review, clean Windows VM testing and Google publisher verification. Real Trash movement was not performed. Schema 26 migration preserves existing data; do not downgrade after migration. See [Google commands](docs/latest/GOOGLE-MAIL.md) and [PROGRESS.md](docs/latest/PROGRESS.md).
 
 Optional AI sessions use separately installed official Codex CLI or Claude Code: `hantong ai login codex` then `hantong ai chat codex` (use `claude` for Console/API billing). `/help` lists available commands and descriptions. Built-in AI automatically connects provider-specific mail tools after the first same-terminal account and external-transfer setup; manual MCP registration and `/agent on` are not required. `/provider`, `/model`, `/mode`, `/fast on|off` and `/agent on|off` switch supported features. Sending and single-message Gmail trash moves require final terminal confirmation; trash also requires Google Modify permission. Permanent and batch deletion are unsupported. External MCP grants remain separate.
 
@@ -134,7 +132,7 @@ Claude Code CLI with explicit HanTong MCP settings. HanTong does not forward
 prompts, parse replies or extract tokens in that session. Use Claude Code's
 Ctrl+C twice to return. Custom commands are disabled in this restricted session.
 Programmatic `--prompt`/JSON use still requires API-compatible
-authentication. Both providers completed two synthetic conversation turns,
+authentication. Beta.20 evidence recorded two synthetic conversation turns for both providers;
 including follow-up context, without requesting mail content or mail mutations.
 Real AI-driven send/Trash remains a separate verification gap.
 Follow the [AI and agent instructions](docs/latest/CLI-LAUNCH.md#ai-sessions-and-agent-tools).

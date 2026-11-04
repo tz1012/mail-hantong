@@ -17,10 +17,9 @@ jobs:
       fail-fast: false
       matrix:
         os:
-          - ubuntu-24.04
           - windows-2025
-          - macos-15
-          - macos-15-intel
+          # User directive 2026-11-04: resume Ubuntu/macOS integration only
+          # after Ponytail is applied. Windows release checks remain required.
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
     steps:
@@ -62,4 +61,4 @@ jobs:
             echo "Platform checks result: $MATRIX_RESULT"
             exit 1
           fi
-          echo "All platform checks passed."
+          echo "Required Windows release checks passed; Unix integration is deferred."

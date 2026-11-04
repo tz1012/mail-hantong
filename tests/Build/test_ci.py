@@ -11,11 +11,10 @@ class ContinuousIntegrationTests(unittest.TestCase):
     def setUp(self):
         self.text = WORKFLOW.read_text(encoding="utf-8")
 
-    def test_M002_matrix_covers_windows_linux_and_both_mac_architectures(self):
-        self.assertIn("ubuntu-24.04", self.text)
+    def test_M002_windows_release_matrix_defers_unix_until_ponytail(self):
         self.assertIn("windows-2025", self.text)
-        self.assertRegex(self.text, r"(?m)^\s+- macos-15\s*$")
-        self.assertRegex(self.text, r"(?m)^\s+- macos-15-intel\s*$")
+        self.assertNotRegex(self.text, r"(?m)^\s+- (?:ubuntu|macos)-")
+        self.assertIn("after Ponytail is applied", self.text)
         self.assertRegex(self.text, r"fail-fast:\s*false")
         self.assertIn("name: CI required", self.text)
         self.assertRegex(self.text, r"if:\s*\$\{\{\s*always\(\)\s*\}\}")
