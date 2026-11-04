@@ -10,6 +10,198 @@ fn full_mail_request(f: &Fixture, id: u8) -> RegistrationRequest {
         )
         .unwrap()
 }
+
+fn v3_mail_request(f: &Fixture, id: u8) -> RegistrationRequest {
+    f.store()
+        .create_registration_request(
+            [id; 32],
+            ClientKind::Mcp,
+            DEFAULT_MCP_LABEL,
+            &RequestedScope::new(
+                vec!["a".into()],
+                hantong_contracts::auth::mcp_mail_tools_v3(),
+            )
+            .unwrap(),
+        )
+        .unwrap()
+}
+
+#[test]
+fn mcp03_v3_new_account_stays_denied_until_explicit_scope_replacement() {
+    let mut f = Fixture::new();
+    f.account("a");
+    let first = McpMailRegistrationStage::new_v3(
+        v3_mail_request(&f, 100),
+        rid(100),
+        mcp_public_key(),
+        server_hash(),
+        None,
+    )
+    .unwrap();
+    f.store().stage_mcp_v3_registration(&first).unwrap();
+    let old = f
+        .store()
+        .activate_mcp_registration(rid(100), 1, server_hash())
+        .unwrap();
+    f.store().with_connection(|c| { c.execute("INSERT INTO accounts(account_id,provider,account_number,status,capabilities,granted_scopes,settings_version) VALUES('b','imap',2,'ready','[]','[]',1)",[])?; Ok(()) }).unwrap();
+    assert_eq!(
+        f.store()
+            .load_mcp_registration()
+            .unwrap()
+            .unwrap()
+            .scope
+            .accounts(),
+        &["a"]
+    );
+    assert_eq!(
+        f.store()
+            .check_mcp_ai_consent(old.registration_id, 1, &["b".into()]),
+        Err(ErrorCode::ScopeDenied)
+    );
+    let request = f
+        .store()
+        .create_registration_request(
+            [101; 32],
+            ClientKind::Mcp,
+            DEFAULT_MCP_LABEL,
+            &RequestedScope::new(
+                vec!["a".into(), "b".into()],
+                hantong_contracts::auth::mcp_mail_tools_v3(),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let stage = McpMailRegistrationStage::new_v3(
+        request,
+        rid(101),
+        public_key(),
+        server_hash(),
+        Some(old.clone()),
+    )
+    .unwrap();
+    f.store().stage_mcp_v3_registration(&stage).unwrap();
+    f.reopen();
+    let active = f
+        .store()
+        .activate_mcp_registration(rid(101), 1, server_hash())
+        .unwrap();
+    assert_eq!(active.scope.accounts(), &["a", "b"]);
+    assert_eq!(
+        f.store()
+            .check_mcp_ai_consent(active.registration_id, 1, &["a".into(), "b".into()]),
+        Ok(())
+    );
+    assert_eq!(
+        f.store()
+            .load_registration(old.registration_id)
+            .unwrap()
+            .unwrap()
+            .state,
+        RegistrationState::Revoked
+    );
+}
+
+#[test]
+fn ai09_mcp_v3_fresh_activation_is_explicit_and_consent_bound() {
+    let mut f = Fixture::new();
+    f.account("a");
+    let request = v3_mail_request(&f, 70);
+    let stage =
+        McpMailRegistrationStage::new_v3(request, rid(70), mcp_public_key(), server_hash(), None)
+            .unwrap();
+    let staged = f.store().stage_mcp_v3_registration(&stage).unwrap();
+    assert_eq!(
+        staged.scope.tools(),
+        hantong_contracts::auth::mcp_mail_tools_v3()
+    );
+    assert_eq!(
+        f.store()
+            .check_mcp_ai_consent(staged.registration_id, 1, &["a".into()]),
+        Err(ErrorCode::ClientSuspended)
+    );
+    f.reopen();
+    let active = f
+        .store()
+        .activate_mcp_registration(staged.registration_id, 1, server_hash())
+        .unwrap();
+    assert_eq!(
+        active.scope.tools(),
+        hantong_contracts::auth::mcp_mail_tools_v3()
+    );
+    assert_eq!(
+        f.store()
+            .check_mcp_ai_consent(active.registration_id, 1, &["a".into()]),
+        Ok(())
+    );
+    f.store()
+        .with_connection(|c| {
+            c.execute(
+                "DELETE FROM mcp_ai_consents WHERE registration_id=?1",
+                [active.registration_id.as_slice()],
+            )
+        })
+        .unwrap();
+    assert_eq!(
+        f.store()
+            .check_mcp_ai_consent(active.registration_id, 1, &["a".into()]),
+        Err(ErrorCode::PolicyBlocked)
+    );
+}
+
+#[test]
+fn ai09_mcp_v2_to_v3_activation_records_predecessor_and_recovers_after_reopen() {
+    let mut f = Fixture::new();
+    f.account("a");
+    let old_request = full_mail_request(&f, 71);
+    let old_stage =
+        McpMailRegistrationStage::new(old_request, rid(71), mcp_public_key(), server_hash(), None)
+            .unwrap();
+    f.store().stage_mcp_mail_registration(&old_stage).unwrap();
+    let old = f
+        .store()
+        .activate_mcp_registration(rid(71), 1, server_hash())
+        .unwrap();
+    let request = v3_mail_request(&f, 72);
+    let stage = McpMailRegistrationStage::new_v3(
+        request,
+        rid(72),
+        public_key(),
+        server_hash(),
+        Some(old.clone()),
+    )
+    .unwrap();
+    let staged = f.store().stage_mcp_v3_registration(&stage).unwrap();
+    assert_eq!(
+        f.store()
+            .load_mcp_replaced_registration(staged.registration_id)
+            .unwrap()
+            .unwrap()
+            .registration_id,
+        old.registration_id
+    );
+    assert_eq!(
+        f.store()
+            .load_registration(old.registration_id)
+            .unwrap()
+            .unwrap()
+            .state,
+        RegistrationState::Revoked
+    );
+    f.reopen();
+    let active = f
+        .store()
+        .activate_mcp_registration(staged.registration_id, 1, server_hash())
+        .unwrap();
+    assert_eq!(
+        active.scope.tools(),
+        hantong_contracts::auth::mcp_mail_tools_v3()
+    );
+    assert_eq!(
+        f.store()
+            .check_mcp_ai_consent(active.registration_id, 1, &["a".into()]),
+        Ok(())
+    );
+}
 #[test]
 fn ai07_mcp_full_mail_requires_distinct_stage_and_atomically_replaces_legacy_identity() {
     let mut f = Fixture::new();

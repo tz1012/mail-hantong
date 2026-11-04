@@ -187,6 +187,8 @@ fn bootstrap_method(method: &str) -> bool {
             | "registration.google_readonly.request"
             | "registration.mcp.request"
             | "registration.mcp.status"
+            | "registration.mcp.v3.request"
+            | "registration.mcp.v3.status"
             | "registration.gui.request"
             | "registration.gui.status"
             | "registration.ai.request"

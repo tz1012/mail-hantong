@@ -1,0 +1,18 @@
+한통 외부 MCP 연결
+  hantong-mcp                         stdio 서버 실행 (외부 앱에 등록할 명령)
+  hantong-mcp config                  실행 파일 절대 경로가 담긴 mcpServers JSON 출력
+  hantong-mcp doctor                  Core·등록·도구 상태 읽기 전용 진단 (JSON)
+  hantong-mcp register                외부 MCP 메일 접근 등록 요청
+  hantong-mcp status REQUEST_ID       등록 진행 상태 확인
+
+먼저 한통을 실행하세요: hantong
+등록 검토: hantong review --kind registration --request-id REQUEST_ID
+config 출력을 외부 앱의 로컬 stdio MCP 설정에 병합하세요. 다른 서버 설정을 덮어쓰지 마세요.
+실행 경로는 버전별 경로입니다. 한통 업데이트 후 config를 다시 실행하세요.
+발송·휴지통 요청은 한통 터미널에서 별도 확인합니다. 수신 이벤트는 메타데이터만 선택적으로 제공합니다.
+원격 HTTP 주소는 제공하지 않습니다. 내장 AI 권한과 외부 MCP 권한은 별개입니다.
+
+  hantong-mcp notify on|off           수신 이벤트 추적 켜기/끄기
+  hantong-mcp notify pending          대기 중인 수신 이벤트를 NDJSON으로 출력
+  hantong-mcp notify ack CURSOR       수신 이벤트 커서 확인
+  hantong-mcp watch                    수신 이벤트를 NDJSON으로 스트리밍

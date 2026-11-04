@@ -31,7 +31,7 @@ pub(crate) async fn serve(
     let (uid_handle, uid_worker) = crate::uid_worker::coordinator_for_store(
         &store,
         secrets_root,
-        shared_slot,
+        shared_slot.clone(),
         server_instance,
     );
     let (google_read_handle, google_read_worker) =
@@ -39,7 +39,7 @@ pub(crate) async fn serve(
     let (google_state, google_worker) = crate::unix_google::State::new();
     let setup_state = crate::unix_setup::State::new(google_state);
     let mut google_signer = load_signer(&store, secrets_root)?;
-    let mut policy = ReadPolicy::new();
+    let policy = std::cell::RefCell::new(ReadPolicy::new());
     let shutdown = Rc::new(Cell::new(false));
     let server_future = serve_connections(
         &store,
@@ -50,7 +50,7 @@ pub(crate) async fn serve(
         &google_read_handle,
         secrets_root,
         &setup_state,
-        &mut policy,
+        &policy,
         shutdown.clone(),
     );
     tokio::pin!(server_future);
@@ -71,6 +71,7 @@ pub(crate) async fn serve(
         result = &mut google_future => result,
         result = &mut action_future => result,
         result = &mut google_read_future => result,
+        result = crate::receive_worker::run(&store, secrets_root, shared_slot, &policy) => result,
     }
 }
 
@@ -84,13 +85,12 @@ async fn serve_connections(
     google_worker: &crate::google_worker::GoogleHandle<'_>,
     secrets_root: &Path,
     setup_state: &crate::unix_setup::State,
-    policy: &mut ReadPolicy,
+    policy: &std::cell::RefCell<ReadPolicy>,
     shutdown: Rc<Cell<bool>>,
 ) -> Result<(), ErrorCode> {
     let server = UnixLocalServer::bind()?;
     let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
         .map_err(|_| ErrorCode::InternalError)?;
-    let policy = std::cell::RefCell::new(policy);
     let brokers = Cell::new(0_usize);
     let mut active: Vec<std::pin::Pin<Box<dyn std::future::Future<Output = ()> + '_>>> = Vec::new();
     loop {

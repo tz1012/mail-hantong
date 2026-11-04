@@ -1,5 +1,42 @@
 # MCP stdio server
 
+## 2026-11-04 approved external mail v3 extension
+
+The user approved the two implementation items in
+[`proposals/external-mcp-mail-v3.md`](proposals/external-mcp-mail-v3.md).
+Human security review remains pending. V2/read3 meanings and credentials remain
+frozen. V3 adds single-message Trash request/internal execution capabilities,
+`mail.events.read` and `mail.events.ack` only after explicit registration review
+and account data-transfer consent. Normal `hantong-mcp register` requests v3;
+existing v2 does not gain these capabilities through startup or migration.
+The protected staging/publication/activation path replaces only the explicitly
+reviewed predecessor; a revoked predecessor cannot authenticate after upgrade.
+
+`mail.send.execute` and `mail.messages.trash.execute` are never model-callable.
+The external host can request a review and inspect status. Only the existing
+Core-owned foreground terminal helper can confirm the exact immutable operation.
+It rechecks active MCP owner/epoch/account consent as well as the usual content,
+UID/catalog and single-claim bindings. No host declaration or elicitation is a
+confirmation. Legacy mentions of mandatory native Windows/Hello review below
+are superseded by `terminal-workflows.md` for this terminal path.
+
+V3 exposes metadata-only receive changes at `mail-hantong://events` with the MCP
+resources capability (`subscribe: true`). Subscribing explicitly enables Core
+tracking for the registered accounts. Core checks provider changes in the
+background (60 seconds by default); clients poll the durable event feed to
+transport unsolicited `notifications/resources/updated` while host stdin is
+idle. Reconnect/ack/retention and disclosure checks follow `events.md`.
+Notifications never carry bodies, subjects or addresses, never approve a write,
+and do not assert that every desktop host automatically starts an LLM turn.
+Unsupported resource hosts can consume `hantong-mcp watch` NDJSON or
+`hantong-mcp notify pending`/`ack CURSOR`; the pending hook emits zero bytes when
+empty. No arbitrary shell callback, HTTP listener or third-party message is added.
+
+External stdio instances still use the fixed external MCP registration; built-in
+Codex/Claude profiles remain separate. Per-host identity is outside this update.
+Protocol stdout is serialized and contains only MCP frames in server mode.
+Config/doctor and explicit watch/notify CLI modes are distinct from server mode.
+
 > 2026-11-03 approved extension: built-in AI uses the separate
 > [`builtin-ai-mail.md`](builtin-ai-mail.md) contract and `ClientKind::Ai`
 > profiles. This document continues to define **external MCP** only:

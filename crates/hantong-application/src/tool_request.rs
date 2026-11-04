@@ -22,6 +22,11 @@ use std::{collections::BTreeSet, fmt};
 
 #[derive(Clone, Eq, PartialEq)]
 pub enum ToolRequest {
+    MailEvents {
+        request_id: String,
+        account_ids: Vec<String>,
+        action: MailEventsAction,
+    },
     GoogleMutation {
         request_id: String,
         account_ids: Vec<String>,
@@ -89,6 +94,21 @@ pub enum ToolRequest {
 }
 
 #[derive(Clone, Eq, PartialEq)]
+pub enum MailEventsAction {
+    Read {
+        cursor: Option<String>,
+        limit: u32,
+        pending_only: bool,
+    },
+    Ack {
+        cursor: String,
+    },
+    Configure {
+        enabled: bool,
+    },
+}
+
+#[derive(Clone, Eq, PartialEq)]
 pub enum SendReviewAction {
     Request(hantong_contracts::mail_send::SendReviewRequest),
     Prepare(hantong_contracts::mail_send::SendReviewRequest),
@@ -139,6 +159,7 @@ pub struct SendExecuteRequest {
 impl fmt::Debug for ToolRequest {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::MailEvents { .. } => f.write_str("ToolRequest::MailEvents(<redacted>)"),
             Self::Google { .. } => f.write_str("ToolRequest::Google(<redacted>)"),
             Self::DisplaySettingsGet { .. } => {
                 f.write_str("ToolRequest::DisplaySettingsGet(<redacted>)")
@@ -324,6 +345,70 @@ impl ToolRequest {
                 request_id,
                 request: parse_diagnostic_snapshot(params)?,
             }),
+            "mail.events.read" | "mail.events.ack" | "mail.events.configure" => {
+                let raw = params
+                    .get("account_ids")
+                    .and_then(Value::as_array)
+                    .ok_or(ErrorCode::InvalidInput)?;
+                if raw.is_empty() || raw.len() > 128 {
+                    return Err(ErrorCode::InvalidInput);
+                }
+                let accounts = raw
+                    .iter()
+                    .map(|v| account_id(string(v)?))
+                    .collect::<Result<Vec<_>, _>>()?;
+                let scope = hantong_contracts::auth::RequestedScope::new(accounts, vec![])?;
+                if scope.accounts().len() != raw.len() {
+                    return Err(ErrorCode::InvalidInput);
+                }
+                let cursor = || -> Result<String, ErrorCode> {
+                    let value = string(&params["cursor"])?;
+                    if value.is_empty()
+                        || value.len() > 2048
+                        || !value.is_ascii()
+                        || value.bytes().any(|b| b.is_ascii_control())
+                    {
+                        return Err(ErrorCode::InvalidInput);
+                    }
+                    Ok(value.to_owned())
+                };
+                let action = match tool {
+                    "mail.events.read" => {
+                        exact_keys(params, &["account_ids", "cursor", "limit", "pending_only"])?;
+                        let limit = params["limit"]
+                            .as_u64()
+                            .filter(|v| (1..=100).contains(v))
+                            .ok_or(ErrorCode::InvalidInput)?
+                            as u32;
+                        MailEventsAction::Read {
+                            cursor: if params["cursor"].is_null() {
+                                None
+                            } else {
+                                Some(cursor()?)
+                            },
+                            limit,
+                            pending_only: params["pending_only"]
+                                .as_bool()
+                                .ok_or(ErrorCode::InvalidInput)?,
+                        }
+                    }
+                    "mail.events.ack" => {
+                        exact_keys(params, &["account_ids", "cursor"])?;
+                        MailEventsAction::Ack { cursor: cursor()? }
+                    }
+                    _ => {
+                        exact_keys(params, &["account_ids", "enabled"])?;
+                        MailEventsAction::Configure {
+                            enabled: params["enabled"].as_bool().ok_or(ErrorCode::InvalidInput)?,
+                        }
+                    }
+                };
+                Ok(Self::MailEvents {
+                    request_id,
+                    account_ids: scope.accounts().to_vec(),
+                    action,
+                })
+            }
             "mail.accounts.list" => Ok(Self::AccountsList(parse_accounts(request_id, params)?)),
             "mail.folders.list" => Ok(Self::FoldersList {
                 request_id,
@@ -594,6 +679,7 @@ impl ToolRequest {
 
     pub fn request_id(&self) -> &str {
         match self {
+            Self::MailEvents { request_id, .. } => request_id,
             Self::Google { request_id, .. } => request_id,
             Self::DisplaySettingsGet { request_id }
             | Self::DiagnosticsSnapshot { request_id, .. } => request_id,
@@ -616,6 +702,10 @@ impl ToolRequest {
 
     pub fn tool_name(&self) -> &str {
         match self {
+            Self::MailEvents {
+                action: MailEventsAction::Configure { .. },
+                ..
+            } => "mail.events.read",
             Self::GoogleMutation { request_tool, .. } => request_tool,
             Self::ImapTrash { .. } => hantong_contracts::google_mutation::TRASH_REQUEST_TOOL,
             Self::ImapTrashStatus { .. } => hantong_contracts::google_mutation::TRASH_REQUEST_TOOL,
@@ -625,6 +715,11 @@ impl ToolRequest {
 
     pub fn tool(&self) -> AuditTool {
         match self {
+            Self::MailEvents { action, .. } => match action {
+                MailEventsAction::Read { .. } => AuditTool::EventsRead,
+                MailEventsAction::Ack { .. } => AuditTool::EventsAck,
+                MailEventsAction::Configure { .. } => AuditTool::EventsConfigure,
+            },
             Self::Google { request, .. } => request.tool(),
             Self::DisplaySettingsGet { .. } => AuditTool::DisplaySettingsGet,
             Self::DiagnosticsSnapshot { .. } => AuditTool::DiagnosticsSnapshot,
@@ -645,6 +740,7 @@ impl ToolRequest {
 
     pub fn account_ids(&self) -> &[String] {
         match self {
+            Self::MailEvents { account_ids, .. } => account_ids,
             Self::Google { request, .. } => request.account_ids(),
             Self::DisplaySettingsGet { .. } | Self::DiagnosticsSnapshot { .. } => &[],
             Self::AccountsList(value) => value.account_ids(),

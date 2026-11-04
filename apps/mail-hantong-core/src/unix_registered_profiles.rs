@@ -3,8 +3,8 @@ use hantong_contracts::{ErrorCode, platform::OpaqueSigner, registration::AiProvi
 use hantong_ipc_client::profile::{ParsedClientProfile, ProfileSelector};
 use hantong_store::{
     AiRegistrationStage, CliRegistrationStage, ClientKind, DEFAULT_AI_CLAUDE_LABEL,
-    DEFAULT_AI_CODEX_LABEL, McpRegistrationStage, RegistrationRecord, RegistrationRequest,
-    RegistrationRequestState, Store,
+    DEFAULT_AI_CODEX_LABEL, McpMailRegistrationStage, McpRegistrationStage, RegistrationRecord,
+    RegistrationRequest, RegistrationRequestState, Store,
 };
 use std::path::Path;
 
@@ -36,6 +36,29 @@ pub(crate) fn commit(
         ClientKind::Cli => store.stage_terminal_cli_registration(
             &CliRegistrationStage::new_terminal_cli(request.clone(), id, client_public, pin)?,
         )?,
+        ClientKind::Mcp
+            if request.scope.tools() == hantong_contracts::auth::mcp_mail_tools_v3() =>
+        {
+            let predecessor = store.load_mcp_registration()?;
+            store.stage_terminal_mcp_v3_registration(&McpMailRegistrationStage::new_terminal_v3(
+                request.clone(),
+                id,
+                client_public,
+                pin,
+                predecessor,
+            )?)?
+        }
+        ClientKind::Mcp if request.scope.tools() == hantong_contracts::auth::mcp_mail_tools() => {
+            store.stage_terminal_mcp_mail_registration(
+                &McpMailRegistrationStage::new_terminal_mcp_mail(
+                    request.clone(),
+                    id,
+                    client_public,
+                    pin,
+                    store.load_mcp_registration()?,
+                )?,
+            )?
+        }
         ClientKind::Mcp => store.stage_terminal_mcp_registration(
             &McpRegistrationStage::new_terminal_mcp(request.clone(), id, client_public, pin)?,
         )?,
@@ -106,6 +129,26 @@ fn publish_activate(
             staged.profile_epoch,
             staged.scope.clone(),
         )?,
+        ClientKind::Mcp if staged.scope.tools() == hantong_contracts::auth::mcp_mail_tools_v3() => {
+            ParsedClientProfile::new_mcp_mail_v3(
+                id,
+                key_id,
+                client_public,
+                public,
+                staged.profile_epoch,
+                staged.scope.accounts().to_vec(),
+            )?
+        }
+        ClientKind::Mcp if staged.scope.tools() == hantong_contracts::auth::mcp_mail_tools() => {
+            ParsedClientProfile::new_mcp_mail(
+                id,
+                key_id,
+                client_public,
+                public,
+                staged.profile_epoch,
+                staged.scope.accounts().to_vec(),
+            )?
+        }
         ClientKind::Mcp => ParsedClientProfile::new_mcp(
             id,
             key_id,

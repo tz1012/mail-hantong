@@ -1,0 +1,18 @@
+HanTong external MCP connection
+  hantong-mcp                         Start stdio server (use this in your host)
+  hantong-mcp config                  Print mcpServers JSON with an absolute executable path
+  hantong-mcp doctor                  Read-only Core/profile/tool diagnostic (JSON)
+  hantong-mcp register                Request external MCP mail access
+  hantong-mcp status REQUEST_ID       Inspect registration progress
+  hantong-mcp notify on|off           Enable or disable receive-event tracking
+  hantong-mcp notify pending          Print pending receive events as NDJSON
+  hantong-mcp notify ack CURSOR       Acknowledge a receive-event cursor
+  hantong-mcp watch                    Stream receive events as NDJSON
+  hantong-mcp --help --lang ko        Korean help
+
+Start HanTong first: hantong
+Complete registration: hantong review --kind registration --request-id REQUEST_ID
+Merge the config output into your app's local stdio MCP settings; do not overwrite other servers.
+The command path is version-specific: regenerate it after updating HanTong.
+Send and Trash requests require a separate HanTong terminal review. Receive events are opt-in metadata only.
+No remote HTTP endpoint. Built-in AI permissions do not grant external MCP access.

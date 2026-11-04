@@ -53,6 +53,14 @@ impl<T> ReadResult<T> {
 pub trait ExecutionContext {
     type Output;
 
+    fn mail_events(
+        &mut self,
+        _accounts: &[String],
+        _action: &crate::MailEventsAction,
+    ) -> Result<ReadResult<Self::Output>, ErrorCode> {
+        Err(ErrorCode::CapabilityUnsupported)
+    }
+
     fn revalidate(&mut self) -> Result<(), ErrorCode>;
     fn begin_audit(&mut self, request: &ToolRequest) -> Result<[u8; 32], ErrorCode>;
     fn check_scope(&mut self, request: &ToolRequest) -> Result<(), ErrorCode>;
@@ -305,6 +313,14 @@ pub fn execute_tool<C: ExecutionContext>(
     }
 
     match request {
+        ToolRequest::MailEvents {
+            account_ids,
+            action,
+            ..
+        } => {
+            let result = context.mail_events(&account_ids, &action);
+            finish_local_read(result, context, audit_id)
+        }
         ToolRequest::Google { request, .. } => match request {
             hantong_contracts::google_mail::GoogleMailRequest::Sync(r) => {
                 match context.request_google_sync(audit_id, &r) {

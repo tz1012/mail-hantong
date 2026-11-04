@@ -279,7 +279,7 @@ impl Discovery for NativeDiscovery<'_> {
             .map_err(uid_error)
     }
 }
-fn uid_error(error: hantong_secrets::ImapUidPageError) -> ErrorCode {
+pub(crate) fn uid_error(error: hantong_secrets::ImapUidPageError) -> ErrorCode {
     match error {
         hantong_secrets::ImapUidPageError::Probe(error) => probe_error(error),
         hantong_secrets::ImapUidPageError::UidValidityChanged

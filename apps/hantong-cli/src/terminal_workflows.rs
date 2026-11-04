@@ -34,14 +34,14 @@ pub(super) fn registration(
     }
     if !matches!(
         command,
-        C::Status(_) | C::McpStatus(_) | C::GuiStatus(_) | C::AiStatus(..)
+        C::Status(_) | C::McpStatus(_) | C::McpStatusV3(_) | C::GuiStatus(_) | C::AiStatus(..)
     ) {
         require_interactive()?;
     }
     let receipt = hantong_ipc_client::registration::exchange(command)?;
     if !matches!(
         command,
-        C::Status(_) | C::McpStatus(_) | C::GuiStatus(_) | C::AiStatus(..)
+        C::Status(_) | C::McpStatus(_) | C::McpStatusV3(_) | C::GuiStatus(_) | C::AiStatus(..)
     ) && receipt.state() == P::Pending
     {
         maybe_review(
@@ -51,6 +51,7 @@ pub(super) fn registration(
         )?;
         let status = match command {
             C::McpRequest => C::McpStatus(*receipt.request_id()),
+            C::McpRequestV3 => C::McpStatusV3(*receipt.request_id()),
             C::AiRequest(provider) => C::AiStatus(provider, *receipt.request_id()),
             C::GuiRequest => C::GuiStatus(*receipt.request_id()),
             _ => C::Status(*receipt.request_id()),

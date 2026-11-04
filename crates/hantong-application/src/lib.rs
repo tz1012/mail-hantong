@@ -24,8 +24,8 @@ pub use diagnostic_snapshot::{
 
 mod tool_request;
 pub use tool_request::{
-    AccountsListRequest, FolderRefreshAction, SendExecuteRequest, SendReviewAction, ToolRequest,
-    UidPageAction,
+    AccountsListRequest, FolderRefreshAction, MailEventsAction, SendExecuteRequest,
+    SendReviewAction, ToolRequest, UidPageAction,
 };
 mod uid_page_response;
 pub use uid_page_response::{
@@ -35,6 +35,8 @@ pub use uid_page_response::{
 
 mod execution;
 pub use execution::{AuditHandoff, ExecutionContext, ReadResult, execute_tool};
+#[cfg(test)]
+mod mail_events_tests;
 #[cfg(test)]
 mod message_search_tests;
 #[cfg(test)]

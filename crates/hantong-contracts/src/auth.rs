@@ -909,8 +909,25 @@ pub fn mcp_mail_tools() -> Vec<String> {
     tools.sort();
     tools
 }
+/// Explicit v3 MCP grant.  The additional mutation and event capabilities
+/// are opt-in and never inferred from an existing v2 registration.
+pub fn mcp_mail_tools_v3() -> Vec<String> {
+    let mut tools = mcp_mail_tools();
+    tools.extend(
+        [
+            "mail.events.ack",
+            "mail.events.read",
+            "mail.messages.trash.execute",
+            "mail.messages.trash.request",
+        ]
+        .into_iter()
+        .map(str::to_owned),
+    );
+    tools.sort();
+    tools
+}
 pub fn is_supported_mcp_toolset(tools: &[String]) -> bool {
-    tools == mcp_read_tools() || tools == mcp_mail_tools()
+    tools == mcp_read_tools() || tools == mcp_mail_tools() || tools == mcp_mail_tools_v3()
 }
 
 /// Exact built-in AI mail tool set. The execution capability is internal to
@@ -1080,5 +1097,28 @@ mod manage_scope_tests {
             &[],
             &manage
         ));
+    }
+}
+
+#[cfg(test)]
+mod mcp_v3_tests {
+    use super::*;
+
+    #[test]
+    fn mcp_v3_is_explicit_and_keeps_v2_unchanged() {
+        let v2 = mcp_mail_tools();
+        let v3 = mcp_mail_tools_v3();
+        assert!(is_supported_mcp_toolset(&v2));
+        assert!(is_supported_mcp_toolset(&v3));
+        assert_ne!(v2, v3);
+        for tool in [
+            "mail.events.read",
+            "mail.events.ack",
+            "mail.messages.trash.request",
+            "mail.messages.trash.execute",
+        ] {
+            assert!(!v2.iter().any(|value| value == tool));
+            assert!(v3.iter().any(|value| value == tool));
+        }
     }
 }

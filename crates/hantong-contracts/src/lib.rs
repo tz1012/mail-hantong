@@ -17,6 +17,7 @@ pub mod google_write;
 pub mod imap_setup;
 pub mod imap_trash;
 pub mod initial_sync;
+pub mod mail_events;
 pub mod message_body;
 pub mod message_search;
 pub mod platform;

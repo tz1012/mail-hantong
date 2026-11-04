@@ -57,7 +57,8 @@ impl RegistrationFlavor {
             && request.scope.accounts().len() <= 128
             && (request.scope.tools() == self.tools()
                 || (self == Self::Mcp
-                    && request.scope.tools() == hantong_contracts::auth::mcp_mail_tools())
+                    && (request.scope.tools() == hantong_contracts::auth::mcp_mail_tools()
+                        || request.scope.tools() == hantong_contracts::auth::mcp_mail_tools_v3()))
                 || ((self == Self::AiCodex || self == Self::AiClaude)
                     && request.scope.tools() == hantong_contracts::auth::ai_mail_tools()))
     }
@@ -65,6 +66,7 @@ impl RegistrationFlavor {
 
 fn is_read_only_toolset(tools: &[String]) -> bool {
     tools != hantong_contracts::auth::mcp_mail_tools()
+        && tools != hantong_contracts::auth::mcp_mail_tools_v3()
         && tools != hantong_contracts::auth::ai_mail_tools()
 }
 
@@ -381,6 +383,49 @@ impl McpMailRegistrationStage {
         inner.expected_mcp_replacement = replaced;
         Ok(Self { inner })
     }
+
+    /// Explicit v3 registration. An existing read-only, v2, or v3 grant is
+    /// replaced only when the caller supplies that exact active predecessor.
+    pub fn new_v3(
+        request: RegistrationRequest,
+        id: [u8; 16],
+        key: [u8; 72],
+        server_hash: [u8; 32],
+        replaced: Option<RegistrationRecord>,
+    ) -> Result<Self, ErrorCode> {
+        if request.scope.tools() != hantong_contracts::auth::mcp_mail_tools_v3() {
+            return Err(ErrorCode::InvalidInput);
+        }
+        if let Some(replaced) = &replaced {
+            let predecessor_ok = replaced.scope.tools()
+                == hantong_contracts::auth::mcp_mail_tools()
+                || replaced.scope.tools() == hantong_contracts::auth::mcp_read_tools()
+                || replaced.scope.tools() == hantong_contracts::auth::mcp_mail_tools_v3();
+            if replaced.client_kind != ClientKind::Mcp
+                || replaced.display_label != DEFAULT_MCP_LABEL
+                || !predecessor_ok
+                || replaced.state != crate::RegistrationState::Active
+            {
+                return Err(ErrorCode::Conflict);
+            }
+        }
+        let mut inner =
+            CliRegistrationStage::new_for(RegistrationFlavor::Mcp, request, id, key, server_hash)?;
+        inner.expected_mcp_replacement = replaced;
+        Ok(Self { inner })
+    }
+
+    pub fn new_terminal_v3(
+        request: RegistrationRequest,
+        id: [u8; 16],
+        key: [u8; 72],
+        server_hash: [u8; 32],
+        replaced: Option<RegistrationRecord>,
+    ) -> Result<Self, ErrorCode> {
+        let mut stage = Self::new_v3(request, id, key, server_hash, replaced)?;
+        stage.inner.decision_channel = "terminal_cli";
+        Ok(stage)
+    }
 }
 impl Store {
     pub fn list_orphan_cli_registration_requests(
@@ -677,7 +722,27 @@ impl Store {
     ) -> Result<RegistrationRecord, ErrorCode> {
         self.stage_registration(&stage.inner, RegistrationFlavor::Mcp)
     }
+    pub fn stage_mcp_v3_registration(
+        &self,
+        stage: &McpMailRegistrationStage,
+    ) -> Result<RegistrationRecord, ErrorCode> {
+        if stage.inner.expected_request.scope.tools()
+            != hantong_contracts::auth::mcp_mail_tools_v3()
+        {
+            return Err(ErrorCode::InvalidInput);
+        }
+        self.stage_registration(&stage.inner, RegistrationFlavor::Mcp)
+    }
     pub fn stage_terminal_mcp_mail_registration(
+        &self,
+        stage: &McpMailRegistrationStage,
+    ) -> Result<RegistrationRecord, ErrorCode> {
+        if stage.inner.decision_channel != "terminal_cli" {
+            return Err(ErrorCode::InvalidInput);
+        }
+        self.stage_registration(&stage.inner, RegistrationFlavor::Mcp)
+    }
+    pub fn stage_terminal_mcp_v3_registration(
         &self,
         stage: &McpMailRegistrationStage,
     ) -> Result<RegistrationRecord, ErrorCode> {
@@ -754,9 +819,16 @@ impl Store {
                     }
                 }
                 if let Some(old)=&stage.expected_mcp_replacement {
-                    if flavor!=RegistrationFlavor::Mcp || request.scope.tools()!=hantong_contracts::auth::mcp_mail_tools(){return Err(ErrorCode::InvalidInput)}
+                    if flavor!=RegistrationFlavor::Mcp || (request.scope.tools()!=hantong_contracts::auth::mcp_mail_tools() && request.scope.tools()!=hantong_contracts::auth::mcp_mail_tools_v3()){return Err(ErrorCode::InvalidInput)}
                     let current=read_registration(tx,&old.registration_id).map_err(internal)?.ok_or(ErrorCode::Conflict)?;
-                    if current!=*old || current.state!=RegistrationState::Active || current.scope.tools()!=hantong_contracts::auth::mcp_read_tools(){return Err(ErrorCode::Conflict)}
+                    let predecessor_tools_ok = if request.scope.tools() == hantong_contracts::auth::mcp_mail_tools_v3() {
+                        current.scope.tools() == hantong_contracts::auth::mcp_mail_tools()
+                            || current.scope.tools() == hantong_contracts::auth::mcp_read_tools()
+                            || current.scope.tools() == hantong_contracts::auth::mcp_mail_tools_v3()
+                    } else {
+                        current.scope.tools() == hantong_contracts::auth::mcp_read_tools()
+                    };
+                    if current!=*old || current.state!=RegistrationState::Active || !predecessor_tools_ok {return Err(ErrorCode::Conflict)}
                     if tx.execute("UPDATE client_registrations SET state='revoked',revoked_at_utc_ms=?1,updated_at_utc_ms=?1,version=version+1 WHERE registration_id=?2 AND state='active' AND version=?3",params![now,old.registration_id.as_slice(),old.version as i64]).map_err(internal)?!=1{return Err(ErrorCode::Conflict)}
                 }
                 let duplicate: bool = tx.query_row(
@@ -1261,13 +1333,24 @@ pub(super) fn validate_mcp_registration(
     if let Some((id, request_id)) = predecessor {
         let old = crate::registrations::read_registration_bare(connection, &id)?
             .ok_or(rusqlite::Error::InvalidQuery)?;
-        if record.scope.tools() != hantong_contracts::auth::mcp_mail_tools()
+        if (record.scope.tools() != hantong_contracts::auth::mcp_mail_tools()
+            && record.scope.tools() != hantong_contracts::auth::mcp_mail_tools_v3())
             || request_id != record.request_id
             || old.client_kind != ClientKind::Mcp
             || old.display_label != DEFAULT_MCP_LABEL
-            || old.scope.tools() != hantong_contracts::auth::mcp_read_tools()
+            || if record.scope.tools() == hantong_contracts::auth::mcp_mail_tools_v3() {
+                old.scope.tools() != hantong_contracts::auth::mcp_mail_tools()
+                    && old.scope.tools() != hantong_contracts::auth::mcp_read_tools()
+                    && old.scope.tools() != hantong_contracts::auth::mcp_mail_tools_v3()
+            } else {
+                old.scope.tools() != hantong_contracts::auth::mcp_read_tools()
+            }
             || old.state != RegistrationState::Revoked
-            || !old.read_only
+            || if record.scope.tools() == hantong_contracts::auth::mcp_mail_tools_v3() {
+                old.read_only != (old.scope.tools() == hantong_contracts::auth::mcp_read_tools())
+            } else {
+                !old.read_only
+            }
             || old.registration_id == record.registration_id
         {
             return Err(rusqlite::Error::InvalidQuery);

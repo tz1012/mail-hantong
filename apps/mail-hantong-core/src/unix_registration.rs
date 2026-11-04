@@ -92,6 +92,15 @@ pub(crate) fn registration(
             )?,
             store.load_pending_mcp_request()?,
         ),
+        RegistrationCommand::McpRequestV3 => (
+            ClientKind::Mcp,
+            DEFAULT_MCP_LABEL,
+            RequestedScope::new(
+                store.list_registrable_account_ids()?,
+                hantong_contracts::auth::mcp_mail_tools_v3(),
+            )?,
+            store.load_pending_mcp_request()?,
+        ),
         RegistrationCommand::AiRequest(provider) => {
             let label = match provider {
                 AiProvider::Codex => DEFAULT_AI_CODEX_LABEL,
@@ -119,6 +128,10 @@ pub(crate) fn registration(
             return status(store, id, ClientKind::Mcp, Some(DEFAULT_MCP_LABEL))
                 .map(SetupReceipt::Registration);
         }
+        RegistrationCommand::McpStatusV3(id) => {
+            return status(store, id, ClientKind::Mcp, Some(DEFAULT_MCP_LABEL))
+                .map(SetupReceipt::Registration);
+        }
         RegistrationCommand::AiStatus(provider, id) => {
             let label = match provider {
                 AiProvider::Codex => DEFAULT_AI_CODEX_LABEL,
@@ -130,7 +143,22 @@ pub(crate) fn registration(
     if scope.accounts().is_empty() {
         return Err(ErrorCode::NotFound);
     }
-    let request = match pending.filter(|r| r.client_kind == kind && r.display_label == label) {
+    if kind == ClientKind::Mcp
+        && let Some(current) = store.load_mcp_registration()?
+        && current.state == hantong_store::RegistrationState::Active
+        && current.scope == scope
+    {
+        return status(
+            store,
+            current.request_id,
+            ClientKind::Mcp,
+            Some(DEFAULT_MCP_LABEL),
+        )
+        .map(SetupReceipt::Registration);
+    }
+    let request = match pending
+        .filter(|r| r.client_kind == kind && r.display_label == label && r.scope == scope)
+    {
         Some(request) => request,
         None => store.create_registration_request(
             hantong_platform::random_nonce()?,

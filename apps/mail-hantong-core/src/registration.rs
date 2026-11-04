@@ -421,13 +421,21 @@ impl RegistrationHandle<'_> {
                         .store
                         .load_registration(pending.owner_registration_id)?
                         .ok_or(ErrorCode::ClientNotRegistered)?;
-                    if !matches!(owner.client_kind, ClientKind::Cli | ClientKind::Ai)
-                        || owner.state != RegistrationState::Active
+                    if !matches!(
+                        owner.client_kind,
+                        ClientKind::Cli | ClientKind::Mcp | ClientKind::Ai
+                    ) || owner.state != RegistrationState::Active
                         || owner.profile_epoch != pending.profile_epoch
                     {
                         return Err(ErrorCode::PolicyBlocked);
                     }
-                    if owner.client_kind == ClientKind::Ai {
+                    if owner.client_kind == ClientKind::Mcp {
+                        self.state.store.check_mcp_ai_consent(
+                            owner.registration_id,
+                            owner.profile_epoch,
+                            std::slice::from_ref(&pending.request.account_id().to_owned()),
+                        )?;
+                    } else if owner.client_kind == ClientKind::Ai {
                         let provider = if owner.display_label == DEFAULT_AI_CODEX_LABEL {
                             AiProvider::Codex
                         } else if owner.display_label == DEFAULT_AI_CLAUDE_LABEL {
@@ -509,7 +517,13 @@ impl RegistrationHandle<'_> {
                     {
                         return Err(ErrorCode::PolicyBlocked);
                     }
-                    if owner.client_kind == ClientKind::Ai {
+                    if owner.client_kind == ClientKind::Mcp {
+                        self.state.store.check_mcp_ai_consent(
+                            owner.registration_id,
+                            owner.profile_epoch,
+                            std::slice::from_ref(&pending.request.account_id().to_owned()),
+                        )?;
+                    } else if owner.client_kind == ClientKind::Ai {
                         let provider = if owner.display_label == DEFAULT_AI_CODEX_LABEL {
                             AiProvider::Codex
                         } else if owner.display_label == DEFAULT_AI_CLAUDE_LABEL {
@@ -981,7 +995,13 @@ impl RegistrationHandle<'_> {
                             {
                                 return Err(ErrorCode::PolicyBlocked);
                             }
-                            if owner.client_kind == ClientKind::Ai {
+                            if owner.client_kind == ClientKind::Mcp {
+                                self.state.store.check_mcp_ai_consent(
+                                    owner.registration_id,
+                                    owner.profile_epoch,
+                                    std::slice::from_ref(&current.request.account_id().to_owned()),
+                                )?;
+                            } else if owner.client_kind == ClientKind::Ai {
                                 let provider = if owner.display_label == DEFAULT_AI_CODEX_LABEL {
                                     AiProvider::Codex
                                 } else if owner.display_label == DEFAULT_AI_CLAUDE_LABEL {
@@ -1027,7 +1047,13 @@ impl RegistrationHandle<'_> {
                             {
                                 return Err(ErrorCode::PolicyBlocked);
                             }
-                            if owner.client_kind == ClientKind::Ai {
+                            if owner.client_kind == ClientKind::Mcp {
+                                self.state.store.check_mcp_ai_consent(
+                                    owner.registration_id,
+                                    owner.profile_epoch,
+                                    std::slice::from_ref(&current.request.account_id().to_owned()),
+                                )?;
+                            } else if owner.client_kind == ClientKind::Ai {
                                 let provider = if owner.display_label == DEFAULT_AI_CODEX_LABEL {
                                     AiProvider::Codex
                                 } else if owner.display_label == DEFAULT_AI_CLAUDE_LABEL {
@@ -2001,7 +2027,10 @@ impl RegistrationHandle<'_> {
         );
         let mcp = matches!(
             command,
-            RegistrationCommand::McpRequest | RegistrationCommand::McpStatus(_)
+            RegistrationCommand::McpRequest
+                | RegistrationCommand::McpRequestV3
+                | RegistrationCommand::McpStatus(_)
+                | RegistrationCommand::McpStatusV3(_)
         );
         let ai_provider = match command {
             RegistrationCommand::AiRequest(provider)
@@ -2029,7 +2058,8 @@ impl RegistrationHandle<'_> {
         match command {
             RegistrationCommand::Status(id)
             | RegistrationCommand::GuiStatus(id)
-            | RegistrationCommand::McpStatus(id) => self.state.receipt(id, kind),
+            | RegistrationCommand::McpStatus(id)
+            | RegistrationCommand::McpStatusV3(id) => self.state.receipt(id, kind),
             RegistrationCommand::AiStatus(provider, id) => {
                 let request = self
                     .state
@@ -2049,6 +2079,7 @@ impl RegistrationHandle<'_> {
             | RegistrationCommand::RequestGoogleReadOnly(_)
             | RegistrationCommand::GuiRequest
             | RegistrationCommand::McpRequest
+            | RegistrationCommand::McpRequestV3
             | RegistrationCommand::AiRequest(_) => {
                 let registered = if mcp {
                     self.state.store.load_mcp_registration()?
@@ -2059,10 +2090,23 @@ impl RegistrationHandle<'_> {
                 } else {
                     self.state.store.load_default_cli_registration()?
                 };
+                if matches!(command, RegistrationCommand::McpRequestV3)
+                    && let Some(current) = &registered
+                    && current.state == RegistrationState::Active
+                    && current.scope.tools() == hantong_contracts::auth::mcp_mail_tools_v3()
+                    && current.scope.accounts()
+                        == self.state.store.list_registrable_account_ids()?
+                {
+                    return self.state.receipt(current.request_id, ClientKind::Mcp);
+                }
                 if registered.as_ref().is_some_and(|r| {
                     !(mcp
                         && r.state == RegistrationState::Active
-                        && r.scope.tools() == hantong_contracts::auth::mcp_read_tools())
+                        && (r.scope.tools() == hantong_contracts::auth::mcp_read_tools()
+                            || r.scope.tools() == hantong_contracts::auth::mcp_mail_tools()
+                            || (matches!(command, RegistrationCommand::McpRequestV3)
+                                && r.scope.tools()
+                                    == hantong_contracts::auth::mcp_mail_tools_v3())))
                 }) {
                     return Err(ErrorCode::Conflict);
                 }
@@ -2114,7 +2158,15 @@ impl RegistrationHandle<'_> {
                     self.state.store.load_pending_ai_request(provider)?
                 } else {
                     self.state.store.load_pending_default_cli_request()?
-                };
+                }
+                .filter(|request| {
+                    if !mcp {
+                        return true;
+                    }
+                    let is_v3 =
+                        request.scope.tools() == hantong_contracts::auth::mcp_mail_tools_v3();
+                    is_v3 == matches!(command, RegistrationCommand::McpRequestV3)
+                });
                 let request = match pending {
                     Some(request) => request,
                     None => {
@@ -2138,7 +2190,11 @@ impl RegistrationHandle<'_> {
                             RequestedScope::new(
                                 accounts,
                                 if mcp {
-                                    hantong_contracts::auth::mcp_mail_tools()
+                                    if matches!(command, RegistrationCommand::McpRequestV3) {
+                                        hantong_contracts::auth::mcp_mail_tools_v3()
+                                    } else {
+                                        hantong_contracts::auth::mcp_mail_tools()
+                                    }
                                 } else if gui {
                                     hantong_contracts::auth::gui_read_tools()
                                 } else {
@@ -2654,7 +2710,9 @@ fn review_snapshot(
         return Err(ErrorCode::Conflict);
     }
     let constructor = if request.client_kind == ClientKind::Mcp {
-        if request.scope.tools() == hantong_contracts::auth::mcp_mail_tools() {
+        if request.scope.tools() == hantong_contracts::auth::mcp_mail_tools_v3() {
+            RegistrationReview::new_mcp_mail_v3
+        } else if request.scope.tools() == hantong_contracts::auth::mcp_mail_tools() {
             RegistrationReview::new_mcp_mail
         } else {
             RegistrationReview::new_mcp
@@ -2945,6 +3003,17 @@ fn commit_terminal_registration(
                     effects.store.load_mcp_registration()?,
                 )?,
             )
+        } else if current.scope.tools() == hantong_contracts::auth::mcp_mail_tools_v3() {
+            let old = effects.store.load_mcp_registration()?;
+            effects.store.stage_terminal_mcp_v3_registration(
+                &McpMailRegistrationStage::new_terminal_v3(
+                    current.clone(),
+                    id,
+                    client_public,
+                    server_hash,
+                    old,
+                )?,
+            )
         } else {
             effects
                 .store
@@ -3022,6 +3091,7 @@ fn validate_initial_record(record: &RegistrationRecord) -> Result<(), ErrorCode>
     // trash requests), so they must not be classified as read-only merely
     // because they are not the legacy MCP mail set.
     let expected_read_only = tools != hantong_contracts::auth::mcp_mail_tools()
+        && tools != hantong_contracts::auth::mcp_mail_tools_v3()
         && tools != hantong_contracts::auth::ai_mail_tools();
     if record.registration_id != hantong_platform::registration_id_for_request(record.request_id)?
         || record.state != RegistrationState::Provisioning
@@ -3050,6 +3120,8 @@ fn raw_profile_bytes(record: &RegistrationRecord, server: [u8; 72]) -> Result<Ve
     let constructor = if record.client_kind == ClientKind::Mcp {
         if record.scope.tools() == hantong_contracts::auth::mcp_mail_tools() {
             ParsedClientProfile::new_mcp_mail
+        } else if record.scope.tools() == hantong_contracts::auth::mcp_mail_tools_v3() {
+            ParsedClientProfile::new_mcp_mail_v3
         } else {
             ParsedClientProfile::new_mcp
         }
@@ -3165,6 +3237,12 @@ impl Effects for NativeEffects<'_> {
                 let old = self.store.load_mcp_registration()?;
                 self.store
                     .stage_mcp_mail_registration(&McpMailRegistrationStage::new(
+                        request, id, public, hash, old,
+                    )?)
+            } else if request.scope.tools() == hantong_contracts::auth::mcp_mail_tools_v3() {
+                let old = self.store.load_mcp_registration()?;
+                self.store
+                    .stage_mcp_v3_registration(&McpMailRegistrationStage::new_v3(
                         request, id, public, hash, old,
                     )?)
             } else {

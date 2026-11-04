@@ -268,6 +268,26 @@ pub(crate) fn review_owner(
     }
 }
 
+fn check_mcp_action_owner(
+    store: &Store,
+    owner: [u8; 16],
+    epoch: u64,
+    account: &str,
+) -> Result<(), ErrorCode> {
+    let registration = store
+        .load_registration(owner)?
+        .ok_or(ErrorCode::ClientNotRegistered)?;
+    if registration.state != hantong_store::RegistrationState::Active
+        || registration.profile_epoch != epoch
+    {
+        return Err(ErrorCode::PolicyBlocked);
+    }
+    if registration.client_kind == hantong_store::ClientKind::Mcp {
+        store.check_mcp_ai_consent(owner, epoch, &[account.to_owned()])?;
+    }
+    Ok(())
+}
+
 pub(crate) fn dispatch(
     state: &State,
     store: &Store,
@@ -420,6 +440,12 @@ async fn action_review(
                 match get.kind {
                     TerminalReviewKind::ImapTrash => {
                         let pending = store.pending_imap_trash(get.request_id)?;
+                        check_mcp_action_owner(
+                            store,
+                            pending.owner_registration_id,
+                            pending.profile_epoch,
+                            pending.request.account_id(),
+                        )?;
                         if get
                             .account_id
                             .as_deref()
@@ -451,6 +477,12 @@ async fn action_review(
                     }
                     TerminalReviewKind::GoogleMutation => {
                         let pending = store.pending_google_mutation(get.request_id)?;
+                        check_mcp_action_owner(
+                            store,
+                            pending.owner_registration_id,
+                            pending.profile_epoch,
+                            pending.request.account_id(),
+                        )?;
                         if get
                             .account_id
                             .as_deref()
@@ -477,6 +509,12 @@ async fn action_review(
                     }
                     TerminalReviewKind::PersonalSend | TerminalReviewKind::ProtectedSend => {
                         let pending = store.pending_mail_send(get.request_id)?;
+                        check_mcp_action_owner(
+                            store,
+                            pending.owner_registration_id,
+                            pending.profile_epoch,
+                            pending.request.account_id(),
+                        )?;
                         let personal = get.kind == TerminalReviewKind::PersonalSend;
                         if get
                             .account_id
@@ -609,6 +647,40 @@ async fn action_review(
                 });
             if queued_action && state.action_jobs.borrow().len() >= 16 {
                 return Err(ErrorCode::RateLimited);
+            }
+            {
+                let reviews = state.action_reviews.borrow();
+                let review = reviews.get(&ticket).ok_or(ErrorCode::Conflict)?;
+                match review.kind {
+                    TerminalReviewKind::ImapTrash => {
+                        let pending = store.pending_imap_trash(review.request_id)?;
+                        check_mcp_action_owner(
+                            store,
+                            pending.owner_registration_id,
+                            pending.profile_epoch,
+                            pending.request.account_id(),
+                        )?;
+                    }
+                    TerminalReviewKind::GoogleMutation => {
+                        let pending = store.pending_google_mutation(review.request_id)?;
+                        check_mcp_action_owner(
+                            store,
+                            pending.owner_registration_id,
+                            pending.profile_epoch,
+                            pending.request.account_id(),
+                        )?;
+                    }
+                    TerminalReviewKind::PersonalSend | TerminalReviewKind::ProtectedSend => {
+                        let pending = store.pending_mail_send(review.request_id)?;
+                        check_mcp_action_owner(
+                            store,
+                            pending.owner_registration_id,
+                            pending.profile_epoch,
+                            pending.request.account_id(),
+                        )?;
+                    }
+                    _ => {}
+                }
             }
             let review = state
                 .action_reviews

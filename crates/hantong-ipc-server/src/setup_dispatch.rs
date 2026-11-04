@@ -110,10 +110,12 @@ where
             RegistrationCommand::Request
             | RegistrationCommand::RequestGoogleReadOnly(_)
             | RegistrationCommand::GuiRequest
-            | RegistrationCommand::McpRequest => None,
+            | RegistrationCommand::McpRequest
+            | RegistrationCommand::McpRequestV3 => None,
             RegistrationCommand::Status(id)
             | RegistrationCommand::GuiStatus(id)
             | RegistrationCommand::McpStatus(id)
+            | RegistrationCommand::McpStatusV3(id)
             | RegistrationCommand::AiStatus(_, id) => Some(id),
             RegistrationCommand::AiRequest(_) => None,
         };

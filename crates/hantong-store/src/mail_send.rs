@@ -89,14 +89,24 @@ mod windows {
         if r.profile_epoch != epoch {
             return Err(ErrorCode::AuthRequired);
         }
+        let mcp = r.client_kind == crate::ClientKind::Mcp;
         let ai = r.client_kind == crate::ClientKind::Ai;
-        if r.read_only || (r.client_kind != crate::ClientKind::Cli && !ai) {
+        if r.read_only || (r.client_kind != crate::ClientKind::Cli && !mcp && !ai) {
             return Err(ErrorCode::PolicyBlocked);
         }
         if !r.scope.permits_account(account, tool) {
             return Err(ErrorCode::ScopeDenied);
         }
-        if ai {
+        if mcp {
+            let consent: bool = db(tx.query_row(
+                "SELECT EXISTS(SELECT 1 FROM mcp_ai_consents consent JOIN client_registrations registration ON registration.registration_id=consent.registration_id WHERE consent.registration_id=?1 AND consent.account_id=?2 AND consent.profile_epoch=?3 AND consent.registration_request_id=registration.request_id AND consent.approved_at_utc_ms=registration.approved_at_utc_ms)",
+                rusqlite::params![owner.as_slice(), account, epoch as i64],
+                |q| q.get(0),
+            ))?;
+            if !consent {
+                return Err(ErrorCode::PolicyBlocked);
+            }
+        } else if ai {
             let provider = match r.display_label.as_str() {
                 crate::registration_activation::DEFAULT_AI_CODEX_LABEL => "codex",
                 crate::registration_activation::DEFAULT_AI_CLAUDE_LABEL => "claude",

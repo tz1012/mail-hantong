@@ -120,7 +120,7 @@ CREATE TABLE audit_starts (
     profile_epoch INTEGER NOT NULL CHECK (profile_epoch >= 1),
     client_kind TEXT NOT NULL CHECK (client_kind IN ('cli', 'mcp', 'gui', 'ai')),
     display_label TEXT NOT NULL CHECK (length(display_label) BETWEEN 1 AND 128 AND length(CAST(display_label AS BLOB)) <= 512),
-    tool_code TEXT NOT NULL CHECK (tool_code IN ('mail.accounts.list', 'mail.send.execute', 'mail.folders.list', 'mail.folders.refresh', 'mail.sync.page', 'mail.messages.search', 'app.settings.display.get', 'app.diagnostics.snapshot', 'mail.messages.get', 'mail.drafts.create', 'mail.send.request', 'mail.google.changes.request', 'mail.google.changes.execute', 'mail.messages.trash.request', 'mail.messages.trash.execute')),
+    tool_code TEXT NOT NULL CHECK (tool_code IN ('mail.accounts.list', 'mail.send.execute', 'mail.folders.list', 'mail.folders.refresh', 'mail.sync.page', 'mail.messages.search', 'app.settings.display.get', 'app.diagnostics.snapshot', 'mail.messages.get', 'mail.drafts.create', 'mail.send.request', 'mail.google.changes.request', 'mail.google.changes.execute', 'mail.messages.trash.request', 'mail.messages.trash.execute', 'mail.events.read', 'mail.events.ack', 'mail.events.configure')),
     started_at_utc_ms INTEGER NOT NULL CHECK (started_at_utc_ms > 0)
 ) STRICT;
 
@@ -931,3 +931,48 @@ CREATE TABLE google_mutation_requests (
  UNIQUE(owner_registration_id,idempotency_key),
  CHECK((state IN ('pending','denied','expired') AND audit_id IS NULL) OR (state IN ('claimed','accepted','rejected','unknown') AND audit_id IS NOT NULL))
 ) STRICT;
+
+-- Metadata-only receive events for explicitly tracked registrations.
+CREATE TABLE mail_event_tracking (
+    owner_registration_id BLOB NOT NULL REFERENCES client_registrations(registration_id) ON DELETE RESTRICT CHECK(length(owner_registration_id)=16),
+    profile_epoch INTEGER NOT NULL CHECK(profile_epoch>=1),
+    account_id TEXT NOT NULL REFERENCES accounts(account_id) ON DELETE RESTRICT CHECK(length(account_id) BETWEEN 1 AND 128 AND account_id NOT GLOB '*[^A-Za-z0-9_-]*'),
+    mailbox_key TEXT NOT NULL CHECK(length(mailbox_key) BETWEEN 1 AND 512),
+    mailbox_encoding TEXT NOT NULL CHECK(length(mailbox_encoding) BETWEEN 1 AND 32),
+    baseline_event_id INTEGER NOT NULL CHECK(baseline_event_id>=0),
+    acknowledged_event_id INTEGER NOT NULL CHECK(acknowledged_event_id>=baseline_event_id),
+    enabled INTEGER NOT NULL CHECK(enabled IN (0,1)),
+    updated_at_utc_ms INTEGER NOT NULL CHECK(updated_at_utc_ms>0),
+    PRIMARY KEY(owner_registration_id,profile_epoch,account_id),
+    UNIQUE(owner_registration_id,profile_epoch,account_id,mailbox_key,mailbox_encoding)
+) STRICT;
+CREATE INDEX mail_event_tracking_enabled_idx ON mail_event_tracking(owner_registration_id,profile_epoch) WHERE enabled=1;
+
+CREATE TABLE mail_event_log (
+    event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    account_id TEXT NOT NULL REFERENCES accounts(account_id) ON DELETE RESTRICT CHECK(length(account_id) BETWEEN 1 AND 128 AND account_id NOT GLOB '*[^A-Za-z0-9_-]*'),
+    mailbox_key TEXT NOT NULL CHECK(length(mailbox_key) BETWEEN 1 AND 512),
+    mailbox_encoding TEXT NOT NULL CHECK(length(mailbox_encoding) BETWEEN 1 AND 32),
+    change_kind TEXT NOT NULL CHECK(length(change_kind) BETWEEN 1 AND 32 AND change_kind GLOB '[a-z_]*'),
+    created_at_utc_ms INTEGER NOT NULL CHECK(created_at_utc_ms>0)
+) STRICT;
+CREATE INDEX mail_event_log_account_idx ON mail_event_log(account_id,event_id);
+CREATE TABLE mail_event_sources (
+    account_id TEXT NOT NULL REFERENCES accounts(account_id) ON DELETE RESTRICT CHECK(length(account_id) BETWEEN 1 AND 128 AND account_id NOT GLOB '*[^A-Za-z0-9_-]*'),
+    mailbox_key TEXT NOT NULL CHECK(length(mailbox_key) BETWEEN 1 AND 512),
+    mailbox_encoding TEXT NOT NULL CHECK(length(mailbox_encoding) BETWEEN 1 AND 32),
+    observation_hash BLOB NOT NULL CHECK(length(observation_hash)=32),
+    baseline_established INTEGER NOT NULL CHECK(baseline_established IN (0,1)),
+    observed_at_utc_ms INTEGER NOT NULL CHECK(observed_at_utc_ms>0),
+    PRIMARY KEY(account_id,mailbox_key,mailbox_encoding)
+) STRICT;
+CREATE TABLE mail_event_cursors (
+    cursor_token BLOB PRIMARY KEY CHECK(length(cursor_token)=32 AND cursor_token<>zeroblob(32)),
+    owner_registration_id BLOB NOT NULL REFERENCES client_registrations(registration_id) ON DELETE RESTRICT CHECK(length(owner_registration_id)=16),
+    profile_epoch INTEGER NOT NULL CHECK(profile_epoch>=1),
+    scope_hash BLOB NOT NULL CHECK(length(scope_hash)=32),
+    event_id INTEGER NOT NULL CHECK(event_id>=0),
+    issued_at_utc_ms INTEGER NOT NULL CHECK(issued_at_utc_ms>0),
+    expires_at_utc_ms INTEGER NOT NULL CHECK(expires_at_utc_ms>issued_at_utc_ms)
+) STRICT;
+CREATE INDEX mail_event_cursors_owner_idx ON mail_event_cursors(owner_registration_id,profile_epoch);

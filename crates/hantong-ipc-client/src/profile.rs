@@ -185,6 +185,24 @@ impl ParsedClientProfile {
             RequestedScope::new(account_ids, hantong_contracts::auth::mcp_mail_tools())?,
         )
     }
+    pub fn new_mcp_mail_v3(
+        registration_id: [u8; 16],
+        client_key_id: [u8; 32],
+        client_public_key: [u8; 72],
+        server_public_key: [u8; 72],
+        profile_epoch: u64,
+        account_ids: Vec<String>,
+    ) -> Result<Self, ErrorCode> {
+        Self::new_for(
+            ProfileSelector::Mcp,
+            registration_id,
+            client_key_id,
+            client_public_key,
+            server_public_key,
+            profile_epoch,
+            RequestedScope::new(account_ids, hantong_contracts::auth::mcp_mail_tools_v3())?,
+        )
+    }
     pub fn new_ai(
         provider: ProfileSelector,
         registration_id: [u8; 16],

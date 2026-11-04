@@ -427,6 +427,34 @@ impl SecretStore {
             .map_err(|_| ErrorCode::InternalError)?;
         Ok(())
     }
+    /// Read only a bounded INBOX message-ID fingerprint; no message content leaves Secrets.
+    pub fn fetch_google_inbox_observation(
+        &self,
+        binding: &GoogleAccountBinding,
+        cancel: &AtomicBool,
+    ) -> Result<[u8; 32], ErrorCode> {
+        binding.validate()?;
+        #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
+        {
+            if account_id(&binding.subject)? != binding.account_id {
+                return Err(ErrorCode::AuthRequired);
+            }
+            self.with_google_access(
+                binding,
+                cancel,
+                hantong_contracts::google_write::GoogleOperation::Read,
+                |transport, access, _, deadline| {
+                    gmail::inbox_observation(transport, access, deadline, cancel)
+                },
+            )
+        }
+        #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
+        {
+            let _ = cancel;
+            Err(ErrorCode::CapabilityUnsupported)
+        }
+    }
+
     pub fn fetch_google_page(
         &self,
         binding: &GoogleAccountBinding,

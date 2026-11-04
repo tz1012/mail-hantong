@@ -63,10 +63,13 @@ pub fn parse(request: &RpcRequest) -> Result<RegistrationCommand, ErrorCode> {
         )?;
         return Ok(RegistrationCommand::RequestGoogleReadOnly(account));
     }
+    let mcp_v3 = request.method.starts_with("registration.mcp.v3.");
     let mcp = request.method.starts_with("registration.mcp.");
     let (status, gui) = match request.method.as_str() {
         "registration.mcp.request" => (false, false),
         "registration.mcp.status" => (true, false),
+        "registration.mcp.v3.request" => (false, false),
+        "registration.mcp.v3.status" => (true, false),
         "registration.request" => (false, false),
         "registration.status" => (true, false),
         "registration.gui.request" => (false, true),
@@ -85,7 +88,9 @@ pub fn parse(request: &RpcRequest) -> Result<RegistrationCommand, ErrorCode> {
         return Err(ErrorCode::VersionMismatch);
     }
     if !status {
-        return Ok(if mcp {
+        return Ok(if mcp_v3 {
+            RegistrationCommand::McpRequestV3
+        } else if mcp {
             RegistrationCommand::McpRequest
         } else if gui {
             RegistrationCommand::GuiRequest
@@ -102,7 +107,9 @@ pub fn parse(request: &RpcRequest) -> Result<RegistrationCommand, ErrorCode> {
     if id == [0; 32] {
         return Err(ErrorCode::InvalidInput);
     }
-    Ok(if mcp {
+    Ok(if mcp_v3 {
+        RegistrationCommand::McpStatusV3(id)
+    } else if mcp {
         RegistrationCommand::McpStatus(id)
     } else if gui {
         RegistrationCommand::GuiStatus(id)
@@ -289,6 +296,36 @@ mod tests {
         let mut frame = (body.len() as u32).to_le_bytes().to_vec();
         frame.extend(body);
         assert_eq!(crate::decode_request(&frame), Err(ErrorCode::InvalidInput));
+    }
+    #[test]
+    fn mcp07_v3_registration_methods_are_distinct_and_never_accept_authority() {
+        assert_eq!(
+            parse(&request(
+                "registration.mcp.v3.request",
+                json!({"protocol_version":1})
+            )),
+            Ok(RegistrationCommand::McpRequestV3)
+        );
+        assert_eq!(
+            parse(&request(
+                "registration.mcp.v3.status",
+                json!({"protocol_version":1,"request_id":wire_hex::encode(&[1;32])})
+            )),
+            Ok(RegistrationCommand::McpStatusV3([1; 32]))
+        );
+        for method in [
+            "registration.mcp.v3.request",
+            "registration.mcp.v3.confirm",
+            "registration.mcp.v3.activate",
+        ] {
+            assert_eq!(
+                parse(&request(
+                    method,
+                    json!({"protocol_version":1,"approved":true})
+                )),
+                Err(ErrorCode::InvalidInput)
+            );
+        }
     }
     #[test]
     fn sec03_mcp_registration_routes_fixed_kind_and_rejects_authority_fields() {

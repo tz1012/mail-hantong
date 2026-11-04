@@ -142,6 +142,20 @@ fn durable_admission<T>(outcome: Result<T, ErrorCode>) -> Result<T, AuditHandoff
 
 impl<'a, 'server> ExecutionContext for CoreExecutionAdapter<'a, 'server> {
     type Output = Value;
+
+    fn mail_events(
+        &mut self,
+        accounts: &[String],
+        action: &hantong_application::MailEventsAction,
+    ) -> Result<ReadResult<Value>, ErrorCode> {
+        crate::mail_events::execute(
+            self.store,
+            *self.connection.registration_id(),
+            self.connection.profile_epoch(),
+            accounts,
+            action,
+        )
+    }
     fn read_google(
         &mut self,
         request: &hantong_contracts::google_mail::GoogleMailRequest,

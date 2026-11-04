@@ -1,6 +1,46 @@
 use super::*;
 use http::Transport;
 use std::sync::Mutex;
+
+#[test]
+fn mcp07_inbox_observation_fetches_ids_only_and_hashes_order_independently() {
+    let read = |value| {
+        let fake = Fake::new(vec![value]);
+        let result = gmail::inbox_observation(
+            &fake,
+            &SecretText::from_string("synthetic-access".into()).unwrap(),
+            Instant::now() + Duration::from_secs(1),
+            &AtomicBool::new(false),
+        );
+        assert_eq!(
+            fake.calls.lock().unwrap().as_slice(),
+            &[(
+                http::Host::Gmail,
+                "/gmail/v1/users/me/messages?maxResults=200&labelIds=INBOX&fields=messages(id)"
+                    .to_string()
+            )]
+        );
+        result
+    };
+    let first = read(serde_json::json!({"messages":[{"id":"a"},{"id":"b"}]})).unwrap();
+    assert_eq!(
+        first,
+        read(serde_json::json!({"messages":[{"id":"b"},{"id":"a"}]})).unwrap()
+    );
+    assert_ne!(
+        first,
+        read(serde_json::json!({"messages":[{"id":"c"}]})).unwrap()
+    );
+    assert_ne!(first, read(serde_json::json!({})).unwrap());
+    assert_eq!(
+        read(serde_json::json!({"messages":[{"id":"../escape"}]})),
+        Err(ErrorCode::InvalidInput)
+    );
+    assert_eq!(
+        read(serde_json::json!({"messages":[{"id":"a"},{"id":"a"}]})),
+        Err(ErrorCode::InvalidInput)
+    );
+}
 pub(super) struct Fake {
     pub(super) responses: Mutex<std::collections::VecDeque<http::Response>>,
     pub(super) calls: Mutex<Vec<(http::Host, String)>>,

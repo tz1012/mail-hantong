@@ -1,4 +1,5 @@
 #![forbid(unsafe_code)]
+mod connection;
 use hantong_contracts::{ErrorCode, registration::RegistrationCommand, wire_hex};
 use serde::{
     Deserialize,
@@ -9,9 +10,22 @@ use std::{
     collections::BTreeSet,
     fmt,
     io::{self, BufRead, Write},
+    sync::mpsc::{self, RecvTimeoutError},
+    thread,
+    time::{Duration, Instant},
 };
 const MAX_FRAME: usize = 1_048_576;
 const VERSION: &str = "2025-11-25";
+const EVENTS_URI: &str = "mail-hantong://events";
+const EVENTS_TOOL: &str = "mail.events.read";
+
+fn required_event_grant(name: &str) -> Option<&'static str> {
+    match name {
+        EVENTS_TOOL | "mail.events.configure" => Some(EVENTS_TOOL),
+        "mail.events.ack" => Some("mail.events.ack"),
+        _ => None,
+    }
+}
 const TOOLS: &[(&str, &str, &str)] = &[
     (
         "mail.accounts.list",
@@ -62,6 +76,20 @@ const TOOLS: &[(&str, &str, &str)] = &[
 trait Backend {
     fn allowed(&mut self) -> Result<Vec<String>, ErrorCode>;
     fn call(&mut self, name: &str, arguments: Value) -> Result<Value, ErrorCode>;
+    fn events_read(
+        &mut self,
+        _cursor: Option<&str>,
+        _limit: u32,
+        _pending_only: bool,
+    ) -> Result<Value, ErrorCode> {
+        Err(ErrorCode::CapabilityUnsupported)
+    }
+    fn events_ack(&mut self, _cursor: &str) -> Result<Value, ErrorCode> {
+        Err(ErrorCode::CapabilityUnsupported)
+    }
+    fn events_configure(&mut self, _enabled: bool) -> Result<Value, ErrorCode> {
+        Err(ErrorCode::CapabilityUnsupported)
+    }
 }
 struct Native {
     provider: Option<hantong_contracts::registration::AiProvider>,
@@ -144,6 +172,62 @@ impl Backend for Native {
         }
         #[cfg(not(any(windows, unix)))]
         {
+            Err(ErrorCode::CapabilityUnsupported)
+        }
+    }
+
+    fn events_read(
+        &mut self,
+        cursor: Option<&str>,
+        limit: u32,
+        pending_only: bool,
+    ) -> Result<Value, ErrorCode> {
+        let mut params = json!({"limit":limit,"pending_only":pending_only});
+        if let Some(cursor) = cursor {
+            params["cursor"] = json!(cursor);
+        } else {
+            params["cursor"] = Value::Null;
+        }
+        self.exchange_event_method(EVENTS_TOOL, params)
+    }
+
+    fn events_ack(&mut self, cursor: &str) -> Result<Value, ErrorCode> {
+        self.exchange_event_method("mail.events.ack", json!({"cursor":cursor}))
+    }
+
+    fn events_configure(&mut self, enabled: bool) -> Result<Value, ErrorCode> {
+        self.exchange_event_method("mail.events.configure", json!({"enabled":enabled}))
+    }
+}
+
+impl Native {
+    fn exchange_event_method(&mut self, name: &str, arguments: Value) -> Result<Value, ErrorCode> {
+        #[cfg(any(windows, unix))]
+        {
+            runtime()?.block_on(async {
+                match self.provider {
+                    Some(provider) => {
+                        exchange_profile(
+                            hantong_ipc_client::authenticate_ai(provider).await?,
+                            name,
+                            arguments,
+                        )
+                        .await
+                    }
+                    None => {
+                        exchange_profile(
+                            hantong_ipc_client::authenticate_mcp().await?,
+                            name,
+                            arguments,
+                        )
+                        .await
+                    }
+                }
+            })
+        }
+        #[cfg(not(any(windows, unix)))]
+        {
+            let _ = (name, arguments);
             Err(ErrorCode::CapabilityUnsupported)
         }
     }
@@ -349,7 +433,8 @@ async fn exchange_profile<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpi
     name: &str,
     arguments: Value,
 ) -> Result<Value, ErrorCode> {
-    if !profile.tools().iter().any(|tool| tool == name) {
+    let required = required_event_grant(name).unwrap_or(name);
+    if !profile.tools().iter().any(|tool| tool == required) {
         return Err(ErrorCode::ScopeDenied);
     }
     let arguments = bound_arguments(name, arguments, profile.accounts())?;
@@ -364,7 +449,8 @@ async fn exchange_profile(
     name: &str,
     arguments: Value,
 ) -> Result<Value, ErrorCode> {
-    if !profile.tools().iter().any(|tool| tool == name) {
+    let required = required_event_grant(name).unwrap_or(name);
+    if !profile.tools().iter().any(|tool| tool == required) {
         return Err(ErrorCode::ScopeDenied);
     }
     let arguments = bound_arguments(name, arguments, profile.accounts())?;
@@ -385,6 +471,8 @@ struct Server<B> {
     backend: B,
     initialized: bool,
     ready: bool,
+    events_subscribed: bool,
+    event_cursor: Option<String>,
 }
 fn error(id: Value, code: i32, message: &str) -> Value {
     json!({"jsonrpc":"2.0","id":id,"error":{"code":code,"message":message}})
@@ -393,6 +481,105 @@ fn success(id: Value, value: Value) -> Value {
     json!({"jsonrpc":"2.0","id":id,"result":value})
 }
 impl<B: Backend> Server<B> {
+    fn events_allowed(&mut self) -> Result<bool, ErrorCode> {
+        Ok(self
+            .backend
+            .allowed()?
+            .iter()
+            .any(|tool| tool == EVENTS_TOOL))
+    }
+
+    fn resource_error(id: Value, result: Result<Value, ErrorCode>) -> Value {
+        match result {
+            Ok(value) => success(id, value),
+            Err(code) => error(id, -32001, code.as_str()),
+        }
+    }
+
+    fn read_events(&mut self, params: &Value) -> Result<Value, ErrorCode> {
+        let map = params.as_object().ok_or(ErrorCode::InvalidInput)?;
+        if map
+            .keys()
+            .any(|key| !matches!(key.as_str(), "uri" | "cursor" | "limit" | "pending_only"))
+            || map.get("uri").and_then(Value::as_str) != Some(EVENTS_URI)
+        {
+            return Err(ErrorCode::InvalidInput);
+        }
+        let cursor = match map.get("cursor") {
+            None | Some(Value::Null) => None,
+            Some(Value::String(value)) if !value.is_empty() && value.len() <= 512 => {
+                Some(value.as_str())
+            }
+            _ => return Err(ErrorCode::InvalidInput),
+        };
+        let limit = match map.get("limit") {
+            None => 100,
+            Some(Value::Number(value)) => value
+                .as_u64()
+                .filter(|value| (1..=100).contains(value))
+                .map(|value| value as u32)
+                .ok_or(ErrorCode::InvalidInput)?,
+            _ => return Err(ErrorCode::InvalidInput),
+        };
+        let pending_only = match map.get("pending_only") {
+            None => true,
+            Some(Value::Bool(value)) => *value,
+            _ => return Err(ErrorCode::InvalidInput),
+        };
+        if !self.events_allowed()? {
+            return Err(ErrorCode::ScopeDenied);
+        }
+        let value = self.backend.events_read(cursor, limit, pending_only)?;
+        let text = serde_json::to_string(&value).map_err(|_| ErrorCode::InternalError)?;
+        if text.len() > MAX_FRAME {
+            return Err(ErrorCode::InternalError);
+        }
+        if let Some(next) = value.get("next_cursor").and_then(Value::as_str)
+            && next.len() > 512
+        {
+            return Err(ErrorCode::CoreUnavailable);
+        }
+        Ok(json!({"contents":[{"uri":EVENTS_URI,"mimeType":"application/json","text":text}]}))
+    }
+
+    fn poll_events(&mut self) -> Option<Value> {
+        if !self.events_subscribed || !self.ready {
+            return None;
+        }
+        let value = match self
+            .backend
+            .events_read(self.event_cursor.as_deref(), 100, true)
+        {
+            Ok(value) => value,
+            Err(ErrorCode::CursorExpired) => {
+                self.event_cursor = None;
+                return Some(
+                    json!({"jsonrpc":"2.0","method":"notifications/resources/updated","params":{"uri":EVENTS_URI}}),
+                );
+            }
+            Err(ErrorCode::RateLimited | ErrorCode::Offline | ErrorCode::CoreUnavailable) => {
+                return None;
+            }
+            Err(_) => {
+                self.events_subscribed = false;
+                return None;
+            }
+        };
+        let events = value.get("events").and_then(Value::as_array);
+        let has_events = events.is_some_and(|items| !items.is_empty());
+        if let Some(next) = value.get("next_cursor").and_then(Value::as_str)
+            && next.len() <= 512
+        {
+            self.event_cursor = Some(next.to_owned());
+        }
+        if !has_events {
+            return None;
+        }
+        Some(
+            json!({"jsonrpc":"2.0","method":"notifications/resources/updated","params":{"uri":EVENTS_URI}}),
+        )
+    }
+
     fn handle(&mut self, frame: &[u8]) -> Option<Value> {
         let request = match strict(frame) {
             Ok(v) if v.is_object() => v,
@@ -459,7 +646,7 @@ impl<B: Backend> Server<B> {
             self.initialized = true;
             return Some(success(
                 id,
-                json!({"protocolVersion":VERSION,"capabilities":{"tools":{"listChanged":false}},"serverInfo":{"name":"mail-hantong","version":env!("CARGO_PKG_VERSION")}}),
+                json!({"protocolVersion":VERSION,"capabilities":{"tools":{"listChanged":false},"resources":{"subscribe":true,"listChanged":false}},"serverInfo":{"name":"mail-hantong","version":env!("CARGO_PKG_VERSION")}}),
             ));
         }
         if method == "ping" && params.as_object().unwrap().is_empty() {
@@ -470,6 +657,45 @@ impl<B: Backend> Server<B> {
         }
         match method {
             "ping" if params.as_object().unwrap().is_empty() => Some(success(id, json!({}))),
+            "resources/list" => {
+                if !params.as_object().unwrap().is_empty() {
+                    return Some(error(id, -32602, "Invalid params"));
+                }
+                match self.events_allowed() {
+                    Ok(true) => Some(success(
+                        id,
+                        json!({"resources":[{"uri":EVENTS_URI,"name":"HanTong mail events","description":"Receive-side metadata changes; bodies and addresses are excluded","mimeType":"application/json"}]}),
+                    )),
+                    Ok(false) => Some(success(id, json!({"resources":[]}))),
+                    Err(code) => Some(error(id, -32001, code.as_str())),
+                }
+            }
+            "resources/read" => Some(Self::resource_error(id, self.read_events(&params))),
+            "resources/subscribe" => {
+                if params.as_object().is_none_or(|map| map.len() != 1)
+                    || params["uri"] != EVENTS_URI
+                {
+                    return Some(error(id, -32602, "Invalid params"));
+                }
+                let result = self.events_allowed().and_then(|allowed| {
+                    if !allowed {
+                        return Err(ErrorCode::ScopeDenied);
+                    }
+                    self.backend.events_configure(true)?;
+                    self.events_subscribed = true;
+                    Ok(json!({}))
+                });
+                Some(Self::resource_error(id, result))
+            }
+            "resources/unsubscribe" => {
+                if params.as_object().is_none_or(|map| map.len() != 1)
+                    || params["uri"] != EVENTS_URI
+                {
+                    return Some(error(id, -32602, "Invalid params"));
+                }
+                self.events_subscribed = false;
+                Some(success(id, json!({})))
+            }
             "tools/list" => {
                 if !params.as_object().unwrap().is_empty() {
                     return Some(error(id, -32602, "Invalid params"));
@@ -527,6 +753,62 @@ impl<B: Backend> Server<B> {
 }
 #[cfg(any(windows, unix, test))]
 fn bound_arguments(name: &str, arguments: Value, accounts: &[String]) -> Result<Value, ErrorCode> {
+    if name == EVENTS_TOOL {
+        let map = arguments.as_object().ok_or(ErrorCode::InvalidInput)?;
+        if map
+            .keys()
+            .any(|key| !matches!(key.as_str(), "cursor" | "limit" | "pending_only"))
+            || accounts.is_empty()
+        {
+            return Err(if accounts.is_empty() {
+                ErrorCode::ScopeDenied
+            } else {
+                ErrorCode::InvalidInput
+            });
+        }
+        let cursor = match map.get("cursor") {
+            Some(Value::Null) => Value::Null,
+            Some(Value::String(value)) if !value.is_empty() && value.len() <= 512 => {
+                Value::String(value.clone())
+            }
+            _ => return Err(ErrorCode::InvalidInput),
+        };
+        let limit = map
+            .get("limit")
+            .and_then(Value::as_u64)
+            .filter(|value| (1..=100).contains(value))
+            .ok_or(ErrorCode::InvalidInput)?;
+        let pending_only = map
+            .get("pending_only")
+            .and_then(Value::as_bool)
+            .ok_or(ErrorCode::InvalidInput)?;
+        return Ok(
+            json!({"account_ids":accounts,"cursor":cursor,"limit":limit,"pending_only":pending_only}),
+        );
+    }
+    if name == "mail.events.ack" {
+        let map = arguments.as_object().ok_or(ErrorCode::InvalidInput)?;
+        let cursor = map
+            .get("cursor")
+            .and_then(Value::as_str)
+            .filter(|value| !value.is_empty() && value.len() <= 512)
+            .ok_or(ErrorCode::InvalidInput)?;
+        if map.len() != 1 {
+            return Err(ErrorCode::InvalidInput);
+        }
+        return Ok(json!({"cursor":cursor}));
+    }
+    if name == "mail.events.configure" {
+        let map = arguments.as_object().ok_or(ErrorCode::InvalidInput)?;
+        let enabled = map
+            .get("enabled")
+            .and_then(Value::as_bool)
+            .ok_or(ErrorCode::InvalidInput)?;
+        if map.len() != 1 {
+            return Err(ErrorCode::InvalidInput);
+        }
+        return Ok(json!({"enabled":enabled}));
+    }
     if name == "mail.messages.trash.request" && arguments["mode"] == "request" {
         return trash_arguments(arguments, accounts);
     }
@@ -856,36 +1138,167 @@ fn strict(frame: &[u8]) -> Result<Value, ()> {
         .map_err(|_| ())
 }
 fn serve(
-    reader: &mut impl BufRead,
+    reader: impl BufRead + Send + 'static,
     writer: &mut impl Write,
-    backend: impl Backend,
+    backend: impl Backend + Send + 'static,
+) -> io::Result<()> {
+    serve_with_events(reader, writer, backend, Duration::from_secs(5))
+}
+
+fn serve_with_events(
+    reader: impl BufRead + Send + 'static,
+    writer: &mut impl Write,
+    backend: impl Backend + Send + 'static,
+    poll_interval: Duration,
 ) -> io::Result<()> {
     let mut server = Server {
         backend,
         initialized: false,
         ready: false,
+        events_subscribed: false,
+        event_cursor: None,
     };
-    loop {
-        let mut frame = Vec::new();
-        let read = std::io::Read::take(&mut *reader, (MAX_FRAME + 1) as u64)
-            .read_until(b'\n', &mut frame)?;
-        if read == 0 {
-            break;
+    let (sender, receiver) = mpsc::sync_channel::<Option<Vec<u8>>>(16);
+    thread::spawn(move || {
+        let mut reader = reader;
+        loop {
+            let mut frame = Vec::new();
+            let read = std::io::Read::take(&mut reader, (MAX_FRAME + 1) as u64)
+                .read_until(b'\n', &mut frame);
+            match read {
+                Ok(0) => {
+                    let _ = sender.send(None);
+                    break;
+                }
+                Ok(_) if frame.len() > MAX_FRAME => {
+                    let _ = sender.send(Some(frame));
+                    break;
+                }
+                Ok(_) => {
+                    if sender.send(Some(frame)).is_err() {
+                        break;
+                    }
+                }
+                Err(_) => {
+                    let _ = sender.send(None);
+                    break;
+                }
+            }
         }
+    });
+    let mut next_poll = Instant::now() + poll_interval;
+    loop {
+        let received = if server.events_subscribed {
+            let now = Instant::now();
+            if now >= next_poll {
+                if let Some(notification) = server.poll_events() {
+                    serde_json::to_writer(&mut *writer, &notification)?;
+                    writer.write_all(b"\n")?;
+                    writer.flush()?;
+                }
+                next_poll = Instant::now() + poll_interval;
+                continue;
+            }
+            match receiver.recv_timeout(next_poll.saturating_duration_since(now)) {
+                Ok(frame) => Some(frame),
+                Err(RecvTimeoutError::Timeout) => {
+                    if let Some(notification) = server.poll_events() {
+                        serde_json::to_writer(&mut *writer, &notification)?;
+                        writer.write_all(b"\n")?;
+                        writer.flush()?;
+                    }
+                    next_poll = Instant::now() + poll_interval;
+                    continue;
+                }
+                Err(RecvTimeoutError::Disconnected) => None,
+            }
+        } else {
+            receiver.recv().ok()
+        };
+        let Some(frame) = received else { break };
+        let Some(frame) = frame else { break };
         if frame.len() > MAX_FRAME {
             serde_json::to_writer(&mut *writer, &error(Value::Null, -32700, "Frame too large"))?;
             writer.write_all(b"\n")?;
             writer.flush()?;
             break;
         }
+        let was_subscribed = server.events_subscribed;
         if let Some(response) = server.handle(&frame) {
             serde_json::to_writer(&mut *writer, &response)?;
             writer.write_all(b"\n")?;
             writer.flush()?;
         }
+        if !was_subscribed && server.events_subscribed {
+            next_poll = Instant::now() + poll_interval;
+        }
     }
     Ok(())
 }
+
+fn run_event_command(args: &[String]) -> Result<(), ErrorCode> {
+    let mut backend = Native {
+        provider: None,
+        review_allowed: false,
+    };
+    if !backend.allowed()?.iter().any(|tool| tool == EVENTS_TOOL) {
+        return Err(ErrorCode::ScopeDenied);
+    }
+    match args {
+        [command] if command == "watch" => {
+            let mut cursor = None;
+            loop {
+                let value = backend.events_read(cursor.as_deref(), 100, true)?;
+                if let Some(events) = value.get("events").and_then(Value::as_array) {
+                    for event in events {
+                        println!(
+                            "{}",
+                            serde_json::to_string(event).map_err(|_| ErrorCode::InternalError)?
+                        );
+                    }
+                    io::stdout().flush().map_err(|_| ErrorCode::InternalError)?;
+                }
+                if let Some(next) = value.get("next_cursor").and_then(Value::as_str) {
+                    cursor = Some(next.to_owned());
+                }
+                thread::sleep(Duration::from_secs(5));
+            }
+        }
+        [command, action] if command == "notify" && matches!(action.as_str(), "on" | "off") => {
+            let value = backend.events_configure(action == "on")?;
+            println!(
+                "{}",
+                serde_json::to_string(&value).map_err(|_| ErrorCode::InternalError)?
+            );
+            Ok(())
+        }
+        [command, action] if command == "notify" && action == "pending" => {
+            let value = backend.events_read(None, 100, true)?;
+            if let Some(events) = value.get("events").and_then(Value::as_array) {
+                for event in events {
+                    println!(
+                        "{}",
+                        serde_json::to_string(event).map_err(|_| ErrorCode::InternalError)?
+                    );
+                }
+            }
+            Ok(())
+        }
+        [command, action, cursor] if command == "notify" && action == "ack" => {
+            if cursor.is_empty() || cursor.len() > 512 {
+                return Err(ErrorCode::InvalidInput);
+            }
+            let value = backend.events_ack(cursor)?;
+            println!(
+                "{}",
+                serde_json::to_string(&value).map_err(|_| ErrorCode::InternalError)?
+            );
+            Ok(())
+        }
+        _ => Err(ErrorCode::InvalidInput),
+    }
+}
+
 fn main() {
     let args: Vec<_> = std::env::args().skip(1).collect();
     if args == ["--version"] {
@@ -893,9 +1306,48 @@ fn main() {
         return;
     }
     if args == ["--help"] {
-        println!(
-            "mail-hantong MCP stdio server\nUsage: hantong-mcp [register | status REQUEST_ID]\nExternal MCP registration requires review in the HanTong terminal."
+        print!("{}", include_str!("../resources/help-en.txt"));
+        return;
+    }
+    if args == ["--help", "--lang", "ko"] {
+        print!("{}", include_str!("../resources/help-ko.txt"));
+        return;
+    }
+    if args == ["config"] {
+        match std::env::current_exe()
+            .map_err(|_| ErrorCode::InternalError)
+            .and_then(|exe| connection::config(&exe))
+        {
+            Ok(value) => println!("{value}"),
+            Err(code) => {
+                eprintln!("{}", code.as_str());
+                std::process::exit(code.exit_code());
+            }
+        }
+        return;
+    }
+    if args == ["doctor"] {
+        let (report, result) = connection::doctor(
+            hantong_ipc_client::core_status(),
+            &mut Native {
+                provider: None,
+                review_allowed: false,
+            },
         );
+        println!("{report}");
+        if let Err(code) = result {
+            std::process::exit(code.exit_code());
+        }
+        return;
+    }
+    if args
+        .first()
+        .is_some_and(|arg| arg == "watch" || arg == "notify")
+    {
+        if let Err(code) = run_event_command(&args) {
+            eprintln!("{}", code.as_str());
+            std::process::exit(code.exit_code());
+        }
         return;
     }
     let review_allowed = !args.iter().any(|arg| arg == "--no-input");
@@ -915,9 +1367,9 @@ fn main() {
     };
     if !args.is_empty() && provider.is_none() {
         let command = match args.as_slice() {
-            [a] if a == "register" => Ok(RegistrationCommand::McpRequest),
+            [a] if a == "register" => Ok(RegistrationCommand::McpRequestV3),
             [a, id] if a == "status" => {
-                wire_hex::decode_fixed(id).map(RegistrationCommand::McpStatus)
+                wire_hex::decode_fixed(id).map(RegistrationCommand::McpStatusV3)
             }
             _ => Err(ErrorCode::InvalidInput),
         };
@@ -935,7 +1387,7 @@ fn main() {
         return;
     }
     if serve(
-        &mut io::stdin().lock(),
+        io::BufReader::new(io::stdin()),
         &mut io::stdout().lock(),
         Native {
             provider,
@@ -995,6 +1447,8 @@ mod tests {
             backend: Ai,
             initialized: true,
             ready: true,
+            events_subscribed: false,
+            event_cursor: None,
         };
         let response = server
             .handle(br#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#)
@@ -1169,11 +1623,11 @@ mod tests {
         );
     }
     #[test]
-    fn mcp03_full_mail_discovery_advertises_eight_real_tools_and_never_direct_execution() {
+    fn mcp03_v3_mail_discovery_advertises_nine_real_tools_and_never_direct_execution() {
         struct Full;
         impl Backend for Full {
             fn allowed(&mut self) -> Result<Vec<String>, ErrorCode> {
-                Ok(hantong_contracts::auth::mcp_mail_tools())
+                Ok(hantong_contracts::auth::mcp_mail_tools_v3())
             }
             fn call(&mut self, _: &str, _: Value) -> Result<Value, ErrorCode> {
                 panic!("Discovery must not call Core effects")
@@ -1183,12 +1637,14 @@ mod tests {
             backend: Full,
             initialized: true,
             ready: true,
+            events_subscribed: false,
+            event_cursor: None,
         };
         let response = s
             .handle(br#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#)
             .unwrap();
         let tools = response["result"]["tools"].as_array().unwrap();
-        assert_eq!(tools.len(), 8);
+        assert_eq!(tools.len(), 9);
         assert!(!tools.iter().any(|t| t["name"] == "mail.send.execute"));
         for t in tools {
             assert!(t["inputSchema"].is_object());
@@ -1234,11 +1690,322 @@ mod tests {
             Ok(json!({"ok":true,"items":[]}))
         }
     }
+
+    #[derive(Default)]
+    struct EventFake {
+        reads: usize,
+        configured: Vec<bool>,
+    }
+    impl Backend for EventFake {
+        fn allowed(&mut self) -> Result<Vec<String>, ErrorCode> {
+            Ok(vec![EVENTS_TOOL.into()])
+        }
+        fn call(&mut self, _: &str, _: Value) -> Result<Value, ErrorCode> {
+            Err(ErrorCode::CapabilityUnsupported)
+        }
+        fn events_read(
+            &mut self,
+            cursor: Option<&str>,
+            _: u32,
+            _: bool,
+        ) -> Result<Value, ErrorCode> {
+            self.reads += 1;
+            Ok(json!({
+                "events": [{"kind":"mail.received","cursor":"c1"}],
+                "next_cursor": cursor.unwrap_or("c1")
+            }))
+        }
+        fn events_configure(&mut self, enabled: bool) -> Result<Value, ErrorCode> {
+            self.configured.push(enabled);
+            Ok(json!({"enabled":enabled}))
+        }
+    }
+
+    struct PollErrorFake {
+        error: Option<ErrorCode>,
+    }
+
+    impl Backend for PollErrorFake {
+        fn allowed(&mut self) -> Result<Vec<String>, ErrorCode> {
+            Ok(vec![EVENTS_TOOL.into()])
+        }
+
+        fn call(&mut self, _: &str, _: Value) -> Result<Value, ErrorCode> {
+            Err(ErrorCode::CapabilityUnsupported)
+        }
+
+        fn events_read(&mut self, _: Option<&str>, _: u32, _: bool) -> Result<Value, ErrorCode> {
+            if let Some(error) = self.error.take() {
+                return Err(error);
+            }
+            Ok(json!({
+                "events": [{"kind":"mail.received","cursor":"c2"}],
+                "next_cursor": "c2"
+            }))
+        }
+
+        fn events_configure(&mut self, _: bool) -> Result<Value, ErrorCode> {
+            Ok(json!({"enabled":true}))
+        }
+    }
+
+    #[test]
+    fn mcp07_resources_are_grant_filtered_and_read_returns_metadata_only() {
+        let mut server = Server {
+            backend: EventFake::default(),
+            initialized: true,
+            ready: true,
+            events_subscribed: false,
+            event_cursor: None,
+        };
+        let listed = server
+            .handle(br#"{"jsonrpc":"2.0","id":1,"method":"resources/list"}"#)
+            .unwrap();
+        assert_eq!(listed["result"]["resources"][0]["uri"], EVENTS_URI);
+        let read = server
+            .handle(br#"{"jsonrpc":"2.0","id":2,"method":"resources/read","params":{"uri":"mail-hantong://events","cursor":null,"limit":1,"pending_only":true}}"#)
+            .unwrap();
+        assert_eq!(read["result"]["contents"][0]["uri"], EVENTS_URI);
+        assert!(
+            read["result"]["contents"][0]["text"]
+                .as_str()
+                .unwrap()
+                .contains("mail.received")
+        );
+    }
+
+    #[test]
+    fn mcp07_subscription_emits_only_a_resource_update_hint() {
+        let mut server = Server {
+            backend: EventFake::default(),
+            initialized: true,
+            ready: true,
+            events_subscribed: false,
+            event_cursor: None,
+        };
+        let response = server
+            .handle(br#"{"jsonrpc":"2.0","id":3,"method":"resources/subscribe","params":{"uri":"mail-hantong://events"}}"#)
+            .unwrap();
+        assert!(response["result"].is_object());
+        let notification = server.poll_events().unwrap();
+        assert_eq!(notification["method"], "notifications/resources/updated");
+        assert_eq!(notification["params"]["uri"], EVENTS_URI);
+        assert!(notification["params"].get("content").is_none());
+        assert_eq!(server.backend.configured, vec![true]);
+        let read = server
+            .handle(br#"{"jsonrpc":"2.0","id":4,"method":"resources/read","params":{"uri":"mail-hantong://events"}}"#)
+            .unwrap();
+        assert!(
+            read["result"]["contents"][0]["text"]
+                .as_str()
+                .unwrap()
+                .contains("mail.received")
+        );
+        assert_eq!(server.backend.reads, 2);
+    }
+
+    struct TimedReader {
+        bytes: Vec<u8>,
+        position: usize,
+        chunk_size: usize,
+        chunk_delay: Duration,
+        eof_delay: Duration,
+        eof_delayed: bool,
+    }
+
+    impl TimedReader {
+        fn new(
+            bytes: Vec<u8>,
+            chunk_size: usize,
+            chunk_delay: Duration,
+            eof_delay: Duration,
+        ) -> Self {
+            Self {
+                bytes,
+                position: 0,
+                chunk_size,
+                chunk_delay,
+                eof_delay,
+                eof_delayed: false,
+            }
+        }
+    }
+
+    impl io::Read for TimedReader {
+        fn read(&mut self, output: &mut [u8]) -> io::Result<usize> {
+            if self.position >= self.bytes.len() {
+                if !self.eof_delayed {
+                    self.eof_delayed = true;
+                    thread::sleep(self.eof_delay);
+                }
+                return Ok(0);
+            }
+            let count = output
+                .len()
+                .min(self.chunk_size.max(1))
+                .min(self.bytes.len() - self.position);
+            output[..count].copy_from_slice(&self.bytes[self.position..self.position + count]);
+            self.position += count;
+            Ok(count)
+        }
+    }
+
+    impl io::BufRead for TimedReader {
+        fn fill_buf(&mut self) -> io::Result<&[u8]> {
+            if self.position >= self.bytes.len() {
+                if !self.eof_delayed {
+                    self.eof_delayed = true;
+                    thread::sleep(self.eof_delay);
+                }
+                return Ok(&[]);
+            }
+            if !self.chunk_delay.is_zero() {
+                thread::sleep(self.chunk_delay);
+            }
+            let end = self
+                .position
+                .saturating_add(self.chunk_size.max(1))
+                .min(self.bytes.len());
+            Ok(&self.bytes[self.position..end])
+        }
+
+        fn consume(&mut self, amount: usize) {
+            self.position = (self.position + amount).min(self.bytes.len());
+        }
+    }
+
+    fn protocol_frames(frames: &[Value]) -> Vec<u8> {
+        let mut input = Vec::new();
+        for frame in frames {
+            input.extend(serde_json::to_vec(frame).unwrap());
+            input.push(b'\n');
+        }
+        input
+    }
+
+    fn notification_output(output: &[u8]) -> Vec<Value> {
+        output
+            .split(|byte| *byte == b'\n')
+            .filter(|line| !line.is_empty())
+            .map(|line| serde_json::from_slice(line).unwrap())
+            .filter(|value: &Value| value["method"] == "notifications/resources/updated")
+            .collect()
+    }
+
+    fn event_protocol_frames(extra: impl IntoIterator<Item = Value>) -> Vec<Value> {
+        let mut frames = vec![
+            json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"fake-host","version":"1"}}}),
+            json!({"jsonrpc":"2.0","method":"notifications/initialized"}),
+            json!({"jsonrpc":"2.0","id":2,"method":"resources/subscribe","params":{"uri":EVENTS_URI}}),
+        ];
+        frames.extend(extra);
+        frames
+    }
+
+    #[test]
+    fn mcp07_idle_subscription_notifies_host_then_host_reads_resource() {
+        let reader = TimedReader::new(
+            protocol_frames(&event_protocol_frames(std::iter::empty::<Value>())),
+            usize::MAX,
+            Duration::ZERO,
+            Duration::from_millis(30),
+        );
+        let mut output = Vec::new();
+        serve_with_events(
+            reader,
+            &mut output,
+            EventFake::default(),
+            Duration::from_millis(5),
+        )
+        .unwrap();
+        let notifications = notification_output(&output);
+        assert!(!notifications.is_empty());
+        assert_eq!(notifications[0]["params"], json!({"uri": EVENTS_URI}));
+        assert!(notifications[0]["params"].get("content").is_none());
+    }
+
+    #[test]
+    fn mcp07_ping_traffic_does_not_starve_event_polling() {
+        let pings = (0..64).map(|id| json!({"jsonrpc":"2.0","id":100 + id,"method":"ping"}));
+        let reader = TimedReader::new(
+            protocol_frames(&event_protocol_frames(pings)),
+            1,
+            Duration::from_millis(1),
+            Duration::from_millis(5),
+        );
+        let mut output = Vec::new();
+        serve_with_events(
+            reader,
+            &mut output,
+            EventFake::default(),
+            Duration::from_millis(5),
+        )
+        .unwrap();
+        assert!(!notification_output(&output).is_empty());
+    }
+
+    #[test]
+    fn mcp07_event_read_rejects_unbounded_or_unknown_fields() {
+        let mut server = Server {
+            backend: EventFake::default(),
+            initialized: true,
+            ready: true,
+            events_subscribed: false,
+            event_cursor: None,
+        };
+        for params in [
+            json!({"uri":EVENTS_URI,"limit":101,"pending_only":true,"cursor":null}),
+            json!({"uri":EVENTS_URI,"limit":1,"pending_only":true,"cursor":null,"account_ids":["x"]}),
+        ] {
+            let frame = json!({"jsonrpc":"2.0","id":4,"method":"resources/read","params":params});
+            assert_eq!(
+                server
+                    .handle(serde_json::to_string(&frame).unwrap().as_bytes())
+                    .unwrap()["error"]["code"],
+                -32001
+            );
+        }
+    }
+
+    #[test]
+    fn mcp07_transient_poll_error_keeps_subscription_for_later_retry() {
+        let mut server = Server {
+            backend: PollErrorFake {
+                error: Some(ErrorCode::Offline),
+            },
+            initialized: true,
+            ready: true,
+            events_subscribed: true,
+            event_cursor: None,
+        };
+        assert!(server.poll_events().is_none());
+        assert!(server.events_subscribed);
+        assert!(server.poll_events().is_some());
+    }
+
+    #[test]
+    fn mcp07_cursor_expiry_resets_cursor_and_requests_current_snapshot() {
+        let mut server = Server {
+            backend: PollErrorFake {
+                error: Some(ErrorCode::CursorExpired),
+            },
+            initialized: true,
+            ready: true,
+            events_subscribed: true,
+            event_cursor: Some("stale".into()),
+        };
+        let notification = server.poll_events().unwrap();
+        assert_eq!(server.event_cursor, None);
+        assert_eq!(notification["params"], json!({"uri": EVENTS_URI}));
+        assert!(server.events_subscribed);
+    }
     fn ready() -> Server<Fake> {
         let mut s = Server {
             backend: Fake::default(),
             initialized: false,
             ready: false,
+            events_subscribed: false,
+            event_cursor: None,
         };
         assert!(s.handle(br#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"test","version":"1"}}}"#).unwrap().get("result").is_some());
         assert!(
@@ -1253,6 +2020,8 @@ mod tests {
             backend: Fake::default(),
             initialized: false,
             ready: false,
+            events_subscribed: false,
+            event_cursor: None,
         };
         assert_eq!(
             s.handle(br#"{"jsonrpc":"2.0","id":0,"method":"ping"}"#)
@@ -1315,6 +2084,8 @@ mod tests {
             backend: Fake::default(),
             initialized: false,
             ready: false,
+            events_subscribed: false,
+            event_cursor: None,
         };
         assert_eq!(
             s.handle(br#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#)
@@ -1331,7 +2102,7 @@ mod tests {
     fn mcp03_stdio_only_emits_protocol_and_exits_on_oversize() {
         let input = vec![b'x'; MAX_FRAME + 2];
         let mut output = Vec::new();
-        serve(&mut io::Cursor::new(input), &mut output, Fake::default()).unwrap();
+        serve(io::Cursor::new(input), &mut output, Fake::default()).unwrap();
         let v: Value = serde_json::from_slice(&output).unwrap();
         assert_eq!(v["error"]["code"], -32700);
     }

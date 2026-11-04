@@ -25,6 +25,9 @@ pub enum AuditTool {
     GoogleMutationExecute,
     TrashRequest,
     TrashExecute,
+    EventsRead,
+    EventsAck,
+    EventsConfigure,
 }
 impl AuditTool {
     pub const fn as_str(self) -> &'static str {
@@ -44,6 +47,9 @@ impl AuditTool {
             Self::GoogleMutationExecute => crate::google_mutation::EXECUTE_TOOL,
             Self::TrashRequest => crate::google_mutation::TRASH_REQUEST_TOOL,
             Self::TrashExecute => crate::google_mutation::TRASH_EXECUTE_TOOL,
+            Self::EventsRead => "mail.events.read",
+            Self::EventsAck => "mail.events.ack",
+            Self::EventsConfigure => "mail.events.configure",
         }
     }
     pub fn parse(value: &str) -> Result<Self, ErrorCode> {
@@ -63,6 +69,9 @@ impl AuditTool {
             crate::google_mutation::EXECUTE_TOOL => Ok(Self::GoogleMutationExecute),
             crate::google_mutation::TRASH_REQUEST_TOOL => Ok(Self::TrashRequest),
             crate::google_mutation::TRASH_EXECUTE_TOOL => Ok(Self::TrashExecute),
+            "mail.events.read" => Ok(Self::EventsRead),
+            "mail.events.ack" => Ok(Self::EventsAck),
+            "mail.events.configure" => Ok(Self::EventsConfigure),
             _ => Err(ErrorCode::InvalidInput),
         }
     }

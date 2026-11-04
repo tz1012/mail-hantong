@@ -90,6 +90,20 @@ impl UnixExecutionAdapter<'_> {
 impl ExecutionContext for UnixExecutionAdapter<'_> {
     type Output = Value;
 
+    fn mail_events(
+        &mut self,
+        accounts: &[String],
+        action: &hantong_application::MailEventsAction,
+    ) -> Result<ReadResult<Value>, ErrorCode> {
+        crate::mail_events::execute(
+            self.store,
+            *self.connection.registration_id(),
+            self.connection.profile_epoch(),
+            accounts,
+            action,
+        )
+    }
+
     fn google_mutation(
         &mut self,
         account: &str,

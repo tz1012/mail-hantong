@@ -25,6 +25,7 @@ pub mod imap_sync;
 pub mod imap_trash;
 pub mod initial_sync;
 pub mod mail_connection;
+pub mod mail_events;
 pub mod mail_send;
 pub mod message_body;
 #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
@@ -52,7 +53,7 @@ pub use registrations::{
 pub use server_identity::ServerIdentity;
 
 #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
-const CURRENT_SCHEMA_VERSION: u32 = 26;
+const CURRENT_SCHEMA_VERSION: u32 = 27;
 #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 const DATABASE_FORMAT: &str = "mail-hantong";
 #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
@@ -117,6 +118,11 @@ const MIGRATION_V25_TO_V26: &str =
     include_str!("../../../docs/contracts/migrations/025-to-026.sql");
 #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 const SCHEMA_V26: &str = include_str!("../../../docs/contracts/migrations/schema-v26.sql");
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
+const MIGRATION_V26_TO_V27: &str =
+    include_str!("../../../docs/contracts/migrations/026-to-027.sql");
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
+const SCHEMA_V27: &str = include_str!("../../../docs/contracts/migrations/schema-v27.sql");
 #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 const SCHEMA_V19: &str = include_str!("../../../docs/contracts/migrations/schema-v19.sql");
 #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
@@ -379,6 +385,7 @@ impl Store {
                 (23, _) => Ok(SchemaState::Version23),
                 (24, _) => Ok(SchemaState::Version24),
                 (25, _) => Ok(SchemaState::Version25),
+                (26, _) => Ok(SchemaState::Version26),
                 (CURRENT_SCHEMA_VERSION, _) => Ok(SchemaState::Current),
                 _ => Ok(SchemaState::Unsupported),
             }
@@ -411,7 +418,7 @@ impl Store {
                 self.migrate_v22_to_v23()?;
                 self.migrate_v23_to_v24()?;
                 self.migrate_v24_to_v25()?;
-                self.migrate_v25_to_v26()?;
+                self.migrate_v25_to_v27()?;
                 Ok(())
             }
             SchemaState::V2 => {
@@ -439,7 +446,7 @@ impl Store {
                 self.migrate_v22_to_v23()?;
                 self.migrate_v23_to_v24()?;
                 self.migrate_v24_to_v25()?;
-                self.migrate_v25_to_v26()
+                self.migrate_v25_to_v27()
             }
             SchemaState::V3 => {
                 self.with_connection(|connection| validate_schema(connection, SCHEMA_V3, 3))?;
@@ -465,7 +472,7 @@ impl Store {
                 self.migrate_v22_to_v23()?;
                 self.migrate_v23_to_v24()?;
                 self.migrate_v24_to_v25()?;
-                self.migrate_v25_to_v26()
+                self.migrate_v25_to_v27()
             }
             SchemaState::V4 => {
                 self.with_connection(|connection| validate_schema(connection, SCHEMA_V4, 4))?;
@@ -490,7 +497,7 @@ impl Store {
                 self.migrate_v22_to_v23()?;
                 self.migrate_v23_to_v24()?;
                 self.migrate_v24_to_v25()?;
-                self.migrate_v25_to_v26()
+                self.migrate_v25_to_v27()
             }
             SchemaState::V5 => {
                 self.with_connection(|connection| validate_schema(connection, SCHEMA_V5, 5))?;
@@ -514,7 +521,7 @@ impl Store {
                 self.migrate_v22_to_v23()?;
                 self.migrate_v23_to_v24()?;
                 self.migrate_v24_to_v25()?;
-                self.migrate_v25_to_v26()
+                self.migrate_v25_to_v27()
             }
             SchemaState::V6 => {
                 self.with_connection(|connection| validate_schema(connection, SCHEMA_V6, 6))?;
@@ -537,7 +544,7 @@ impl Store {
                 self.migrate_v22_to_v23()?;
                 self.migrate_v23_to_v24()?;
                 self.migrate_v24_to_v25()?;
-                self.migrate_v25_to_v26()
+                self.migrate_v25_to_v27()
             }
             SchemaState::V7 => {
                 self.with_connection(|connection| validate_schema(connection, SCHEMA_V7, 7))?;
@@ -559,7 +566,7 @@ impl Store {
                 self.migrate_v22_to_v23()?;
                 self.migrate_v23_to_v24()?;
                 self.migrate_v24_to_v25()?;
-                self.migrate_v25_to_v26()
+                self.migrate_v25_to_v27()
             }
             SchemaState::V8 => {
                 self.with_connection(|connection| validate_schema(connection, SCHEMA_V8, 8))?;
@@ -580,7 +587,7 @@ impl Store {
                 self.migrate_v22_to_v23()?;
                 self.migrate_v23_to_v24()?;
                 self.migrate_v24_to_v25()?;
-                self.migrate_v25_to_v26()
+                self.migrate_v25_to_v27()
             }
             SchemaState::V9 => {
                 self.with_connection(|connection| validate_schema(connection, SCHEMA_V9, 9))?;
@@ -600,7 +607,7 @@ impl Store {
                 self.migrate_v22_to_v23()?;
                 self.migrate_v23_to_v24()?;
                 self.migrate_v24_to_v25()?;
-                self.migrate_v25_to_v26()
+                self.migrate_v25_to_v27()
             }
             SchemaState::V10 => {
                 self.with_connection(|connection| validate_schema(connection, SCHEMA_V10, 10))?;
@@ -619,7 +626,7 @@ impl Store {
                 self.migrate_v22_to_v23()?;
                 self.migrate_v23_to_v24()?;
                 self.migrate_v24_to_v25()?;
-                self.migrate_v25_to_v26()
+                self.migrate_v25_to_v27()
             }
             SchemaState::V11 => {
                 self.with_connection(|c| validate_schema(c, SCHEMA_V11, 11))?;
@@ -637,7 +644,7 @@ impl Store {
                 self.migrate_v22_to_v23()?;
                 self.migrate_v23_to_v24()?;
                 self.migrate_v24_to_v25()?;
-                self.migrate_v25_to_v26()
+                self.migrate_v25_to_v27()
             }
             SchemaState::V12 => {
                 self.with_connection(|c| validate_schema(c, SCHEMA_V12, 12))?;
@@ -654,7 +661,7 @@ impl Store {
                 self.migrate_v22_to_v23()?;
                 self.migrate_v23_to_v24()?;
                 self.migrate_v24_to_v25()?;
-                self.migrate_v25_to_v26()
+                self.migrate_v25_to_v27()
             }
             SchemaState::V13 => {
                 self.with_connection(|c| validate_schema(c, SCHEMA_V13, 13))?;
@@ -670,7 +677,7 @@ impl Store {
                 self.migrate_v22_to_v23()?;
                 self.migrate_v23_to_v24()?;
                 self.migrate_v24_to_v25()?;
-                self.migrate_v25_to_v26()
+                self.migrate_v25_to_v27()
             }
             SchemaState::V14 => {
                 self.with_connection(|c| validate_schema(c, SCHEMA_V14, 14))?;
@@ -685,7 +692,7 @@ impl Store {
                 self.migrate_v22_to_v23()?;
                 self.migrate_v23_to_v24()?;
                 self.migrate_v24_to_v25()?;
-                self.migrate_v25_to_v26()
+                self.migrate_v25_to_v27()
             }
             SchemaState::V15 => {
                 self.with_connection(|c| validate_schema(c, SCHEMA_V15, 15))?;
@@ -699,7 +706,7 @@ impl Store {
                 self.migrate_v22_to_v23()?;
                 self.migrate_v23_to_v24()?;
                 self.migrate_v24_to_v25()?;
-                self.migrate_v25_to_v26()
+                self.migrate_v25_to_v27()
             }
             SchemaState::V16 => {
                 self.with_connection(|c| validate_schema(c, SCHEMA_V16, 16))?;
@@ -712,7 +719,7 @@ impl Store {
                 self.migrate_v22_to_v23()?;
                 self.migrate_v23_to_v24()?;
                 self.migrate_v24_to_v25()?;
-                self.migrate_v25_to_v26()
+                self.migrate_v25_to_v27()
             }
             SchemaState::V17 => {
                 self.with_connection(|c| validate_schema(c, SCHEMA_V17, 17))?;
@@ -724,7 +731,7 @@ impl Store {
                 self.migrate_v22_to_v23()?;
                 self.migrate_v23_to_v24()?;
                 self.migrate_v24_to_v25()?;
-                self.migrate_v25_to_v26()
+                self.migrate_v25_to_v27()
             }
             SchemaState::V18 => {
                 self.with_connection(|c| validate_schema(c, SCHEMA_V18, 18))?;
@@ -735,7 +742,7 @@ impl Store {
                 self.migrate_v22_to_v23()?;
                 self.migrate_v23_to_v24()?;
                 self.migrate_v24_to_v25()?;
-                self.migrate_v25_to_v26()
+                self.migrate_v25_to_v27()
             }
             SchemaState::V19 => {
                 self.with_connection(|c| validate_schema(c, SCHEMA_V19, 19))?;
@@ -745,7 +752,7 @@ impl Store {
                 self.migrate_v22_to_v23()?;
                 self.migrate_v23_to_v24()?;
                 self.migrate_v24_to_v25()?;
-                self.migrate_v25_to_v26()
+                self.migrate_v25_to_v27()
             }
             SchemaState::Version20 => {
                 self.with_connection(|c| validate_schema(c, SCHEMA_V20, 20))?;
@@ -754,7 +761,7 @@ impl Store {
                 self.migrate_v22_to_v23()?;
                 self.migrate_v23_to_v24()?;
                 self.migrate_v24_to_v25()?;
-                self.migrate_v25_to_v26()
+                self.migrate_v25_to_v27()
             }
             SchemaState::Version21 => {
                 self.with_connection(|c| {
@@ -766,7 +773,7 @@ impl Store {
                 self.migrate_v22_to_v23()?;
                 self.migrate_v23_to_v24()?;
                 self.migrate_v24_to_v25()?;
-                self.migrate_v25_to_v26()
+                self.migrate_v25_to_v27()
             }
             SchemaState::Version22 => {
                 self.with_connection(|c| {
@@ -777,7 +784,7 @@ impl Store {
                 self.migrate_v22_to_v23()?;
                 self.migrate_v23_to_v24()?;
                 self.migrate_v24_to_v25()?;
-                self.migrate_v25_to_v26()
+                self.migrate_v25_to_v27()
             }
             SchemaState::Version23 => {
                 self.with_connection(|c| {
@@ -787,12 +794,12 @@ impl Store {
                 })?;
                 self.migrate_v23_to_v24()?;
                 self.migrate_v24_to_v25()?;
-                self.migrate_v25_to_v26()
+                self.migrate_v25_to_v27()
             }
             SchemaState::Version24 => {
                 self.with_connection(|c| validate_schema(c, SCHEMA_V24, 24))?;
                 self.migrate_v24_to_v25()?;
-                self.migrate_v25_to_v26()
+                self.migrate_v25_to_v27()
             }
             SchemaState::Version25 => {
                 self.with_connection(|c| {
@@ -800,7 +807,11 @@ impl Store {
                     scope_refresh::validate_history_v25(c)
                         .map_err(|_| rusqlite::Error::InvalidQuery)
                 })?;
-                self.migrate_v25_to_v26()
+                self.migrate_v25_to_v27()
+            }
+            SchemaState::Version26 => {
+                self.with_connection(|c| validate_schema(c, SCHEMA_V26, 26))?;
+                self.migrate_v26_to_v27()
             }
             SchemaState::Current => self.with_connection(|connection| {
                 validate_schema(connection, SCHEMA, CURRENT_SCHEMA_VERSION)
@@ -945,6 +956,19 @@ impl Store {
     }
 
     #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
+    fn migrate_v26_to_v27(&self) -> Result<(), ErrorCode> {
+        self.migrate_with_backup(26, 27, SCHEMA_V27, |c| {
+            c.execute_batch(MIGRATION_V26_TO_V27)
+        })
+    }
+
+    #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
+    fn migrate_v25_to_v27(&self) -> Result<(), ErrorCode> {
+        self.migrate_v25_to_v26()?;
+        self.migrate_v26_to_v27()
+    }
+
+    #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
     fn migrate_v19_to_v20(&self) -> Result<(), ErrorCode> {
         self.migrate_with_backup(19, 20, SCHEMA_V20, |c| {
             c.execute_batch(MIGRATION_V19_TO_V20)
@@ -1083,6 +1107,7 @@ enum SchemaState {
     Version23,
     Version24,
     Version25,
+    Version26,
     Newer,
     Unsupported,
     Corrupt,
@@ -3442,6 +3467,43 @@ mod tests {
 #[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
 mod unix_schema_tests {
     use super::*;
+
+    #[test]
+    fn acc02_unix_v26_to_v27_preserves_rows_and_foreign_keys_without_authority() {
+        let connection = rusqlite::Connection::open_in_memory().unwrap();
+        connection.execute_batch(SCHEMA_V26).unwrap();
+        connection.execute("INSERT INTO app_metadata(singleton,database_format,schema_version,created_at_utc_ms,updated_at_utc_ms) VALUES(1,'mail-hantong',26,1,1)", []).unwrap();
+        connection.execute("INSERT INTO accounts(account_id,provider,account_number,status,capabilities,granted_scopes,settings_version) VALUES('fixture','imap',1,'ready','[]','[]',1)", []).unwrap();
+        let transaction = connection.unchecked_transaction().unwrap();
+        transaction.execute_batch(MIGRATION_V26_TO_V27).unwrap();
+        transaction.execute("UPDATE app_metadata SET schema_version=27,updated_at_utc_ms=2 WHERE singleton=1 AND schema_version=26", []).unwrap();
+        transaction.pragma_update(None, "user_version", 27).unwrap();
+        validate_schema(&transaction, SCHEMA, 27).unwrap();
+        transaction.commit().unwrap();
+        assert_eq!(
+            connection
+                .query_row("SELECT count(*) FROM accounts", [], |r| r.get::<_, i64>(0))
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            connection
+                .query_row("SELECT count(*) FROM mail_event_tracking", [], |r| r
+                    .get::<_, i64>(0))
+                .unwrap(),
+            0
+        );
+        assert!(
+            connection
+                .prepare("PRAGMA foreign_key_check")
+                .unwrap()
+                .query([])
+                .unwrap()
+                .next()
+                .unwrap()
+                .is_none()
+        );
+    }
 
     #[test]
     fn acc02_unix_current_schema_validates_in_memory_without_os_keyring() {

@@ -52,7 +52,9 @@ pub enum RegistrationCommand {
     GuiRequest,
     GuiStatus([u8; 32]),
     McpRequest,
+    McpRequestV3,
     McpStatus([u8; 32]),
+    McpStatusV3([u8; 32]),
     AiRequest(AiProvider),
     AiStatus(AiProvider, [u8; 32]),
 }
@@ -66,7 +68,9 @@ impl std::fmt::Debug for RegistrationCommand {
             }
             Self::Status(_) => "RegistrationCommand::Status(<redacted>)",
             Self::McpRequest => "RegistrationCommand::McpRequest",
+            Self::McpRequestV3 => "RegistrationCommand::McpRequestV3",
             Self::McpStatus(_) => "RegistrationCommand::McpStatus(<redacted>)",
+            Self::McpStatusV3(_) => "RegistrationCommand::McpStatusV3(<redacted>)",
             Self::AiRequest(provider) => match provider {
                 AiProvider::Codex => "RegistrationCommand::AiRequest(Codex)",
                 AiProvider::Claude => "RegistrationCommand::AiRequest(Claude)",

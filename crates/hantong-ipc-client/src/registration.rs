@@ -29,6 +29,9 @@ pub fn request(id: &str, command: RegistrationCommand) -> Result<Vec<u8>, ErrorC
         RegistrationCommand::McpRequest => {
             ("registration.mcp.request", json!({"protocol_version":1}))
         }
+        RegistrationCommand::McpRequestV3 => {
+            ("registration.mcp.v3.request", json!({"protocol_version":1}))
+        }
         RegistrationCommand::GuiRequest => {
             ("registration.gui.request", json!({"protocol_version":1}))
         }
@@ -38,13 +41,21 @@ pub fn request(id: &str, command: RegistrationCommand) -> Result<Vec<u8>, ErrorC
         ),
         RegistrationCommand::Status(request_id)
         | RegistrationCommand::GuiStatus(request_id)
-        | RegistrationCommand::McpStatus(request_id) => {
+        | RegistrationCommand::McpStatus(request_id)
+        | RegistrationCommand::McpStatusV3(request_id) => {
             if request_id == [0; 32] {
                 return Err(ErrorCode::InvalidInput);
             }
             (
-                if matches!(command, RegistrationCommand::McpStatus(_)) {
-                    "registration.mcp.status"
+                if matches!(
+                    command,
+                    RegistrationCommand::McpStatus(_) | RegistrationCommand::McpStatusV3(_)
+                ) {
+                    if matches!(command, RegistrationCommand::McpStatusV3(_)) {
+                        "registration.mcp.v3.status"
+                    } else {
+                        "registration.mcp.status"
+                    }
                 } else if matches!(command, RegistrationCommand::GuiStatus(_)) {
                     "registration.gui.status"
                 } else {
@@ -91,6 +102,7 @@ pub fn parse_response(
     if let RegistrationCommand::Status(expected)
     | RegistrationCommand::GuiStatus(expected)
     | RegistrationCommand::McpStatus(expected)
+    | RegistrationCommand::McpStatusV3(expected)
     | RegistrationCommand::AiStatus(_, expected) = command
         && receipt.request_id() != &expected
     {
@@ -313,6 +325,41 @@ mod tests {
             "r",
             RegistrationCommand::Status([1; 32]),
         )
+    }
+    #[test]
+    fn mcp07_v3_registration_client_uses_distinct_methods_and_binds_status() {
+        for (command, method) in [
+            (
+                RegistrationCommand::McpRequestV3,
+                "registration.mcp.v3.request",
+            ),
+            (
+                RegistrationCommand::McpStatusV3([1; 32]),
+                "registration.mcp.v3.status",
+            ),
+        ] {
+            let encoded = request("r", command).unwrap();
+            let value: Value = serde_json::from_slice(&encoded).unwrap();
+            assert_eq!(value["method"], method);
+            assert_eq!(
+                parse_response(&serde_json::to_vec(&response()).unwrap(), "r", command)
+                    .unwrap()
+                    .request_id(),
+                &[1; 32]
+            );
+        }
+        assert_eq!(
+            request("r", RegistrationCommand::McpStatusV3([0; 32])),
+            Err(ErrorCode::InvalidInput)
+        );
+        assert_eq!(
+            parse_response(
+                &serde_json::to_vec(&response()).unwrap(),
+                "r",
+                RegistrationCommand::McpStatusV3([2; 32])
+            ),
+            Err(ErrorCode::CoreUnavailable)
+        );
     }
     #[test]
     fn sec03_google_readonly_client_sends_only_explicit_selector() {

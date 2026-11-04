@@ -5,6 +5,52 @@ const MAX_BODY_TEXT_BYTES: usize = 65536;
 // The shared MIME renderer includes this synthetic, bounded header in its 1MiB budget.
 const MAX_TEXT_PART_BYTES: usize = hantong_contracts::message_body::MAX_BODY_BYTES - 2048;
 
+// A bounded change hint, not a count of newly received messages or a message-content fetch.
+pub(super) fn inbox_observation(
+    transport: &impl http::Transport,
+    access: &SecretText,
+    deadline: Instant,
+    cancel: &AtomicBool,
+) -> Result<[u8; 32], ErrorCode> {
+    let list = get(
+        transport,
+        "/gmail/v1/users/me/messages?maxResults=200&labelIds=INBOX&fields=messages(id)",
+        access,
+        65536,
+        deadline,
+        cancel,
+    )?;
+    let ids = match list.get("messages") {
+        None => Vec::new(),
+        Some(Value::Array(rows)) if rows.len() <= 200 => rows
+            .iter()
+            .map(|row| {
+                let id = required(row, "id")?;
+                if id.is_empty()
+                    || id.len() > 256
+                    || !id
+                        .bytes()
+                        .all(|b| b.is_ascii_alphanumeric() || b"_-".contains(&b))
+                {
+                    return Err(ErrorCode::InvalidInput);
+                }
+                Ok(id.to_owned())
+            })
+            .collect::<Result<Vec<_>, ErrorCode>>()?,
+        _ => return Err(ErrorCode::InvalidInput),
+    };
+    let mut ids = ids;
+    ids.sort();
+    if ids.windows(2).any(|v| v[0] == v[1]) {
+        return Err(ErrorCode::InvalidInput);
+    }
+    crypto::sha256(
+        serde_json::to_string(&ids)
+            .map_err(|_| ErrorCode::InternalError)?
+            .as_bytes(),
+    )
+}
+
 struct RenderedBody {
     text: String,
     truncated: bool,

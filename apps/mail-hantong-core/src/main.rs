@@ -17,6 +17,10 @@ mod google_worker;
 mod identity;
 #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 mod imap_trash;
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
+mod mail_events;
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
+mod receive_worker;
 #[cfg(windows)]
 mod registration;
 #[cfg(windows)]
@@ -186,7 +190,7 @@ fn start() -> Result<(), ErrorCode> {
             let (uid_worker_handle, uid_worker) = uid_worker::coordinator_for_store(
                 &store,
                 &directories.secrets,
-                shared_slot,
+                shared_slot.clone(),
                 server_instance,
             );
             let (google_handle, google_worker) =
@@ -218,6 +222,7 @@ fn start() -> Result<(), ErrorCode> {
                 result=folder_worker.run()=>{result?;return Err(ErrorCode::InternalError);},
                 result=uid_worker.run()=>{result?;return Err(ErrorCode::InternalError);},
                 result=google_worker.run()=>{result?;return Err(ErrorCode::InternalError);},
+                result=receive_worker::run(&store, &directories.secrets, shared_slot, &read_policy)=>{result?;return Err(ErrorCode::InternalError);},
                 result=server=>result?,
             }
             event(EventKind::CoreStopped);

@@ -33,16 +33,16 @@ The current beta includes guided installation/startup, Google account selection 
 | Bounded UID metadata collection, reconciliation and recovery | General attachment download and rich HTML display |
 | Local metadata lookup, bounded text body reading and immutable drafts | Scheduled sending, contacts, tag editing and rules |
 | SMTP setup and individually confirmed sending | Unattended sending or automatic resend |
-| Managed AI protocol/tool integration and MCP mail tools (provider execution environment required) | Codex on hosts without MXC; Claude subscription OAuth in embedded/programmatic integrations |
+| Managed AI protocol/tool integration and the published v2 MCP mail tools (provider execution environment required) | v3 external Trash/events/config/doctor source candidate; Codex on hosts without MXC; Claude subscription OAuth in embedded/programmatic integrations |
 | Core status, diagnostics and stable error/exit codes | Complete background mailbox synchronization |
 
 IMAP/SMTP and advanced Google setup use hidden credential input in the same console. Passwords are never accepted through command arguments or JSON. Core validates the complete pending request before applying the selected operation. Interactive steps require terminal input and output; `--no-input`, redirected output and JSON do not confirm an operation. Terminal confirmation expresses intent and does not provide Windows Hello human-presence verification.
 
 ### Generic IMAP/SMTP and Trash
 
-Beta.21 carries ordinary IMAP/SMTP onboarding and a provider-neutral one-message
+Beta.22 carries ordinary IMAP/SMTP onboarding and a provider-neutral one-message
 Trash flow. The real Daum authentication, synthetic Gmail send, and 17-mailbox
-catalog/body-read results are historical beta.20 evidence; beta.21 adds no new
+catalog/body-read results are historical beta.20 evidence; beta.22 adds no new
 real-account or real-mail test claim. Real Trash movement was not performed.
 
 Use the normal onboarding menus rather than assembling request IDs. At the first
@@ -305,7 +305,13 @@ Typed arguments such as `/provider claude`, `/model MODEL_ID`, `/mode high` also
 
 Built-in AI chat automatically connects mail tools after its first provider-specific setup when the provider execution environment is available. The same terminal shows all ready accounts, permitted tools and external mail-data transfer before you choose Connect or Cancel. Codex and Claude use separate registrations and consent. No manual registration command, request-ID copying or required `/agent on` is needed for this built-in flow. Startup does not upload the inbox; scoped tool results can be sent to the selected AI provider when used. `/agent off` disconnects tools and clears session context. Existing registrations are not silently expanded when new accounts are added.
 
-For an independent external MCP host, registration remains a separate workflow:
+For an independent external MCP host, the published beta.22 registration remains
+the v2 workflow:
+
+The v3 source candidate adds `config`, `doctor`, a reviewed Trash request and
+metadata-only receive events, but these are not included in the published
+beta.22 binaries. See the [external MCP connection guide](EXTERNAL-MCP-GUIDE.md)
+only when using that matching source candidate.
 
 ```powershell
 hantong-mcp register
@@ -313,7 +319,7 @@ hantong review --kind registration --request-id REQUEST_ID
 hantong-mcp status REQUEST_ID
 ```
 
-Replace REQUEST_ID with the ID printed by `register`. Registration prepares a pending request; the explicit `hantong review` step completes it in the same terminal. External MCP hosts launch `hantong-mcp` without arguments over stdio and retain their own grants. The built-in AI setup does not expand these grants. Tool discovery returns current grants; accounts are discovered through the authorized account-list tool. Send and trash requests require separate terminal review; an AI cannot confirm them itself. Generic shell, filesystem and web tools are disabled in the integrated AI session. Revoked or missing account consent blocks mail disclosure.
+Replace REQUEST_ID with the ID printed by `register`. Registration prepares a pending request; the explicit `hantong review` step completes it in the same terminal. External MCP hosts launch `hantong-mcp` without arguments over stdio and use the fixed external MCP profile; per-host identities are not yet available. The built-in AI setup does not expand these grants. Tool discovery returns current v2 grants; accounts are discovered through the authorized account-list tool. Send requests require separate terminal review; an AI cannot confirm them itself. Generic shell, filesystem and web tools are disabled in the integrated AI session. Revoked or missing account consent blocks mail disclosure. The v3 source candidate adds the separate resource and Trash flow described above, but beta.22 users do not have it.
 
 Built-in AI also exposes `mail.messages.trash.request` for moving one Gmail message to Trash. It requires an existing Google Modify grant and a final same-terminal preview and confirmation. Missing permissions are not granted automatically. Permanent deletion, batch deletion and deletion through other mail providers are not supported. An uncertain send or trash outcome is never automatically retried. JSON, redirected input/output and `--no-input` cannot perform the interactive confirmation.
 

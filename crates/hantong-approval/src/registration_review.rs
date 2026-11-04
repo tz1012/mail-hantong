@@ -124,6 +124,29 @@ impl RegistrationReview {
         )?;
         Ok(review)
     }
+    pub fn new_mcp_mail_v3(
+        request_id: [u8; 32],
+        request_version: u64,
+        account_ids: Vec<String>,
+        server_public_key_hash: [u8; 32],
+        created_at_utc_ms: i64,
+        expires_at_utc_ms: i64,
+    ) -> Result<Self, ErrorCode> {
+        let mut review = Self::new_mcp_mail(
+            request_id,
+            request_version,
+            account_ids,
+            server_public_key_hash,
+            created_at_utc_ms,
+            expires_at_utc_ms,
+        )?;
+        review.scope = RequestedScope::new(
+            review.account_ids().to_vec(),
+            hantong_contracts::auth::mcp_mail_tools_v3(),
+        )?;
+        Ok(review)
+    }
+
     pub fn new_ai(
         provider: AiProvider,
         request_id: [u8; 32],
@@ -192,6 +215,7 @@ impl RegistrationReview {
     }
     pub fn read_only(&self) -> bool {
         self.scope.tools() != hantong_contracts::auth::mcp_mail_tools()
+            && self.scope.tools() != hantong_contracts::auth::mcp_mail_tools_v3()
     }
     pub fn requests_per_minute(&self) -> u32 {
         60
@@ -211,7 +235,9 @@ impl RegistrationReview {
                 output.extend_from_slice(tool.as_bytes());
             }
         } else if self.client_kind == ClientKind::Mcp {
-            if self.scope.tools() == hantong_contracts::auth::mcp_mail_tools() {
+            if self.scope.tools() == hantong_contracts::auth::mcp_mail_tools_v3() {
+                output.extend_from_slice(b"mail-hantong/mcp-mail-registration-review/v3\0");
+            } else if self.scope.tools() == hantong_contracts::auth::mcp_mail_tools() {
                 output.extend_from_slice(b"mail-hantong/mcp-mail-registration-review/v2\0");
             } else {
                 output.extend_from_slice(b"mail-hantong/mcp-registration-review/v1\0");
@@ -509,6 +535,32 @@ impl<R: ReviewSnapshot> ReviewModel<R> {
 
 #[cfg(test)]
 mod mcp_binding_tests {
+    #[test]
+    fn mcp07_v3_review_binds_notification_and_trash_grants_to_a_distinct_domain() {
+        let v2 =
+            super::RegistrationReview::new_mcp_mail([1; 32], 1, vec!["a".into()], [2; 32], 1, 1000)
+                .unwrap();
+        let v3 = super::RegistrationReview::new_mcp_mail_v3(
+            [1; 32],
+            1,
+            vec!["a".into()],
+            [2; 32],
+            1,
+            1000,
+        )
+        .unwrap();
+        assert_eq!(
+            v3.scope().tools(),
+            hantong_contracts::auth::mcp_mail_tools_v3()
+        );
+        assert!(!v3.read_only());
+        assert_ne!(v2.canonical_bytes(), v3.canonical_bytes());
+        assert!(
+            v3.canonical_bytes()
+                .starts_with(b"mail-hantong/mcp-mail-registration-review/v3\0")
+        );
+    }
+
     #[test]
     fn ai09_mcp_full_mail_proof_has_distinct_domain_and_writable_disclosure() {
         let old =

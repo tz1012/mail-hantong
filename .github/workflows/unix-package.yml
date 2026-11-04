@@ -9,7 +9,7 @@ on:
       version:
         description: Release prerelease version to package
         required: true
-        default: 0.1.0-beta.22
+        default: 0.1.0-beta.23
         type: string
 
 permissions:
@@ -31,7 +31,7 @@ jobs:
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     env:
-      PACKAGE_VERSION: ${{ inputs.version || '0.1.0-beta.22' }}
+      PACKAGE_VERSION: ${{ inputs.version || '0.1.0-beta.23' }}
     steps:
       - name: Check out source
         uses: actions/checkout@v6.1.0
@@ -70,6 +70,10 @@ jobs:
           cargo test -p hantong-secrets --lib --locked --offline terminal_secret_linux_stage_is_encrypted_and_cross_process_readable
           cargo test -p hantong-secrets --lib --locked --offline terminal_secret_line_reader
           cargo test -p mail-hantong-core --bin mail-hantong-core --locked --offline unix_stop
+          cargo test -p hantong-mcp --all-targets --locked --offline
+          cargo test -p hantong-store --lib --locked --offline unix_schema_tests -- --test-threads=1
+          cargo test -p hantong-approval -p hantong-secrets -p mail-hantong-core --all-targets --locked --offline mcp07 -- --test-threads=1
+          cargo test -p hantong-contracts -p hantong-ipc-client -p hantong-ipc-server --lib --locked --offline mcp -- --test-threads=1
       - name: Download and isolate reviewed publisher asset
         env:
           PUBLISHER_URL: https://github.com/tz1012/mail-hantong/releases/download/v0.1.0-beta.21/mail-hantong-cli-0.1.0-beta.21-windows-x86_64.zip

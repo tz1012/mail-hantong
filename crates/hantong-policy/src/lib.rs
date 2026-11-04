@@ -40,6 +40,9 @@ impl ReadPolicy {
             | AuditTool::FoldersRefresh
             | AuditTool::MessagesGet
             | AuditTool::MessagesSearch
+            | AuditTool::EventsRead
+            | AuditTool::EventsAck
+            | AuditTool::EventsConfigure
             | AuditTool::SyncPage => Ok(()),
             AuditTool::DraftCreate
             | AuditTool::SendRequest

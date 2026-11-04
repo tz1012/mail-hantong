@@ -2,6 +2,7 @@ use super::*;
 mod ai_tests;
 mod google_oauth_tests;
 mod gui_tests;
+mod mail_event_tests;
 mod mcp_tests;
 mod send_tests;
 use crate::RegistrationState;
