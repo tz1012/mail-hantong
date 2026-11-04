@@ -14,6 +14,7 @@ pub(super) fn ensure_started() -> Result<(), ErrorCode> {
     // Core/Secrets own any protected TTY input. The CLI never reads credentials.
     let child = Command::new(core)
         .arg("run")
+        .arg("--background")
         .stdin(Stdio::inherit())
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit())

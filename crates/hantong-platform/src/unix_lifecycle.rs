@@ -6,6 +6,28 @@
 use hantong_contracts::{ErrorCode, unix_auth::UnixPeerContextV2};
 use std::path::Path;
 
+/// Detach a Core only after protected startup and storage recovery have
+/// completed. The process keeps no terminal handles after this point.
+#[cfg(unix)]
+#[allow(unsafe_code)]
+pub fn detach_background_process() -> Result<(), ErrorCode> {
+    if unsafe { libc::setsid() } < 0 {
+        return Err(ErrorCode::CoreUnavailable);
+    }
+    let null = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open("/dev/null")
+        .map_err(|_| ErrorCode::CoreUnavailable)?;
+    let fd = std::os::fd::AsRawFd::as_raw_fd(&null);
+    for target in [libc::STDIN_FILENO, libc::STDOUT_FILENO, libc::STDERR_FILENO] {
+        if unsafe { libc::dup2(fd, target) } < 0 {
+            return Err(ErrorCode::CoreUnavailable);
+        }
+    }
+    Ok(())
+}
+
 /// Stop the peer represented by an authenticated Unix peer context after
 /// checking that it is the verified installed Core image.  Linux uses pidfd;
 /// macOS deliberately has no equivalent implementation in this release.

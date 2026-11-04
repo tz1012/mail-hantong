@@ -240,7 +240,7 @@ fn startup_step<T>(stage: &'static str, result: Result<T, ErrorCode>) -> Result<
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-fn start() -> Result<(), ErrorCode> {
+fn start(background: bool) -> Result<(), ErrorCode> {
     let directories = startup_step("directories", hantong_platform::app_directories())?;
     let _secrets_directory = startup_step(
         "secrets_directory",
@@ -276,6 +276,12 @@ fn start() -> Result<(), ErrorCode> {
         "workflow_recovery",
         unix_registration::recover_startup(&store, &directories.secrets, &mut server_identity),
     )?;
+    if background {
+        startup_step(
+            "detach",
+            hantong_platform::unix_lifecycle::detach_background_process(),
+        )?;
+    }
     let server_instance = startup_step("instance", hantong_platform::random_nonce())?;
     let runtime = startup_step(
         "runtime",
@@ -335,6 +341,8 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> i32 {
     }
     let mut lang = Lang::En;
     let mut command = None;
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    let mut background = false;
     let mut it = args.into_iter();
     while let Some(value) = it.next() {
         let Some(value) = value.to_str() else {
@@ -349,6 +357,8 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> i32 {
             "run" | "--help" | "-h" | "--version" | "-V" if command.is_none() => {
                 command = Some(value.to_owned())
             }
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            "--background" if command.as_deref() == Some("run") && !background => background = true,
             _ => return emit_error(ErrorCode::InvalidInput, lang),
         }
     }
@@ -365,10 +375,16 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> i32 {
             println!("mail-hantong-core {}", env!("CARGO_PKG_VERSION"));
             0
         }
-        Some("run") => match start() {
-            Ok(()) => 0,
-            Err(code) => emit_error(code, lang),
-        },
+        Some("run") => {
+            #[cfg(windows)]
+            let result = start();
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            let result = start(background);
+            match result {
+                Ok(()) => 0,
+                Err(code) => emit_error(code, lang),
+            }
+        }
         _ => emit_error(ErrorCode::InvalidInput, lang),
     }
 }
