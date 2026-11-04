@@ -1092,6 +1092,11 @@ mod tests {
         std::fs::create_dir(&root).unwrap();
         std::fs::set_permissions(&root, std::os::unix::fs::PermissionsExt::from_mode(0o700))
             .unwrap();
+        // macOS exposes the temporary directory through /var, while the
+        // guarded path validator intentionally rejects symlink ancestors.
+        // Pin the fixture to its canonical directory before handing it to
+        // production staging code; no production path policy is relaxed.
+        let root = std::fs::canonicalize(&root).unwrap();
         let ticket = TerminalSecretTicket {
             binding: binding(now_utc_ms() + TICKET_TTL_MS),
             ticket_id: [9; 32],
