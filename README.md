@@ -4,6 +4,11 @@ A multi-account mail hub for Windows, with a shared core service, the `hantong` 
 
 **Current Windows CLI release: 0.1.0-beta.20.** Start with the [Korean installation and feature guide](https://tz1012.github.io/mail-hantong/). Account setup, feature selection, composing, Trash review and Send/Cancel use the same terminal without a separate HanTong window or Windows Hello. Google OAuth opens its standard provider browser. See the [CLI usage guide](docs/latest/CLI-LAUNCH.md) for mail, AI sessions, MCP tools and remaining limitations.
 
+macOS and Linux remain support targets; product packages and end-to-end mail
+support for those systems are still unfinished. Current release assets are
+Windows x64 only. For an old updater's `Join-Path` failure or a program-only
+reinstall that preserves accounts, see [Windows recovery](docs/latest/WINDOWS-RECOVERY.md).
+
 The package contains two terminal experiences over the same Core, account store,
 policy checks and provider operations. `hantong` is the guided, command-style
 CLI for setup and explicit workflows. `hantong-t` is a separate full-screen

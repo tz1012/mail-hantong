@@ -316,6 +316,13 @@ Built-in AI also exposes `mail.messages.trash.request` for moving one Gmail mess
 
 ## Update and remove
 
+If an older `update hantong` fails with `Join-Path` / null `drive`, run the
+public installation command directly once to replace the old updater. This
+preserves account data and keys. See [Windows recovery and program-only clean
+reinstallation](WINDOWS-RECOVERY.md) for both procedures. macOS and Linux are
+planned support targets with unfinished product implementations; the current
+Windows package does not provide working mail operations on those systems.
+
 From beta.5 onward, update in an interactive terminal with either command:
 
 ```powershell
