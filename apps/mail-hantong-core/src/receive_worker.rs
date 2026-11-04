@@ -149,6 +149,16 @@ async fn observe(root: &Path, account: &str, source: &Binding) -> Result<[u8; 32
     task.await.map_err(|_| ErrorCode::InternalError)?
 }
 
+// Resume after the last admitted account when the shared request budget runs out.
+fn receive_order<T>(targets: &mut [T], next: usize) -> usize {
+    if targets.is_empty() {
+        return 0;
+    }
+    let start = next % targets.len();
+    targets.rotate_left(start);
+    start
+}
+
 pub(crate) async fn run(
     store: &Store,
     root: &Path,
@@ -157,12 +167,13 @@ pub(crate) async fn run(
 ) -> Result<(), ErrorCode> {
     let mut timer = tokio::time::interval(Duration::from_secs(60));
     timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    let mut next_account = 0;
     loop {
         timer.tick().await;
         let Some(owner) = store.load_mcp_registration()? else {
             continue;
         };
-        let targets = match store
+        let mut targets = match store
             .list_mail_event_tracking_targets(owner.registration_id, owner.profile_epoch)
         {
             Ok(targets) => targets,
@@ -174,7 +185,9 @@ pub(crate) async fn run(
             ) => continue,
             Err(error) => return Err(error),
         };
-        for target in targets {
+        let count = targets.len();
+        let start = receive_order(&mut targets, next_account);
+        for (index, target) in targets.into_iter().enumerate() {
             if slot.get().is_some() {
                 break;
             }
@@ -199,6 +212,7 @@ pub(crate) async fn run(
             {
                 break;
             }
+            next_account = (start + index + 1) % count;
             let id = hantong_platform::random_nonce()?;
             store.begin_audit(&AuditBegin::new(
                 id,
@@ -249,6 +263,42 @@ pub(crate) async fn run(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn mcp07_receive_scan_reaches_128_accounts_without_widening_the_shared_budget() {
+        let mut policy = ReadPolicy::new();
+        let mut next = 0;
+        let mut observed = std::collections::BTreeSet::new();
+        let now = Instant::now();
+        for window in 0..3 {
+            let time = now + Duration::from_secs(window * 61);
+            // Foreground MCP polling shares the same 60-request allowance.
+            for _ in 0..12 {
+                policy
+                    .check([1; 16], false, 60, AuditTool::EventsRead, time)
+                    .unwrap();
+            }
+            let mut targets: Vec<_> = (0..128).collect();
+            let count = targets.len();
+            let start = receive_order(&mut targets, next);
+            for (index, target) in targets.into_iter().enumerate() {
+                if policy
+                    .check([1; 16], false, 60, AuditTool::EventsRead, time)
+                    .is_err()
+                {
+                    break;
+                }
+                next = (start + index + 1) % count;
+                observed.insert(target);
+            }
+            assert_eq!(
+                policy.check([1; 16], false, 60, AuditTool::EventsRead, time),
+                Err(ErrorCode::RateLimited)
+            );
+        }
+        assert_eq!(observed.len(), 128);
+        let mut none: [u8; 0] = [];
+        assert_eq!(receive_order(&mut none, next), 0);
+    }
     #[test]
     fn mcp07_cancelled_provider_read_does_not_release_slot_before_reap() {
         let slot = Rc::new(Cell::new(Some([1; 32])));
