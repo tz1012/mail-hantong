@@ -8,19 +8,20 @@
 <body>
 <header><a class="brand" href="index.html">한통 <span>mail-hantong</span></a><nav aria-label="주 메뉴"><a href="index.html" aria-current="page">소개</a><a href="#start">설치</a><a href="#ai">AI 연결</a><a href="privacy.html">개인정보</a><a href="terms.html">이용 안내</a></nav></header>
 <main>
-<p class="eyebrow">Windows 11 x64 · CLI 베타 0.1.0-beta.20</p>
+<p class="eyebrow">Windows 11 x64 · CLI 베타 0.1.0-beta.21</p>
 <h1>메일과 AI를<br>한 터미널에서</h1>
 <p class="lead">내 Windows PC에서 메일을 읽고 작성하는 메일 클라이언트입니다. 한통의 설정·내용 확인·보내기·취소는 같은 터미널에서 진행합니다. 별도 한통 확인창이나 Windows Hello를 요구하지 않으며, Google 로그인·동의만 표준 브라우저에서 진행합니다.</p>
-<div class="actions"><a class="button" href="#start">설치하고 시작하기</a><a href="https://github.com/tz1012/mail-hantong/releases">beta.20 릴리스·변경 내용</a></div>
+<div class="actions"><a class="button" href="#start">설치하고 시작하기</a><a href="https://github.com/tz1012/mail-hantong/releases">beta.21 릴리스·변경 내용</a></div>
 
-<p class="notice"><strong>beta.20 안내:</strong> 여러 Google 계정을 기존 권한과 함께 연결하고, 일반 IMAP/SMTP 계정도 같은 CLI/TUI에서 조회·작성·개별 발송 확인할 수 있습니다. Daum IMAP·SMTP 인증과 합성 메일 발송 상태를 실제로 확인했습니다. Daum IMAP 카탈로그에서 사서함 17개를 읽고 최근 2페이지와 반복 새로고침을 두 번 모두 확인했으며 본문 읽기도 검증했습니다. 실제 휴지통 이동은 수행하지 않았습니다.</p>
+<p class="notice"><strong>beta.21 안내:</strong> 여러 Google 계정을 기존 권한과 함께 연결하고, 일반 IMAP/SMTP 계정도 같은 CLI/TUI에서 조회·작성·개별 발송 확인할 수 있습니다. 이전 beta.20 계열에서 Daum IMAP·SMTP 인증과 합성 메일 발송 상태를 실제로 확인했습니다. 당시 Daum IMAP 카탈로그에서 사서함 17개를 읽고 최근 2페이지와 반복 새로고침을 두 번 모두 확인했으며 본문 읽기도 검증했습니다. beta.21에서는 Windows 패키징·설치 회귀를 확인했으며, 실제 휴지통 이동은 수행하지 않았습니다.</p>
 
 <section id="start">
 <h2>설치 → 실행 → 계정 연결 → Google 동의 → 이용</h2>
 <ol class="steps">
 <li><strong>설치·업데이트:</strong> Windows PowerShell에서 아래 명령을 실행하세요. beta.5부터는 설치 후 <code>update hantong</code> 또는 <code>hantong update</code>로 업데이트할 수 있습니다. beta.3·beta.4 사용자는 먼저 아래 설치 명령을 한 번 실행해야 업데이트 명령이 추가됩니다.
-<pre><code>irm https://raw.githubusercontent.com/tz1012/mail-hantong/66d28d6deb0f3dadc7d3591a7fb34350e510753f/install.ps1 | iex</code></pre>
+<pre><code>irm https://raw.githubusercontent.com/tz1012/mail-hantong/aa8d344af13899d13d85fb464700f50fdaa36785/install.ps1 | iex</code></pre>
 <p>설치기는 공개 릴리스의 체크섬을 확인합니다. GitHub API가 일시적으로 403 또는 429를 반환하면 같은 저장소의 공개 릴리스 피드를 사용해도 고정된 GitHub 자산 URL·HEAD 크기·SHA256을 다시 확인합니다. 피드가 잘못되면 설치를 중단합니다. 일반 메일 이용에 Rust·Python·Docker·Google Cloud 설정 파일은 필요하지 않습니다. ZIP으로 직접 설치할 때는 릴리스의 <code>SHA256SUMS</code>를 대조하세요.</p></li>
+<li><strong>beta.21 ??? ??:</strong> ?? publisher ??? Windows 8.3 alias?long path ??? ?????. ?? Windows v1 ?????? DB??? ?????.</li>
 <li><strong>구버전 업데이트 오류:</strong> <code>Join-Path</code> 또는 <code>drive</code> 오류가 나면 위 설치 명령으로 직접 교체하세요. 계정 저장소는 보존합니다. 프로그램만 제거하는 방법은 <a href="https://github.com/tz1012/mail-hantong/blob/main/docs/latest/WINDOWS-RECOVERY.md">Windows 복구·재설치 안내</a>에서 확인하세요.</li>
 <li><strong>실행:</strong> 같은 터미널에서 한국어 시작 메뉴를 여세요.
 <pre><code>hantong --lang ko init</code></pre>
@@ -32,7 +33,7 @@
 <p>같은 Google 계정·동일한 권한으로 다시 연결하면 중복 등록 없이 기존 연결을 사용합니다. 새 계정은 기존 계정을 교체하지 않으며, 터미널에 표시된 계정 목록과 기능을 확인한 뒤 추가합니다. IMAP/SMTP 설정은 작업 메뉴 <code>6</code>에서 서버·포트·TLS·로그인·별도 발신 주소를 입력하고, 비밀번호는 같은 터미널의 보호 입력에서만 입력합니다.</p>
 </section>
 
-<p>macOS와 Linux도 지원 대상입니다. 현재 같은 CLI/TUI·메일 기능을 제공하기 위한 OS 구현을 진행 중이며, 두 OS의 설치 패키지와 실제 메일 기능 검증은 아직 완료되지 않았습니다.</p>
+<p>macOS and Linux remain support targets, but beta.21 ships Windows x64 only. Unix foundation code is experimental and inactive in the Windows product path; Mac/Linux product mail, installation and update integration are deferred until Ponytail and are not offered in this release.</p>
 <section id="mail">
 <h2>메일 이용과 기능 전환</h2>
 <div class="table-scroll"><table>
@@ -80,17 +81,17 @@ hantong ai chat codex</code></pre>
 <p>AI에 입력한 프롬프트·대화 맥락과 허용된 메일 도구 결과는 선택한 외부 AI 서비스로 전송될 수 있습니다. AI 도구 연결만으로 발송이나 삭제가 실행되지는 않습니다. 발송과 휴지통 이동은 같은 터미널에서 전체 내용을 확인한 뒤 명시적으로 선택해야 합니다. <a href="privacy.html">외부 전송과 저장 범위</a>를 먼저 읽어 주세요.</p>
 </section>
 
-<p class="notice"><strong>Codex 연결 수정:</strong> beta.20는 지원되는 Windows 호스트에서 세션 전용 MXC 격리를 사용합니다. 디스크 읽기는 기본 거부하고 최소 실행 경로와 새 임시 폴더만 허용합니다. 이 PC에서 허용/거부 파일 검사와 실제 합성 질문 응답을 확인했으며, 모델 시험에 메일 내용을 넣지 않았습니다. MXC를 지원하지 않는 호스트에서는 읽기 권한을 넓히지 않고 종료합니다. 전역 Codex 설정·UAC·기존 계정은 변경하지 않습니다.</p>
+<p class="notice"><strong>Codex 연결 수정:</strong> beta.21는 지원되는 Windows 호스트에서 세션 전용 MXC 격리를 사용합니다. 디스크 읽기는 기본 거부하고 최소 실행 경로와 새 임시 폴더만 허용합니다. 이 PC에서 허용/거부 파일 검사와 실제 합성 질문 응답을 확인했으며, 모델 시험에 메일 내용을 넣지 않았습니다. MXC를 지원하지 않는 호스트에서는 읽기 권한을 넓히지 않고 종료합니다. 전역 Codex 설정·UAC·기존 계정은 변경하지 않습니다.</p>
 <p>명령 표는 한통 내장 대화에 적용됩니다. 제한된 공식 Claude Code 세션에서는 사용자 명령을 끄고 <kbd>Ctrl+C</kbd> 두 번으로 한통에 돌아옵니다.</p>
 <section id="status">
-<h2>beta.20에서 확인한 범위</h2>
+<h2>Historical beta.20 evidence</h2>
 <ul>
 <li>이번 beta는 전체 1,906개 검사를 새로 반복하지 않고, 변경 영향에 맞춘 Store/Core/CLI·SMTP·설치 회귀 검사를 수행합니다. 이전 통합 기준의 전체 검사 결과를 이번 beta의 새 전체 검사 결과로 표시하지 않습니다.</li>
 <li>실제 Gmail 계정에서 터미널 취소, 본인 주소로 합성 메일 1회 발송·수신, 본문·첨부 내용 일치와 자동 재발송 없음은 beta.3에서 확인한 결과입니다.</li>
 <li>Codex와 Claude 각각 실제 2턴의 합성 대화와 문맥 유지·정상 종료를 확인했습니다. 메일 내용은 요청하지 않았고 기존 로그인을 사용했습니다. 실제 AI 메일 발송·휴지통 이동은 수행하지 않았습니다. Daum IMAP·SMTP 인증, 합성 메일 발송 상태, 사서함 17개 조회와 본문 읽기는 이전 버전에서 확인했습니다.</li>
 <li>새 Windows 가상 머신 점검·사람 보안 검토·Google 검증 심사 완료는 별도 과제입니다. 터미널 선택은 요청 의도이며 OS 본인 확인 증거가 아닙니다.</li>
 </ul>
-<p>현재 버전은 Windows CLI beta.20입니다. <code>/help</code>를 입력하면 현재 CLI에서 이용 가능한 명령과 설명을 확인할 수 있습니다. 새 메일 GUI, macOS·Linux 제품 지원, 전체 메일함 자동 동기화, 예약 발송·주소록·규칙 자동화, 일반 첨부 다운로드·풍부한 HTML 표시는 이번 배포의 완료 기능으로 안내하지 않습니다. Gmail과 지원되는 일반 IMAP 계정은 조건을 충족할 때 단일 메일을 휴지통으로 이동할 수 있으며, 영구 삭제·대량 삭제·스팸 삭제·IMAP EXPUNGE는 지원하지 않습니다. Gmail 휴지통 이동에는 Modify 권한과 터미널 최종 확인이 필요합니다. Google 수정 권한 자체의 범위는 앱 기능보다 넓을 수 있으므로 연결 화면을 확인하세요.</p>
+<p>현재 버전은 Windows CLI beta.21입니다. <code>/help</code>를 입력하면 현재 CLI에서 이용 가능한 명령과 설명을 확인할 수 있습니다. 새 메일 GUI, macOS·Linux 제품 지원, 전체 메일함 자동 동기화, 예약 발송·주소록·규칙 자동화, 일반 첨부 다운로드·풍부한 HTML 표시는 이번 배포의 완료 기능으로 안내하지 않습니다. Gmail과 지원되는 일반 IMAP 계정은 조건을 충족할 때 단일 메일을 휴지통으로 이동할 수 있으며, 영구 삭제·대량 삭제·스팸 삭제·IMAP EXPUNGE는 지원하지 않습니다. Gmail 휴지통 이동에는 Modify 권한과 터미널 최종 확인이 필요합니다. Google 수정 권한 자체의 범위는 앱 기능보다 넓을 수 있으므로 연결 화면을 확인하세요.</p>
 <p>상세 명령과 제약은 <a href="https://github.com/tz1012/mail-hantong/blob/main/docs/latest/CLI-LAUNCH.md">CLI 사용 안내</a>와 <a href="https://github.com/tz1012/mail-hantong/blob/main/docs/latest/PROGRESS.md">진행 기록</a>에 있습니다. <a href="terms.html">이용 안내와 라이선스</a>도 함께 확인하세요.</p>
 </section>
 </main>
