@@ -132,7 +132,8 @@ def main() -> int:
         bin_dir = root / "home" / ".local" / "bin"
         install_root.parent.mkdir(mode=0o700, parents=True)
         bin_dir.mkdir(mode=0o700, parents=True)
-        environment = {**os.environ, "HOME": str(root / "home"), "XDG_DATA_HOME": str(root / "data")}
+        # Program roots are explicit. Keep the OS user environment for Keychain.
+        environment = dict(os.environ)
         subprocess.run(
             ["sh", str(package_root / "install.sh"), "--install-root", str(install_root), "--bin-dir", str(bin_dir)],
             env=environment, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,

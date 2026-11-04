@@ -47,6 +47,15 @@ jobs:
           rustup target add ${{ matrix.target }} --toolchain 1.95.0
           rustup default 1.95.0
           rustup component add clippy --toolchain 1.95.0
+      - name: Restore native build cache
+        uses: actions/cache/restore@v6.1.0
+        id: cargo-cache
+        with:
+          path: |
+            ~/.cargo/registry
+            target
+          key: native-1.95.0-${{ matrix.target }}-${{ hashFiles('Cargo.lock') }}-${{ github.sha }}
+          restore-keys: native-1.95.0-${{ matrix.target }}-${{ hashFiles('Cargo.lock') }}-
       - name: Fetch locked dependencies
         run: cargo fetch --locked
       - name: Verify source traceability and license provenance
@@ -108,3 +117,11 @@ jobs:
           path: ${{ runner.temp }}/artifacts/${{ env.PACKAGE_VERSION }}/
           if-no-files-found: error
           retention-days: 14
+      - name: Save native build cache
+        if: always() && steps.cargo-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            target
+          key: native-1.95.0-${{ matrix.target }}-${{ hashFiles('Cargo.lock') }}-${{ github.sha }}
