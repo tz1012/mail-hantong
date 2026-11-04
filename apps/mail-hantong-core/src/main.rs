@@ -43,7 +43,7 @@ mod terminal_secret_input;
 mod uid_worker;
 #[cfg(all(test, target_os = "linux"))]
 mod unix_authentication_tests;
-#[cfg(unix)]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 pub mod unix_identity;
 
 #[derive(Clone, Copy, PartialEq, Eq)]

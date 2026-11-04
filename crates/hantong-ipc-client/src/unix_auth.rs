@@ -35,6 +35,7 @@ impl<S: OpaqueSigner> std::fmt::Debug for PendingUnixAuthentication<S> {
 }
 
 impl<S: OpaqueSigner> PendingUnixAuthentication<S> {
+    #[allow(clippy::too_many_arguments)] // Keep each independently bound auth input explicit.
     pub(crate) fn begin(
         signer: S,
         pinned_server_key: [u8; 72],
@@ -78,6 +79,7 @@ impl<S: OpaqueSigner> PendingUnixAuthentication<S> {
 
     /// Starts authentication over an already connected, kernel-identified Unix socket.
     /// The socket remains owned by the pending state until `respond_connected` succeeds.
+    #[allow(clippy::too_many_arguments)]
     pub fn begin_connected(
         signer: S,
         connection: UnixLocalConnection,

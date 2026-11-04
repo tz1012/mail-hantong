@@ -3476,6 +3476,15 @@ mod unix_schema_tests {
             .query_row("SELECT count(*) FROM accounts", [], |row| row.get(0))
             .unwrap();
         connection.execute_batch(MIGRATION_V25_TO_V26).unwrap();
+        // The standalone migration SQL intentionally leaves the framework CAS
+        // update to its caller, so mirror the production migration wrapper
+        // before validating the resulting current schema.
+        connection
+            .execute(
+                "UPDATE app_metadata SET schema_version=26,updated_at_utc_ms=2 WHERE singleton=1 AND schema_version=25",
+                [],
+            )
+            .unwrap();
         validate_schema(&connection, SCHEMA_V26, 26).unwrap();
         let mut foreign_key_statement = connection.prepare("PRAGMA foreign_key_check").unwrap();
         let mut foreign_keys = foreign_key_statement.query([]).unwrap();

@@ -10,6 +10,7 @@ use keyring_core::Entry;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use hantong_platform::unix_paths::UnixDirectoryGuard;
 
+#[cfg(target_os = "linux")]
 const PROTECTED_LABEL: &str = "mail-hantong protected item";
 
 pub const SERVICE: &str = "mail-hantong.local-security.v1";
@@ -257,7 +258,7 @@ impl UnixSecretStore {
                 crate::wipe(&mut existing);
                 return Err(UnixSecretError::AlreadyExists);
             }
-            Err(error) if matches!(error, keyring_core::Error::NoEntry) => {}
+            Err(keyring_core::Error::NoEntry) => {}
             Err(error) => return Err(map_keyring_error(error)),
         }
         entry.set_secret(secret).map_err(map_keyring_error)
@@ -377,6 +378,12 @@ fn is_lower_hex(value: &str) -> bool {
 fn encoded_account(account_id: &str) -> Result<String, UnixSecretError> {
     crate::validate_account(account_id).map_err(|_| UnixSecretError::InvalidSelector)?;
     Ok(crate::encode_base32hex(account_id.as_bytes()))
+}
+
+impl Default for UnixSecretStore {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 #[cfg(test)]

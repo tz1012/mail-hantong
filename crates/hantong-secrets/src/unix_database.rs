@@ -55,16 +55,14 @@ impl Database {
             selector,
             root: &roots.1,
         };
-        Self::open_prepared(&roots.0, &mut source).and_then(|opened| {
-            Ok(Self {
-                connection: opened.connection,
-                key: opened.key,
-                _file: opened.file,
-                _database_lock: opened.database_lock,
-                _key_lock: opened.key_lock,
-                data: roots.0,
-                _secrets: roots.1,
-            })
+        Self::open_prepared(&roots.0, &mut source).map(|opened| Self {
+            connection: opened.connection,
+            key: opened.key,
+            _file: opened.file,
+            _database_lock: opened.database_lock,
+            _key_lock: opened.key_lock,
+            data: roots.0,
+            _secrets: roots.1,
         })
     }
 
@@ -285,7 +283,12 @@ fn directory_identity(root: &UnixDirectoryGuard) -> Result<(u64, u64), DatabaseE
         return Err(DatabaseError::Internal);
     }
     let stat = unsafe { stat.assume_init() };
-    Ok((stat.st_dev as u64, stat.st_ino as u64))
+    #[cfg(target_os = "linux")]
+    let device = stat.st_dev;
+    #[cfg(target_os = "macos")]
+    let device = stat.st_dev as u64;
+    let inode = stat.st_ino;
+    Ok((device, inode))
 }
 
 fn open_keyed(
@@ -367,7 +370,7 @@ fn configure(connection: &Connection) -> Result<(), DatabaseError> {
     }
     let journal_mode: String =
         internal(connection.pragma_query_value(None, "journal_mode", |row| row.get(0)))?;
-    if journal_mode.to_ascii_lowercase() != "delete" {
+    if !journal_mode.eq_ignore_ascii_case("delete") {
         return Err(DatabaseError::Internal);
     }
     Ok(())

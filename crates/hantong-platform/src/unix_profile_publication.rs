@@ -115,7 +115,7 @@ pub fn cleanup_profile_refresh_backup(
         .backup
         .as_ref()
         .ok_or(ErrorCode::InternalError)?;
-    let expected = read_all(&backup)?;
+    let expected = read_all(backup)?;
     if expected.is_empty() || expected.len() > MAX_PROFILE_BYTES {
         return Err(ErrorCode::InternalError);
     }
@@ -301,7 +301,7 @@ fn validate_bytes(bytes: &[u8]) -> Result<(), ErrorCode> {
 
 fn temp_name(prefix: &str, id: [u8; 32]) -> String {
     let mut name = String::with_capacity(prefix.len() + 65);
-    name.push_str(".");
+    name.push('.');
     name.push_str(prefix);
     name.push('-');
     for byte in id {

@@ -158,11 +158,11 @@ impl SecretStore {
                     .map_err(|_| SecretError::InvalidRoot)?;
                 unix_secret_store::UnixSecretStore::install_platform_store()
                     .map_err(|_| SecretError::UnsupportedPlatform)?;
-                return Ok(Self {
+                Ok(Self {
                     root: root.to_path_buf(),
                     unix_root,
                     unix_store: unix_secret_store::UnixSecretStore::new(),
-                });
+                })
             }
             #[cfg(not(any(target_os = "linux", target_os = "macos")))]
             {

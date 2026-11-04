@@ -63,6 +63,7 @@ pub struct PendingUnixAuthentication {
 }
 
 impl PendingUnixAuthentication {
+    #[allow(clippy::too_many_arguments)] // Keep each independently bound auth input explicit.
     pub(crate) fn begin(
         server_signer: &mut impl OpaqueSigner,
         server_instance_id: [u8; 32],
@@ -135,6 +136,7 @@ impl PendingUnixAuthentication {
 
     /// Starts authentication over an already connected, kernel-identified Unix socket.
     /// The socket remains owned by the pending state until `finish` succeeds.
+    #[allow(clippy::too_many_arguments)]
     pub fn begin_connected(
         server_signer: &mut impl OpaqueSigner,
         connection: UnixLocalConnection,

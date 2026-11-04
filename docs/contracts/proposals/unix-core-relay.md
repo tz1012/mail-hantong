@@ -76,6 +76,12 @@ issue terminal-review tickets, claim a send/trash operation, or bypass the
 existing Core policy and audit paths. Mail mutation and send confirmation
 remain separate Core workflows. A relay request is never human presence proof.
 
+This does not remove composing, sending, or Trash from Unix clients. The
+relay may forward their existing request/status/execute methods when the
+fixed profile permits them. Core alone validates the message-specific
+confirmation, consumes the ledger claim and invokes the provider. The relay
+cannot synthesize that confirmation or perform a provider operation itself.
+
 ## Trust and revalidation
 
 Core must authenticate the relay's Unix peer using the existing ADR-030 peer

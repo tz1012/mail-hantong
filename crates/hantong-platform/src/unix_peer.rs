@@ -40,7 +40,7 @@ pub fn observe_peer(fd: RawFd) -> Result<UnixPeerContextV2, ErrorCode> {
         }
         let mut instance = [0u8; 32];
         hash_instance(&boot, pid, start, &mut instance);
-        return UnixPeerContextV2::new(
+        UnixPeerContextV2::new(
             UnixPlatform::Linux,
             credentials.uid,
             credentials.gid,
@@ -48,7 +48,7 @@ pub fn observe_peer(fd: RawFd) -> Result<UnixPeerContextV2, ErrorCode> {
             session_id,
             instance,
         )
-        .map_err(|_| ErrorCode::AuthRequired);
+        .map_err(|_| ErrorCode::AuthRequired)
     }
     #[cfg(target_os = "macos")]
     {
@@ -67,8 +67,8 @@ pub fn observe_peer(fd: RawFd) -> Result<UnixPeerContextV2, ErrorCode> {
         }
         let mut instance = [0u8; 32];
         hash_instance(&boot, pid, start, &mut instance);
-        return UnixPeerContextV2::new(UnixPlatform::MacOs, uid, gid, pid, session, instance)
-            .map_err(|_| ErrorCode::AuthRequired);
+        UnixPeerContextV2::new(UnixPlatform::MacOs, uid, gid, pid, session, instance)
+            .map_err(|_| ErrorCode::AuthRequired)
     }
 }
 
@@ -131,9 +131,9 @@ pub fn peer_matches_current_image(peer: &UnixPeerContextV2) -> Result<bool, Erro
         let observed = std::fs::canonicalize(format!("/proc/{pid}/exe"))
             .map_err(|_| ErrorCode::AuthRequired)?;
         let current = std::env::current_exe()
-            .and_then(|path| std::fs::canonicalize(path))
+            .and_then(std::fs::canonicalize)
             .map_err(|_| ErrorCode::AuthRequired)?;
-        return same_executable(&observed, &current);
+        same_executable(&observed, &current)
     }
     #[cfg(target_os = "macos")]
     {
@@ -219,7 +219,11 @@ fn linux_process_start(pid: u32) -> Result<u64, ErrorCode> {
 #[cfg(target_os = "linux")]
 fn parse_linux_process_start(text: &str) -> Result<u64, ErrorCode> {
     let right = text.rfind(')').ok_or(ErrorCode::AuthRequired)?;
-    let fields: Vec<&str> = text[right + 2..].split_whitespace().collect();
+    let tail = text
+        .get(right + 1..)
+        .and_then(|tail| tail.strip_prefix(' '))
+        .ok_or(ErrorCode::AuthRequired)?;
+    let fields: Vec<&str> = tail.split_whitespace().collect();
     fields
         .get(19)
         .and_then(|value| value.parse().ok())
@@ -360,6 +364,9 @@ mod tests {
     fn sec03_proc_stat_parser_rejects_malformed_or_truncated_records() {
         assert!(parse_linux_process_start("1 (bad) S").is_err());
         assert!(parse_linux_process_start("1 bad S 1").is_err());
+        for truncated in [")", "1 (bad)", "1 (bad) ", "1 (bad)S"] {
+            assert!(parse_linux_process_start(truncated).is_err());
+        }
         let valid = "1 (name with ) paren) S 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 20";
         assert_eq!(parse_linux_process_start(valid), Ok(20));
     }

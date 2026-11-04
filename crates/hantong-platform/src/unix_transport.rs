@@ -13,7 +13,7 @@ use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::net::{UnixListener, UnixStream};
 
 const SOCKET_NAME: &str = "core-v2.sock";
-const SOCKET_MODE: u32 = 0o600;
+const SOCKET_MODE: libc::mode_t = 0o600;
 
 pub struct UnixLocalServer {
     listener: UnixListener,
@@ -77,7 +77,7 @@ impl UnixLocalServer {
         let metadata = std::fs::symlink_metadata(path).map_err(|_| ErrorCode::CoreUnavailable)?;
         if !metadata.file_type().is_socket()
             || metadata.uid() != unsafe { libc::geteuid() }
-            || metadata.mode() & 0o777 != SOCKET_MODE
+            || metadata.mode() & 0o777 != 0o600
             || (metadata.dev(), metadata.ino()) != (before.dev(), before.ino())
         {
             return Err(ErrorCode::ScopeDenied);

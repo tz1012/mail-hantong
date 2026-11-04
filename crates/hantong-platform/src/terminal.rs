@@ -469,10 +469,10 @@ mod unix {
         }
 
         pub fn size(&self) -> (u16, u16) {
-            if let Some((at, size)) = self.cached_size.get() {
-                if at.elapsed() < Duration::from_millis(250) {
-                    return size;
-                }
+            if let Some((at, size)) = self.cached_size.get()
+                && at.elapsed() < Duration::from_millis(250)
+            {
+                return size;
             }
             let size = Self::query_size();
             self.cached_size.set(Some((Instant::now(), size)));
