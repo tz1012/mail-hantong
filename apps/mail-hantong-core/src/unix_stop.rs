@@ -6,9 +6,7 @@
 
 use hantong_contracts::ErrorCode;
 #[cfg(target_os = "macos")]
-use serde::Deserialize;
-#[cfg(target_os = "macos")]
-use serde_json::json;
+use serde_json::{Value, json};
 #[cfg(target_os = "macos")]
 use std::time::Duration;
 #[cfg(target_os = "macos")]
@@ -105,30 +103,25 @@ async fn request_macos_stop(
 }
 
 #[cfg(target_os = "macos")]
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct StopResponse {
-    jsonrpc: String,
-    id: String,
-    result: StopResult,
-}
-
-#[cfg(target_os = "macos")]
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct StopResult {
-    state: String,
-    protocol_version: u8,
-}
-
-#[cfg(target_os = "macos")]
 fn validate_stop_response(response: &[u8], request_id: &str) -> Result<(), ErrorCode> {
-    let value: StopResponse =
-        serde_json::from_slice(response).map_err(|_| ErrorCode::InvalidInput)?;
-    if value.jsonrpc != "2.0"
-        || value.id != request_id
-        || value.result.state != "stopping"
-        || value.result.protocol_version != 1
+    let value: Value = serde_json::from_slice(response).map_err(|_| ErrorCode::InvalidInput)?;
+    if serde_json::to_vec(&value).map_err(|_| ErrorCode::InvalidInput)? != response {
+        return Err(ErrorCode::InvalidInput);
+    }
+    let object = value.as_object().ok_or(ErrorCode::InvalidInput)?;
+    if object.len() != 3
+        || object.get("jsonrpc") != Some(&Value::String("2.0".into()))
+        || object.get("id") != Some(&Value::String(request_id.into()))
+    {
+        return Err(ErrorCode::InvalidInput);
+    }
+    let result = object
+        .get("result")
+        .and_then(Value::as_object)
+        .ok_or(ErrorCode::InvalidInput)?;
+    if result.len() != 2
+        || result.get("protocol_version") != Some(&Value::from(1))
+        || result.get("state") != Some(&Value::String("stopping".into()))
     {
         return Err(ErrorCode::InvalidInput);
     }
@@ -218,12 +211,12 @@ mod tests {
         .unwrap();
         assert_eq!(
             super::validate_stop_response(&bad, "unix-stop-v1"),
-            Err(ErrorCode::InvalidInput)
+            Err(super::ErrorCode::InvalidInput)
         );
         let duplicate = br#"{"jsonrpc":"2.0","jsonrpc":"2.0","id":"unix-stop-v1","result":{"state":"stopping","protocol_version":1}}"#;
         assert_eq!(
             super::validate_stop_response(duplicate, "unix-stop-v1"),
-            Err(ErrorCode::InvalidInput)
+            Err(super::ErrorCode::InvalidInput)
         );
     }
 
