@@ -13,7 +13,7 @@
 
 ## Product goals
 - Explain the product before asking users to install; make install/account/mail/AI instructions easy to find.
-- Lead with multi-account Inbox/tags, guided CLI plus keyboard/mouse TUI, and explicit terminal send/Trash review.
+- Lead with external local-stdio MCP connectivity and concrete user control of account/tool/data-transfer scope and per-message send/Trash confirmation. Mailbox change hints are the third strength; CLI/TUI follows.
 - Success: clear first-screen product/OS/CTA; functioning TOC/search and copy controls; readable mobile documentation.
 - Non-goals: app UI changes, new product features, signup/backend, competitor parity.
 
@@ -23,13 +23,13 @@
 
 ## Information architecture
 - Centered hero and three compact product strengths, then a left grouped sticky TOC and readable right documentation column.
-- Order: overview/OS, install/account connection, mail and TUI, AI, updates/troubleshooting, current validation and limits.
+- Order: external agent connection, permissions/security, opt-in mailbox hints, installation/account connection, mail and TUI, built-in AI, troubleshooting, validation and limits.
 - Download route provides four platform assets and directs users back to the relevant guide anchors.
 
 ## Design principles
 - Adopt zele's white-space, restrained dividers, serif hero, document-like code/table content and grouped sidebar.
 - Give HanTong's screenshot and distinctive advantages higher placement; do not import reference product claims.
-- Keep one source of product truth: release22 source and verification record, including historical caveats.
+- Keep one source of product truth: release23 source and verification record, including historical caveats.
 
 ## Visual language
 - Neutral white/ink, forest-green accents, muted gray and subtle rules; optional dark display theme.

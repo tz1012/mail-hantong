@@ -2,13 +2,13 @@
 <html lang="ko">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="referrer" content="no-referrer">
-<meta name="description" content="한통 beta.23의 Windows·Linux headless·macOS 설치, Google·IMAP·SMTP 계정 연결, 메일 읽기·작성·발송·휴지통, Codex·Claude 연결 안내입니다.">
+<meta name="description" content="쓰던 AI에 내 메일을 연결하세요. 한통 beta.23의 외부 MCP 연결, 계정·도구 권한, 발송·휴지통 확인과 Windows·Mac·Linux 설치 안내.">
 <link rel="canonical" href="https://tz1012.github.io/mail-hantong/">
 <meta property="og:type" content="website">
 <meta property="og:locale" content="ko_KR">
 <meta property="og:site_name" content="한통 · mail-hantong">
-<meta property="og:title" content="한통 — 메일과 AI를 한 터미널에서">
-<meta property="og:description" content="여러 계정의 메일을 한곳에서. Windows·macOS·Linux용 CLI와 통신풍 TUI의 설치·이용 안내입니다.">
+<meta property="og:title" content="한통 — 쓰던 AI에, 내 메일을 연결하세요">
+<meta property="og:description" content="외부 에이전트에 메일 도구를 연결하고, 발송·휴지통 이동은 직접 확인하세요. Windows·Mac·Linux 지원.">
 <meta property="og:url" content="https://tz1012.github.io/mail-hantong/">
 <meta property="og:image" content="https://tz1012.github.io/mail-hantong/assets/hantong-share-v1.png">
 <meta property="og:image:secure_url" content="https://tz1012.github.io/mail-hantong/assets/hantong-share-v1.png">
@@ -17,8 +17,8 @@
 <meta property="og:image:height" content="640">
 <meta property="og:image:alt" content="가상 계정·메일을 사용한 한통 TUI: 계정 태그, 메일 목록과 보낸 사람·수신자·본문">
 <meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:title" content="한통 — 메일과 AI를 한 터미널에서">
-<meta name="twitter:description" content="Windows·macOS·Linux용 한통 설치·이용 안내">
+<meta name="twitter:title" content="한통 — 쓰던 AI에, 내 메일을 연결하세요">
+<meta name="twitter:description" content="외부 AI 연결 · 계정·도구 범위 설정 · 발송·휴지통 직접 확인">
 <meta name="twitter:image" content="https://tz1012.github.io/mail-hantong/assets/hantong-share-v1.png">
 <title>설치부터 메일·AI 이용까지 | 한통</title><link rel="stylesheet" href="styles.css">
 </head>
@@ -26,9 +26,35 @@
 <a class="skip-link" href="#guide">본문으로 건너뛰기</a>
 <header class="site-header"><a class="brand" href="index.html" aria-label="한통 홈"><span class="brand-name">한통<span class="brand-dot">.</span></span><span class="brand-sub">mail-hantong</span></a><nav class="header-links" aria-label="주 메뉴"><a href="download.html">다운로드 <span aria-hidden="true">↗</span></a><a href="https://github.com/tz1012/mail-hantong">GitHub <span aria-hidden="true">↗</span></a><button class="theme-toggle" type="button" data-theme-toggle aria-label="어두운 테마로 전환" aria-pressed="false">◐</button></nav></header>
 <main class="site-main" id="guide">
-<section class="hero" id="top"><p class="eyebrow">CLI + 통신풍 TUI <span>·</span> BETA.23</p><h1>여러 계정의 메일,<br><span>나와 AI가 함께 쓰는 한통.</span></h1><p class="lead">메일을 모으고, 읽고, 작성하고.<br>익숙한 터미널에서 내 흐름대로 이어가세요.</p><div class="actions"><a class="button" href="#start">설치하고 시작하기 <span aria-hidden="true">→</span></a><a class="text-link" href="download.html">Windows · Mac · Linux</a></div></section>
-<div class="strengths" aria-label="한통의 장점"><article><span class="strength-number">01 / TOGETHER</span><h2>계정은 여럿, 받은편지함은 하나.</h2><p>개인·업무 메일을 계정 태그로 구별하고<br>같은 화면에서 읽으세요.</p></article><article><span class="strength-number">02 / YOUR WORKFLOW</span><h2>짧은 명령부터, 통신풍 화면까지.</h2><p>CLI로 입력하고 TUI로 탐색하세요.<br>키보드와 마우스 모두 사용할 수 있습니다.</p></article><article><span class="strength-number">03 / YOU DECIDE</span><h2>AI와 다루고, 보내기는 직접.</h2><p>메일을 보며 Codex·Claude로 전환하고<br>발송 전 내용은 터미널에서 확인하세요.</p></article></div>
-<div class="docs-layout"><aside class="docs-sidebar" aria-label="문서 목차"><details class="toc-panel" open><summary class="toc-title">이용 안내 <span aria-hidden="true">⌄</span></summary><div class="toc-content"><label class="search-label" for="toc-search"><span class="sr-only">목차 검색</span><input id="toc-search" type="search" placeholder="목차 검색…" autocomplete="off"><kbd class="search-shortcut">/</kbd></label><div class="toc-external"><a href="download.html">다운로드 <span aria-hidden="true">↗</span></a><a href="https://github.com/tz1012/mail-hantong/releases/tag/v0.1.0-beta.23">릴리스 노트 <span aria-hidden="true">↗</span></a></div><nav class="toc-nav" aria-label="상세 목차"><div class="toc-group"><p class="toc-group-label">시작하기</p><a href="#start">설치와 첫 실행</a><a href="#platforms">지원 환경</a><a href="#unix-install">Mac·Linux / SSH</a><a href="#accounts">계정 연결</a><a href="#google-account">Google · Gmail</a><a href="#imap-account">IMAP / SMTP</a></div><div class="toc-group"><p class="toc-group-label">메일과 터미널</p><a href="#features">통합함과 계정 태그</a><a href="#mail">조회·작성·발송·휴지통</a><a href="#terminal">CLI · TUI 키 안내</a></div><div class="toc-group"><p class="toc-group-label">AI와 관리</p><a href="#ai">AI · Codex · Claude</a><a href="#external-mcp">외부 MCP 연결</a><a href="#update">업데이트·문제 해결</a><a href="#status">검증 범위·제한</a></div></nav><p id="toc-empty" class="small-note" role="status" hidden>일치하는 목차가 없습니다.</p></div></details></aside><article class="docs-content"><section id="start">
+<section class="hero" id="top"><p class="eyebrow">AI 메일 도구 · 사용자 통제 <span>·</span> BETA.23</p><h1>쓰던 AI에,<br><span>내 메일을 연결하세요.</span></h1><p class="lead">여러 메일 계정을 한통으로 연결해 AI와 조회하고 작성하세요.<br>발송과 휴지통 이동은 내용을 확인한 뒤 직접 결정합니다.</p><div class="actions"><a class="button" href="#external-mcp">AI에 연결하는 방법 <span aria-hidden="true">→</span></a><a class="text-link" href="#start">설치하고 시작하기</a></div><p class="small-note">Windows · macOS · Linux / 로컬 stdio MCP 지원 호스트</p></section>
+<div class="strengths" aria-label="한통의 장점"><article><span class="strength-number">01 / CONNECT</span><h2>쓰던 에이전트에 메일 도구를.</h2><p>로컬 MCP를 지원하는 데스크톱 앱에서<br>여러 계정의 메일을 조회하고 작성하세요.</p></article><article><span class="strength-number">02 / YOU DECIDE</span><h2>접근 범위부터, 마지막 확인까지.</h2><p>연결할 계정·도구 범위를 확인하고<br>발송·휴지통 이동은 건별로 결정하세요.</p></article><article><span class="strength-number">03 / STAY INFORMED</span><h2>메일함의 변화를 에이전트에게.</h2><p>선택한 메일함의 변경 신호를 전달합니다.<br>자동 반응 여부는 연결한 앱에 달려 있습니다.</p></article></div>
+<div class="docs-layout"><aside class="docs-sidebar" aria-label="문서 목차"><details class="toc-panel" open><summary class="toc-title">이용 안내 <span aria-hidden="true">⌄</span></summary><div class="toc-content"><label class="search-label" for="toc-search"><span class="sr-only">목차 검색</span><input id="toc-search" type="search" placeholder="목차 검색…" autocomplete="off"><kbd class="search-shortcut">/</kbd></label><div class="toc-external"><a href="download.html">다운로드 <span aria-hidden="true">↗</span></a><a href="https://github.com/tz1012/mail-hantong/releases/tag/v0.1.0-beta.23">릴리스 노트 <span aria-hidden="true">↗</span></a></div><nav class="toc-nav" aria-label="상세 목차"><div class="toc-group"><p class="toc-group-label">AI 연결과 보안</p><a href="#external-mcp">외부 에이전트 연결</a><a href="#security">권한·보안·내 확인</a><a href="#receive-events">메일함 변경 알림</a></div><div class="toc-group"><p class="toc-group-label">설치와 계정</p><a href="#start">설치와 첫 실행</a><a href="#platforms">지원 환경</a><a href="#unix-install">Mac·Linux / SSH</a><a href="#accounts">계정 연결</a><a href="#google-account">Google · Gmail</a><a href="#imap-account">IMAP / SMTP</a></div><div class="toc-group"><p class="toc-group-label">메일과 터미널</p><a href="#features">통합함과 계정 태그</a><a href="#mail">조회·작성·발송·휴지통</a><a href="#terminal">CLI · TUI 키 안내</a></div><div class="toc-group"><p class="toc-group-label">AI와 관리</p><a href="#ai">AI · Codex · Claude</a><a href="#update">업데이트·문제 해결</a><a href="#status">검증 범위·제한</a></div></nav><p id="toc-empty" class="small-note" role="status" hidden>일치하는 목차가 없습니다.</p></div></details></aside><article class="docs-content"><section id="external-mcp">
+<p class="section-kicker">CONNECT YOUR AGENT</p><h2>내가 쓰던 AI에서, 내 메일을 다루세요</h2>
+<p>로컬 stdio MCP를 지원하는 외부 에이전트·데스크톱 앱에 한통을 연결합니다. 연결한 계정의 폴더와 메일을 조회하고, 본문을 읽고, 초안을 만들고, 발송·휴지통 이동을 요청할 수 있습니다. CLI와 통신풍 TUI에서도 같은 메일 계정을 이용합니다.</p>
+<ol class="steps"><li><strong>한통 설치·계정 연결.</strong> <a href="#start">설치 안내</a>를 따라 Google 또는 일반 IMAP/SMTP 계정을 연결합니다.</li><li><strong>공유 범위 확인.</strong> 아래 등록 요청에 표시된 계정·도구·외부 전송 범위를 터미널에서 확인합니다.</li><li><strong>쓰던 앱에 MCP 설정 추가.</strong> <code>config</code>의 JSON을 해당 앱의 MCP 설정 방식에 맞게 추가하고 도구를 불러옵니다.</li></ol>
+<pre><code>hantong-mcp register
+hantong review --kind registration --request-id REQUEST_ID
+hantong-mcp status REQUEST_ID
+hantong-mcp doctor
+hantong-mcp config</code></pre>
+<p><code>REQUEST_ID</code>는 실제 출력값으로 바꿉니다. <code>config</code>는 실행 경로가 포함된 <code>mcpServers</code> JSON을 출력하고, <code>doctor</code>는 연결 상태를 진단합니다. 앱 설정을 자동으로 수정하지 않으며, 업데이트 후 실행 경로가 바뀌면 설정을 다시 생성하세요.</p>
+<p class="small-note">URL만 받는 원격 MCP 호스트는 지원하지 않습니다. 외부 데스크톱 앱별 실제 연동 시험은 아직 남아 있습니다. 기존 v2 등록과 내장 Codex·Claude의 권한은 새 v3 권한으로 자동 확대되지 않습니다. <a href="#ai">한통 안에서 AI 대화하기</a>도 선택할 수 있습니다.</p>
+</section><section id="security">
+<p class="section-kicker">YOUR MAIL, YOUR CONTROL</p><h2>메일 접근은 정한 범위로. 보내기는 내 확인으로.</h2>
+<ul><li><strong>계정·도구·외부 전송 범위를 먼저 확인.</strong> AI에 제공할 권한을 등록할 때 확인합니다. 연결만으로 다른 계정의 권한까지 확대하지 않습니다.</li><li><strong>발송·휴지통 이동은 한 통씩 확인.</strong> AI가 요청해도 같은 터미널에서 대상과 내용을 확인하고 선택해야 실행됩니다. 결과가 불확실하면 자동으로 반복하지 않습니다.</li><li><strong>인증정보는 보호 저장소에.</strong> 비밀번호·토큰·키를 메일 도구 응답에 넣지 않습니다. 메일 속 지시문으로 권한이나 정책을 변경하지 않습니다.</li></ul>
+<p>허용한 조회 도구가 반환한 메일 본문·메타데이터와 AI 대화 내용은 선택한 외부 AI 서비스로 전송될 수 있습니다. 본문을 읽을 때마다 터미널 확인을 요구하는 방식은 아닙니다. 알림에는 제목·주소·본문·첨부·토큰을 담지 않습니다.</p>
+<p><a href="privacy.html">외부 전송·저장 범위 읽기</a> · <a href="#status">검증 범위와 남은 일</a></p><p class="small-note">터미널 확인은 사용자의 작업 의도를 받는 절차이며 OS 본인 인증은 아닙니다. 보안 경계 코드의 사람 검토는 아직 남아 있습니다.</p>
+</section><section id="receive-events">
+<p class="section-kicker">MAILBOX SIGNALS</p><h2>새 메일을 기다리는 에이전트에게, 변경 신호를.</h2>
+<p>수신 감시를 켜면 준비된 Gmail·IMAP 받은편지함의 변경을 확인해 외부 MCP에 전달합니다. 처음 확인한 상태를 기준으로 삼으므로 기존 메일을 모두 알림으로 보내지 않습니다.</p>
+<pre><code>hantong-mcp notify on
+hantong-mcp notify pending
+hantong-mcp watch
+# 감시 끄기
+hantong-mcp notify off</code></pre>
+<p>리소스 구독을 지원하는 호스트는 <code>mail-hantong://events</code>의 변경 알림을 받을 수 있습니다. 다른 호스트는 <code>watch</code>의 NDJSON 또는 <code>notify pending</code>을 자체 실행 흐름에 연결할 수 있습니다. 확인한 이벤트는 <code>hantong-mcp notify ack CURSOR</code>로 처리합니다.</p>
+<p class="small-note">기본 꺼짐이며 외부 등록·계정 범위가 유효해야 합니다. Core 감시는 약 60초, MCP 조회는 약 5초 주기이고 계정 수·제공자 지연·요청 한도의 영향을 받습니다. 정확한 새 메일 개수나 즉시 수신을 보장하지 않는 메일함 변경 힌트입니다. LLM을 깨우고 자동 대화를 시작할지는 호스트가 결정합니다. 여러 호스트는 같은 외부 등록과 이벤트 확인 상태를 공유합니다.</p>
+</section><section id="start">
 <p class="section-kicker">GETTING STARTED</p><h2>설치하고, 바로 시작하세요</h2>
 <p>별도 서버 설정이나 개발 도구 없이 설치합니다. Windows는 아래 명령을 PowerShell에서 실행하세요. Mac·Linux는 <a href="#unix-install">Unix 설치 안내</a>를 따르세요.</p>
 <div class="code-label"><span>Windows · PowerShell</span><span>현재 공개 버전 beta.23</span></div>
@@ -142,19 +168,6 @@ hantong ai chat claude</code></pre><p><code>hantong ai login claude</code>는 Co
 <h3>AI 메일 도구 자동 연결</h3>
 <p>내장 Codex 또는 Claude를 처음 사용할 때 같은 터미널에서 제공자별 계정 목록과 외부 AI 전송 기능을 확인합니다. 확인을 마치면 표시된 준비 완료 계정 전체의 메일 읽기·본문·작성·발송 요청·단일 메일 휴지통 이동 도구가 자동으로 연결됩니다. 현재는 계정별 부분 선택을 지원하지 않으며, 취소하면 연결하지 않습니다. 기존 내장 AI 등록은 새 계정으로 자동 확대되지 않습니다. 별도의 <code>hantong-mcp register</code>, 요청 ID 복사, <code>hantong review</code>, 필수 <code>/agent on</code> 절차는 필요하지 않습니다.</p>
 <p>AI에 입력한 프롬프트·대화 맥락과 허용된 메일 도구 결과는 선택한 외부 AI 서비스로 전송될 수 있습니다. AI 도구 연결만으로 발송이나 삭제가 실행되지는 않습니다. 발송과 휴지통 이동은 같은 터미널에서 전체 내용을 확인한 뒤 명시적으로 선택해야 합니다. <a href="privacy.html">외부 전송과 저장 범위</a>를 먼저 읽어 주세요.</p>
-</section><section id="external-mcp">
-<h2>외부 MCP와 데스크톱 에이전트 연결</h2>
-<p>Codex·Claude Desktop 등 외부 호스트에서 한통의 메일 도구를 쓰려면 MCP 등록을 별도로 검토합니다. 기존 v2 등록은 자동으로 v3 권한으로 넓어지지 않습니다. v3는 메일 이벤트 확인, 단일 메일 휴지통 요청·실행을 포함하며, 계정과 도구 범위를 새 요청에서 확인한 뒤 명시적으로 승인해야 합니다.</p>
-<pre><code>hantong-mcp register
-hantong review --kind registration --request-id REQUEST_ID
-hantong-mcp status REQUEST_ID
-hantong-mcp doctor
-hantong-mcp config
-hantong-mcp notify on
-hantong-mcp notify pending
-hantong-mcp watch</code></pre>
-<p><code>REQUEST_ID</code>는 실제 출력값으로 바꿉니다. 외부 호스트가 메일 내용을 읽거나 도구를 호출하려면 한통 Core가 실행 중이고 등록·동의·계정 범위가 유효해야 합니다. 기본 감시 주기는 Core 약 60초, MCP 조회 약 5초이며, 감시가 중단되면 <code>hantong-mcp notify pending</code>으로 보류된 이벤트를 확인하고 <code>hantong-mcp notify ack CURSOR</code>로 확인합니다.</p>
-<p>메일 도착을 외부 모델에 자동으로 깨우거나 대화를 자동 실행한다고 약속하지 않습니다. 이벤트는 메타데이터와 변경 여부를 전달하는 선택 기능이며, 본문 전송·발송·휴지통 이동은 등록된 도구 범위와 별도의 단일 작업 확인을 거칩니다. 외부 AI로 전송되는 프롬프트와 메일 범위를 먼저 읽고, 비밀번호·앱 비밀번호·인증 코드는 공유하지 마세요.</p>
 </section><section id="update">
 <h2>업데이트와 문제 해결</h2>
 <p>Windows·Mac·Linux에서 대화형 터미널을 열고 실행합니다. Windows에서는 <code>update hantong</code>도 사용할 수 있습니다.</p>
@@ -178,4 +191,4 @@ hantong-mcp watch</code></pre>
 <ul><li>영구·대량 삭제, 무인 발송과 불확실한 발송·이동의 자동 재시도</li><li>전체 메일함 자동 동기화, 예약 발송·주소록·규칙 자동화</li><li>일반 첨부 다운로드·풍부한 HTML 표시, 일반 SMTP 작성의 첨부</li><li>Linux ARM 배포, Mac SSH 금고, Unix 고급 사용자 Google 클라이언트 설정</li></ul>
 <p>Gmail 휴지통은 Modify 권한이 필요하고, 일반 IMAP 휴지통은 MOVE와 유일한 Trash 사서함이 필요합니다. Google 발송 계정 선택은 최대 128개로 제한됩니다. Google 게시 상태·검증 심사와 새 Windows VM 검증·Mac 서명·공증도 별도 과제입니다.</p>
 <p><a href="https://github.com/tz1012/mail-hantong/releases/tag/v0.1.0-beta.23">릴리스 원문·체크섬</a> · <a href="https://github.com/tz1012/mail-hantong/actions/runs/41827738310">Mac 실행 검증</a> · <a href="https://github.com/tz1012/mail-hantong/blob/v0.1.0-beta.23/docs/latest/CLI-LAUNCH.md">상세 CLI 안내</a> · <a href="privacy.html">외부 전송·저장 범위</a></p>
-</section></article></div></main><footer class="site-footer"><a class="brand" href="index.html">한통.</a><p>메일과 AI를 한 터미널에서 · beta.23</p><nav aria-label="사이트 안내"><a href="download.html">다운로드</a><a href="privacy.html">개인정보</a><a href="terms.html">이용 안내·라이선스</a><a href="mailto:andrew@tzt.kr">문의</a></nav><p class="small-note">기준: 2026-11-04 · 운영자 Andrew Cho (tz1012). 화면은 가상 데이터입니다.</p></footer><script src="guide.js" defer></script></body></html>
+</section></article></div></main><footer class="site-footer"><a class="brand" href="index.html">한통.</a><p>쓰던 AI에 내 메일을 · 마지막 결정은 내가 · beta.23</p><nav aria-label="사이트 안내"><a href="download.html">다운로드</a><a href="privacy.html">개인정보</a><a href="terms.html">이용 안내·라이선스</a><a href="mailto:andrew@tzt.kr">문의</a></nav><p class="small-note">기준: 2026-11-04 · 운영자 Andrew Cho (tz1012). 화면은 가상 데이터입니다.</p></footer><script src="guide.js" defer></script></body></html>

@@ -143,6 +143,7 @@ button { cursor: pointer; }
   text-transform: uppercase;
 }
 .hero h1 {
+  word-break: keep-all;
   max-width: 820px;
   margin: 0 auto;
   color: var(--ink);
