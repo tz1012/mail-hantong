@@ -12,6 +12,7 @@ import os
 from pathlib import Path
 import platform
 import pwd
+import re
 import shutil
 import subprocess
 import tarfile
@@ -67,7 +68,11 @@ def run_cli(executable: Path, environment: dict[str, str]) -> None:
                 if len(output) > 256 * 1024:
                     fail("startup output exceeded its bound")
         if not menu_ready:
-            fail("installed CLI did not present the English no-account menu")
+            diagnostics = re.findall(
+                rb"hantong_startup stage=[a-z_]+ outcome=failed code=[A-Z_]+|\b[A-Z]+(?:_[A-Z]+)+\b",
+                bytes(output),
+            )
+            fail(f"installed CLI did not present the English no-account menu; exit={process.returncode}; codes={diagnostics[-8:]}")
         if process.poll() is None:
             fail("installed CLI did not finish the no-account exit flow")
         if process.returncode != 0:
