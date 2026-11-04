@@ -190,7 +190,7 @@ pub(crate) async fn run_job(
     execute_confirmed(store, policy, &p, personal, submit).await
 }
 // Existing protected-path tests supply synthetic futures without issuing proof.
-#[cfg(test)]
+#[cfg(all(test, any(windows, target_os = "linux")))]
 async fn execute_verified(
     store: &Store,
     policy: &Rc<RefCell<ReadPolicy>>,
