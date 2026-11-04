@@ -21,7 +21,7 @@
 <li><strong>설치·업데이트:</strong> Windows PowerShell에서 아래 명령을 실행하세요. beta.5부터는 설치 후 <code>update hantong</code> 또는 <code>hantong update</code>로 업데이트할 수 있습니다. beta.3·beta.4 사용자는 먼저 아래 설치 명령을 한 번 실행해야 업데이트 명령이 추가됩니다.
 <pre><code>irm https://raw.githubusercontent.com/tz1012/mail-hantong/aa8d344af13899d13d85fb464700f50fdaa36785/install.ps1 | iex</code></pre>
 <p>설치기는 공개 릴리스의 체크섬을 확인합니다. GitHub API가 일시적으로 403 또는 429를 반환하면 같은 저장소의 공개 릴리스 피드를 사용해도 고정된 GitHub 자산 URL·HEAD 크기·SHA256을 다시 확인합니다. 피드가 잘못되면 설치를 중단합니다. 일반 메일 이용에 Rust·Python·Docker·Google Cloud 설정 파일은 필요하지 않습니다. ZIP으로 직접 설치할 때는 릴리스의 <code>SHA256SUMS</code>를 대조하세요.</p></li>
-<li><strong>beta.21 ??? ??:</strong> ?? publisher ??? Windows 8.3 alias?long path ??? ?????. ?? Windows v1 ?????? DB??? ?????.</li>
+<li><strong>beta.21 설치 개선:</strong> 배포용 Google 설정 파일을 포함할 때 Windows의 짧은 경로와 긴 경로가 같은 파일을 가리키는지 정확히 확인합니다. 기존 계정·키·메일 데이터는 보존합니다.</li>
 <li><strong>구버전 업데이트 오류:</strong> <code>Join-Path</code> 또는 <code>drive</code> 오류가 나면 위 설치 명령으로 직접 교체하세요. 계정 저장소는 보존합니다. 프로그램만 제거하는 방법은 <a href="https://github.com/tz1012/mail-hantong/blob/main/docs/latest/WINDOWS-RECOVERY.md">Windows 복구·재설치 안내</a>에서 확인하세요.</li>
 <li><strong>실행:</strong> 같은 터미널에서 한국어 시작 메뉴를 여세요.
 <pre><code>hantong --lang ko init</code></pre>
