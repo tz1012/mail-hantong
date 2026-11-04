@@ -113,7 +113,7 @@ def main() -> int:
     stop_verified = False
     temporary = tempfile.TemporaryDirectory(prefix="hantong-macos-smoke-")
     try:
-        root = Path(temporary.name)
+        root = Path(temporary.name).resolve()
         package = root / "package"
         package.mkdir(mode=0o700)
         extract_archive(archives[0], package)

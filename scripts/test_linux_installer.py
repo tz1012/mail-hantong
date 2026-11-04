@@ -13,7 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 def main():
     assert os.name == "posix"
     with tempfile.TemporaryDirectory(prefix="hantong install ") as directory:
-        fixture = Path(directory)
+        fixture = Path(directory).resolve()
         package = fixture / "package"
         package.mkdir()
         for name in ("install.sh", "uninstall.sh"):
