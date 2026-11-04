@@ -83,7 +83,7 @@ pub fn imap_uid_page_payload_hash(
     page: &ImapUidPage,
     cursor_version: u64,
 ) -> Result<[u8; 32], ErrorCode> {
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
     {
         storage::payload_hash(
             account_version,
@@ -93,7 +93,7 @@ pub fn imap_uid_page_payload_hash(
             cursor_version,
         )
     }
-    #[cfg(not(windows))]
+    #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
     {
         let _ = (
             account_version,
@@ -114,7 +114,7 @@ impl Store {
         page: &ImapUidPage,
         mutation: &MailMutation,
     ) -> Result<ImapUidApplyReceipt, ErrorCode> {
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
         {
             storage::apply(
                 self,
@@ -125,7 +125,7 @@ impl Store {
                 mutation,
             )
         }
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
         {
             let _ = (
                 account_version,
@@ -142,11 +142,11 @@ impl Store {
         account: &str,
         mailbox: &ImapMailboxName,
     ) -> Result<Option<StoredImapUidCursor>, ErrorCode> {
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
         {
             storage::cursor(self, account, mailbox)
         }
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
         {
             let _ = (account, mailbox);
             Err(ErrorCode::CapabilityUnsupported)
@@ -159,20 +159,20 @@ impl Store {
         validity: u32,
         uid: u32,
     ) -> Result<Option<ImapMessageMetadata>, ErrorCode> {
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
         {
             storage::metadata(self, account, mailbox, validity, uid)
         }
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
         {
             let _ = (account, mailbox, validity, uid);
             Err(ErrorCode::CapabilityUnsupported)
         }
     }
 }
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 pub(crate) mod storage;
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 pub(super) use storage::validate_history;
 #[cfg(all(test, windows))]
 mod tests;

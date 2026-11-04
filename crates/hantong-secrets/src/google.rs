@@ -1,32 +1,32 @@
 //! OAuth and read-only Gmail boundary. No token-bearing value is public.
 use crate::SecretStore;
-#[cfg(any(windows, test))]
+#[cfg(any(windows, test, target_os = "linux", target_os = "macos"))]
 use crate::{SensitiveBuffer, wipe};
 use hantong_contracts::{ErrorCode, google::*, google_write::GoogleAccessMode};
-#[cfg(any(windows, test))]
+#[cfg(any(windows, test, target_os = "linux", target_os = "macos"))]
 use serde_json::Value;
 use std::sync::atomic::AtomicBool;
-#[cfg(any(windows, test))]
+#[cfg(any(windows, test, target_os = "linux", target_os = "macos"))]
 use std::sync::atomic::Ordering;
-#[cfg(any(windows, test))]
+#[cfg(any(windows, test, target_os = "linux", target_os = "macos"))]
 use std::time::Duration;
-#[cfg(any(windows, test))]
+#[cfg(any(windows, test, target_os = "linux", target_os = "macos"))]
 use std::time::Instant;
 
 mod client_secret;
-#[cfg(any(windows, test))]
+#[cfg(any(windows, test, target_os = "linux", target_os = "macos"))]
 pub mod compose;
-#[cfg(any(windows, test))]
+#[cfg(any(windows, test, target_os = "linux", target_os = "macos"))]
 mod crypto;
-#[cfg(any(windows, test))]
+#[cfg(any(windows, test, target_os = "linux", target_os = "macos"))]
 mod diagnostics;
-#[cfg(any(windows, test))]
+#[cfg(any(windows, test, target_os = "linux", target_os = "macos"))]
 mod gmail;
-#[cfg(any(windows, test))]
+#[cfg(any(windows, test, target_os = "linux", target_os = "macos"))]
 mod http;
 mod oauth;
 mod publisher_config;
-#[cfg(any(windows, test))]
+#[cfg(any(windows, test, target_os = "linux", target_os = "macos"))]
 pub mod write;
 pub use client_secret::GoogleClientSecret;
 pub use oauth::{
@@ -34,9 +34,9 @@ pub use oauth::{
 };
 pub use publisher_config::{InstalledGooglePublisher, load_installed_publisher_configuration};
 
-#[cfg(any(windows, test))]
+#[cfg(any(windows, test, target_os = "linux", target_os = "macos"))]
 struct SecretText(SensitiveBuffer);
-#[cfg(any(windows, test))]
+#[cfg(any(windows, test, target_os = "linux", target_os = "macos"))]
 impl SecretText {
     fn from_string(value: String) -> Result<Self, ErrorCode> {
         let value = Self(SensitiveBuffer(value.into_bytes()));
@@ -52,9 +52,9 @@ impl SecretText {
         std::str::from_utf8(self.0.as_slice()).unwrap_or("")
     }
 }
-#[cfg(any(windows, test))]
+#[cfg(any(windows, test, target_os = "linux", target_os = "macos"))]
 struct SecretJson(Value);
-#[cfg(any(windows, test))]
+#[cfg(any(windows, test, target_os = "linux", target_os = "macos"))]
 impl SecretJson {
     fn parse(bytes: &[u8]) -> Result<Self, ErrorCode> {
         serde_json::from_slice(bytes)
@@ -74,7 +74,7 @@ impl SecretJson {
         }
     }
 }
-#[cfg(any(windows, test))]
+#[cfg(any(windows, test, target_os = "linux", target_os = "macos"))]
 impl Drop for SecretJson {
     fn drop(&mut self) {
         fn clear(v: &mut Value) {
@@ -96,9 +96,9 @@ impl Drop for SecretJson {
 pub struct PendingGoogleCredential {
     identity: GoogleIdentity,
     client_id: String,
-    #[cfg(any(windows, test))]
+    #[cfg(any(windows, test, target_os = "linux", target_os = "macos"))]
     refresh: SecretText,
-    #[cfg(any(windows, test))]
+    #[cfg(any(windows, test, target_os = "linux", target_os = "macos"))]
     client_secret: Option<GoogleClientSecret>,
 }
 impl std::fmt::Debug for PendingGoogleCredential {
@@ -126,12 +126,7 @@ impl PendingGoogleCredential {
         store: &SecretStore,
         binding: &GoogleAccountBinding,
     ) -> Result<(), ErrorCode> {
-        #[cfg(not(windows))]
-        {
-            let _ = (self, store, binding);
-            Err(ErrorCode::CapabilityUnsupported)
-        }
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
         {
             if self.binding(binding.credential_version)? != *binding {
                 return Err(ErrorCode::AuthRequired);
@@ -146,7 +141,7 @@ impl PendingGoogleCredential {
     }
 }
 
-#[cfg(any(windows, test))]
+#[cfg(any(windows, test, target_os = "linux", target_os = "macos"))]
 fn normalize_scopes(scope: &str) -> Result<Vec<String>, ErrorCode> {
     if scope.len() > 8192 {
         return Err(ErrorCode::ScopeDenied);
@@ -174,14 +169,14 @@ fn normalize_scopes(scope: &str) -> Result<Vec<String>, ErrorCode> {
     }
     Ok(scopes)
 }
-#[cfg(any(windows, test))]
+#[cfg(any(windows, test, target_os = "linux", target_os = "macos"))]
 struct TokenResponse {
     access: SecretText,
     refresh: Option<SecretText>,
     scopes: Vec<String>,
     verified_email: Option<String>,
 }
-#[cfg(any(windows, test))]
+#[cfg(any(windows, test, target_os = "linux", target_os = "macos"))]
 fn parse_tokens(
     response: http::Response,
     fallback_scope: Option<&[String]>,
@@ -215,7 +210,7 @@ fn parse_tokens(
         verified_email: None,
     })
 }
-#[cfg(any(windows, test))]
+#[cfg(any(windows, test, target_os = "linux", target_os = "macos"))]
 fn identity(
     transport: &impl http::Transport,
     access: &SecretText,
@@ -258,15 +253,19 @@ fn identity(
     identity.validate().map_err(|_| ErrorCode::AuthRequired)?;
     Ok(identity)
 }
-#[cfg(any(windows, test))]
+#[cfg(any(windows, test, target_os = "linux", target_os = "macos"))]
 fn account_id(subject: &str) -> Result<String, ErrorCode> {
+    #[cfg(any(windows, test))]
+    let digest = crypto::sha256(subject.as_bytes())?;
+    #[cfg(not(any(windows, test)))]
+    let digest = hantong_platform::sha256(subject.as_bytes())?;
     Ok(format!(
         "google_{}",
-        hantong_contracts::wire_hex::encode(&crypto::sha256(subject.as_bytes())?)
+        hantong_contracts::wire_hex::encode(&digest)
     ))
 }
 
-#[cfg(any(windows, test))]
+#[cfg(any(windows, test, target_os = "linux", target_os = "macos"))]
 fn refresh_verified(
     transport: &impl http::Transport,
     binding: &GoogleAccountBinding,
@@ -332,7 +331,7 @@ impl SecretStore {
         if binding.client_id != client_id {
             return Err(ErrorCode::ScopeDenied);
         }
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
         {
             let mut bundle = self.read_bound_google_bundle(binding)?;
             let scopes = bundle
@@ -347,12 +346,12 @@ impl SecretStore {
             normalize_scopes(&scopes)?;
             client_secret::from_bundle(&mut bundle, client_id)
         }
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
         {
             Err(ErrorCode::CapabilityUnsupported)
         }
     }
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
     fn read_bound_google_bundle(
         &self,
         binding: &GoogleAccountBinding,
@@ -362,17 +361,34 @@ impl SecretStore {
             return Err(ErrorCode::AuthRequired);
         }
         crate::validate_path(&self.root).map_err(|_| ErrorCode::AuthRequired)?;
+        #[cfg(windows)]
         let handle = self.handle(
             &binding.account_id,
             crate::SecretKind::GoogleOAuth(binding.credential_version),
         );
+        #[cfg(windows)]
         let bytes = crate::windows_impl::read_google_credential(
             &handle.path,
             &binding.account_id,
             binding.credential_version,
         )
         .map_err(|_| ErrorCode::AuthRequired)?;
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        let protected = {
+            let selector = self
+                .unix_selector(
+                    &binding.account_id,
+                    crate::SecretKind::GoogleOAuth(binding.credential_version),
+                )
+                .map_err(|_| ErrorCode::AuthRequired)?;
+            self.unix_store
+                .read(&selector)
+                .map_err(|_| ErrorCode::AuthRequired)?
+        };
+        #[cfg(windows)]
         let bundle = SecretJson::parse(bytes.as_slice())?;
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        let bundle = SecretJson::parse(protected.as_bytes_in_secrets())?;
         if !matches!(bundle.0.get("format").and_then(Value::as_u64), Some(3..=5))
             || client_secret::bundle_mode(&bundle)? != binding.access_mode
             || bundle.0.get("account_id").and_then(Value::as_str) != Some(&binding.account_id)
@@ -385,7 +401,7 @@ impl SecretStore {
         }
         Ok(bundle)
     }
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
     fn write_google_bundle(
         &self,
         binding: &GoogleAccountBinding,
@@ -422,20 +438,20 @@ impl SecretStore {
         if request.account_id != binding.account_id {
             return Err(ErrorCode::AuthRequired);
         }
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
         {
             if account_id(&binding.subject)? != binding.account_id {
                 return Err(ErrorCode::AuthRequired);
             }
             self.fetch_google_page_windows(binding, request, cancel)
         }
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
         {
             let _ = cancel;
             Err(ErrorCode::CapabilityUnsupported)
         }
     }
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
     fn fetch_google_page_windows(
         &self,
         binding: &GoogleAccountBinding,
@@ -451,7 +467,7 @@ impl SecretStore {
             },
         )
     }
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
     fn with_google_access<T>(
         &self,
         binding: &GoogleAccountBinding,

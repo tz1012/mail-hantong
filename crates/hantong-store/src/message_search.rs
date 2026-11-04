@@ -10,11 +10,11 @@ impl Store {
         &self,
         request: &ImapMetadataSearchRequest,
     ) -> Result<ImapMetadataSearchPage, ErrorCode> {
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
         {
             storage::search(self, request)
         }
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
         {
             let _ = request;
             Err(ErrorCode::CapabilityUnsupported)
@@ -22,7 +22,7 @@ impl Store {
     }
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 mod storage;
 
 #[cfg(all(test, windows))]

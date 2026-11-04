@@ -1,6 +1,6 @@
 //! Durable, one-shot folder observations bound to their original audit and grants.
 use crate::Store;
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 use hantong_contracts::folders::FolderRefreshState;
 use hantong_contracts::{
     ErrorCode,
@@ -58,33 +58,33 @@ impl Store {
         request: &FolderRefreshRequest,
         queue: FolderQueueAdmission,
     ) -> Result<FolderRefreshAdmission, ErrorCode> {
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
         {
             storage::admit(self, audit_id, request, queue)
         }
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
         {
             let _ = (audit_id, request, queue);
             Err(ErrorCode::CapabilityUnsupported)
         }
     }
     pub fn start_folder_refresh(&self, id: [u8; 32]) -> Result<FolderRefreshStart, ErrorCode> {
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
         {
             storage::start(self, id)
         }
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
         {
             let _ = id;
             Err(ErrorCode::CapabilityUnsupported)
         }
     }
     pub fn check_folder_refresh(&self, id: [u8; 32]) -> Result<(), ErrorCode> {
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
         {
             storage::check(self, id)
         }
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
         {
             let _ = id;
             Err(ErrorCode::CapabilityUnsupported)
@@ -95,11 +95,11 @@ impl Store {
         id: [u8; 32],
         snapshot: &ImapMailboxSnapshot,
     ) -> Result<FolderRefreshReceipt, ErrorCode> {
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
         {
             storage::succeed(self, id, snapshot)
         }
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
         {
             let _ = (id, snapshot);
             Err(ErrorCode::CapabilityUnsupported)
@@ -110,11 +110,11 @@ impl Store {
         id: [u8; 32],
         error: ErrorCode,
     ) -> Result<FolderRefreshReceipt, ErrorCode> {
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
         {
             storage::fail(self, id, error)
         }
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
         {
             let _ = (id, error);
             Err(ErrorCode::CapabilityUnsupported)
@@ -125,11 +125,11 @@ impl Store {
         owner: [u8; 16],
         request: &FolderRefreshStatusRequest,
     ) -> Result<FolderRefreshReceipt, ErrorCode> {
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
         {
             storage::receipt(self, owner, request)
         }
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
         {
             let _ = (owner, request);
             Err(ErrorCode::CapabilityUnsupported)
@@ -137,9 +137,9 @@ impl Store {
     }
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 mod storage;
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 pub(super) use storage::{operation_reserved, validate_history};
 #[cfg(all(test, windows))]
 mod tests;

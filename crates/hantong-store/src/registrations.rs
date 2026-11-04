@@ -7,11 +7,11 @@ use hantong_contracts::client::validate_client_label as validate_label;
 use hantong_contracts::{ErrorCode, auth::RequestedScope};
 use std::fmt;
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 const REQUEST_TTL_MS: i64 = 5 * 60 * 1000;
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 const MAX_PENDING: i64 = 64;
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 const MAX_RETAINED: i64 = 1024;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -22,7 +22,7 @@ pub enum RegistrationRequestState {
     Expired,
 }
 impl RegistrationRequestState {
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
     fn parse(v: &str) -> Result<Self, ErrorCode> {
         match v {
             "pending" => Ok(Self::Pending),
@@ -42,7 +42,7 @@ pub enum RegistrationState {
     Revoked,
 }
 impl RegistrationState {
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
     fn parse(v: &str) -> Result<Self, ErrorCode> {
         match v {
             "provisioning" => Ok(Self::Provisioning),
@@ -121,12 +121,12 @@ impl Store {
             return Err(ErrorCode::InvalidInput);
         }
         validate_label(display_label)?;
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
         {
             let _ = (request_id, client_kind, scope);
             Err(ErrorCode::CapabilityUnsupported)
         }
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
         {
             enum InsertResult {
                 Created(RegistrationRequest),
@@ -217,12 +217,12 @@ impl Store {
         if expected_version == i64::MAX as u64 {
             return Err(ErrorCode::Conflict);
         }
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
         {
             let _ = request_id;
             Err(ErrorCode::CapabilityUnsupported)
         }
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
         {
             enum ExpireOutcome {
                 Expired,
@@ -272,12 +272,12 @@ impl Store {
         &self,
         request_id: [u8; 32],
     ) -> Result<Option<RegistrationRequest>, ErrorCode> {
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
         {
             let _ = request_id;
             Err(ErrorCode::CapabilityUnsupported)
         }
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
         {
             self.with_connection(|connection| read_request(connection, &request_id))
         }
@@ -288,12 +288,12 @@ impl Store {
         &self,
         registration_id: [u8; 16],
     ) -> Result<Option<RegistrationRecord>, ErrorCode> {
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
         {
             let _ = registration_id;
             Err(ErrorCode::CapabilityUnsupported)
         }
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
         {
             self.with_connection(|connection| {
                 // Read the registration, decision, and grants from one snapshot.
@@ -309,7 +309,7 @@ impl Store {
     }
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 pub(super) fn text_column<'row>(
     row: &'row rusqlite::Row<'_>,
     index: usize,
@@ -325,7 +325,7 @@ pub(super) fn text_column<'row>(
     Ok(value)
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 pub(super) fn blob_column<const N: usize>(
     row: &rusqlite::Row<'_>,
     index: usize,
@@ -337,7 +337,7 @@ pub(super) fn blob_column<const N: usize>(
         .map_err(|_| rusqlite::Error::InvalidQuery)
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 fn parse_scope(accounts: &str, tools: &str) -> rusqlite::Result<RequestedScope> {
     let accounts: Vec<String> =
         serde_json::from_str(accounts).map_err(|_| rusqlite::Error::InvalidQuery)?;
@@ -346,7 +346,7 @@ fn parse_scope(accounts: &str, tools: &str) -> rusqlite::Result<RequestedScope> 
     RequestedScope::new(accounts, tools).map_err(|_| rusqlite::Error::InvalidQuery)
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 pub(super) fn read_request(
     connection: &rusqlite::Connection,
     id: &[u8; 32],
@@ -430,7 +430,7 @@ pub(super) fn read_request(
         .optional()
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 pub(super) fn read_registration(
     connection: &rusqlite::Connection,
     id: &[u8; 16],
@@ -447,7 +447,7 @@ pub(super) fn read_registration(
 
 // Scope provenance reads this structural snapshot directly; calling the public
 // adapter from history validation would recurse through the refresh reader.
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 pub(super) fn read_registration_bare(
     connection: &rusqlite::Connection,
     id: &[u8; 16],
@@ -536,7 +536,7 @@ pub(super) fn read_registration_bare(
         .optional()
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 fn read_granted_scope(
     connection: &rusqlite::Connection,
     registration_id: &[u8; 16],

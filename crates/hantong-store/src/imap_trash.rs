@@ -1,9 +1,9 @@
 //! Durable, provider-free IMAP trash admission and single-attempt ledger.
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
 use crate::Store;
 use hantong_contracts::{ErrorCode, imap_trash::ImapTrashRequest};
 use hantong_domain::mail_connection::ImapEndpointConfig;
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 use hantong_domain::{
     mail_connection::MailConnectionConfig,
     mailboxes::{ImapMailboxSnapshot, SpecialUseRole},
@@ -54,7 +54,7 @@ pub enum ImapTrashOutcome {
     Unknown,
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 mod windows {
     use super::*;
     use crate::{
@@ -1472,7 +1472,7 @@ mod windows {
     }
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
 impl Store {
     pub fn request_imap_trash(
         &self,

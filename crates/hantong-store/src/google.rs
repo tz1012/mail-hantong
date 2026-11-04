@@ -22,8 +22,8 @@ pub struct GoogleMessageList {
 
 macro_rules! call {
     ($store:expr, $function:ident $(, $arg:expr)*) => {{
-        #[cfg(windows)] { storage::$function($store $(, $arg)*) }
-        #[cfg(not(windows))] { let _ = ($store $(, $arg)*); Err(ErrorCode::CapabilityUnsupported) }
+        #[cfg(any(windows, target_os = "linux", target_os = "macos"))] { storage::$function($store $(, $arg)*) }
+        #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))] { let _ = ($store $(, $arg)*); Err(ErrorCode::CapabilityUnsupported) }
     }};
 }
 
@@ -129,7 +129,7 @@ impl Store {
     }
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 mod storage {
     use super::*;
     use crate::{
@@ -973,10 +973,10 @@ account_id:account.into(),subject:r.get(0)?,client_id:r.get(1)?,credential_versi
 #[cfg(all(test, windows))]
 mod tests;
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 pub(super) fn validate_history(c: &rusqlite::Connection) -> rusqlite::Result<()> {
     storage::validate_history(c)
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 pub(crate) use storage::binding as google_binding_in_transaction;

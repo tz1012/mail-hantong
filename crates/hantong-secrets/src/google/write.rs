@@ -1,7 +1,7 @@
 //! Fixed Gmail mutation transport. Core must provide native-review-bound input.
 //! No retry occurs here, including after an ambiguous provider response.
 use super::*;
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 use hantong_contracts::google_write::GoogleOperation;
 use hantong_contracts::google_write::{ComposeSnapshot, MAX_ATTACHMENT_BYTES, MessageLabelChange};
 
@@ -29,7 +29,7 @@ impl GoogleAttachmentData {
 
 impl SecretStore {
     /// Only the native Core send coordinator may call this after its durable claim.
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
     pub fn send_google_message(
         &self,
         binding: &GoogleAccountBinding,
@@ -55,7 +55,7 @@ impl SecretStore {
             },
         )
     }
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
     pub fn create_google_draft(
         &self,
         binding: &GoogleAccountBinding,
@@ -81,7 +81,7 @@ impl SecretStore {
             },
         )
     }
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
     pub fn change_google_labels(
         &self,
         binding: &GoogleAccountBinding,
@@ -100,7 +100,7 @@ impl SecretStore {
             },
         )
     }
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
     pub fn trash_google_message(
         &self,
         binding: &GoogleAccountBinding,
@@ -117,7 +117,7 @@ impl SecretStore {
             |transport, access, _, deadline| trash(transport, message_id, access, deadline, cancel),
         )
     }
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
     pub fn fetch_google_attachment(
         &self,
         binding: &GoogleAccountBinding,

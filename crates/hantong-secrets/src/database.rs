@@ -22,6 +22,8 @@ impl std::error::Error for DatabaseError {}
 pub struct KeyedConnection {
     #[cfg(windows)]
     inner: windows_database::Database,
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    inner: crate::unix_database::Database,
 }
 impl fmt::Debug for KeyedConnection {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -39,7 +41,13 @@ impl KeyedConnection {
                 inner: windows_database::Database::open(data_root.as_ref(), key_root.as_ref())?,
             })
         }
-        #[cfg(not(windows))]
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        {
+            Ok(Self {
+                inner: crate::unix_database::Database::open(data_root.as_ref(), key_root.as_ref())?,
+            })
+        }
+        #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
         {
             let _ = (data_root, key_root);
             Err(DatabaseError::Unsupported)
@@ -47,7 +55,7 @@ impl KeyedConnection {
     }
     /// For the trusted Store repository implementation only. Borrowed database
     /// objects cannot escape the callback; the owning wrapper keeps guards alive.
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
     pub fn with_connection<T>(
         &self,
         operation: impl FnOnce(&rusqlite::Connection) -> rusqlite::Result<T>,
@@ -55,11 +63,11 @@ impl KeyedConnection {
         operation(&self.inner.connection).map_err(|_| DatabaseError::Internal)
     }
     pub fn backup_before_migration(&self, current_version: u32) -> Result<(), DatabaseError> {
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
         {
             self.inner.backup(current_version)
         }
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
         {
             let _ = current_version;
             Err(DatabaseError::Unsupported)
@@ -72,7 +80,7 @@ impl KeyedConnection {
 #[path = "windows_database.rs"]
 mod windows_database;
 
-#[cfg(all(test, not(windows)))]
+#[cfg(all(test, not(any(windows, target_os = "linux", target_os = "macos"))))]
 mod tests {
     use super::*;
     #[test]

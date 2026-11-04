@@ -6,25 +6,25 @@ use hantong_contracts::{
     audit::{AuditBegin, AuditRecord, AuditTerminal},
 };
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 use crate::registrations::{blob_column, read_registration, text_column};
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 use hantong_contracts::{
     audit::AuditTool,
     client::{AuditActor, ClientKind},
 };
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 use rusqlite::{OptionalExtension, Transaction, TransactionBehavior};
 
 impl Store {
     /// Commits the local start record. This is not authorization to perform an effect.
     pub fn begin_audit(&self, begin: &AuditBegin) -> Result<u64, ErrorCode> {
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
         {
             let _ = begin;
             Err(ErrorCode::CapabilityUnsupported)
         }
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
         {
             self.with_connection(|connection| {
                 let tx = Transaction::new_unchecked(connection, TransactionBehavior::Immediate)?;
@@ -94,12 +94,12 @@ impl Store {
         execution_id: [u8; 32],
         terminal: AuditTerminal,
     ) -> Result<(), ErrorCode> {
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
         {
             let _ = (execution_id, terminal);
             Err(ErrorCode::CapabilityUnsupported)
         }
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
         {
             self.with_connection(|connection| {
                 let tx = Transaction::new_unchecked(connection, TransactionBehavior::Immediate)?;
@@ -114,12 +114,12 @@ impl Store {
     }
 
     pub fn load_audit(&self, execution_id: [u8; 32]) -> Result<Option<AuditRecord>, ErrorCode> {
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
         {
             let _ = execution_id;
             Err(ErrorCode::CapabilityUnsupported)
         }
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
         {
             self.with_connection(|connection| {
                 let tx = Transaction::new_unchecked(connection, TransactionBehavior::Deferred)?;
@@ -141,11 +141,11 @@ impl Store {
         {
             return Err(ErrorCode::InvalidInput);
         }
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
         {
             Err(ErrorCode::CapabilityUnsupported)
         }
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
         {
             self.with_connection(|connection| {
                 let tx = Transaction::new_unchecked(connection, TransactionBehavior::Deferred)?;
@@ -171,7 +171,7 @@ impl Store {
     }
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 pub(super) fn read_audit(
     connection: &rusqlite::Connection,
     id: &[u8; 32],
@@ -261,7 +261,7 @@ pub(super) fn read_audit(
 }
 
 /// Shared transaction boundary for a job result and its immutable audit terminal.
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 pub(super) fn insert_audit_terminal_tx(
     tx: &rusqlite::Connection,
     execution_id: [u8; 32],

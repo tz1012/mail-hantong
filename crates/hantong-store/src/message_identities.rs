@@ -225,5 +225,7 @@ pub(crate) fn validate_history(c: &Connection) -> rusqlite::Result<()> {
     Ok(())
 }
 
-#[cfg(test)]
+// The fixture module depends on the Windows-only uid reconciliation fixture
+// and therefore is not a portable Unix Store test.
+#[cfg(all(test, windows))]
 mod tests;

@@ -30,3 +30,6 @@ serde_json = "1.0.154"
 
 [dev-dependencies]
 hantong-test-support = { path = "../../tests/Fakes" }
+
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+ring = "=0.17.14"

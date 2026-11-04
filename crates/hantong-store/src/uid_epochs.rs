@@ -1,5 +1,5 @@
 //! Immutable UID namespace boundaries; only retirement fields may change once.
-#![cfg(windows)]
+#![cfg(any(windows, target_os = "linux", target_os = "macos"))]
 use crate::{
     imap_sync::storage::{Operation, read_operation},
     registrations::{blob_column, text_column},

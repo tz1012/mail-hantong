@@ -69,11 +69,11 @@ impl Store {
         queue: UidQueueAdmission,
         instance: [u8; 32],
     ) -> Result<InitialSyncAdmission, ErrorCode> {
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
         {
             storage::admit(self, id, request, queue, instance)
         }
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
         {
             let _ = (id, request, queue, instance);
             Err(ErrorCode::CapabilityUnsupported)
@@ -91,22 +91,22 @@ impl Store {
         self.admit_initial_sync(id, request, UidQueueAdmission::Reserved, instance)
     }
     pub fn start_initial_sync(&self, id: [u8; 32]) -> Result<InitialSyncStart, ErrorCode> {
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
         {
             storage::start(self, id)
         }
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
         {
             let _ = id;
             Err(ErrorCode::CapabilityUnsupported)
         }
     }
     pub fn check_initial_sync(&self, id: [u8; 32]) -> Result<(), ErrorCode> {
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
         {
             storage::check(self, id)
         }
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
         {
             let _ = id;
             Err(ErrorCode::CapabilityUnsupported)
@@ -117,11 +117,11 @@ impl Store {
         id: [u8; 32],
         observation: &ImapUidObservation,
     ) -> Result<InitialSyncReceipt, ErrorCode> {
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
         {
             storage::observe(self, id, observation)
         }
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
         {
             let _ = (id, observation);
             Err(ErrorCode::CapabilityUnsupported)
@@ -132,11 +132,11 @@ impl Store {
         id: [u8; 32],
         page: &ImapUidReconcilePage,
     ) -> Result<InitialSyncReceipt, ErrorCode> {
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
         {
             storage::page(self, id, page)
         }
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
         {
             let _ = (id, page);
             Err(ErrorCode::CapabilityUnsupported)
@@ -147,11 +147,11 @@ impl Store {
         id: [u8; 32],
         error: ErrorCode,
     ) -> Result<InitialSyncReceipt, ErrorCode> {
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
         {
             storage::fail(self, id, error)
         }
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
         {
             let _ = (id, error);
             Err(ErrorCode::CapabilityUnsupported)
@@ -162,11 +162,11 @@ impl Store {
         owner: [u8; 16],
         request: &UidPageStatusRequest,
     ) -> Result<InitialSyncReceipt, ErrorCode> {
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
         {
             storage::receipt(self, owner, request)
         }
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
         {
             let _ = (owner, request);
             Err(ErrorCode::CapabilityUnsupported)
@@ -177,11 +177,11 @@ impl Store {
         owner: [u8; 16],
         request: &InitialSyncPlanRequest,
     ) -> Result<InitialSyncPlanSnapshot, ErrorCode> {
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
         {
             storage::plan_snapshot(self, owner, request)
         }
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
         {
             let _ = (owner, request);
             Err(ErrorCode::CapabilityUnsupported)
@@ -192,20 +192,20 @@ impl Store {
         owner: [u8; 16],
         request: &UidCursorRequest,
     ) -> Result<Option<InitialSyncPlanSnapshot>, ErrorCode> {
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
         {
             storage::current_plan_snapshot(self, owner, request)
         }
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
         {
             let _ = (owner, request);
             Err(ErrorCode::CapabilityUnsupported)
         }
     }
 }
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 pub(crate) mod storage;
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 pub(crate) use storage::{execution_reserved, operation_reserved, validate_history};
 #[cfg(all(test, windows))]
 mod tests;

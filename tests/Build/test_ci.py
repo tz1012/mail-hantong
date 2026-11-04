@@ -11,9 +11,11 @@ class ContinuousIntegrationTests(unittest.TestCase):
     def setUp(self):
         self.text = WORKFLOW.read_text(encoding="utf-8")
 
-    def test_M002_matrix_covers_both_required_platforms_without_fail_fast(self):
+    def test_M002_matrix_covers_windows_linux_and_both_mac_architectures(self):
         self.assertIn("ubuntu-24.04", self.text)
         self.assertIn("windows-2025", self.text)
+        self.assertRegex(self.text, r"(?m)^\s+- macos-15\s*$")
+        self.assertRegex(self.text, r"(?m)^\s+- macos-15-intel\s*$")
         self.assertRegex(self.text, r"fail-fast:\s*false")
         self.assertIn("name: CI required", self.text)
         self.assertRegex(self.text, r"if:\s*\$\{\{\s*always\(\)\s*\}\}")

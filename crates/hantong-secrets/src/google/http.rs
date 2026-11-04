@@ -6,7 +6,7 @@ pub(super) enum Host {
     Gmail,
 }
 impl Host {
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
     fn name(self) -> &'static str {
         match self {
             Self::Token => "oauth2.googleapis.com",
@@ -177,10 +177,25 @@ impl Transport for NativeTransport {
         }
         #[cfg(not(windows))]
         {
-            Err(ErrorCode::CapabilityUnsupported)
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            {
+                unix_native::request(r)
+            }
+            #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+            {
+                Err(ErrorCode::CapabilityUnsupported)
+            }
         }
     }
 }
+
+// The parser is pure and is also compiled on Windows test builds so its
+// framing contract is checked without opening a platform credential store.
+#[cfg(any(test, target_os = "linux", target_os = "macos"))]
+mod unix;
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+mod unix_native;
 
 #[cfg(windows)]
 #[allow(unsafe_code)]

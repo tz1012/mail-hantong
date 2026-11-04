@@ -3,20 +3,20 @@ use crate::{
     Store,
     mail_connection::{MailMutation, MailObservation},
 };
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 use crate::{
     mail_connection::{MailEndpointKind, check_account, read_endpoint, read_observation, replay},
     registrations::text_column,
 };
 use hantong_contracts::ErrorCode;
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 use hantong_domain::mail_connection::MailConnectionConfig;
 use hantong_domain::{
     account_provisioning::NewImapAccountDraft,
     accounts::AccountStatus,
     mail_connection::{Authentication, ImapEndpointConfig, TlsMode},
 };
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 use rusqlite::{Transaction, TransactionBehavior, params};
 use std::fmt;
 
@@ -100,11 +100,11 @@ pub fn imap_account_stage_payload_hash(
         Authentication::AppPassword => 0,
         Authentication::Oauth2 => 1,
     });
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
     {
         hantong_platform::sha256(&bytes).map_err(|_| ErrorCode::InternalError)
     }
-    #[cfg(not(windows))]
+    #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
     {
         let _ = bytes;
         Err(ErrorCode::CapabilityUnsupported)
@@ -125,11 +125,11 @@ impl Store {
         if &hash != mutation.payload_hash() {
             return Err(ErrorCode::InvalidInput);
         }
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
         {
             Err(ErrorCode::CapabilityUnsupported)
         }
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
         {
             self.mail_transaction(TransactionBehavior::Immediate, |tx| {
                 stage_account(tx, draft, endpoint, mutation, db(crate::utc_millis())?)
@@ -155,11 +155,11 @@ impl Store {
         if let InitialImapProbeOutcome::Ready(values) = outcome {
             validate_capabilities(values).map_err(|_| ErrorCode::InvalidInput)?;
         }
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
         {
             Err(ErrorCode::CapabilityUnsupported)
         }
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
         {
             self.mail_transaction(TransactionBehavior::Immediate, |tx| {
                 finish_probe(
@@ -180,11 +180,11 @@ impl Store {
         account_id: &str,
     ) -> Result<ImapProvisioningState, ErrorCode> {
         crate::mail_connection::input_account(account_id)?;
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
         {
             Err(ErrorCode::CapabilityUnsupported)
         }
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
         {
             self.mail_transaction(TransactionBehavior::Deferred, |tx| {
                 read_state(tx, account_id)
@@ -193,7 +193,7 @@ impl Store {
     }
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 pub(super) fn stage_account(
     tx: &Transaction<'_>,
     draft: &NewImapAccountDraft,
@@ -281,7 +281,7 @@ pub(super) fn stage_account(
     Ok(receipt)
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 pub(super) fn finish_probe(
     tx: &Transaction<'_>,
     account_id: &str,
@@ -356,12 +356,12 @@ pub(super) fn validate_capabilities(values: &[String]) -> Result<(), ErrorCode> 
         .map_err(|_| ErrorCode::InternalError)
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 fn db<T>(result: rusqlite::Result<T>) -> Result<T, ErrorCode> {
     result.map_err(|_| ErrorCode::InternalError)
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 fn has_matching_imap_endpoint(
     tx: &Transaction<'_>,
     candidate: &ImapEndpointConfig,
@@ -383,7 +383,7 @@ fn has_matching_imap_endpoint(
     Ok(matched)
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 fn read_imap_endpoint(
     tx: &Transaction<'_>,
     account_id: &str,
@@ -398,7 +398,7 @@ fn read_imap_endpoint(
         .clone())
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 pub(super) fn read_state(
     tx: &Transaction<'_>,
     account_id: &str,

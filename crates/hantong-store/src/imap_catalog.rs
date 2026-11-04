@@ -3,26 +3,26 @@
 //! The implementation is intentionally kept behind the Store boundary: callers
 //! receive validated snapshots and generation metadata, never SQL rows.
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 use crate::mail_connection::MailEndpointKind;
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 use crate::mail_connection::{check_account, read_endpoint};
 use hantong_contracts::ErrorCode;
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 use hantong_domain::{
     accounts::{AccountProvider, AccountStatus},
     mail_connection::MailConnectionConfig,
 };
 use hantong_domain::{mail_connection::ImapEndpointConfig, mailboxes::ImapMailboxSnapshot};
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 use rusqlite::{OptionalExtension, Transaction, TransactionBehavior, params};
 use std::fmt;
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 fn db<T>(result: rusqlite::Result<T>) -> Result<T, ErrorCode> {
     result.map_err(|_| ErrorCode::InternalError)
 }
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 fn bounded_text(row: &rusqlite::Row<'_>, index: usize, max: usize) -> rusqlite::Result<String> {
     let value = row.get_ref(index)?.as_str()?;
     if value.len() > max {
@@ -30,7 +30,7 @@ fn bounded_text(row: &rusqlite::Row<'_>, index: usize, max: usize) -> rusqlite::
     }
     Ok(value.to_owned())
 }
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 fn bounded_hash(row: &rusqlite::Row<'_>, index: usize) -> rusqlite::Result<Vec<u8>> {
     let value = row.get_ref(index)?.as_blob()?;
     if value.len() != 32 {
@@ -38,9 +38,9 @@ fn bounded_hash(row: &rusqlite::Row<'_>, index: usize) -> rusqlite::Result<Vec<u
     }
     Ok(value.to_vec())
 }
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 type CatalogRow = (i64, i64, Vec<u8>, i64, String, Vec<u8>, String, i64);
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 pub(super) type OperationRow = (
     String,
     String,
@@ -55,7 +55,7 @@ pub(super) type OperationRow = (
     i64,
 );
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 fn validate_operation(row: &OperationRow) -> Result<(), ErrorCode> {
     for id in [&row.0, &row.1, &row.2] {
         crate::mail_connection::input_account(id).map_err(|_| ErrorCode::InternalError)?;
@@ -168,18 +168,18 @@ fn push_string(bytes: &mut Vec<u8>, value: &str) {
 }
 
 fn sha256(bytes: &[u8]) -> Result<[u8; 32], ErrorCode> {
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
     {
         hantong_platform::sha256_storage_payload(bytes).map_err(|_| ErrorCode::InternalError)
     }
-    #[cfg(not(windows))]
+    #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
     {
         let _ = bytes;
         Err(ErrorCode::CapabilityUnsupported)
     }
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 pub(super) fn endpoint_hash(
     account: &str,
     endpoint: &ImapEndpointConfig,
@@ -190,7 +190,7 @@ pub(super) fn endpoint_hash(
     sha256(&bytes)
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 fn operation_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<OperationRow> {
     Ok((
         bounded_text(r, 0, 128)?,
@@ -206,7 +206,7 @@ fn operation_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<OperationRow> {
         r.get(10)?,
     ))
 }
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 pub(super) fn read_operation(
     c: &rusqlite::Connection,
     id: &str,
@@ -218,7 +218,7 @@ pub(super) fn read_operation(
     Ok(row)
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 fn replay_catalog(
     tx: &Transaction<'_>,
     account: &str,
@@ -264,7 +264,7 @@ fn replay_catalog(
     Ok(result)
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 pub(super) fn load_catalog(
     tx: &rusqlite::Connection,
     account: &str,
@@ -380,7 +380,7 @@ pub(super) fn load_catalog(
 
 /// Only the direct API and the bound refresh completion may call this helper.
 /// The caller owns the transaction and has already resolved operation ownership.
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 pub(super) fn apply_new_catalog(
     tx: &Transaction<'_>,
     expected_account_version: u64,
@@ -476,12 +476,12 @@ impl crate::Store {
         {
             return Err(ErrorCode::InvalidInput);
         }
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
         {
             let _ = (endpoint, mutation);
             Err(ErrorCode::CapabilityUnsupported)
         }
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
         {
             self.mail_transaction(TransactionBehavior::Immediate, |tx| {
                 if crate::initial_sync::operation_reserved(
@@ -517,11 +517,11 @@ impl crate::Store {
         account_id: &str,
     ) -> Result<Option<StoredImapMailboxCatalog>, ErrorCode> {
         crate::mail_connection::input_account(account_id)?;
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
         {
             Err(ErrorCode::CapabilityUnsupported)
         }
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
         {
             self.mail_transaction(TransactionBehavior::Deferred, |tx| {
                 load_catalog(tx, account_id)

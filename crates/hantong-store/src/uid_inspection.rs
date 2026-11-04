@@ -1,11 +1,11 @@
 //! Local observation summaries; no network work or synchronization side effects.
 use crate::Store;
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 use hantong_contracts::uid_inspection::UidObservationSummary;
 use hantong_contracts::{
     ErrorCode, uid_inspection::UidInspectionSnapshot, uid_page::UidCursorRequest,
 };
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 use rusqlite::{TransactionBehavior, params};
 
 impl Store {
@@ -13,7 +13,7 @@ impl Store {
         &self,
         request: &UidCursorRequest,
     ) -> Result<UidInspectionSnapshot, ErrorCode> {
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
         {
             crate::mail_connection::input_account(request.account_id())?;
             let mailbox = crate::uid_page_jobs::storage::mailbox(request.mailbox())?;
@@ -77,7 +77,7 @@ impl Store {
                 ).map_err(|_| ErrorCode::InternalError)
             })
         }
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
         {
             let _ = request;
             Err(ErrorCode::CapabilityUnsupported)

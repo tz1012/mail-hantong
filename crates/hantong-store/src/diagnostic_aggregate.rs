@@ -10,13 +10,13 @@ impl Store {
         &self,
         query: &DiagnosticAggregateQuery,
     ) -> Result<DiagnosticAggregate, ErrorCode> {
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
         {
             self.mail_transaction(rusqlite::TransactionBehavior::Deferred, |tx| {
                 storage::collect(tx, query)
             })
         }
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
         {
             let _ = query;
             Err(ErrorCode::CapabilityUnsupported)
@@ -24,7 +24,7 @@ impl Store {
     }
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 mod storage;
 
 #[cfg(all(test, windows))]

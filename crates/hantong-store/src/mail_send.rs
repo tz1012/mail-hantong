@@ -4,7 +4,7 @@ use hantong_contracts::{
     google_write::{ComposeSnapshot, MailSendTarget},
     mail_send::SendReviewRequest,
 };
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 use hantong_contracts::{
     google_write::{AttachmentSnapshot, GoogleOperation},
     mail_send::DraftCreateRequest,
@@ -42,7 +42,7 @@ pub enum SendOutcome {
     Unknown,
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 mod windows {
     use super::*;
     use crate::{
@@ -809,10 +809,10 @@ mod windows {
     }
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 pub(crate) use windows::draft as draft_in_transaction;
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
 impl crate::Store {
     pub fn can_confirm_personal_mail_send(
         &self,

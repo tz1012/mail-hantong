@@ -8,7 +8,7 @@ use crate::{SecretError, SecretStore, validate_account};
 use hantong_domain::mail_connection::SmtpEndpointConfig;
 use std::fmt;
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 mod windows;
 
 #[derive(Clone, Eq, PartialEq)]
@@ -101,7 +101,7 @@ impl std::error::Error for SmtpSendError {}
 
 // Keep every wire line ASCII and bounded. Lettre owns SMTP dot stuffing;
 // callers must not insert DATA terminators or reuse this as a raw command API.
-#[cfg(any(windows, test))]
+#[cfg(any(windows, test, target_os = "linux", target_os = "macos"))]
 pub(crate) fn base64(input: &[u8]) -> String {
     const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = String::with_capacity(input.len().div_ceil(3) * 4);
@@ -125,7 +125,7 @@ pub(crate) fn base64(input: &[u8]) -> String {
     out
 }
 
-#[cfg(any(windows, test))]
+#[cfg(any(windows, test, target_os = "linux", target_os = "macos"))]
 pub(crate) fn rfc_date(seconds: u64) -> Result<String, SmtpSendError> {
     let mut days = seconds / 86400;
     if days > 2932896 {
@@ -175,7 +175,7 @@ pub(crate) fn rfc_date(seconds: u64) -> Result<String, SmtpSendError> {
     ))
 }
 
-#[cfg(any(windows, test))]
+#[cfg(any(windows, test, target_os = "linux", target_os = "macos"))]
 fn encode_message(
     sender: &str,
     envelope: &SmtpSendEnvelope,
@@ -298,11 +298,11 @@ impl SecretStore {
     ) -> Result<SmtpSendResult, SmtpSendError> {
         validate_account(account).map_err(|_| SmtpSendError::InvalidAccount)?;
         envelope.validate()?;
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
         {
             windows::send(self, account, endpoint, envelope).await
         }
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
         {
             let _ = endpoint;
             Err(SmtpSendError::UnsupportedPlatform)
@@ -341,7 +341,7 @@ mod tests {
         assert_eq!(value.validate(), Err(SmtpSendError::InvalidRecipient));
     }
 
-    #[cfg(not(windows))]
+    #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
     #[test]
     fn send01_non_windows_never_attempts_submission() {
         let root = std::env::temp_dir().join("mail-hantong-send-unsupported");

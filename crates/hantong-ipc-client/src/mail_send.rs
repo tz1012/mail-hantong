@@ -198,6 +198,7 @@ pub fn parse_review(
     })
 }
 
+#[cfg(any(windows, test))]
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct PersonalAttachmentWire {
@@ -206,6 +207,7 @@ struct PersonalAttachmentWire {
     size: u64,
     sha256: String,
 }
+#[cfg(any(windows, test))]
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct PersonalPreviewWire {
@@ -218,6 +220,7 @@ struct PersonalPreviewWire {
     draft_id: String,
     version: u64,
 }
+#[cfg(any(windows, test))]
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct PersonalPrepareWire {
@@ -230,6 +233,7 @@ struct PersonalPrepareWire {
     preview: Option<PersonalPreviewWire>,
 }
 
+#[cfg(any(windows, test))]
 fn parse_personal_prepare(
     bytes: &[u8],
     id: &str,
@@ -346,6 +350,7 @@ fn parse_personal_prepare(
     Ok(PersonalPrepareResponse { receipt, preview })
 }
 
+#[cfg(any(windows, test))]
 fn valid_address(value: &str) -> bool {
     !value.is_empty()
         && value.len() <= 320

@@ -3,9 +3,9 @@ use crate::{DEFAULT_CLI_LABEL, RegistrationRecord, Store};
 use hantong_contracts::ErrorCode;
 use hantong_contracts::auth::{RequestedScope, default_cli_legacy_tools};
 use std::fmt;
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 mod storage;
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 use storage::*;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -122,11 +122,11 @@ impl Store {
             return Err(ErrorCode::InvalidInput);
         }
         validate_accounts(target_scope.accounts())?;
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
         {
             Err(ErrorCode::CapabilityUnsupported)
         }
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
         {
             self.mail_transaction(rusqlite::TransactionBehavior::Immediate, |tx| {
                 create(
@@ -159,12 +159,12 @@ impl Store {
         {
             return Err(ErrorCode::InvalidInput);
         }
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
         {
             let _ = (refresh_id, target_scope, server_pin);
             Err(ErrorCode::CapabilityUnsupported)
         }
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
         {
             self.mail_transaction(rusqlite::TransactionBehavior::Immediate, |tx| {
                 let channel: String = tx.query_row(
@@ -193,12 +193,12 @@ impl Store {
         {
             return Err(ErrorCode::InvalidInput);
         }
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
         {
             let _ = (refresh_id, target_scope, server_pin);
             Err(ErrorCode::CapabilityUnsupported)
         }
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
         {
             self.mail_transaction(rusqlite::TransactionBehavior::Immediate, |tx| {
                 let channel: String = tx
@@ -233,12 +233,12 @@ impl Store {
         {
             return Err(ErrorCode::InvalidInput);
         }
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
         {
             let _ = (refresh_id, target_scope, server_pin);
             Err(ErrorCode::CapabilityUnsupported)
         }
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
         {
             self.mail_transaction(rusqlite::TransactionBehavior::Immediate, |tx| {
                 let channel: String = tx
@@ -275,12 +275,12 @@ impl Store {
         {
             return Err(ErrorCode::InvalidInput);
         }
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
         {
             let _ = (refresh_id, target_scope, server_pin);
             Err(ErrorCode::CapabilityUnsupported)
         }
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
         {
             self.mail_transaction(rusqlite::TransactionBehavior::Immediate, |tx| {
                 storage::create_terminal(tx, refresh_id, target_scope, server_pin)
@@ -294,21 +294,21 @@ impl Store {
         if id == [0; 32] {
             return Err(ErrorCode::InvalidInput);
         }
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
         {
             Err(ErrorCode::CapabilityUnsupported)
         }
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
         {
             self.mail_transaction(rusqlite::TransactionBehavior::Deferred, |tx| load(tx, id))
         }
     }
     pub fn load_pending_cli_scope_refresh(&self) -> Result<Option<CliScopeRefresh>, ErrorCode> {
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
         {
             Err(ErrorCode::CapabilityUnsupported)
         }
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
         {
             self.mail_transaction(rusqlite::TransactionBehavior::Deferred, |tx| {
                 Ok(list_phase(tx, ScopeRefreshPhase::Pending)?.pop())
@@ -316,11 +316,11 @@ impl Store {
         }
     }
     pub fn list_staged_cli_scope_refreshes(&self) -> Result<Vec<CliScopeRefresh>, ErrorCode> {
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
         {
             Err(ErrorCode::CapabilityUnsupported)
         }
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
         {
             self.mail_transaction(rusqlite::TransactionBehavior::Deferred, |tx| {
                 list_phase(tx, ScopeRefreshPhase::Staged)
@@ -334,12 +334,12 @@ impl Store {
         self.change_scope_refresh(expected, ScopeRefreshPhase::Denied)
     }
     pub fn expire_cli_scope_refresh(&self, expected: &CliScopeRefresh) -> Result<bool, ErrorCode> {
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
         {
             let _ = expected;
             Err(ErrorCode::CapabilityUnsupported)
         }
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
         {
             self.mail_transaction(rusqlite::TransactionBehavior::Immediate, |tx| {
                 expire(tx, expected)
@@ -356,12 +356,12 @@ impl Store {
         &self,
         expected: &CliScopeRefresh,
     ) -> Result<RegistrationRecord, ErrorCode> {
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
         {
             let _ = expected;
             Err(ErrorCode::CapabilityUnsupported)
         }
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
         {
             self.mail_transaction(rusqlite::TransactionBehavior::Immediate, |tx| {
                 activate(tx, expected)
@@ -373,12 +373,12 @@ impl Store {
         expected: &CliScopeRefresh,
         phase: ScopeRefreshPhase,
     ) -> Result<CliScopeRefresh, ErrorCode> {
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
         {
             let _ = (expected, phase);
             Err(ErrorCode::CapabilityUnsupported)
         }
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
         {
             self.mail_transaction(rusqlite::TransactionBehavior::Immediate, |tx| {
                 change(tx, expected, phase)
@@ -386,29 +386,29 @@ impl Store {
         }
     }
 }
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 pub(crate) fn validate_history_v8(connection: &rusqlite::Connection) -> rusqlite::Result<()> {
     storage::validate_history_v8(connection)
 }
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 pub(crate) fn validate_history_v11(connection: &rusqlite::Connection) -> rusqlite::Result<()> {
     storage::validate_history_v11(connection)
 }
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 pub(crate) fn validate_history_v14(connection: &rusqlite::Connection) -> rusqlite::Result<()> {
     storage::validate_history_v14(connection)
 }
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 pub(crate) fn validate_history_v15(connection: &rusqlite::Connection) -> rusqlite::Result<()> {
     storage::validate_history_v15(connection)
 }
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 pub(crate) fn validate_history(connection: &rusqlite::Connection) -> rusqlite::Result<()> {
     context(connection)
         .map(|_| ())
         .map_err(|_| rusqlite::Error::InvalidQuery)
 }
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 pub(super) fn validate_registration(
     connection: &rusqlite::Connection,
     record: &RegistrationRecord,
@@ -439,7 +439,7 @@ fn validate_accounts(accounts: &[String]) -> Result<(), ErrorCode> {
 #[cfg(all(test, windows))]
 mod tests;
 
-#[cfg(all(test, not(windows)))]
+#[cfg(all(test, not(any(windows, target_os = "linux", target_os = "macos"))))]
 #[test]
 fn cli15_refresh_requires_the_windows_store() {
     let store = Store {};
@@ -461,31 +461,31 @@ fn cli15_refresh_requires_the_windows_store() {
     );
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 pub(crate) fn validate_history_v17(c: &rusqlite::Connection) -> rusqlite::Result<()> {
     storage::validate_history_v17(c)
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 pub(crate) fn validate_history_v20(c: &rusqlite::Connection) -> rusqlite::Result<()> {
     storage::validate_history_v20(c)
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 pub(crate) fn validate_history_v23(c: &rusqlite::Connection) -> rusqlite::Result<()> {
     storage::validate_history_v23(c)
 }
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 pub(crate) fn validate_history_v21(c: &rusqlite::Connection) -> rusqlite::Result<()> {
     storage::validate_history_v21(c)
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 pub(crate) fn validate_history_v22(c: &rusqlite::Connection) -> rusqlite::Result<()> {
     storage::validate_history_v22(c)
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 pub(crate) fn validate_history_v25(c: &rusqlite::Connection) -> rusqlite::Result<()> {
     storage::validate_history_v25(c)
 }

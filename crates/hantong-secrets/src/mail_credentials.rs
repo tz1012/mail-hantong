@@ -6,13 +6,10 @@ use hantong_domain::mail_connection::{
 
 const MAGIC: &[u8] = b"mail-hantong.mail-credential.v1\0";
 pub(super) struct BoundCredential {
-    #[cfg(windows)]
     envelope: SensitiveBuffer,
-    #[cfg(windows)]
     offset: usize,
 }
 impl BoundCredential {
-    #[cfg(windows)]
     pub(super) fn text(&self) -> Result<&str, SecretError> {
         std::str::from_utf8(&self.envelope.as_slice()[self.offset..])
             .map_err(|_| SecretError::CredentialMismatch)
@@ -196,7 +193,7 @@ impl SecretStore {
     fn verify_bound_mail(&self, account: &str, binding: Binding<'_>) -> Result<(), SecretError> {
         self.unseal_bound_mail(account, binding).map(|_| ())
     }
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
     pub(super) fn unseal_imap_credential(
         &self,
         account: &str,
@@ -204,7 +201,7 @@ impl SecretStore {
     ) -> Result<BoundCredential, SecretError> {
         self.unseal_bound_mail(account, endpoint.into())
     }
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
     pub(super) fn unseal_smtp_credential(
         &self,
         account: &str,
@@ -218,6 +215,7 @@ impl SecretStore {
         binding: Binding<'_>,
     ) -> Result<BoundCredential, SecretError> {
         let prefix = binding.prefix(account)?;
+        #[cfg(windows)]
         let handle = self.resolve_mail_handle(account, binding.slot())?;
         #[cfg(windows)]
         {
@@ -244,8 +242,32 @@ impl SecretStore {
         }
         #[cfg(not(windows))]
         {
-            let _ = (prefix, handle);
-            Err(SecretError::UnsupportedPlatform)
+            let selector = self.unix_selector(account, SecretKind::Mail(binding.slot()))?;
+            let protected = self
+                .unix_store
+                .read(&selector)
+                .map_err(|_| SecretError::CredentialMismatch)?;
+            let rest = protected
+                .as_bytes_in_secrets()
+                .strip_prefix(prefix.as_slice())
+                .ok_or(SecretError::CredentialMismatch)?;
+            let length = rest.get(..4).ok_or(SecretError::CredentialMismatch)?;
+            let length = u32::from_be_bytes(
+                length
+                    .try_into()
+                    .map_err(|_| SecretError::CredentialMismatch)?,
+            ) as usize;
+            let credential = &rest[4..];
+            if credential.len() != length || !binding.valid_credential(credential) {
+                return Err(SecretError::CredentialMismatch);
+            }
+            let offset = prefix.len() + 4;
+            let mut envelope =
+                SensitiveBuffer(Vec::with_capacity(prefix.len() + 4 + credential.len()));
+            envelope.0.extend_from_slice(prefix.as_slice());
+            envelope.0.extend_from_slice(&(length as u32).to_be_bytes());
+            envelope.0.extend_from_slice(credential);
+            Ok(BoundCredential { envelope, offset })
         }
     }
 }

@@ -3,12 +3,12 @@ use crate::{ClientKind, RegistrationRecord, RegistrationRequest, RegistrationReq
 use hantong_contracts::ErrorCode;
 use std::fmt;
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 use crate::{
     RegistrationState,
     registrations::{blob_column, read_registration, read_request, text_column},
 };
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 use rusqlite::{OptionalExtension, TransactionBehavior, params};
 
 pub const DEFAULT_CLI_LABEL: &str = "hantong CLI (default)";
@@ -411,12 +411,12 @@ impl Store {
         &self,
         flavor: RegistrationFlavor,
     ) -> Result<Vec<RegistrationRequest>, ErrorCode> {
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
         {
             let _ = flavor;
             Err(ErrorCode::CapabilityUnsupported)
         }
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
         {
             self.registration_transaction(TransactionBehavior::Deferred, |tx| {
                 orphan_requests(tx, flavor)
@@ -432,11 +432,11 @@ impl Store {
         if request_id == [0; 32] || !public_header(&public_key) {
             return Err(ErrorCode::InvalidInput);
         }
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
         {
             Err(ErrorCode::CapabilityUnsupported)
         }
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
         {
             let id = hantong_platform::registration_id_for_request(request_id)?;
             self.registration_transaction(TransactionBehavior::Deferred,|tx| {
@@ -475,12 +475,12 @@ impl Store {
             return Err(ErrorCode::ScopeDenied);
         }
         let requested = hantong_contracts::auth::RequestedScope::new(account_ids.to_vec(), vec![])?;
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
         {
             let _ = requested;
             Err(ErrorCode::CapabilityUnsupported)
         }
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
         {
             self.registration_transaction(TransactionBehavior::Deferred,|tx|{
                 let record=read_registration(tx,&registration_id).map_err(internal)?.ok_or(ErrorCode::ClientNotRegistered)?;
@@ -518,12 +518,12 @@ impl Store {
             hantong_contracts::registration::AiProvider::Codex => RegistrationFlavor::AiCodex,
             hantong_contracts::registration::AiProvider::Claude => RegistrationFlavor::AiClaude,
         };
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
         {
             let _ = (requested, flavor);
             Err(ErrorCode::CapabilityUnsupported)
         }
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
         {
             self.registration_transaction(TransactionBehavior::Deferred, |tx| {
                 let record = read_registration(tx, &registration_id).map_err(internal)?.ok_or(ErrorCode::ClientNotRegistered)?;
@@ -555,12 +555,12 @@ impl Store {
         &self,
         flavor: RegistrationFlavor,
     ) -> Result<Option<RegistrationRecord>, ErrorCode> {
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
         {
             let _ = flavor;
             Err(ErrorCode::CapabilityUnsupported)
         }
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
         {
             self.registration_transaction(TransactionBehavior::Deferred, |tx| {
                 let mut statement=tx.prepare("SELECT registration_id FROM client_registrations WHERE ((client_kind=?1 AND display_label=?2) OR (?1 IN ('gui','mcp') AND (client_kind=?1 OR display_label=?2))) AND (?1<>'mcp' OR state<>'revoked') ORDER BY registration_id LIMIT 2").map_err(internal)?;
@@ -594,12 +594,12 @@ impl Store {
         &self,
         flavor: RegistrationFlavor,
     ) -> Result<Option<RegistrationRequest>, ErrorCode> {
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
         {
             let _ = flavor;
             Err(ErrorCode::CapabilityUnsupported)
         }
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
         {
             self.registration_transaction(TransactionBehavior::Deferred, |tx| {
                 let now=crate::utc_millis().map_err(internal)?;
@@ -690,12 +690,12 @@ impl Store {
         &self,
         id: [u8; 16],
     ) -> Result<Option<RegistrationRecord>, ErrorCode> {
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
         {
             let _ = id;
             Err(ErrorCode::CapabilityUnsupported)
         }
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
         {
             self.registration_transaction(TransactionBehavior::Deferred,|tx|{
             let old=tx.query_row("SELECT previous_registration_id FROM mcp_registration_replacements WHERE registration_id=?1",[id.as_slice()],|r|blob_column::<16>(r,0)).optional().map_err(internal)?;
@@ -711,7 +711,7 @@ impl Store {
         if !flavor.matches_request(&stage.expected_request) {
             return Err(ErrorCode::InvalidInput);
         }
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
         {
             let _ = (
                 &stage.expected_request,
@@ -721,7 +721,7 @@ impl Store {
             );
             Err(ErrorCode::CapabilityUnsupported)
         }
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
         {
             if stage.registration_id
                 != hantong_platform::registration_id_for_request(stage.expected_request.request_id)?
@@ -852,12 +852,12 @@ impl Store {
             return Err(ErrorCode::InvalidInput);
         }
         incrementable_version(expected_version)?;
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
         {
             let _ = flavor;
             Err(ErrorCode::CapabilityUnsupported)
         }
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
         {
             let observed = self
                 .load_registration(registration_id)?
@@ -954,12 +954,12 @@ impl Store {
             return Err(ErrorCode::InvalidInput);
         }
         incrementable_version(expected_version)?;
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
         {
             let _ = flavor;
             Err(ErrorCode::CapabilityUnsupported)
         }
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
         {
             self.registration_transaction(TransactionBehavior::Immediate, |tx| {
                 let request = read_request(tx,&request_id).map_err(internal)?.ok_or(ErrorCode::NotFound)?;
@@ -981,12 +981,12 @@ impl Store {
         &self,
         request_id: [u8; 32],
     ) -> Result<Option<RegistrationRecord>, ErrorCode> {
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
         {
             let _ = request_id;
             Err(ErrorCode::CapabilityUnsupported)
         }
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
         {
             self.registration_transaction(TransactionBehavior::Deferred, |tx| {
                 let id = tx
@@ -1013,11 +1013,11 @@ impl Store {
         if !(1..=128).contains(&limit) {
             return Err(ErrorCode::InvalidInput);
         }
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
         {
             Err(ErrorCode::CapabilityUnsupported)
         }
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
         {
             self.registration_transaction(TransactionBehavior::Deferred, |tx| {
                 let mut statement = tx.prepare("SELECT registration_id FROM client_registrations WHERE state='provisioning' ORDER BY registration_id LIMIT ?1").map_err(internal)?;
@@ -1028,11 +1028,11 @@ impl Store {
         }
     }
     pub fn list_registrable_account_ids(&self) -> Result<Vec<String>, ErrorCode> {
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
         {
             Err(ErrorCode::CapabilityUnsupported)
         }
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
         {
             self.registration_transaction(TransactionBehavior::Deferred, |tx| {
                 let mut statement = tx
@@ -1055,11 +1055,11 @@ impl Store {
 
     /// Snapshot of ready Gmail/IMAP accounts for explicit built-in AI setup.
     pub fn list_ready_ai_account_ids(&self) -> Result<Vec<String>, ErrorCode> {
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
         {
             Err(ErrorCode::CapabilityUnsupported)
         }
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
         {
             self.registration_transaction(TransactionBehavior::Deferred, |tx| {
                 let mut statement = tx.prepare("SELECT account_id FROM accounts WHERE provider IN ('gmail','imap') AND status='ready' ORDER BY account_id LIMIT 129").map_err(internal)?;
@@ -1071,7 +1071,7 @@ impl Store {
         }
     }
 
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
     fn registration_transaction<T>(
         &self,
         behavior: TransactionBehavior,
@@ -1087,7 +1087,7 @@ impl Store {
         })?
     }
 
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
     fn registration_server_pin(&self, expected_hash: [u8; 32]) -> Result<ServerPin, ErrorCode> {
         let pin = self
             .with_connection(read_server_pin)?
@@ -1113,18 +1113,18 @@ fn incrementable_version(version: u64) -> Result<(), ErrorCode> {
     }
     Ok(())
 }
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 fn internal(_: rusqlite::Error) -> ErrorCode {
     ErrorCode::InternalError
 }
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 fn request_clock(request: &RegistrationRequest, now: i64) -> Result<(), ErrorCode> {
     if now < request.created_at_utc_ms || now >= request.expires_at_utc_ms {
         return Err(ErrorCode::ApprovalExpired);
     }
     Ok(())
 }
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 fn provisioning_version(registration: &RegistrationRecord, expected: u64) -> Result<(), ErrorCode> {
     if registration.state != RegistrationState::Provisioning
         || registration.version != expected
@@ -1135,7 +1135,7 @@ fn provisioning_version(registration: &RegistrationRecord, expected: u64) -> Res
     Ok(())
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 #[derive(Eq, PartialEq)]
 struct ServerPin {
     key_id: [u8; 32],
@@ -1145,7 +1145,7 @@ struct ServerPin {
     created: i64,
     updated: i64,
 }
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 fn read_server_pin(connection: &rusqlite::Connection) -> rusqlite::Result<Option<ServerPin>> {
     connection.query_row(
         "SELECT key_id,state,public_key,key_epoch,version,created_at_utc_ms,updated_at_utc_ms FROM server_identity WHERE singleton=1",[], |row| {
@@ -1164,7 +1164,7 @@ fn read_server_pin(connection: &rusqlite::Connection) -> rusqlite::Result<Option
         }
     ).optional().map(Option::flatten)
 }
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 fn same_server(connection: &rusqlite::Connection, expected: &ServerPin) -> Result<(), ErrorCode> {
     if read_server_pin(connection).map_err(internal)?.as_ref() != Some(expected) {
         return Err(ErrorCode::Conflict);
@@ -1173,7 +1173,7 @@ fn same_server(connection: &rusqlite::Connection, expected: &ServerPin) -> Resul
 }
 
 /// Validates GUI provenance without calling the registration reader recursively.
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 pub(super) fn validate_gui_registration(
     connection: &rusqlite::Connection,
     record: &RegistrationRecord,
@@ -1201,7 +1201,7 @@ pub(super) fn validate_gui_registration(
     Ok(())
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 pub(super) fn validate_ai_registration(
     connection: &rusqlite::Connection,
     record: &RegistrationRecord,
@@ -1231,7 +1231,7 @@ pub(super) fn validate_ai_registration(
     }
     Ok(())
 }
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 pub(super) fn validate_mcp_registration(
     connection: &rusqlite::Connection,
     record: &RegistrationRecord,
@@ -1277,7 +1277,7 @@ pub(super) fn validate_mcp_registration(
     Ok(())
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 fn orphan_requests(
     tx: &rusqlite::Transaction<'_>,
     flavor: RegistrationFlavor,

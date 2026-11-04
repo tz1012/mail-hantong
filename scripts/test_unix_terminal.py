@@ -1,0 +1,122 @@
+#!/usr/bin/env python3
+"""Exercise only synthetic TUI data in a newly owned Unix pseudo-terminal."""
+from __future__ import annotations
+
+import argparse
+import fcntl
+import json
+import os
+from pathlib import Path
+import select
+import struct
+import subprocess
+import tempfile
+import termios
+import time
+
+
+def exercise(program: Path, exit_key: bytes) -> None:
+    master, slave = os.openpty()
+    original = termios.tcgetattr(slave)
+    fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 40, 140, 0, 0))
+    child = None
+    with tempfile.TemporaryDirectory(prefix="hantong-demo-") as home:
+        env = dict(os.environ, HOME=home, XDG_CONFIG_HOME=home, XDG_DATA_HOME=home,
+                   TERM="xterm-256color")
+        try:
+            child = subprocess.Popen([str(program), "--demo", "--theme", "bbs8"],
+                                     stdin=slave, stdout=slave, stderr=slave,
+                                     env=env, start_new_session=True)
+
+            def read_until(expected: bytes, timeout: float = 8) -> bytes:
+                output = bytearray()
+                deadline = time.monotonic() + timeout
+                while time.monotonic() < deadline:
+                    if select.select([master], [], [], 0.1)[0]:
+                        output.extend(os.read(master, 65536))
+                        if expected in output:
+                            return bytes(output)
+                    if child.poll() is not None:
+                        break
+                raise AssertionError(f"synthetic TUI did not display {expected!r}")
+
+            first = read_until(b"> Welcome to HANTONG / terminal letter 01")
+            assert b"\x1b[?1049h" in first and b"\x1b[?1006h" in first
+            os.write(master, b"\x1b[B")
+            read_until(b"> Welcome to HANTONG / terminal letter 02")
+            os.write(master, b"\r")
+            read_until(b"BODY")
+            os.write(master, b"\x1b")
+            read_until(b"MESSAGES")
+            # Terminal resize is detected without borrowing the user's terminal.
+            fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 28, 100, 0, 0))
+            read_until(b"\x1b[2J")
+            os.write(master, exit_key)
+            child.wait(timeout=8)
+            assert child.returncode == 0, child.returncode
+            assert termios.tcgetattr(slave) == original, "terminal mode was not restored"
+        finally:
+            if child is not None and child.poll() is None:
+                child.kill()
+                child.wait(timeout=5)
+            os.close(master)
+            os.close(slave)
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("program", type=Path)
+    parser.add_argument("--input-probe", type=Path)
+    args = parser.parse_args()
+    program = args.program.resolve(strict=True)
+    for key in (b"q", b"\x03"):
+        exercise(program, key)
+    headless = subprocess.run([str(program), "--demo"], input=b"", capture_output=True,
+                              timeout=8, check=False)
+    assert headless.returncode != 0
+    assert b"\x1b[?1049h" not in headless.stdout
+    if args.input_probe:
+        probe = args.input_probe.resolve(strict=True)
+        for mode, initial, keys, expected in (
+            ("choice", b"Synthetic first", b"\x1b[B\r", b"PROBE_RESULT=second"),
+            ("select", b"Synthetic first", b"\x1b[B\r", b"PROBE_RESULT=1"),
+            ("select", b"Synthetic first", b"\x1b", b"PROBE_RESULT=cancelled"),
+            ("prompt", b"Mail >", b"/", b"  /help"),
+        ):
+            master, slave = os.openpty()
+            original = termios.tcgetattr(slave)
+            child = subprocess.Popen([str(probe), mode], stdin=slave, stdout=slave, stderr=slave)
+            output = bytearray()
+
+            def wait_for(value: bytes) -> None:
+                deadline = time.monotonic() + 8
+                while value not in output and time.monotonic() < deadline:
+                    if select.select([master], [], [], 0.1)[0]:
+                        output.extend(os.read(master, 65536))
+                assert value in output, (mode, value)
+
+            try:
+                wait_for(initial)
+                os.write(master, keys)
+                wait_for(expected)
+                if mode == "prompt":
+                    os.write(master, b"\x1b[B\r")
+                    wait_for(b"PROBE_RESULT=/help")
+                child.wait(timeout=8)
+                assert child.returncode == 0
+                assert b"\x1b[?1049h" not in output, "inline editor replaced the screen"
+                assert termios.tcgetattr(slave) == original
+            finally:
+                if child.poll() is None:
+                    child.kill()
+                    child.wait(timeout=5)
+                os.close(master)
+                os.close(slave)
+    print(json.dumps({"synthetic_only": True, "keyboard_open_back": True,
+                      "resize": True, "quit_and_ctrl_c_restore": True,
+                      "headless_rejected_before_effect": True,
+                      "inline_input_checked": bool(args.input_probe)}))
+
+
+if __name__ == "__main__":
+    main()

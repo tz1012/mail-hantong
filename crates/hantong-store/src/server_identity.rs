@@ -26,11 +26,11 @@ impl fmt::Debug for ServerIdentity {
 
 impl Store {
     pub fn load_server_identity(&self) -> Result<Option<ServerIdentity>, ErrorCode> {
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
         {
             self.with_connection(read_identity)
         }
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
         {
             Err(ErrorCode::CapabilityUnsupported)
         }
@@ -39,12 +39,12 @@ impl Store {
     /// Persists the public CNG selector before the coordinator creates a key.
     /// An existing identity is never replaced, including a Creating identity.
     pub fn stage_server_identity(&self, key_id: [u8; 32]) -> Result<ServerIdentity, ErrorCode> {
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
         {
             let _ = key_id;
             Err(ErrorCode::CapabilityUnsupported)
         }
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
         {
             let changed=self.with_connection(|c| {
                 let now=crate::utc_millis()?;
@@ -69,12 +69,12 @@ impl Store {
         public_key: [u8; 72],
         expected_version: u64,
     ) -> Result<ServerIdentity, ErrorCode> {
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
         {
             let _ = (key_id, public_key, expected_version);
             Err(ErrorCode::CapabilityUnsupported)
         }
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
         {
             if !valid_header(&public_key) {
                 return Err(ErrorCode::InvalidInput);
@@ -95,12 +95,12 @@ impl Store {
     }
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 fn valid_header(public_key: &[u8; 72]) -> bool {
     &public_key[..4] == b"ECS1" && public_key[4..8] == 32u32.to_le_bytes()
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 fn read_identity(c: &rusqlite::Connection) -> rusqlite::Result<Option<ServerIdentity>> {
     use rusqlite::OptionalExtension;
     c.query_row(
@@ -147,7 +147,7 @@ fn read_identity(c: &rusqlite::Connection) -> rusqlite::Result<Option<ServerIden
 }
 
 #[cfg(test)]
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 mod tests {
     use super::*;
     use std::{

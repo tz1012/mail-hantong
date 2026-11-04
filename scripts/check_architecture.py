@@ -30,7 +30,7 @@ ALLOWED = {
     "hantong-ipc-client": {"hantong-contracts", "hantong-platform"},
     "hantong-ipc-server": {"hantong-contracts", "hantong-platform", "hantong-application"},
     "hantong-store": {"hantong-contracts", "hantong-domain", "hantong-secrets", "hantong-platform"},
-    "hantong-secrets": {"hantong-contracts", "hantong-domain"},
+    "hantong-secrets": {"hantong-contracts", "hantong-domain", "hantong-platform"},
     "hantong-adapters": {"hantong-domain"},
     "hantong-cli": {"hantong-contracts", "hantong-ipc-client", "hantong-ai", "hantong-platform"},
     "hantong-ai": set(),

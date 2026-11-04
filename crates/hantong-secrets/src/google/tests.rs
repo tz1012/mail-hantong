@@ -193,7 +193,7 @@ fn sec08_oauth_provider_reason_is_an_exact_allowlist_not_error_reflection() {
     }
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 #[test]
 fn acc02_sec08_callback_timeout_diagnostic_preserves_failure_and_no_secrets() {
     let runtime = tokio::runtime::Builder::new_current_thread()
@@ -517,7 +517,7 @@ fn sync02_unsupported_large_and_attachment_bodies_keep_metadata() {
 #[test]
 fn sync02_large_visible_body_is_utf8_bounded_instead_of_rejected() {
     for text in ["x".repeat(96000), "한".repeat(32000)] {
-        let value = serde_json::json!({"id":"a","threadId":"b","internalDate":"0","payload":{"mimeType":"text/plain","body":{"size":text.len(),"data":crypto::base64url(text.as_bytes())}}});
+        let value = serde_json::json!({"id":"a","threadId":"b","internalDate":"0","payload":{"mimeType":"text/plain","headers":[{"name":"Content-Type","value":"text/plain; charset=utf-8"}],"body":{"size":text.len(),"data":crypto::base64url(text.as_bytes())}}});
         let message = gmail::parse_message(&value, false).unwrap();
         let preview = message.body_text.as_deref().unwrap();
         assert!(!preview.is_empty() && preview.len() <= 65536);
@@ -626,7 +626,7 @@ fn ext03_transport_rejects_cross_host_mutations_and_expired_or_cancelled_request
     cancel.store(true, Ordering::Relaxed);
     assert_eq!(http::check(deadline, &cancel), Err(ErrorCode::Offline));
 }
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 #[tokio::test]
 async fn acc02_loopback_completes_once_and_closes_listener_without_provider_network() {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};

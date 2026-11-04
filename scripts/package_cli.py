@@ -70,10 +70,15 @@ def archive_name(value: str) -> str:
 
 
 def read_file(path: Path, boundary: Path) -> bytes:
-    boundary = boundary.resolve()
+    # Keep the lexical relationship for relative-path and link checks before
+    # canonicalizing. Windows can expose the same TEMP directory through an
+    # 8.3 alias, while Path.resolve() expands only one side of the pair.
+    lexical_boundary = boundary.absolute()
+    lexical_path = path.absolute()
     try:
+        relative = lexical_path.relative_to(lexical_boundary)
+        boundary = boundary.resolve()
         resolved = path.resolve(strict=True)
-        relative = path.absolute().relative_to(boundary)
     except (OSError, ValueError):
         raise PackageError("required package input is missing or outside its source directory") from None
     if not resolved.is_relative_to(boundary):

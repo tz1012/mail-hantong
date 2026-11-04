@@ -4,12 +4,12 @@ use hantong_contracts::ErrorCode;
 use hantong_domain::{
     account_provisioning::NewImapAccountDraft, mail_connection::ImapEndpointConfig,
 };
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 use rusqlite::TransactionBehavior;
 use std::fmt;
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 mod storage;
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 use storage::*;
 
 #[derive(Clone, Eq, PartialEq)]
@@ -189,12 +189,12 @@ impl Store {
             0,
             *expected.intent.mutation.payload_hash(),
         )?;
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
         {
             let _ = mutation;
             Err(ErrorCode::CapabilityUnsupported)
         }
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
         {
             self.mail_transaction(TransactionBehavior::Immediate, |tx| {
                 prepare_resume(tx, expected, new_id, mutation)
@@ -205,11 +205,11 @@ impl Store {
         if id == [0; 32] {
             return Err(ErrorCode::InvalidInput);
         }
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
         {
             Err(ErrorCode::CapabilityUnsupported)
         }
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
         {
             self.mail_transaction(TransactionBehavior::Deferred, |tx| resolve_leaf(tx, &id))
         }
@@ -224,12 +224,12 @@ impl Store {
         &self,
         intent: &NewImapSetupRequest,
     ) -> Result<ImapSetupRequest, ErrorCode> {
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
         {
             let _ = intent;
             Err(ErrorCode::CapabilityUnsupported)
         }
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
         {
             self.mail_transaction(TransactionBehavior::Immediate, |tx| create(tx, intent))
         }
@@ -241,21 +241,21 @@ impl Store {
         if id == [0; 32] {
             return Err(ErrorCode::InvalidInput);
         }
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
         {
             Err(ErrorCode::CapabilityUnsupported)
         }
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
         {
             self.mail_transaction(TransactionBehavior::Deferred, |tx| read_request(tx, &id))
         }
     }
     pub fn list_imap_setup_requests(&self) -> Result<Vec<ImapSetupRequest>, ErrorCode> {
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
         {
             Err(ErrorCode::CapabilityUnsupported)
         }
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
         {
             self.mail_transaction(TransactionBehavior::Deferred, |tx| read_all(tx))
         }
@@ -315,12 +315,12 @@ impl Store {
         expected: &ImapSetupRequest,
         event: ImapSetupEvent,
     ) -> Result<ImapSetupRequest, ErrorCode> {
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
         {
             let _ = (expected, event);
             Err(ErrorCode::CapabilityUnsupported)
         }
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
         {
             self.mail_transaction(TransactionBehavior::Immediate, |tx| {
                 change(tx, expected, event)
@@ -329,13 +329,13 @@ impl Store {
     }
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 pub(crate) fn validate_journal(connection: &rusqlite::Connection) -> rusqlite::Result<()> {
     read_all(connection)
         .map(|_| ())
         .map_err(|_| rusqlite::Error::InvalidQuery)
 }
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 pub(crate) fn validate_journal_v5(connection: &rusqlite::Connection) -> rusqlite::Result<()> {
     read_all_v5(connection)
         .map(|_| ())

@@ -12,12 +12,18 @@ use std::path::{Path, PathBuf};
 
 mod database;
 pub mod google;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+mod unix_database;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub mod unix_secret_store;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub mod unix_signing;
 pub use google::{GoogleAuthorization, PendingGoogleCredential, begin_google_authorization};
 pub mod imap_body;
 mod imap_probe;
 pub mod imap_trash;
 mod mail_credentials;
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 mod mail_transport;
 mod protected_input;
 mod smtp_probe;
@@ -136,13 +142,33 @@ pub struct SecretStore {
     root: PathBuf,
     #[cfg(windows)]
     _root_handles: Vec<File>,
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    unix_root: hantong_platform::unix_paths::UnixDirectoryGuard,
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    unix_store: unix_secret_store::UnixSecretStore,
 }
 impl SecretStore {
     pub fn open(root: impl AsRef<Path>) -> Result<Self, SecretError> {
         #[cfg(not(windows))]
         {
-            let _ = root;
-            Err(SecretError::UnsupportedPlatform)
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            {
+                let root = root.as_ref();
+                let unix_root = hantong_platform::unix_paths::UnixDirectoryGuard::open(root, true)
+                    .map_err(|_| SecretError::InvalidRoot)?;
+                unix_secret_store::UnixSecretStore::install_platform_store()
+                    .map_err(|_| SecretError::UnsupportedPlatform)?;
+                return Ok(Self {
+                    root: root.to_path_buf(),
+                    unix_root,
+                    unix_store: unix_secret_store::UnixSecretStore::new(),
+                });
+            }
+            #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+            {
+                let _ = root;
+                Err(SecretError::UnsupportedPlatform)
+            }
         }
         #[cfg(windows)]
         {
@@ -184,11 +210,15 @@ impl SecretStore {
         }
         #[cfg(not(windows))]
         {
-            let _ = h;
-            false
+            self.owns(h)
+                && self
+                    .unix_selector(&h.account_id, h.kind)
+                    .ok()
+                    .and_then(|selector| self.unix_store.read(&selector).ok())
+                    .is_some()
         }
     }
-    /// Resolves an existing mail slot without decrypting it.
+    /// Resolves an existing mail slot without exposing credential bytes.
     pub fn resolve_mail_handle(
         &self,
         account_id: &str,
@@ -204,8 +234,14 @@ impl SecretStore {
         }
         #[cfg(not(windows))]
         {
-            let _ = handle;
-            Err(SecretError::UnsupportedPlatform)
+            let selector = self.unix_selector(account_id, SecretKind::Mail(slot))?;
+            self.unix_store
+                .read(&selector)
+                .map(|_| handle)
+                .map_err(|e| match e {
+                    unix_secret_store::UnixSecretError::NotFound => SecretError::NotFound,
+                    _ => SecretError::Protection,
+                })
         }
     }
     pub fn verify(&self, h: &SecretHandle) -> Result<(), SecretError> {
@@ -221,8 +257,26 @@ impl SecretStore {
         }
         validate_path(&self.root)?;
         #[cfg(windows)]
-        drop(windows_impl::open_checked(&h.path)?);
-        fs::remove_file(&h.path).map_err(|_| SecretError::NotFound)
+        {
+            drop(windows_impl::open_checked(&h.path)?);
+            fs::remove_file(&h.path).map_err(|_| SecretError::NotFound)
+        }
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        {
+            let selector = self.unix_selector(&h.account_id, h.kind)?;
+            let guard = unix_secret_store::UnixSecretMutationGuard::lock(&self.unix_root)
+                .map_err(|_| SecretError::Protection)?;
+            self.unix_store
+                .delete(&guard, &selector)
+                .map_err(|e| match e {
+                    unix_secret_store::UnixSecretError::NotFound => SecretError::NotFound,
+                    _ => SecretError::Protection,
+                })
+        }
+        #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
+        {
+            fs::remove_file(&h.path).map_err(|_| SecretError::NotFound)
+        }
     }
     fn handle(&self, a: &str, k: SecretKind) -> SecretHandle {
         SecretHandle {
@@ -259,14 +313,28 @@ impl SecretStore {
         k: SecretKind,
         b: &[u8],
     ) -> Result<(), SecretError> {
+        #[cfg(not(windows))]
+        let _ = h;
         #[cfg(windows)]
         {
             windows_impl::store(&h.path, a, k, b)
         }
         #[cfg(not(windows))]
         {
-            let _ = (h, a, k, b);
-            Err(SecretError::UnsupportedPlatform)
+            let selector = self.unix_selector(a, k)?;
+            let guard = unix_secret_store::UnixSecretMutationGuard::lock(&self.unix_root)
+                .map_err(|_| SecretError::Protection)?;
+            match self
+                .unix_store
+                .replace(&guard, &selector, b, selector.kind())
+            {
+                Ok(()) => Ok(()),
+                Err(unix_secret_store::UnixSecretError::NotFound) => self
+                    .unix_store
+                    .create(&guard, &selector, b, selector.kind())
+                    .map_err(|_| SecretError::Protection),
+                Err(_) => Err(SecretError::Protection),
+            }
         }
     }
     fn verify_inner(&self, h: &SecretHandle) -> Result<(), SecretError> {
@@ -276,9 +344,35 @@ impl SecretStore {
         }
         #[cfg(not(windows))]
         {
-            let _ = h;
-            Err(SecretError::UnsupportedPlatform)
+            let selector = self.unix_selector(&h.account_id, h.kind)?;
+            self.unix_store
+                .read(&selector)
+                .map(|_| ())
+                .map_err(|e| match e {
+                    unix_secret_store::UnixSecretError::NotFound => SecretError::NotFound,
+                    _ => SecretError::Protection,
+                })
         }
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    fn unix_selector(
+        &self,
+        account: &str,
+        kind: SecretKind,
+    ) -> Result<unix_secret_store::UnixSecretSelector, SecretError> {
+        let (kind, version) = match kind {
+            SecretKind::Mail(slot) => (unix_secret_store::UnixSecretKind::MailCredential(slot), 1),
+            SecretKind::GoogleOAuth(version) => {
+                (unix_secret_store::UnixSecretKind::GoogleOAuth, version)
+            }
+            SecretKind::ModelApiKey => (unix_secret_store::UnixSecretKind::ModelApiKey, 1),
+            SecretKind::OAuthAccess | SecretKind::OAuthRefresh | SecretKind::AppPassword => {
+                return Err(SecretError::UnsupportedPlatform);
+            }
+        };
+        unix_secret_store::UnixSecretSelector::new(kind, Some(account), version)
+            .map_err(|_| SecretError::InvalidCredential)
     }
 }
 
@@ -653,7 +747,7 @@ mod tests {
             b"old"
         );
     }
-    #[cfg(not(windows))]
+    #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
     #[test]
     fn sec01_non_windows_never_writes_plaintext() {
         let fixture = TempGuard::new("unsupported");
@@ -663,6 +757,17 @@ mod tests {
             Err(SecretError::UnsupportedPlatform)
         ));
         assert!(!r.exists());
+    }
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn sec01_unix_missing_root_fails_closed_without_creating_files() {
+        let fixture = TempGuard::new("unix-missing-root");
+        let missing = fixture.root.join("missing");
+        assert!(matches!(
+            SecretStore::open(&missing),
+            Err(SecretError::InvalidRoot)
+        ));
+        assert!(!missing.exists());
     }
     #[cfg(windows)]
     #[test]

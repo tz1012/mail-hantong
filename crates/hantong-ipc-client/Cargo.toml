@@ -14,6 +14,9 @@ hantong-contracts = { path = "../hantong-contracts" }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 
-[target.'cfg(windows)'.dependencies]
+[target.'cfg(any(windows, target_os = "linux", target_os = "macos"))'.dependencies]
 hantong-platform = { path = "../hantong-platform" }
 tokio = { version = "1.54.1", default-features = false, features = ["rt", "net", "io-util", "time"] }
+
+[target.'cfg(unix)'.dev-dependencies]
+ring = "=0.17.14"

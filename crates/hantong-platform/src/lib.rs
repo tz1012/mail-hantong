@@ -11,12 +11,29 @@ pub mod mail_display;
 mod paths;
 mod profile_file;
 mod selection;
-#[cfg(windows)]
+#[cfg(any(windows, unix))]
 mod terminal;
 pub mod ui_preferences;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+mod unix_crypto;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub mod unix_paths;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub mod unix_peer;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub mod unix_profile_publication;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub mod unix_socket;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub mod unix_transport;
 pub use selection::{Selection, SelectionKey, interactive_select};
-#[cfg(windows)]
+#[cfg(any(windows, unix))]
 pub use terminal::{MouseKind, TerminalEvent, TerminalKey, TerminalSession};
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub use unix_crypto::{
+    MAX_RELEASE_FILE, client_key_id_for_registration, random_nonce, registration_id_for_request,
+    sha256, sha256_release_file, sha256_storage_payload, validate_public_key, verify_signature,
+};
 #[cfg(windows)]
 mod windows_autostart;
 #[cfg(windows)]
@@ -46,7 +63,7 @@ pub use windows_pipe::{
 #[cfg(not(windows))]
 pub struct LocalPipeServer;
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
 pub fn sha256_storage_payload(input: &[u8]) -> Result<[u8; 32], ErrorCode> {
     if input.len() > 8 * 1024 * 1024 + 4096 {
         return Err(ErrorCode::InvalidInput);
@@ -78,7 +95,7 @@ mod tests {
         ));
     }
 
-    #[cfg(not(windows))]
+    #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
     #[test]
     fn storage_payload_hash_stub_preserves_size_validation() {
         assert_eq!(

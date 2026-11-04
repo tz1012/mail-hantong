@@ -26,11 +26,11 @@ impl Store {
         {
             return Err(ErrorCode::InvalidInput);
         }
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
         {
             self.with_connection(|c| Ok(storage::locate(c, account, message, max_bytes)))?
         }
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
         {
             let _ = max_bytes;
             Err(ErrorCode::CapabilityUnsupported)
@@ -41,11 +41,11 @@ impl Store {
         &self,
         request: &MessageBodyRequest,
     ) -> Result<ImapEndpointConfig, ErrorCode> {
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
         {
             self.with_connection(|c| Ok(storage::binding(c, request)))?
         }
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
         {
             let _ = request;
             Err(ErrorCode::CapabilityUnsupported)
@@ -55,11 +55,11 @@ impl Store {
         &self,
         request: &MessageBodyRequest,
     ) -> Result<Option<MessageBody>, ErrorCode> {
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
         {
             self.with_connection(|c| Ok(storage::cached(c, request)))?
         }
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
         {
             let _ = request;
             Err(ErrorCode::CapabilityUnsupported)
@@ -70,18 +70,18 @@ impl Store {
         body: &MessageBody,
         endpoint_version: u64,
     ) -> Result<(), ErrorCode> {
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
         {
             self.with_connection(|c| Ok(storage::put(c, body, endpoint_version)))?
         }
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
         {
             let _ = (body, endpoint_version);
             Err(ErrorCode::CapabilityUnsupported)
         }
     }
 }
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 mod storage {
     use super::*;
     use hantong_contracts::{uid_page::UidMailboxEncoding, wire_hex};

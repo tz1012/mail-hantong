@@ -7,15 +7,15 @@ use hantong_domain::imap_recovery::{ImapUidRecoveryPage, ImapUidRecoveryRequest}
 use hantong_domain::imap_sync::{ImapUidPage, ImapUidPageRequest};
 use hantong_domain::mail_connection::ImapEndpointConfig;
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 mod gate;
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 mod list_gate;
 #[cfg(all(windows, test))]
 mod tests;
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 mod uid_page_gate;
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 pub(crate) mod windows;
 
 #[derive(Debug, Eq, PartialEq)]
@@ -60,11 +60,11 @@ impl SecretStore {
         endpoint: &ImapEndpointConfig,
     ) -> Result<hantong_contracts::message_body::MessageBody, crate::imap_body::ImapBodyError> {
         validate_account(request.account_id()).map_err(MailProbeError::Credential)?;
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
         {
             windows::fetch_body(self, request, endpoint).await
         }
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
         {
             let _ = endpoint;
             Err(MailProbeError::UnsupportedPlatform.into())
@@ -82,11 +82,11 @@ impl SecretStore {
         }
         validate_account(request.account_id())
             .map_err(|_| ImapUidPageError::Probe(MailProbeError::InvalidAccount))?;
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
         {
             windows::fetch_uid_observation(self, request, endpoint).await
         }
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
         {
             let _ = endpoint;
             Err(ImapUidPageError::Probe(MailProbeError::UnsupportedPlatform))
@@ -104,11 +104,11 @@ impl SecretStore {
         }
         validate_account(request.account_id())
             .map_err(|_| ImapUidPageError::Probe(MailProbeError::InvalidAccount))?;
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
         {
             windows::fetch_uid_recovery_page(self, request, endpoint).await
         }
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
         {
             let _ = endpoint;
             Err(ImapUidPageError::Probe(MailProbeError::UnsupportedPlatform))
@@ -126,11 +126,11 @@ impl SecretStore {
         }
         validate_account(request.account_id())
             .map_err(|_| ImapUidPageError::Probe(MailProbeError::InvalidAccount))?;
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
         {
             windows::fetch_uid_reconcile_page(self, request, endpoint).await
         }
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
         {
             let _ = endpoint;
             Err(ImapUidPageError::Probe(MailProbeError::UnsupportedPlatform))
@@ -149,11 +149,11 @@ impl SecretStore {
         }
         validate_account(request.account_id())
             .map_err(|_| ImapUidPageError::Probe(MailProbeError::InvalidAccount))?;
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
         {
             windows::fetch_uid_page(self, request, endpoint).await
         }
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
         {
             let _ = endpoint;
             Err(ImapUidPageError::Probe(MailProbeError::UnsupportedPlatform))
@@ -167,11 +167,11 @@ impl SecretStore {
         endpoint: &ImapEndpointConfig,
     ) -> Result<hantong_domain::mailboxes::ImapMailboxSnapshot, MailProbeError> {
         validate_account(account).map_err(|_| MailProbeError::InvalidAccount)?;
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
         {
             windows::discover(self, account, endpoint).await
         }
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
         {
             let _ = endpoint;
             Err(MailProbeError::UnsupportedPlatform)
@@ -184,11 +184,11 @@ impl SecretStore {
         endpoint: &ImapEndpointConfig,
     ) -> Result<ImapProbeReceipt, MailProbeError> {
         validate_account(account).map_err(|_| MailProbeError::InvalidAccount)?;
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
         {
             windows::probe(self, account, endpoint).await
         }
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
         {
             let _ = endpoint;
             Err(MailProbeError::UnsupportedPlatform)

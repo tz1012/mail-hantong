@@ -1,3 +1,4 @@
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
 use super::*;
 
 #[cfg(windows)]
@@ -816,7 +817,7 @@ mod native {
     }
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
 #[test]
 fn acc01_provisioning_is_unsupported_without_windows_store() {
     let store = Store {};

@@ -36,6 +36,11 @@ pub mod uid_inspection;
 pub mod uid_page;
 pub mod uid_reconcile;
 pub mod uid_recovery;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub mod unix_auth;
+pub mod unix_auth_wire;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub mod unix_authenticated_wire;
 
 use hantong_contracts::ErrorCode;
 use serde::{Deserialize, Serialize};

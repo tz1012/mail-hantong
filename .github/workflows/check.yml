@@ -19,6 +19,8 @@ jobs:
         os:
           - ubuntu-24.04
           - windows-2025
+          - macos-15
+          - macos-15-intel
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
     steps:
@@ -39,6 +41,9 @@ jobs:
         run: python scripts/prepare_native_tools.py
       - name: Run repository checks offline
         run: python scripts/check_all.py
+      - name: Verify native Unix terminal navigation and restoration
+        if: runner.os != 'Windows'
+        run: python scripts/test_unix_terminal.py target/debug/hantong-t --input-probe target/debug/examples/terminal_input_probe
 
   ci-required:
     name: CI required

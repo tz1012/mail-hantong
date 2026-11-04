@@ -46,10 +46,64 @@ pub fn interactive_select(labels: &[String], initial: usize) -> Result<Option<us
     {
         windows::select(labels, selection)
     }
-    #[cfg(not(windows))]
+    #[cfg(unix)]
+    {
+        unix::select(labels, selection)
+    }
+    #[cfg(all(not(windows), not(unix)))]
     {
         let _ = (labels, selection);
         Err(ErrorCode::CapabilityUnsupported)
+    }
+}
+
+#[cfg(unix)]
+mod unix {
+    use super::*;
+    use crate::{TerminalEvent, TerminalKey, TerminalSession};
+    use std::io::{self, Write};
+
+    fn draw(labels: &[String], selection: Selection) -> Result<(), ErrorCode> {
+        print!("\x1b[2J\x1b[H");
+        let start = selection
+            .index()
+            .saturating_sub(3)
+            .min(labels.len().saturating_sub(8));
+        for offset in 0..8 {
+            let index = start + offset;
+            if let Some(label) = labels.get(index) {
+                println!(
+                    "{} {}",
+                    if index == selection.index() { ">" } else { " " },
+                    label
+                );
+            } else {
+                println!();
+            }
+        }
+        println!("\n[Enter] select  [Esc] cancel  [↑/↓] move");
+        io::stdout().flush().map_err(|_| ErrorCode::CoreUnavailable)
+    }
+
+    pub fn select(labels: &[String], mut selection: Selection) -> Result<Option<usize>, ErrorCode> {
+        let mut terminal = TerminalSession::enter_inline()?;
+        draw(labels, selection)?;
+        loop {
+            match terminal.read_event()? {
+                TerminalEvent::Key(TerminalKey::Up) => {
+                    selection.key(SelectionKey::Up);
+                    draw(labels, selection)?;
+                }
+                TerminalEvent::Key(TerminalKey::Down) => {
+                    selection.key(SelectionKey::Down);
+                    draw(labels, selection)?;
+                }
+                TerminalEvent::Key(TerminalKey::Enter) => return Ok(Some(selection.index())),
+                TerminalEvent::Key(TerminalKey::Escape | TerminalKey::Quit) => return Ok(None),
+                TerminalEvent::Resize => draw(labels, selection)?,
+                TerminalEvent::Tick | TerminalEvent::Mouse { .. } | TerminalEvent::Key(_) => {}
+            }
+        }
     }
 }
 #[cfg(windows)]

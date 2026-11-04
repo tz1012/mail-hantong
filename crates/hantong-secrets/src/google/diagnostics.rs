@@ -6,11 +6,11 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Clone, Copy)]
 pub(super) enum Stage {
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
     CallbackWait,
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
     CallbackTimeout,
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
     CallbackValidation,
     TokenExchange,
     TokenResponse,
@@ -26,11 +26,11 @@ pub(super) enum Stage {
 impl Stage {
     fn name(self) -> &'static str {
         match self {
-            #[cfg(windows)]
+            #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
             Self::CallbackWait => "callback_wait",
-            #[cfg(windows)]
+            #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
             Self::CallbackTimeout => "callback_timeout",
-            #[cfg(windows)]
+            #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
             Self::CallbackValidation => "callback_validation",
             Self::TokenExchange => "token_exchange",
             Self::TokenResponse => "token_response",

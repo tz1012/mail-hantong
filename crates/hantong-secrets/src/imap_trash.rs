@@ -28,7 +28,7 @@ impl SecretStore {
         if request.account_id() != account || cancel.load(std::sync::atomic::Ordering::Relaxed) {
             return Ok(ImapTrashOutcome::Rejected);
         }
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
         {
             crate::imap_probe::windows::move_to_trash(self, request, endpoint, destination, cancel)
                 .await
@@ -44,7 +44,7 @@ impl SecretStore {
                     }
                 })
         }
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
         {
             let _ = (endpoint, request, destination);
             Err(MailProbeError::UnsupportedPlatform)

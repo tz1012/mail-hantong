@@ -13,6 +13,11 @@ pub mod imap_setup_wire;
 pub mod registration_wire;
 pub mod setup_dispatch;
 pub mod terminal_review_wire;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub mod unix_auth;
+pub mod unix_auth_wire;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub mod unix_authenticated_wire;
 
 use hantong_contracts::ErrorCode;
 use serde::Deserializer;

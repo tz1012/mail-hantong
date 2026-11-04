@@ -1,25 +1,27 @@
 use super::*;
 #[cfg(not(any(windows, test)))]
 use crate::SensitiveBuffer;
-#[cfg(windows)]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+use ring::rand::SecureRandom;
+#[cfg(any(windows, test, target_os = "linux", target_os = "macos"))]
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 pub struct GoogleAuthorization {
     url: SensitiveBuffer,
-    #[cfg(windows)]
+    #[cfg(any(windows, test, target_os = "linux", target_os = "macos"))]
     listener: tokio::net::TcpListener,
-    #[cfg(windows)]
+    #[cfg(any(windows, test, target_os = "linux", target_os = "macos"))]
     state: SecretText,
-    #[cfg(windows)]
+    #[cfg(any(windows, test, target_os = "linux", target_os = "macos"))]
     verifier: SecretText,
-    #[cfg(windows)]
+    #[cfg(any(windows, test, target_os = "linux", target_os = "macos"))]
     client_id: String,
-    #[cfg(windows)]
+    #[cfg(any(windows, test, target_os = "linux", target_os = "macos"))]
     access_mode: GoogleAccessMode,
-    #[cfg(windows)]
+    #[cfg(any(windows, test, target_os = "linux", target_os = "macos"))]
     client_secret: Option<GoogleClientSecret>,
-    #[cfg(windows)]
+    #[cfg(any(windows, test, target_os = "linux", target_os = "macos"))]
     redirect: String,
-    #[cfg(windows)]
+    #[cfg(any(windows, test, target_os = "linux", target_os = "macos"))]
     deadline: Instant,
 }
 impl std::fmt::Debug for GoogleAuthorization {
@@ -39,15 +41,20 @@ pub async fn begin_google_authorization_for_mode(
     access_mode: GoogleAccessMode,
 ) -> Result<GoogleAuthorization, ErrorCode> {
     validate_google_client_id(client_id)?;
-    #[cfg(not(windows))]
+    #[cfg(not(any(windows, test, target_os = "linux", target_os = "macos")))]
     {
         let _ = (force_consent, access_mode);
         Err(ErrorCode::CapabilityUnsupported)
     }
-    #[cfg(windows)]
+    #[cfg(any(windows, test, target_os = "linux", target_os = "macos"))]
     {
         let mut random = SensitiveBuffer(vec![0; 64]);
+        #[cfg(windows)]
         crate::windows_impl::random_bytes(&mut random.0).map_err(|_| ErrorCode::InternalError)?;
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        ring::rand::SystemRandom::new()
+            .fill(&mut random.0)
+            .map_err(|_| ErrorCode::InternalError)?;
         let state = SecretText::from_string(crypto::base64url(&random.0[..32]))?;
         let verifier = SecretText::from_string(crypto::base64url(&random.0[32..]))?;
         let challenge = crypto::base64url(&crypto::sha256(verifier.0.as_slice())?);
@@ -102,7 +109,7 @@ pub async fn begin_google_authorization_for_mode(
 impl GoogleAuthorization {
     /// Only an opaque, client-bound native capture can supply this credential.
     pub fn with_client_secret(mut self, secret: GoogleClientSecret) -> Result<Self, ErrorCode> {
-        #[cfg(windows)]
+        #[cfg(any(windows, test, target_os = "linux", target_os = "macos"))]
         {
             if !secret.matches(&self.client_id) {
                 return Err(ErrorCode::ScopeDenied);
@@ -110,7 +117,7 @@ impl GoogleAuthorization {
             self.client_secret = Some(secret);
             Ok(self)
         }
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows, test, target_os = "linux", target_os = "macos")))]
         {
             let _ = (&mut self, secret);
             Err(ErrorCode::CapabilityUnsupported)
@@ -121,11 +128,11 @@ impl GoogleAuthorization {
         std::str::from_utf8(self.url.as_slice()).unwrap_or("")
     }
     pub async fn complete(self) -> Result<PendingGoogleCredential, ErrorCode> {
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows, test, target_os = "linux", target_os = "macos")))]
         {
             Err(ErrorCode::CapabilityUnsupported)
         }
-        #[cfg(windows)]
+        #[cfg(any(windows, test, target_os = "linux", target_os = "macos"))]
         {
             let trace = diagnostics::Trace::new();
             trace.start(diagnostics::Stage::CallbackWait);
@@ -213,7 +220,7 @@ impl GoogleAuthorization {
         }
     }
 }
-#[cfg(any(windows, test))]
+#[cfg(any(windows, test, target_os = "linux", target_os = "macos"))]
 fn callback_reply(valid: bool) -> Vec<u8> {
     let (status, body) = if valid {
         (
@@ -256,7 +263,7 @@ fn sec08_google_callback_page_is_static_bilingual_no_reflection_or_external_cont
     }
 }
 
-#[cfg(any(windows, test))]
+#[cfg(any(windows, test, target_os = "linux", target_os = "macos"))]
 pub(super) fn form(values: &[(&str, &str)]) -> SensitiveBuffer {
     const HEX: &[u8] = b"0123456789ABCDEF";
     let size = values.iter().map(|(k, v)| k.len() + v.len() * 3 + 2).sum();
@@ -279,7 +286,7 @@ pub(super) fn form(values: &[(&str, &str)]) -> SensitiveBuffer {
     }
     out
 }
-#[cfg(any(windows, test))]
+#[cfg(any(windows, test, target_os = "linux", target_os = "macos"))]
 pub(super) fn encode(value: &str) -> String {
     const HEX: &[u8] = b"0123456789ABCDEF";
     let mut out = String::with_capacity(value.len() * 3);
@@ -294,7 +301,7 @@ pub(super) fn encode(value: &str) -> String {
     }
     out
 }
-#[cfg(any(windows, test))]
+#[cfg(any(windows, test, target_os = "linux", target_os = "macos"))]
 fn decode(value: &str) -> Result<String, ErrorCode> {
     let mut out = SensitiveBuffer(Vec::with_capacity(value.len()));
     let mut chars = value.bytes();
@@ -321,7 +328,7 @@ fn decode(value: &str) -> Result<String, ErrorCode> {
         ErrorCode::AuthRequired
     })
 }
-#[cfg(any(windows, test))]
+#[cfg(any(windows, test, target_os = "linux", target_os = "macos"))]
 pub(super) fn callback(request: &[u8], host: &str, state: &str) -> Result<SecretText, ErrorCode> {
     let request = std::str::from_utf8(request).map_err(|_| ErrorCode::AuthRequired)?;
     let (head, end) = request
@@ -426,7 +433,7 @@ pub(super) fn complete_code_traced(
         GoogleAccessMode::ReadOnly,
     )
 }
-#[cfg(any(windows, test))]
+#[cfg(any(windows, test, target_os = "linux", target_os = "macos"))]
 #[allow(clippy::too_many_arguments)]
 pub(super) fn complete_code_traced_for_mode(
     transport: &impl http::Transport,

@@ -86,33 +86,33 @@ impl Store {
         request: &UidReconcileRequest,
         queue: UidQueueAdmission,
     ) -> Result<UidReconcileAdmission, ErrorCode> {
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
         {
             storage::admit(self, id, request, queue)
         }
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
         {
             let _ = (id, request, queue);
             Err(ErrorCode::CapabilityUnsupported)
         }
     }
     pub fn start_uid_reconcile(&self, id: [u8; 32]) -> Result<UidReconcileStart, ErrorCode> {
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
         {
             storage::start(self, id)
         }
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
         {
             let _ = id;
             Err(ErrorCode::CapabilityUnsupported)
         }
     }
     pub fn check_uid_reconcile(&self, id: [u8; 32]) -> Result<(), ErrorCode> {
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
         {
             storage::check(self, id)
         }
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
         {
             let _ = id;
             Err(ErrorCode::CapabilityUnsupported)
@@ -123,11 +123,11 @@ impl Store {
         id: [u8; 32],
         page: &ImapUidReconcilePage,
     ) -> Result<UidReconcileReceipt, ErrorCode> {
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
         {
             storage::succeed(self, id, page)
         }
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
         {
             let _ = (id, page);
             Err(ErrorCode::CapabilityUnsupported)
@@ -138,11 +138,11 @@ impl Store {
         id: [u8; 32],
         error: ErrorCode,
     ) -> Result<UidReconcileReceipt, ErrorCode> {
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
         {
             storage::fail(self, id, error)
         }
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
         {
             let _ = (id, error);
             Err(ErrorCode::CapabilityUnsupported)
@@ -153,11 +153,11 @@ impl Store {
         owner: [u8; 16],
         request: &UidPageStatusRequest,
     ) -> Result<UidReconcileReceipt, ErrorCode> {
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
         {
             storage::receipt(self, owner, request)
         }
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
         {
             let _ = (owner, request);
             Err(ErrorCode::CapabilityUnsupported)
@@ -171,22 +171,22 @@ impl Store {
         validity: u32,
         uid: u32,
     ) -> Result<Option<StoredImapUidObservation>, ErrorCode> {
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
         {
             storage::observation(self, account, mailbox, validity, uid)
         }
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
         {
             let _ = (account, mailbox, validity, uid);
             Err(ErrorCode::CapabilityUnsupported)
         }
     }
 }
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 mod storage;
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 pub(crate) use storage::{SearchHead, search_head, search_source};
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 pub(super) use storage::{execution_reserved, operation_reserved, validate_history};
 #[cfg(all(test, windows))]
 pub(crate) mod tests;

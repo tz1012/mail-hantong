@@ -41,6 +41,10 @@ mod terminal_review_frontend;
 mod terminal_secret_input;
 #[cfg(windows)]
 mod uid_worker;
+#[cfg(all(test, target_os = "linux"))]
+mod unix_authentication_tests;
+#[cfg(unix)]
+pub mod unix_identity;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Lang {

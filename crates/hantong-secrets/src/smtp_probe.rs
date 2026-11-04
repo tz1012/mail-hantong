@@ -6,7 +6,7 @@ use std::fmt;
 
 #[cfg(all(windows, test))]
 pub(crate) mod tests;
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 pub(crate) mod windows;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -64,11 +64,11 @@ impl SecretStore {
         endpoint: &SmtpEndpointConfig,
     ) -> Result<SmtpProbeReceipt, MailProbeError> {
         validate_account(account).map_err(|_| MailProbeError::InvalidAccount)?;
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
         {
             windows::probe(self, account, endpoint).await
         }
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
         {
             let _ = endpoint;
             Err(MailProbeError::UnsupportedPlatform)

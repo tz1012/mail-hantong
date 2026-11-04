@@ -86,6 +86,16 @@ pub trait SecretStore {
     fn delete(&mut self, handle: &Self::Handle) -> Result<(), PlatformError>;
 }
 
+/// Opaque signing boundary for platform-owned authentication keys.
+///
+/// Implementations must keep private key material inside the owning Secrets/OS boundary and
+/// return only the fixed public-key/signature wire forms. Callers must pass a
+/// bounded canonical transcript, never a secret value.
+pub trait OpaqueSigner {
+    fn public_key(&self) -> Result<[u8; 72], PlatformError>;
+    fn sign(&mut self, transcript: &[u8]) -> Result<[u8; 64], PlatformError>;
+}
+
 pub trait IpcTransport {
     fn send_frame(&mut self, frame: &[u8]) -> Result<Vec<u8>, PlatformError>;
 }

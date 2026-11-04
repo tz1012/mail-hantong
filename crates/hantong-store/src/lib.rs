@@ -27,13 +27,13 @@ pub mod initial_sync;
 pub mod mail_connection;
 pub mod mail_send;
 pub mod message_body;
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 mod message_identities;
 pub mod message_search;
 mod registration_activation;
 mod registrations;
 pub mod scope_refresh;
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 mod uid_epochs;
 pub mod uid_inspection;
 pub mod uid_page_jobs;
@@ -51,133 +51,133 @@ pub use registrations::{
 };
 pub use server_identity::ServerIdentity;
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 const CURRENT_SCHEMA_VERSION: u32 = 26;
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 const DATABASE_FORMAT: &str = "mail-hantong";
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 const MAX_SETTING_KEY_BYTES: usize = 128;
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 const MAX_SETTING_JSON_BYTES: usize = 64 * 1024;
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 const SCHEMA: &str = include_str!("../../../docs/contracts/db-schema.sql");
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 const SCHEMA_V4: &str = include_str!("../../../docs/contracts/migrations/schema-v4.sql");
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 const SCHEMA_V5: &str = include_str!("../../../docs/contracts/migrations/schema-v5.sql");
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 const SCHEMA_V6: &str = include_str!("../../../docs/contracts/migrations/schema-v6.sql");
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 const SCHEMA_V7: &str = include_str!("../../../docs/contracts/migrations/schema-v7.sql");
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 const SCHEMA_V8: &str = include_str!("../../../docs/contracts/migrations/schema-v8.sql");
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 const SCHEMA_V10: &str = include_str!("../../../docs/contracts/migrations/schema-v10.sql");
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 const SCHEMA_V11: &str = include_str!("../../../docs/contracts/migrations/schema-v11.sql");
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 const SCHEMA_V12: &str = include_str!("../../../docs/contracts/migrations/schema-v12.sql");
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 const SCHEMA_V13: &str = include_str!("../../../docs/contracts/migrations/schema-v13.sql");
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 const SCHEMA_V14: &str = include_str!("../../../docs/contracts/migrations/schema-v14.sql");
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 const SCHEMA_V16: &str = include_str!("../../../docs/contracts/migrations/schema-v16.sql");
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 const SCHEMA_V17: &str = include_str!("../../../docs/contracts/migrations/schema-v17.sql");
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 const SCHEMA_V20: &str = include_str!("../../../docs/contracts/migrations/schema-v20.sql");
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 const MIGRATION_V20_TO_V21: &str =
     include_str!("../../../docs/contracts/migrations/020-to-021.sql");
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 const SCHEMA_V21: &str = include_str!("../../../docs/contracts/migrations/schema-v21.sql");
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 const SCHEMA_V22: &str = include_str!("../../../docs/contracts/migrations/schema-v22.sql");
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 const MIGRATION_V21_TO_V22: &str =
     include_str!("../../../docs/contracts/migrations/021-to-022.sql");
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 const MIGRATION_V22_TO_V23: &str =
     include_str!("../../../docs/contracts/migrations/022-to-023.sql");
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 const SCHEMA_V23: &str = include_str!("../../../docs/contracts/migrations/schema-v23.sql");
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 const SCHEMA_V24: &str = include_str!("../../../docs/contracts/migrations/schema-v24.sql");
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 const MIGRATION_V23_TO_V24: &str =
     include_str!("../../../docs/contracts/migrations/023-to-024.sql");
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 const MIGRATION_V24_TO_V25: &str =
     include_str!("../../../docs/contracts/migrations/024-to-025.sql");
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 const SCHEMA_V25: &str = include_str!("../../../docs/contracts/migrations/schema-v25.sql");
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 const MIGRATION_V25_TO_V26: &str =
     include_str!("../../../docs/contracts/migrations/025-to-026.sql");
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 const SCHEMA_V26: &str = include_str!("../../../docs/contracts/migrations/schema-v26.sql");
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 const SCHEMA_V19: &str = include_str!("../../../docs/contracts/migrations/schema-v19.sql");
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 const MIGRATION_V19_TO_V20: &str =
     include_str!("../../../docs/contracts/migrations/019-to-020.sql");
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 const SCHEMA_V18: &str = include_str!("../../../docs/contracts/migrations/schema-v18.sql");
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 const MIGRATION_V18_TO_V19: &str =
     include_str!("../../../docs/contracts/migrations/018-to-019.sql");
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 const MIGRATION_V17_TO_V18: &str =
     include_str!("../../../docs/contracts/migrations/017-to-018.sql");
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 const MIGRATION_V16_TO_V17: &str =
     include_str!("../../../docs/contracts/migrations/016-to-017.sql");
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 const SCHEMA_V15: &str = include_str!("../../../docs/contracts/migrations/schema-v15.sql");
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 const MIGRATION_V15_TO_V16: &str =
     include_str!("../../../docs/contracts/migrations/015-to-016.sql");
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 const MIGRATION_V14_TO_V15: &str =
     include_str!("../../../docs/contracts/migrations/014-to-015.sql");
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 const MIGRATION_V13_TO_V14: &str =
     include_str!("../../../docs/contracts/migrations/013-to-014.sql");
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 const MIGRATION_V12_TO_V13: &str =
     include_str!("../../../docs/contracts/migrations/012-to-013.sql");
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 const MIGRATION_V11_TO_V12: &str =
     include_str!("../../../docs/contracts/migrations/011-to-012.sql");
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 const MIGRATION_V10_TO_V11: &str =
     include_str!("../../../docs/contracts/migrations/010-to-011.sql");
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 const SCHEMA_V9: &str = include_str!("../../../docs/contracts/migrations/schema-v9.sql");
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 const MIGRATION_V8_TO_V9: &str = include_str!("../../../docs/contracts/migrations/008-to-009.sql");
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 const MIGRATION_V9_TO_V10: &str = include_str!("../../../docs/contracts/migrations/009-to-010.sql");
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 const MIGRATION_V7_TO_V8: &str = include_str!("../../../docs/contracts/migrations/007-to-008.sql");
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 const MIGRATION_V6_TO_V7: &str = include_str!("../../../docs/contracts/migrations/006-to-007.sql");
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 const SCHEMA_V1: &str = include_str!("../../../docs/contracts/migrations/schema-v1.sql");
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 const MIGRATION_V1_TO_V2: &str = include_str!("../../../docs/contracts/migrations/001-to-002.sql");
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 const SCHEMA_V2: &str = include_str!("../../../docs/contracts/migrations/schema-v2.sql");
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 const MIGRATION_V2_TO_V3: &str = include_str!("../../../docs/contracts/migrations/002-to-003.sql");
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 const SCHEMA_V3: &str = include_str!("../../../docs/contracts/migrations/schema-v3.sql");
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 const MIGRATION_V3_TO_V4: &str = include_str!("../../../docs/contracts/migrations/003-to-004.sql");
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 const MIGRATION_V4_TO_V5: &str = include_str!("../../../docs/contracts/migrations/004-to-005.sql");
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 const MIGRATION_V5_TO_V6: &str = include_str!("../../../docs/contracts/migrations/005-to-006.sql");
 
 #[derive(Clone, Eq, PartialEq)]
@@ -196,14 +196,14 @@ impl fmt::Debug for Setting {
     }
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 use hantong_secrets::{DatabaseError, KeyedConnection};
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 use rusqlite::OptionalExtension;
 
 /// An encrypted, schema-checked local store.
 pub struct Store {
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
     connection: KeyedConnection,
 }
 
@@ -220,12 +220,12 @@ impl Store {
         data_root: impl AsRef<std::path::Path>,
         key_root: impl AsRef<std::path::Path>,
     ) -> Result<Self, ErrorCode> {
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
         {
             let _ = (data_root, key_root);
             Err(ErrorCode::CapabilityUnsupported)
         }
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
         {
             let connection =
                 KeyedConnection::open(data_root, key_root).map_err(map_database_error)?;
@@ -237,12 +237,12 @@ impl Store {
 
     /// Returns a setting without exposing the underlying connection.
     pub(crate) fn get_setting(&self, key: &str) -> Result<Option<Setting>, ErrorCode> {
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
         {
             let _ = key;
             Err(ErrorCode::CapabilityUnsupported)
         }
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
         {
             validate_setting_key(key)?;
             self.with_connection(|connection| {
@@ -271,12 +271,12 @@ impl Store {
         value_json: &str,
         expected_version: u64,
     ) -> Result<u64, ErrorCode> {
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
         {
             let _ = (key, value_json, expected_version);
             Err(ErrorCode::CapabilityUnsupported)
         }
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
         {
             validate_setting(key, value_json)?;
             let outcome = self.with_connection(|connection| {
@@ -337,7 +337,7 @@ impl Store {
         }
     }
 
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
     fn ensure_schema(&self) -> Result<(), ErrorCode> {
         let state = self.with_connection(|connection| {
             let user_version =
@@ -810,176 +810,176 @@ impl Store {
         }
     }
 
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
     fn migrate_v1_to_v2(&self) -> Result<(), ErrorCode> {
         self.migrate_with_backup(1, 2, SCHEMA_V2, |connection| {
             connection.execute_batch(MIGRATION_V1_TO_V2)
         })
     }
 
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
     fn migrate_v2_to_v3(&self) -> Result<(), ErrorCode> {
         self.migrate_with_backup(2, 3, SCHEMA_V3, |connection| {
             connection.execute_batch(MIGRATION_V2_TO_V3)
         })
     }
 
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
     fn migrate_v3_to_v4(&self) -> Result<(), ErrorCode> {
         self.migrate_with_backup(3, 4, SCHEMA_V4, |connection| {
             connection.execute_batch(MIGRATION_V3_TO_V4)
         })
     }
 
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
     fn migrate_v4_to_v5(&self) -> Result<(), ErrorCode> {
         self.migrate_with_backup(4, 5, SCHEMA_V5, |connection| {
             connection.execute_batch(MIGRATION_V4_TO_V5)
         })
     }
 
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
     fn migrate_v5_to_v6(&self) -> Result<(), ErrorCode> {
         self.migrate_with_backup(5, 6, SCHEMA_V6, |connection| {
             connection.execute_batch(MIGRATION_V5_TO_V6)
         })
     }
 
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
     fn migrate_v6_to_v7(&self) -> Result<(), ErrorCode> {
         self.migrate_with_backup(6, 7, SCHEMA_V7, |connection| {
             connection.execute_batch(MIGRATION_V6_TO_V7)
         })
     }
 
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
     fn migrate_v7_to_v8(&self) -> Result<(), ErrorCode> {
         self.migrate_with_backup(7, 8, SCHEMA_V8, |connection| {
             connection.execute_batch(MIGRATION_V7_TO_V8)
         })
     }
 
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
     fn migrate_v8_to_v9(&self) -> Result<(), ErrorCode> {
         self.migrate_with_backup(8, 9, SCHEMA_V9, |connection| {
             connection.execute_batch(MIGRATION_V8_TO_V9)
         })
     }
 
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
     fn migrate_v9_to_v10(&self) -> Result<(), ErrorCode> {
         self.migrate_with_backup(9, 10, SCHEMA_V10, |connection| {
             connection.execute_batch(MIGRATION_V9_TO_V10)
         })
     }
 
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
     fn migrate_v10_to_v11(&self) -> Result<(), ErrorCode> {
         self.migrate_with_backup(10, 11, SCHEMA_V11, |c| {
             c.execute_batch(MIGRATION_V10_TO_V11)
         })
     }
 
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
     fn migrate_v11_to_v12(&self) -> Result<(), ErrorCode> {
         self.migrate_with_backup(11, 12, SCHEMA_V12, |c| {
             c.execute_batch(MIGRATION_V11_TO_V12)
         })
     }
 
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
     fn migrate_v13_to_v14(&self) -> Result<(), ErrorCode> {
         self.migrate_with_backup(13, 14, SCHEMA_V14, apply_v14_migration)
     }
 
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
     fn migrate_v14_to_v15(&self) -> Result<(), ErrorCode> {
         self.migrate_with_backup(14, 15, SCHEMA_V15, apply_v15_migration)
     }
 
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
     fn migrate_v15_to_v16(&self) -> Result<(), ErrorCode> {
         self.migrate_with_backup(15, 16, SCHEMA_V16, apply_v16_migration)
     }
 
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
     fn migrate_v20_to_v21(&self) -> Result<(), ErrorCode> {
         self.migrate_with_backup(20, 21, SCHEMA_V21, |c| {
             c.execute_batch(MIGRATION_V20_TO_V21)
         })
     }
 
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
     fn migrate_v21_to_v22(&self) -> Result<(), ErrorCode> {
         self.migrate_with_backup(21, 22, SCHEMA_V22, |c| {
             c.execute_batch(MIGRATION_V21_TO_V22)
         })
     }
 
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
     fn migrate_v22_to_v23(&self) -> Result<(), ErrorCode> {
         self.migrate_with_backup(22, 23, SCHEMA_V23, |c| {
             c.execute_batch(MIGRATION_V22_TO_V23)
         })
     }
 
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
     fn migrate_v23_to_v24(&self) -> Result<(), ErrorCode> {
         self.migrate_with_backup(23, 24, SCHEMA_V24, |c| {
             c.execute_batch(MIGRATION_V23_TO_V24)
         })
     }
 
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
     fn migrate_v24_to_v25(&self) -> Result<(), ErrorCode> {
         self.migrate_with_backup(24, 25, SCHEMA_V25, |c| {
             c.execute_batch(MIGRATION_V24_TO_V25)
         })
     }
 
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
     fn migrate_v25_to_v26(&self) -> Result<(), ErrorCode> {
         self.migrate_with_backup(25, 26, SCHEMA_V26, |c| {
             c.execute_batch(MIGRATION_V25_TO_V26)
         })
     }
 
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
     fn migrate_v19_to_v20(&self) -> Result<(), ErrorCode> {
         self.migrate_with_backup(19, 20, SCHEMA_V20, |c| {
             c.execute_batch(MIGRATION_V19_TO_V20)
         })
     }
 
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
     fn migrate_v18_to_v19(&self) -> Result<(), ErrorCode> {
         self.migrate_with_backup(18, 19, SCHEMA_V19, |c| {
             c.execute_batch(MIGRATION_V18_TO_V19)
         })
     }
 
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
     fn migrate_v17_to_v18(&self) -> Result<(), ErrorCode> {
         self.migrate_with_backup(17, 18, SCHEMA_V18, |c| {
             c.execute_batch(MIGRATION_V17_TO_V18)
         })
     }
 
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
     fn migrate_v16_to_v17(&self) -> Result<(), ErrorCode> {
         self.migrate_with_backup(16, 17, SCHEMA_V17, |c| {
             c.execute_batch(MIGRATION_V16_TO_V17)
         })
     }
 
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
     fn migrate_v12_to_v13(&self) -> Result<(), ErrorCode> {
         self.migrate_with_backup(12, 13, SCHEMA_V13, |c| {
             c.execute_batch(MIGRATION_V12_TO_V13)
         })
     }
 
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
     fn with_connection<T>(
         &self,
         operation: impl FnOnce(&rusqlite::Connection) -> rusqlite::Result<T>,
@@ -996,7 +996,7 @@ impl Store {
     /// Runs one fixed migration step after creating and validating the
     /// encrypted same-key backup. Callers cannot supply migration SQL through
     /// the public Store API; future schema versions add ordered private steps.
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
     fn migrate_with_backup(
         &self,
         current_version: u32,
@@ -1044,7 +1044,7 @@ impl Store {
     }
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 fn map_database_error(error: DatabaseError) -> ErrorCode {
     match error {
         DatabaseError::Conflict => ErrorCode::Conflict,
@@ -1053,7 +1053,7 @@ fn map_database_error(error: DatabaseError) -> ErrorCode {
     }
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum SchemaState {
     Fresh,
@@ -1088,14 +1088,14 @@ enum SchemaState {
     Corrupt,
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 enum SettingWrite {
     Invalid,
     Conflict,
     Updated(u64),
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 fn initialize_schema(connection: &rusqlite::Connection) -> rusqlite::Result<()> {
     let transaction =
         rusqlite::Transaction::new_unchecked(connection, rusqlite::TransactionBehavior::Immediate)?;
@@ -1110,7 +1110,7 @@ fn initialize_schema(connection: &rusqlite::Connection) -> rusqlite::Result<()> 
     transaction.commit()
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 fn validate_schema(
     connection: &rusqlite::Connection,
     schema: &str,
@@ -1238,7 +1238,7 @@ fn validate_schema(
     Ok(())
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 fn apply_v16_migration(c: &rusqlite::Connection) -> rusqlite::Result<()> {
     let (count, sequence, maximum): (i64, Option<i64>, Option<i64>) = c.query_row(
         "SELECT count(*),max(seq),(SELECT max(audit_seq) FROM audit_starts) FROM sqlite_sequence WHERE name='audit_starts'",
@@ -1253,7 +1253,7 @@ fn apply_v16_migration(c: &rusqlite::Connection) -> rusqlite::Result<()> {
     c.execute_batch(MIGRATION_V15_TO_V16)
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 fn apply_v15_migration(c: &rusqlite::Connection) -> rusqlite::Result<()> {
     let (count, sequence, maximum): (i64, Option<i64>, Option<i64>) = c.query_row(
         "SELECT count(*),max(seq),(SELECT max(audit_seq) FROM audit_starts) FROM sqlite_sequence WHERE name='audit_starts'",
@@ -1269,7 +1269,7 @@ fn apply_v15_migration(c: &rusqlite::Connection) -> rusqlite::Result<()> {
     crate::message_identities::backfill_v14(c)
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 fn apply_v14_migration(c: &rusqlite::Connection) -> rusqlite::Result<()> {
     let (before, after) = MIGRATION_V13_TO_V14
         .split_once("-- BACKFILL_EPOCHS --")
@@ -1279,12 +1279,12 @@ fn apply_v14_migration(c: &rusqlite::Connection) -> rusqlite::Result<()> {
     c.execute_batch(after)
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 fn normalize_ddl(sql: &str) -> String {
     sql.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 fn validate_setting_key(key: &str) -> Result<(), ErrorCode> {
     if key.is_empty() || key.len() > MAX_SETTING_KEY_BYTES || key.chars().any(char::is_control) {
         Err(ErrorCode::InvalidInput)
@@ -1293,7 +1293,7 @@ fn validate_setting_key(key: &str) -> Result<(), ErrorCode> {
     }
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 fn validate_setting(key: &str, value_json: &str) -> Result<(), ErrorCode> {
     validate_setting_key(key)?;
     if value_json.len() > MAX_SETTING_JSON_BYTES {
@@ -1302,7 +1302,7 @@ fn validate_setting(key: &str, value_json: &str) -> Result<(), ErrorCode> {
     Ok(())
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 fn utc_millis() -> rusqlite::Result<i64> {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -3436,5 +3436,66 @@ mod tests {
             assert_eq!(insert("valid-id","valid-key")?,1);
             Ok(())
         }).unwrap();
+    }
+}
+
+#[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
+mod unix_schema_tests {
+    use super::*;
+
+    #[test]
+    fn acc02_unix_current_schema_validates_in_memory_without_os_keyring() {
+        let connection = rusqlite::Connection::open_in_memory().unwrap();
+        connection.execute_batch(SCHEMA).unwrap();
+        connection
+            .execute(
+                "INSERT INTO app_metadata(singleton,database_format,schema_version,created_at_utc_ms,updated_at_utc_ms) VALUES(1,?1,?2,1,1)",
+                rusqlite::params![DATABASE_FORMAT, CURRENT_SCHEMA_VERSION],
+            )
+            .unwrap();
+        validate_schema(&connection, SCHEMA, CURRENT_SCHEMA_VERSION).unwrap();
+    }
+
+    #[test]
+    fn acc02_unix_v25_to_v26_rebuild_preserves_foreign_keys_and_trash_tables() {
+        let connection = rusqlite::Connection::open_in_memory().unwrap();
+        connection.execute_batch(SCHEMA_V25).unwrap();
+        connection
+            .execute(
+                "INSERT INTO app_metadata(singleton,database_format,schema_version,created_at_utc_ms,updated_at_utc_ms) VALUES(1,'mail-hantong',25,1,1)",
+                [],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO accounts(account_id,provider,provider_subject,primary_address,display_name,color,account_number,status,capabilities,granted_scopes,settings_version) VALUES('fixture-account','imap',NULL,'fixture@example.invalid','Fixture',NULL,1,'ready','[]','[]',1)",
+                [],
+            )
+            .unwrap();
+        let account_count_before: i64 = connection
+            .query_row("SELECT count(*) FROM accounts", [], |row| row.get(0))
+            .unwrap();
+        connection.execute_batch(MIGRATION_V25_TO_V26).unwrap();
+        validate_schema(&connection, SCHEMA_V26, 26).unwrap();
+        let mut foreign_key_statement = connection.prepare("PRAGMA foreign_key_check").unwrap();
+        let mut foreign_keys = foreign_key_statement.query([]).unwrap();
+        assert!(foreign_keys.next().unwrap().is_none());
+        assert_eq!(
+            connection
+                .query_row("SELECT count(*) FROM accounts", [], |row| row
+                    .get::<_, i64>(0))
+                .unwrap(),
+            account_count_before
+        );
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT count(*) FROM sqlite_master WHERE type='table' AND name IN ('imap_trash_reviews','imap_trash_outbox')",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )
+                .unwrap(),
+            2
+        );
     }
 }

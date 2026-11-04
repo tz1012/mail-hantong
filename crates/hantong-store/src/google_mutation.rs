@@ -22,7 +22,7 @@ impl std::fmt::Debug for PendingMutation {
         f.write_str("PendingMutation(<redacted>)")
     }
 }
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 pub(crate) fn validate_history(c: &rusqlite::Connection) -> rusqlite::Result<()> {
     use crate::registrations::blob_column;
     use hantong_contracts::audit::AuditTool;
@@ -144,7 +144,7 @@ pub enum MutationOutcome {
     Unknown,
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 mod windows {
     use super::*;
     use crate::{

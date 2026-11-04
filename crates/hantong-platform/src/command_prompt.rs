@@ -1,4 +1,4 @@
-//! Bounded interactive command input for the Windows terminal CLI.
+//! Bounded interactive command input for the terminal CLI.
 //!
 //! This is a line editor for ordinary commands. It does not read the
 //! clipboard, inject input into another process, or provide secret input.
@@ -13,12 +13,12 @@ pub const MAX_HINT_BYTES: usize = 128;
 ///
 /// `hints` are display-only command suggestions. A leading `/` prints the
 /// bounded suggestions immediately; Up/Down cycles them into the edit line.
-#[cfg(windows)]
+#[cfg(any(windows, unix))]
 pub fn read_command_line(prompt: &str, hints: &[String]) -> Result<Option<String>, ErrorCode> {
     read_command_line_with_options(prompt, hints, &[])
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, unix))]
 pub fn read_command_line_with_options(
     prompt: &str,
     hints: &[String],
@@ -27,22 +27,29 @@ pub fn read_command_line_with_options(
     read_command_line_with_selection(prompt, hints, choices, 0)
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, unix))]
 pub fn read_command_line_with_selection(
     prompt: &str,
     hints: &[String],
     choices: &[(String, String)],
     initial: usize,
 ) -> Result<Option<String>, ErrorCode> {
-    windows::read(prompt, hints, choices, initial)
+    #[cfg(windows)]
+    {
+        windows::read(prompt, hints, choices, initial)
+    }
+    #[cfg(unix)]
+    {
+        unix::read(prompt, hints, choices, initial)
+    }
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, unix)))]
 pub fn read_command_line(_prompt: &str, _hints: &[String]) -> Result<Option<String>, ErrorCode> {
     Err(ErrorCode::HumanStepRequired)
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, unix)))]
 pub fn read_command_line_with_options(
     _prompt: &str,
     _hints: &[String],
@@ -51,7 +58,7 @@ pub fn read_command_line_with_options(
     Err(ErrorCode::HumanStepRequired)
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, unix)))]
 pub fn read_command_line_with_selection(
     _prompt: &str,
     _hints: &[String],
@@ -61,10 +68,12 @@ pub fn read_command_line_with_selection(
     Err(ErrorCode::HumanStepRequired)
 }
 
+#[cfg(any(windows, unix, test))]
 fn valid_prompt(prompt: &str) -> bool {
     prompt.len() <= MAX_HINT_BYTES && !prompt.chars().any(char::is_control)
 }
 
+#[cfg(any(windows, unix, test))]
 fn valid_hints(hints: &[String]) -> bool {
     hints.len() <= MAX_HINTS
         && hints.iter().all(|hint| {
@@ -72,6 +81,7 @@ fn valid_hints(hints: &[String]) -> bool {
         })
 }
 
+#[cfg(any(windows, unix, test))]
 fn valid_choices(choices: &[(String, String)]) -> bool {
     choices.len() <= 256
         && choices.iter().all(|(value, label)| {
@@ -299,6 +309,126 @@ mod windows {
                         redraw(prompt, &line)?;
                     }
                 }
+            }
+        }
+    }
+}
+
+#[cfg(unix)]
+mod unix {
+    use super::*;
+    use crate::{TerminalEvent, TerminalKey, TerminalSession};
+    use std::io::{self, IsTerminal, Write};
+
+    fn redraw(prompt: &str, line: &str) -> Result<(), ErrorCode> {
+        print!("\r\x1b[2K{prompt}{line}");
+        io::stdout().flush().map_err(|_| ErrorCode::CoreUnavailable)
+    }
+
+    fn print_hints(prompt: &str, line: &str, hints: &[String]) -> Result<(), ErrorCode> {
+        println!();
+        for hint in hints {
+            println!("  {hint}");
+        }
+        redraw(prompt, line)
+    }
+
+    pub(super) fn read(
+        prompt: &str,
+        hints: &[String],
+        choices: &[(String, String)],
+        initial: usize,
+    ) -> Result<Option<String>, ErrorCode> {
+        if !io::stdin().is_terminal() || !io::stdout().is_terminal() {
+            return Err(ErrorCode::HumanStepRequired);
+        }
+        if !valid_prompt(prompt) || !valid_hints(hints) || !valid_choices(choices) {
+            return Err(ErrorCode::InvalidInput);
+        }
+        let mut terminal = TerminalSession::enter_inline()?;
+        let mut line = String::new();
+        let mut choice_index = (!choices.is_empty()).then(|| initial.min(choices.len() - 1));
+        let mut hint_index: Option<usize> = None;
+        let initial_line = choice_index
+            .and_then(|index| choices.get(index))
+            .map(|(_, label)| format!("> {label}"))
+            .unwrap_or_default();
+        redraw(prompt, &initial_line)?;
+
+        loop {
+            let event = terminal.read_event()?;
+            let key = match event {
+                TerminalEvent::Key(key) => key,
+                TerminalEvent::Resize | TerminalEvent::Tick | TerminalEvent::Mouse { .. } => {
+                    continue;
+                }
+            };
+            match key {
+                TerminalKey::Enter | TerminalKey::Right => {
+                    println!();
+                    return Ok(Some(
+                        choice_index
+                            .and_then(|index| choices.get(index).map(|(value, _)| value.clone()))
+                            .unwrap_or(line),
+                    ));
+                }
+                TerminalKey::Escape | TerminalKey::Left | TerminalKey::Quit => {
+                    println!();
+                    return Ok(Some("/back".to_owned()));
+                }
+                TerminalKey::Char('\u{7f}' | '\u{8}') => {
+                    choice_index = None;
+                    line.pop();
+                    hint_index = None;
+                    redraw(prompt, &line)?;
+                }
+                TerminalKey::Up | TerminalKey::Down
+                    if !choices.is_empty() && !line.starts_with('/') =>
+                {
+                    let next = match (key, choice_index) {
+                        (TerminalKey::Up, Some(index)) => index.saturating_sub(1),
+                        (TerminalKey::Up, None) => choices.len().saturating_sub(1),
+                        (_, Some(index)) => (index + 1) % choices.len(),
+                        (_, None) => 0,
+                    };
+                    choice_index = Some(next);
+                    line.clear();
+                    redraw(prompt, &format!("> {}", choices[next].1))?;
+                }
+                TerminalKey::Up | TerminalKey::Down if !hints.is_empty() => {
+                    let next = match (key, hint_index) {
+                        (TerminalKey::Up, Some(index)) => index.saturating_sub(1),
+                        (TerminalKey::Up, None) => hints.len().saturating_sub(1),
+                        (_, Some(index)) => (index + 1) % hints.len(),
+                        (_, None) => 0,
+                    };
+                    hint_index = Some(next);
+                    line.clear();
+                    line.push_str(&hints[next]);
+                    redraw(prompt, &line)?;
+                }
+                TerminalKey::Char(ch) if !ch.is_control() => {
+                    choice_index = None;
+                    if line.len().saturating_add(ch.len_utf8()) <= MAX_COMMAND_BYTES {
+                        let first_slash = line.is_empty() && ch == '/';
+                        line.push(ch);
+                        hint_index = None;
+                        if first_slash {
+                            print_hints(prompt, &line, hints)?;
+                        } else {
+                            redraw(prompt, &line)?;
+                        }
+                    }
+                }
+                TerminalKey::Tab
+                | TerminalKey::Up
+                | TerminalKey::Down
+                | TerminalKey::BackTab
+                | TerminalKey::Home
+                | TerminalKey::End
+                | TerminalKey::PageUp
+                | TerminalKey::PageDown
+                | TerminalKey::Char(_) => {}
             }
         }
     }

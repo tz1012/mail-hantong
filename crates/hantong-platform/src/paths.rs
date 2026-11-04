@@ -24,7 +24,16 @@ impl fmt::Debug for AppDirectories {
 }
 
 pub fn app_directories() -> Result<AppDirectories, ErrorCode> {
-    #[cfg(not(windows))]
+    #[cfg(all(not(windows), any(target_os = "linux", target_os = "macos")))]
+    {
+        let directories = crate::unix_paths::app_directories()?;
+        Ok(AppDirectories {
+            data: directories.data,
+            secrets: directories.secrets,
+            profiles: directories.profiles,
+        })
+    }
+    #[cfg(all(not(windows), not(any(target_os = "linux", target_os = "macos"))))]
     {
         Err(ErrorCode::CapabilityUnsupported)
     }

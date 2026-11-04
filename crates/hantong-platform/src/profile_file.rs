@@ -4,7 +4,7 @@
 use hantong_contracts::ErrorCode;
 use std::fmt;
 
-#[cfg(windows)]
+#[cfg(any(windows, unix))]
 const MAX_PROFILE_BYTES: usize = 32 * 1024;
 
 /// Immutable public bytes, with the Windows file and ancestor handles retained
@@ -15,6 +15,10 @@ pub struct LoadedClientProfile {
     _file: std::fs::File,
     #[cfg(windows)]
     _directories: Vec<std::fs::File>,
+    #[cfg(unix)]
+    _file: std::fs::File,
+    #[cfg(unix)]
+    _directory: crate::unix_paths::UnixDirectoryGuard,
 }
 
 impl LoadedClientProfile {
@@ -36,7 +40,11 @@ pub fn load_default_client_profile() -> Result<LoadedClientProfile, ErrorCode> {
     {
         windows::load(&crate::app_directories()?.profiles)
     }
-    #[cfg(not(windows))]
+    #[cfg(all(not(windows), any(target_os = "linux", target_os = "macos")))]
+    {
+        unix::load(&crate::app_directories()?.profiles, "default.json")
+    }
+    #[cfg(all(not(windows), not(any(target_os = "linux", target_os = "macos"))))]
     {
         Err(ErrorCode::CapabilityUnsupported)
     }
@@ -48,7 +56,11 @@ pub fn load_gui_client_profile() -> Result<LoadedClientProfile, ErrorCode> {
     {
         windows::load_gui(&crate::app_directories()?.profiles)
     }
-    #[cfg(not(windows))]
+    #[cfg(all(not(windows), any(target_os = "linux", target_os = "macos")))]
+    {
+        unix::load(&crate::app_directories()?.profiles, "gui.json")
+    }
+    #[cfg(all(not(windows), not(any(target_os = "linux", target_os = "macos"))))]
     {
         Err(ErrorCode::CapabilityUnsupported)
     }
@@ -58,7 +70,11 @@ pub fn load_mcp_client_profile() -> Result<LoadedClientProfile, ErrorCode> {
     {
         windows::load_mcp(&crate::app_directories()?.profiles)
     }
-    #[cfg(not(windows))]
+    #[cfg(all(not(windows), any(target_os = "linux", target_os = "macos")))]
+    {
+        unix::load(&crate::app_directories()?.profiles, "mcp.json")
+    }
+    #[cfg(all(not(windows), not(any(target_os = "linux", target_os = "macos"))))]
     {
         Err(ErrorCode::CapabilityUnsupported)
     }
@@ -68,7 +84,11 @@ pub fn load_ai_codex_client_profile() -> Result<LoadedClientProfile, ErrorCode> 
     {
         windows::load_ai(&crate::app_directories()?.profiles, false)
     }
-    #[cfg(not(windows))]
+    #[cfg(all(not(windows), any(target_os = "linux", target_os = "macos")))]
+    {
+        unix::load(&crate::app_directories()?.profiles, "ai-codex.json")
+    }
+    #[cfg(all(not(windows), not(any(target_os = "linux", target_os = "macos"))))]
     {
         Err(ErrorCode::CapabilityUnsupported)
     }
@@ -78,9 +98,49 @@ pub fn load_ai_claude_client_profile() -> Result<LoadedClientProfile, ErrorCode>
     {
         windows::load_ai(&crate::app_directories()?.profiles, true)
     }
-    #[cfg(not(windows))]
+    #[cfg(all(not(windows), any(target_os = "linux", target_os = "macos")))]
+    {
+        unix::load(&crate::app_directories()?.profiles, "ai-claude.json")
+    }
+    #[cfg(all(not(windows), not(any(target_os = "linux", target_os = "macos"))))]
     {
         Err(ErrorCode::CapabilityUnsupported)
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+mod unix {
+    use super::*;
+    use std::io::Read;
+
+    pub(super) fn load(
+        profiles: &std::path::Path,
+        name: &str,
+    ) -> Result<LoadedClientProfile, ErrorCode> {
+        let directory = crate::unix_paths::UnixDirectoryGuard::open(profiles, true).map_err(
+            |error| match error {
+                ErrorCode::NotFound => ErrorCode::ClientNotRegistered,
+                other => other,
+            },
+        )?;
+        let file = directory.open_existing_readonly_regular(name)?;
+        let metadata = file.metadata().map_err(|_| ErrorCode::ScopeDenied)?;
+        if metadata.len() > MAX_PROFILE_BYTES as u64 {
+            return Err(ErrorCode::InvalidInput);
+        }
+        let mut bytes = Vec::new();
+        (&file)
+            .take((MAX_PROFILE_BYTES + 1) as u64)
+            .read_to_end(&mut bytes)
+            .map_err(|_| ErrorCode::ScopeDenied)?;
+        if bytes.len() > MAX_PROFILE_BYTES {
+            return Err(ErrorCode::InvalidInput);
+        }
+        Ok(LoadedClientProfile {
+            bytes,
+            _file: file,
+            _directory: directory,
+        })
     }
 }
 
@@ -857,7 +917,7 @@ mod windows {
     }
 }
 
-#[cfg(all(test, not(windows)))]
+#[cfg(all(test, not(windows), not(any(target_os = "linux", target_os = "macos"))))]
 mod tests {
     use super::*;
 
@@ -871,5 +931,83 @@ mod tests {
             load_gui_client_profile().unwrap_err(),
             ErrorCode::CapabilityUnsupported
         );
+    }
+}
+
+#[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
+mod unix_tests {
+    use super::*;
+    use std::os::unix::fs::{PermissionsExt, symlink};
+
+    fn fixture() -> (std::path::PathBuf, std::path::PathBuf) {
+        let root = std::env::temp_dir().join(format!(
+            "hantong-profile-unix-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        let profiles = root.join("profiles");
+        std::fs::create_dir_all(&profiles).expect("profiles");
+        std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o700)).expect("root mode");
+        std::fs::set_permissions(&profiles, std::fs::Permissions::from_mode(0o700))
+            .expect("profiles mode");
+        (root, profiles)
+    }
+
+    #[test]
+    fn inst01_unix_profile_loader_reads_only_known_file() {
+        let (root, profiles) = fixture();
+        std::fs::write(profiles.join("default.json"), b"profile").expect("profile");
+        std::fs::set_permissions(
+            profiles.join("default.json"),
+            std::fs::Permissions::from_mode(0o600),
+        )
+        .expect("profile mode");
+        let loaded = unix::load(&profiles, "default.json").expect("load");
+        assert_eq!(loaded.bytes(), b"profile");
+        assert_eq!(format!("{loaded:?}"), "LoadedClientProfile { <redacted> }");
+        drop(loaded);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn sec03_unix_profile_loader_rejects_symlink_loose_mode_and_oversize() {
+        let (root, profiles) = fixture();
+        let target = root.join("target.json");
+        std::fs::write(&target, b"target").expect("target");
+        symlink(&target, profiles.join("default.json")).expect("symlink");
+        assert!(matches!(
+            unix::load(&profiles, "default.json"),
+            Err(ErrorCode::CoreUnavailable | ErrorCode::ScopeDenied)
+        ));
+        std::fs::remove_file(profiles.join("default.json")).expect("remove link");
+        std::fs::write(profiles.join("default.json"), b"loose").expect("profile");
+        std::fs::set_permissions(
+            profiles.join("default.json"),
+            std::fs::Permissions::from_mode(0o644),
+        )
+        .expect("loose mode");
+        assert_eq!(
+            unix::load(&profiles, "default.json").unwrap_err(),
+            ErrorCode::ScopeDenied
+        );
+        std::fs::remove_file(profiles.join("default.json")).expect("remove loose");
+        std::fs::write(
+            profiles.join("default.json"),
+            vec![b'x'; MAX_PROFILE_BYTES + 1],
+        )
+        .expect("oversize");
+        std::fs::set_permissions(
+            profiles.join("default.json"),
+            std::fs::Permissions::from_mode(0o600),
+        )
+        .expect("size mode");
+        assert_eq!(
+            unix::load(&profiles, "default.json").unwrap_err(),
+            ErrorCode::InvalidInput
+        );
+        let _ = std::fs::remove_dir_all(root);
     }
 }

@@ -1,6 +1,6 @@
 #![forbid(unsafe_code)]
 
-#[cfg(windows)]
+#[cfg(any(windows, unix))]
 mod terminal_app;
 mod terminal_view;
 mod unified;
@@ -1365,14 +1365,14 @@ fn main() -> io::Result<()> {
         println!("Mouse: click selects, double-click opens, wheel scrolls. CLI: hantong --help");
         return Ok(());
     }
-    #[cfg(windows)]
+    #[cfg(any(windows, unix))]
     {
         terminal_app::run(&args)
     }
-    #[cfg(not(windows))]
+    #[cfg(not(any(windows, unix)))]
     {
         eprintln!(
-            "The full-screen terminal currently requires Windows. Use --plain for the text view."
+            "The full-screen terminal is unavailable on this operating system. Use --plain for the text view."
         );
         Ok(())
     }

@@ -4,7 +4,7 @@ use hantong_contracts::ErrorCode;
 use hantong_domain::mail_connection::{
     Authentication, ImapEndpointConfig, MailConnectionConfig, SmtpEndpointConfig, TlsMode,
 };
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 use rusqlite::{OptionalExtension, Transaction, TransactionBehavior, params};
 use std::fmt;
 
@@ -14,7 +14,7 @@ pub enum MailEndpointKind {
     Smtp,
 }
 impl MailEndpointKind {
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
     fn as_str(self) -> &'static str {
         match self {
             Self::Imap => "imap",
@@ -36,7 +36,7 @@ pub enum MailConnectionState {
     Offline,
     Error,
 }
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 impl MailConnectionState {
     fn as_str(self) -> &'static str {
         match self {
@@ -195,11 +195,11 @@ fn payload_hash(account: &str, e: Endpoint<'_>, expected: u64) -> Result<[u8; 32
         bytes.push(1);
         push(&mut bytes, sender);
     }
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
     {
         hantong_platform::sha256(&bytes).map_err(|_| ErrorCode::InternalError)
     }
-    #[cfg(not(windows))]
+    #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
     {
         let _ = bytes;
         Err(ErrorCode::CapabilityUnsupported)
@@ -221,7 +221,7 @@ pub(super) fn input_account(s: &str) -> Result<(), ErrorCode> {
 impl Store {
     pub fn smtp_setup_account_version(&self, account: &str) -> Result<u64, ErrorCode> {
         input_account(account)?;
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
         {
             self.mail_transaction(TransactionBehavior::Deferred, |tx| {
                 check_account(tx, account)?;
@@ -236,7 +236,7 @@ impl Store {
                     .ok_or(ErrorCode::InternalError)
             })
         }
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
         {
             Err(ErrorCode::CapabilityUnsupported)
         }
@@ -278,11 +278,11 @@ impl Store {
         account: &str,
     ) -> Result<Option<MailConnectionConfig>, ErrorCode> {
         input_account(account)?;
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
         {
             Err(ErrorCode::CapabilityUnsupported)
         }
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
         {
             self.mail_transaction(TransactionBehavior::Deferred,|tx| {
                 check_account(tx,account)?;
@@ -309,12 +309,12 @@ impl Store {
         if settings == 0 || settings > i64::MAX as u64 || expected > i64::MAX as u64 {
             return Err(ErrorCode::InvalidInput);
         }
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
         {
             let _ = (kind, state);
             Err(ErrorCode::CapabilityUnsupported)
         }
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
         {
             self.mail_transaction(TransactionBehavior::Immediate,|tx| {
                 check_account(tx,account)?;
@@ -335,12 +335,12 @@ impl Store {
         kind: MailEndpointKind,
     ) -> Result<Option<MailObservation>, ErrorCode> {
         input_account(account)?;
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
         {
             let _ = kind;
             Err(ErrorCode::CapabilityUnsupported)
         }
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
         {
             self.mail_transaction(TransactionBehavior::Deferred, |tx| {
                 check_account(tx, account)?;
@@ -370,12 +370,12 @@ impl Store {
         if hash != m.payload_hash {
             return Err(ErrorCode::InvalidInput);
         }
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
         {
             let _ = account_version;
             Err(ErrorCode::CapabilityUnsupported)
         }
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
         {
             self.mail_transaction(TransactionBehavior::Immediate,|tx| {
                 if let Some(expected)=account_version {let current:i64=db(tx.query_row("SELECT settings_version FROM accounts WHERE account_id=?1",[account],|r|r.get(0)))?;if u64::try_from(current).ok()!=Some(expected){return Err(ErrorCode::Conflict)}}
@@ -409,7 +409,7 @@ impl Store {
             })
         }
     }
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
     pub(super) fn mail_transaction<T>(
         &self,
         behavior: TransactionBehavior,
@@ -425,11 +425,11 @@ impl Store {
         })?
     }
 }
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 fn db<T>(result: rusqlite::Result<T>) -> Result<T, ErrorCode> {
     result.map_err(|_| ErrorCode::InternalError)
 }
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 fn text(row: &rusqlite::Row<'_>, index: usize, max: usize) -> rusqlite::Result<String> {
     let value = row.get_ref(index)?.as_str()?;
     if value.len() > max {
@@ -437,7 +437,7 @@ fn text(row: &rusqlite::Row<'_>, index: usize, max: usize) -> rusqlite::Result<S
     }
     Ok(value.to_owned())
 }
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 pub(super) fn check_account(tx: &rusqlite::Connection, account: &str) -> Result<(), ErrorCode> {
     match db(tx
         .query_row(
@@ -454,13 +454,13 @@ pub(super) fn check_account(tx: &rusqlite::Connection, account: &str) -> Result<
         _ => Err(ErrorCode::InternalError),
     }
 }
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 pub(super) struct StoredEndpoint {
     version: u64,
     updated: i64,
     pub(super) json: serde_json::Value,
 }
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 pub(super) fn read_endpoint(
     tx: &rusqlite::Connection,
     account: &str,
@@ -540,7 +540,7 @@ pub(super) fn read_endpoint(
         json,
     }))
 }
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 pub(super) fn read_observation(
     tx: &Transaction<'_>,
     account: &str,
@@ -562,7 +562,7 @@ pub(super) fn read_observation(
         observed_at_utc_ms: time,
     }))
 }
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 pub(super) fn replay(
     tx: &Transaction<'_>,
     account: &str,

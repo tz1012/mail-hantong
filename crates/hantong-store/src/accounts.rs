@@ -4,10 +4,10 @@ use crate::Store;
 use hantong_contracts::{ErrorCode, auth::RequestedScope};
 use hantong_domain::accounts::AccountSnapshot;
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 use hantong_domain::accounts::{AccountProvider, AccountStatus, AccountSummary};
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 use crate::registrations::text_column;
 
 impl Store {
@@ -31,12 +31,12 @@ impl Store {
         {
             return Err(ErrorCode::InvalidInput);
         }
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
         {
             let _ = include_capabilities;
             Err(ErrorCode::CapabilityUnsupported)
         }
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
         {
             self.with_connection(|connection| {
                 let tx = rusqlite::Transaction::new_unchecked(
@@ -76,7 +76,7 @@ impl Store {
     }
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 pub(super) fn read_account(
     row: &rusqlite::Row<'_>,
     include_capabilities: bool,
@@ -122,7 +122,7 @@ pub(super) fn read_account(
     Ok(summary)
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 fn optional_text(
     row: &rusqlite::Row<'_>,
     index: usize,

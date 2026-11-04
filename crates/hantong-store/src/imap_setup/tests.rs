@@ -693,7 +693,7 @@ mod native {
     }
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
 #[test]
 fn setup01_journal_does_not_enable_a_non_windows_store() {
     use super::*;

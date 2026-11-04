@@ -1,15 +1,11 @@
 //! Opaque client credential: only native capture can construct a production value.
-#[cfg(any(windows, test))]
+#[cfg(any(windows, test, target_os = "linux", target_os = "macos"))]
 use super::*;
 pub struct GoogleClientSecret {
     // Keep a private field on unsupported hosts so callers cannot construct
     // this opaque credential even though native capture is unavailable there.
-    #[cfg_attr(
-        not(any(windows, test)),
-        expect(dead_code, reason = "native credential capture is Windows-only")
-    )]
     client_id: String,
-    #[cfg(any(windows, test))]
+    #[cfg(any(windows, test, target_os = "linux", target_os = "macos"))]
     secret: SecretText,
 }
 impl std::fmt::Debug for GoogleClientSecret {
@@ -18,7 +14,7 @@ impl std::fmt::Debug for GoogleClientSecret {
     }
 }
 impl GoogleClientSecret {
-    #[cfg(any(windows, test))]
+    #[cfg(any(windows, test, target_os = "linux", target_os = "macos"))]
     pub(crate) fn from_capture(
         client_id: &str,
         secret: SensitiveBuffer,
@@ -35,11 +31,11 @@ impl GoogleClientSecret {
             secret: SecretText(secret),
         })
     }
-    #[cfg(any(windows, test))]
+    #[cfg(any(windows, test, target_os = "linux", target_os = "macos"))]
     pub(super) fn matches(&self, client_id: &str) -> bool {
         self.client_id == client_id
     }
-    #[cfg(any(windows, test))]
+    #[cfg(any(windows, test, target_os = "linux", target_os = "macos"))]
     pub(super) fn value_for(&self, client_id: &str) -> Result<&str, ErrorCode> {
         if !self.matches(client_id) {
             return Err(ErrorCode::ScopeDenied);
@@ -47,7 +43,7 @@ impl GoogleClientSecret {
         Ok(self.secret.text())
     }
 }
-#[cfg(any(windows, test))]
+#[cfg(any(windows, test, target_os = "linux", target_os = "macos"))]
 pub(super) fn bundle(
     binding: &GoogleAccountBinding,
     refresh: &SecretText,
@@ -67,7 +63,7 @@ pub(super) fn bundle(
     }
     Ok(value)
 }
-#[cfg(any(windows, test))]
+#[cfg(any(windows, test, target_os = "linux", target_os = "macos"))]
 pub(super) fn from_bundle(
     bundle: &mut SecretJson,
     client_id: &str,
@@ -83,7 +79,7 @@ pub(super) fn from_bundle(
     }
 }
 
-#[cfg(any(windows, test))]
+#[cfg(any(windows, test, target_os = "linux", target_os = "macos"))]
 pub(super) fn bundle_mode(bundle: &SecretJson) -> Result<GoogleAccessMode, ErrorCode> {
     match bundle.0.get("format").and_then(Value::as_u64) {
         Some(3 | 4) if bundle.0.get("access_mode").is_none() => Ok(GoogleAccessMode::ReadOnly),

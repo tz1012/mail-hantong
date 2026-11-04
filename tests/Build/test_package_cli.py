@@ -137,6 +137,25 @@ class PackageCliTests(unittest.TestCase):
             with self.assertRaisesRegex(package.PackageError, "bounded nonempty"):
                 self.build(skip_build=True, publisher_config=config)
 
+    def test_inst03_read_file_keeps_lexical_boundary_before_alias_resolution(self):
+        with tempfile.TemporaryDirectory() as directory:
+            canonical = Path(directory).resolve()
+            lexical_boundary = Path(str(canonical) + "-short")
+            lexical_path = lexical_boundary / "input.bin"
+            actual_path = canonical / "input.bin"
+            actual_path.write_bytes(b"synthetic")
+            real_resolve = Path.resolve
+
+            def resolve_alias(path, strict=False):
+                if path == lexical_boundary:
+                    return canonical
+                if path == lexical_path:
+                    return actual_path
+                return real_resolve(path, strict=strict)
+
+            with mock.patch.object(Path, "resolve", resolve_alias):
+                self.assertEqual(package.read_file(lexical_path, lexical_boundary), b"synthetic")
+
     def test_INST01_beta_package_records_beta_channel(self):
         result = self.build(version="0.1.0-beta.1", skip_build=True)
         metadata = json.loads((result / "BUILD-METADATA.json").read_bytes())

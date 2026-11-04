@@ -25,6 +25,7 @@ pub mod uid_inspection;
 pub mod uid_page;
 pub mod uid_reconcile;
 pub mod uid_recovery;
+pub mod unix_auth;
 pub mod wire_hex;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

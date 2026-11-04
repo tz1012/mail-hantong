@@ -61,33 +61,33 @@ impl Store {
         request: &UidPageRequest,
         queue: UidQueueAdmission,
     ) -> Result<UidPageAdmission, ErrorCode> {
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
         {
             storage::admit(self, id, request, queue)
         }
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
         {
             let _ = (id, request, queue);
             Err(ErrorCode::CapabilityUnsupported)
         }
     }
     pub fn start_uid_page(&self, id: [u8; 32]) -> Result<UidPageStart, ErrorCode> {
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
         {
             storage::start(self, id)
         }
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
         {
             let _ = id;
             Err(ErrorCode::CapabilityUnsupported)
         }
     }
     pub fn check_uid_page(&self, id: [u8; 32]) -> Result<(), ErrorCode> {
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
         {
             storage::check(self, id)
         }
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
         {
             let _ = id;
             Err(ErrorCode::CapabilityUnsupported)
@@ -98,11 +98,11 @@ impl Store {
         id: [u8; 32],
         page: &ImapUidPage,
     ) -> Result<UidPageReceipt, ErrorCode> {
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
         {
             storage::succeed(self, id, page)
         }
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
         {
             let _ = (id, page);
             Err(ErrorCode::CapabilityUnsupported)
@@ -113,11 +113,11 @@ impl Store {
         id: [u8; 32],
         error: ErrorCode,
     ) -> Result<UidPageReceipt, ErrorCode> {
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
         {
             storage::fail(self, id, error)
         }
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
         {
             let _ = (id, error);
             Err(ErrorCode::CapabilityUnsupported)
@@ -128,20 +128,20 @@ impl Store {
         owner: [u8; 16],
         request: &UidPageStatusRequest,
     ) -> Result<UidPageReceipt, ErrorCode> {
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
         {
             storage::receipt(self, owner, request)
         }
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
         {
             let _ = (owner, request);
             Err(ErrorCode::CapabilityUnsupported)
         }
     }
 }
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 pub(crate) mod storage;
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 pub(super) use storage::{execution_reserved, operation_reserved, validate_history};
 #[cfg(all(test, windows))]
 mod tests;

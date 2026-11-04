@@ -1297,21 +1297,21 @@ pub(super) fn activate(
         .registration)
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 pub(super) fn validate_history_v20(c: &Connection) -> rusqlite::Result<()> {
     context_with_layout(c, false, 6)
         .map(|_| ())
         .map_err(|_| rusqlite::Error::InvalidQuery)
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 pub(super) fn validate_history_v21(c: &Connection) -> rusqlite::Result<()> {
     context_with_layout(c, false, 7)
         .map(|_| ())
         .map_err(|_| rusqlite::Error::InvalidQuery)
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 pub(super) fn validate_history_v22(c: &Connection) -> rusqlite::Result<()> {
     context_with_layout(c, false, 8)
         .map(|_| ())
@@ -1321,7 +1321,7 @@ pub(super) fn validate_history_v22(c: &Connection) -> rusqlite::Result<()> {
 /// Freeze the v25 ledger before the v26 schema widens the scope hash domain.
 /// Hash versions 11 and 12 belong exclusively to v26 and must never be
 /// accepted while validating the v25 on-disk layout.
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 pub(super) fn validate_history_v25(c: &Connection) -> rusqlite::Result<()> {
     context_with_layout(c, false, 10)
         .map(|_| ())
