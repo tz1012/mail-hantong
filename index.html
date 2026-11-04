@@ -3,6 +3,23 @@
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="referrer" content="no-referrer">
 <meta name="description" content="한통 beta.22의 Windows·Linux headless·macOS 설치, Google·IMAP·SMTP 계정 연결, 메일 읽기·작성·발송·휴지통, Codex·Claude 연결 안내입니다.">
+<link rel="canonical" href="https://tz1012.github.io/mail-hantong/">
+<meta property="og:type" content="website">
+<meta property="og:locale" content="ko_KR">
+<meta property="og:site_name" content="한통 · mail-hantong">
+<meta property="og:title" content="한통 — 메일과 AI를 한 터미널에서">
+<meta property="og:description" content="여러 계정의 메일을 한곳에서. Windows·macOS·Linux용 CLI와 통신풍 TUI의 설치·이용 안내입니다.">
+<meta property="og:url" content="https://tz1012.github.io/mail-hantong/">
+<meta property="og:image" content="https://tz1012.github.io/mail-hantong/assets/hantong-share-v1.png">
+<meta property="og:image:secure_url" content="https://tz1012.github.io/mail-hantong/assets/hantong-share-v1.png">
+<meta property="og:image:type" content="image/png">
+<meta property="og:image:width" content="1280">
+<meta property="og:image:height" content="640">
+<meta property="og:image:alt" content="가상 계정·메일을 사용한 한통 TUI: 계정 태그, 메일 목록과 보낸 사람·수신자·본문">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="한통 — 메일과 AI를 한 터미널에서">
+<meta name="twitter:description" content="Windows·macOS·Linux용 한통 설치·이용 안내">
+<meta name="twitter:image" content="https://tz1012.github.io/mail-hantong/assets/hantong-share-v1.png">
 <title>설치부터 메일·AI 이용까지 | 한통</title><link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -11,7 +28,11 @@
 <p class="eyebrow">Windows 11 x64 · Linux x86_64 glibc ≥ 2.39 · macOS 15 Intel/Apple Silicon · CLI beta.22</p>
 <h1>메일과 AI를<br>한 터미널에서</h1>
 <p class="lead">내 컴퓨터에서 여러 계정의 메일을 읽고 작성하는 메일 클라이언트입니다. 한통의 설정·내용 확인·보내기·취소는 같은 터미널에서 진행합니다. 별도 한통 확인창이나 Windows Hello를 요구하지 않으며, Google 로그인·동의만 표준 브라우저에서 진행합니다.</p>
-<div class="actions"><a class="button" href="#start">설치하고 시작하기</a><a href="https://github.com/tz1012/mail-hantong/releases/tag/v0.1.0-beta.22">v0.1.0-beta.22 릴리스·변경 내용</a></div>
+<div class="actions"><a class="button" href="#start">설치하고 시작하기</a><a href="download.html">다운로드 · beta.22</a></div>
+<figure class="product-preview">
+<a href="assets/hantong-tui-demo-v1.png"><img src="assets/hantong-tui-demo-v1.png" width="1600" height="992" alt="가상 개인·업무 계정의 메일을 한 화면에서 보는 한통 통신풍 TUI. 왼쪽은 계정·폴더, 가운데는 제목 목록, 오른쪽은 보낸 사람·수신자·참조·본문입니다." fetchpriority="high"></a>
+<figcaption>현재 TUI 렌더러로 만든 가상 이용 화면입니다. 실제 계정·메일·발송은 사용하지 않았습니다. 이미지를 누르면 크게 볼 수 있습니다.</figcaption>
+</figure>
 
 <p class="notice"><strong>beta.22 안내:</strong> Windows 11 x64, Linux x86_64(glibc ≥ 2.39, headless·SSH 포함), macOS 15 Intel·Apple Silicon용 설치 파일을 제공합니다. Windows는 격리 설치·제거 뒤 데이터와 PATH 보존을 별도로 확인했습니다. macOS는 두 아키텍처의 설치·시작·암호화 DB·상태·중지·재시작을 <a href="https://github.com/tz1012/mail-hantong/actions/runs/41801224195">native CI</a>에서 확인했습니다. Linux는 별도 GUI/DBus 없는 격리 환경에서 보호된 첫 시작·재시작·잘못된 잠금 해제 뒤 암호문 보존·비TTY 거부를 확인했습니다. Unix 실제 제공자 로그인·메일 읽기·발송·휴지통·AI 대화는 아직 시험하지 않았으며, 사람 보안 검토가 남아 있습니다.</p>
 

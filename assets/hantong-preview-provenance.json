@@ -1,0 +1,10 @@
+{
+  "product_renderer_sha256": "1db7ab5e815f53e782143c54a290049a32f7be96e11ae762b680ad1a6098ee82",
+  "source_release": "v0.1.0-beta.22",
+  "synthetic_data_only": true,
+  "capture_method": "unmodified product terminal renderer with a synthetic Frame; ANSI cells rasterized",
+  "images": {
+    "hantong-share-v1.png": "19e62fa1e6f03da5b9a48b3b2058eb3a6e7b769ec580e4fe47ef014cdef14704",
+    "hantong-tui-demo-v1.png": "1dd3927d659502b03f1d52fce6fee2a14522ea796d0ac4bd4009203b8c80a17b"
+  }
+}

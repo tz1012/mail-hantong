@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="referrer" content="no-referrer">
+<title>한통 다운로드 · Windows·Mac·Linux | beta.22</title>
+<meta name="description" content="한통 beta.22 다운로드. Windows x64, macOS Intel·Apple Silicon, Linux x64용 CLI와 통신풍 TUI를 설치하세요.">
+<link rel="canonical" href="https://tz1012.github.io/mail-hantong/download.html">
+<meta property="og:type" content="website">
+<meta property="og:locale" content="ko_KR">
+<meta property="og:site_name" content="한통 · mail-hantong">
+<meta property="og:title" content="한통 다운로드 — Windows·Mac·Linux">
+<meta property="og:description" content="메일과 AI를 한 터미널에서. beta.22 설치 파일과 가상 데이터 이용 화면을 확인하세요.">
+<meta property="og:url" content="https://tz1012.github.io/mail-hantong/download.html">
+<meta property="og:image" content="https://tz1012.github.io/mail-hantong/assets/hantong-share-v1.png">
+<meta property="og:image:secure_url" content="https://tz1012.github.io/mail-hantong/assets/hantong-share-v1.png">
+<meta property="og:image:type" content="image/png">
+<meta property="og:image:width" content="1280">
+<meta property="og:image:height" content="640">
+<meta property="og:image:alt" content="가상 계정·메일로 보는 한통 통신풍 TUI 이용 화면">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="한통 다운로드 — Windows·Mac·Linux">
+<meta name="twitter:description" content="한통 beta.22 설치 파일과 가상 데이터 이용 화면">
+<meta name="twitter:image" content="https://tz1012.github.io/mail-hantong/assets/hantong-share-v1.png">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<header><a class="brand" href="index.html">한통 <span>mail-hantong</span></a><nav aria-label="주 메뉴"><a href="index.html">설치·이용 안내</a><a href="download.html" aria-current="page">다운로드</a><a href="privacy.html">개인정보</a></nav></header>
+<main>
+<p class="eyebrow">CLI + 통신풍 TUI · 0.1.0-beta.22</p>
+<h1>내 컴퓨터에서<br>한통 시작하기</h1>
+<p class="lead">운영체제에 맞는 설치 파일을 선택하세요. 개발 도구·Docker·WSL은 제품 실행에 필요하지 않습니다.</p>
+<figure class="product-preview"><a href="assets/hantong-tui-demo-v1.png"><img src="assets/hantong-tui-demo-v1.png" width="1600" height="992" alt="가상 개인·업무 계정의 제목 목록과 보낸 사람·수신자·참조·본문이 표시된 실제 한통 TUI 렌더러 화면" fetchpriority="high"></a><figcaption>가상 데이터 이용 화면 · 실제 계정·메일·발송은 사용하지 않았습니다.</figcaption></figure>
+<div class="download-grid" aria-label="운영체제별 다운로드">
+<article class="download-card"><h2>Windows</h2><p>Windows 11 · x64</p><a class="button" href="https://github.com/tz1012/mail-hantong/releases/download/v0.1.0-beta.22/mail-hantong-cli-0.1.0-beta.22-windows-x86_64.zip">Windows ZIP 다운로드</a></article>
+<article class="download-card"><h2>Mac · Apple Silicon</h2><p>macOS 15 · M 시리즈</p><a class="button" href="https://github.com/tz1012/mail-hantong/releases/download/v0.1.0-beta.22/mail-hantong-cli-0.1.0-beta.22-macos-aarch64.tar.gz">Mac ARM 다운로드</a></article>
+<article class="download-card"><h2>Mac · Intel</h2><p>macOS 15 · Intel x64</p><a class="button" href="https://github.com/tz1012/mail-hantong/releases/download/v0.1.0-beta.22/mail-hantong-cli-0.1.0-beta.22-macos-x86_64.tar.gz">Mac Intel 다운로드</a></article>
+<article class="download-card"><h2>Linux</h2><p>x86_64 · glibc 2.39 이상<br>GUI 없는 headless·SSH 지원</p><a class="button" href="https://github.com/tz1012/mail-hantong/releases/download/v0.1.0-beta.22/mail-hantong-cli-0.1.0-beta.22-linux-x86_64.tar.gz">Linux 다운로드</a></article>
+</div>
+<section><h2>설치와 업데이트</h2><p>처음이라면 <a href="index.html#start">설치 명령과 계정 연결 안내</a>를 따라 진행하세요. Unix 압축 파일은 새 폴더에 풀고 <code>sh install.sh</code>를 실행합니다. Linux 서버에서는 최초 실행 시 <code>1) headless passphrase</code>를 선택하고, Core를 다시 시작할 때 터미널에서 금고를 잠금 해제합니다. macOS는 잠금 해제된 Keychain이 필요합니다.</p><p>설치 후 <code>hantong --lang ko</code> 또는 <code>hantong-t</code>를 실행하세요. 업데이트는 <code>hantong update</code>로 진행합니다. Windows 구버전 업데이트 오류는 설치 안내의 복구 절차를 확인하세요.</p></section>
+<section><h2>파일 확인과 알려진 제한</h2><p><a href="https://github.com/tz1012/mail-hantong/releases/download/v0.1.0-beta.22/SHA256SUMS">SHA256SUMS</a>로 다운로드한 파일을 확인하세요. 소스·빌드 정보·검증 범위는 <a href="https://github.com/tz1012/mail-hantong/releases/tag/v0.1.0-beta.22">GitHub 릴리스 원문</a>에 있습니다.</p><p>Unix 설치·암호화 저장소·시작·재시작은 검증했으며, Unix 실제 계정 송수신·휴지통·AI 대화 시험과 사람 보안 검토는 남아 있습니다. Linux ARM 배포, macOS SSH 금고와 macOS 서명·공증은 제공하지 않습니다. 개인 비밀번호나 인증 코드를 공유하지 마세요.</p></section>
+</main>
+<footer><p>한통 · mail-hantong · beta.22 · <a href="terms.html">이용 안내와 라이선스</a></p></footer>
+</body>
+</html>
