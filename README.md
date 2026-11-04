@@ -1,13 +1,12 @@
 # mail-hantong
 
-A multi-account mail hub for Windows, with a shared core service, the `hantong` CLI, MCP access, and an optional GUI. GUI languages are Korean and English; themes are light, dark, and system. The CLI defaults to English and supports Korean.
+A multi-account mail hub with a shared core service, the `hantong` CLI, MCP access, and an optional GUI. GUI languages are Korean and English; themes are light, dark, and system. The CLI defaults to English and supports Korean.
 
-**Current Windows CLI release: 0.1.0-beta.21.** Start with the [Korean installation and feature guide](https://tz1012.github.io/mail-hantong/). Account setup, feature selection, composing, Trash review and Send/Cancel use the same terminal without a separate HanTong window or Windows Hello. Google OAuth opens its standard provider browser. See the [CLI usage guide](docs/latest/CLI-LAUNCH.md) for mail, AI sessions, MCP tools and remaining limitations.
+**Current CLI release: 0.1.0-beta.22.** Start with the [Unix installation guide](docs/latest/UNIX-INSTALL.md) for macOS 15 and Linux x86_64, or the [CLI usage guide](docs/latest/CLI-LAUNCH.md) for the shared workflows.
 
-macOS and Linux remain support targets; product packages and end-to-end mail
-support for those systems are still unfinished. Current release assets are
-Windows x64 only. For an old updater's `Join-Path` failure or a program-only
-reinstall that preserves accounts, see [Windows recovery](docs/latest/WINDOWS-RECOVERY.md).
+Release assets are Windows x64, Linux x64, macOS Intel and macOS ARM;
+there is no Linux ARM asset. Unix install and use details, including headless
+secret handling, are in [UNIX-INSTALL.md](docs/latest/UNIX-INSTALL.md).
 
 The package contains two terminal experiences over the same Core, account store,
 policy checks and provider operations. `hantong` is the guided, command-style
@@ -47,8 +46,10 @@ remaining width to the body on wide windows. Startup shows a short preparation
 animation while the existing startup work runs, then returns to the normal
 accounts/version/update notice prompt. It never installs an update by itself.
 
-beta.21 keeps the PowerShell update path, newest-compatible release selection
-and automatic downgrade protection. New accounts can use the same read, body,
+beta.22 keeps the PowerShell update path, automatic downgrade protection and
+native macOS/Linux packages. The source is pinned to
+`c50c01dd88fe75e2b643e580fb25ba85430639d6a4e9e55650cf7595c86332fd` from
+`feature/linux-product-20261104` at `3eabc14`. New accounts can use the same read, body,
 compose and individually confirmed send flow as existing accounts. Google
 account selection requests the required consent and the same terminal confirms
 the exact account scope. Generic IMAP/SMTP accounts use the same CLI/TUI flow.
@@ -56,10 +57,11 @@ The selected sending-account scope is bounded at 128 accounts.
 
 ## Generic IMAP/SMTP and Trash
 
-beta.21 carries the ordinary IMAP/SMTP onboarding and one-message Trash implementation in
+beta.22 carries the ordinary IMAP/SMTP onboarding and one-message Trash implementation in
 the CLI and `hantong-t` view. The real Daum authentication, synthetic Gmail send,
 and 17-mailbox catalog/body-read results below are historical beta.20 evidence;
-beta.21 adds no new real-account or real-mail test claim.
+Unix provider login/send/Trash and AI conversation remain untested; the native
+release smoke used synthetic providers.
 
 In the normal `hantong` flow, enter `3` at the first account menu or `imap` in
 the existing-account menu to add a generic account. After the account is
@@ -103,7 +105,7 @@ Beta.21 also includes the Windows package-path fix for external publisher config
 Install or update from PowerShell on Windows x64:
 
 ```powershell
-irm https://raw.githubusercontent.com/tz1012/mail-hantong/main/install.ps1 | iex
+irm https://raw.githubusercontent.com/tz1012/mail-hantong/3eabc14b9ed8463aa58db0304dbf86d6da00bb94/install.ps1 | iex
 ```
 
 Then run `hantong --lang ko init` (or `hantong` for English). The existing account menu offers inbox reading, enabling composing/sending with option 4, composing with option 5, and generic IMAP/SMTP setup with option 6. Core starts automatically when needed. The installer verifies release checksums and adds the current user's launcher directory to PATH.
@@ -114,7 +116,7 @@ to add these commands. Installation displays phase progress and percentages.
 Choosing Connect Google account opens the browser directly for account selection
 and Google read/write/send consent; confirm the selected account scope in the terminal.
 
-The candidate includes publisher Google Desktop configuration; ordinary users do not configure Google Cloud. The preceding beta.20 baseline passed 1,906 full-check test executions. Beta.21 uses affected-package regression checks and does not claim that old count as a new full-suite result. Earlier affected-package evidence covers Store/Core IMAP Trash, migration, SMTP endpoint, CLI setup and terminal-flow behavior. This unsigned candidate still needs final package verification, human security review, clean Windows VM testing and Google publisher verification. Real Trash movement was not performed. Schema 26 migration preserves existing data; do not downgrade after migration. See [Google commands](docs/latest/GOOGLE-MAIL.md) and [PROGRESS.md](docs/latest/PROGRESS.md).
+The package includes publisher Google Desktop configuration; ordinary users do not configure Google Cloud. The preceding beta.20 baseline passed 1,906 full-check test executions; beta.22 does not claim that old count as a new full-suite result. Native macOS/Linux and isolated Windows package evidence is recorded in [OS-SUPPORT-PLAN-20261104.md](docs/latest/OS-SUPPORT-PLAN-20261104.md). Human security review and Google publisher verification remain open. Real Unix provider login/send/Trash and AI conversation were not performed. Schema 26 migration preserves existing data; do not downgrade after migration. See [Google commands](docs/latest/GOOGLE-MAIL.md) and [PROGRESS.md](docs/latest/PROGRESS.md).
 
 Optional AI sessions use separately installed official Codex CLI or Claude Code: `hantong ai login codex` then `hantong ai chat codex` (use `claude` for Console/API billing). `/help` lists available commands and descriptions. Built-in AI automatically connects provider-specific mail tools after the first same-terminal account and external-transfer setup; manual MCP registration and `/agent on` are not required. `/provider`, `/model`, `/mode`, `/fast on|off` and `/agent on|off` switch supported features. Sending and single-message Gmail trash moves require final terminal confirmation; trash also requires Google Modify permission. Permanent and batch deletion are unsupported. External MCP grants remain separate.
 
@@ -139,7 +141,9 @@ Follow the [AI and agent instructions](docs/latest/CLI-LAUNCH.md#ai-sessions-and
 
 Windows GUI는 `cargo run -p mail-hantong-gui -- --lang ko --theme system`으로 실행합니다. 영어는 `--lang en`, 테마는 `light`, `dark`, `system`입니다. GUI는 CLI와 별도 등록을 사용하며, 사용자가 연결을 요청하고 보호된 확인 창에서 검토한 계정의 저장된 폴더·메일 메타데이터만 읽습니다. 선택한 폴더에서 전체·읽지 않음·즐겨찾기로 목록을 좁히고 다시 조회할 수 있습니다. 현대적인 메일 화면의 구성과 참조 기준은 [디자인 가이드](docs/latest/DESIGN.md)에 기록합니다. 표시 설정 저장·본문·첨부·작성·발송은 아직 개발 중입니다. 최신 검증 여부는 [진행 기록](docs/latest/PROGRESS.md)을 확인하세요.
 
-Windows ships first. Planned macOS support starts with the local core, CLI, and a minimal approval helper; the full GUI follows later.
+Windows remains supported with its preserved v1 behavior. beta.22 adds native
+macOS 15 and Linux x86_64 CLI/Core packages; see
+[UNIX-INSTALL.md](docs/latest/UNIX-INSTALL.md) for their supported boundaries.
 
 개발용 화면 확인은 `cargo run -p hantong-desktop --example fixture_preview`로 실행할 수 있습니다. 새로고침 후 `[Sample / 예시] Preview` 계정과 받은편지함을 선택하면 명시적으로 표시된 합성 메일 32개로 목록·테마·스크롤을 확인합니다. 이 예제는 Core·IPC·실제 계정·네트워크를 사용하지 않으며 제품 실행 파일에는 포함되지 않습니다.
 
@@ -165,7 +169,7 @@ cargo run -p hantong-cli -- --lang ko --help
 ./scripts/check-all.ps1
 ```
 
-Python 실행 파일을 지정하려면 `./scripts/check-all.ps1 -Python <python-path>`를 사용합니다. Windows의 첫 전체 빌드는 SQLCipher·OpenSSL을 소스에서 컴파일하므로 수 분 이상 걸릴 수 있습니다. 다음 빌드는 Cargo 캐시를 사용합니다. Linux 개발 환경에서는 Windows 도구 준비를 건너뛰고 `cargo fetch --locked` 후 `sh scripts/check-all` 또는 `python3 scripts/check_all.py`로 검사합니다. OS 비밀 저장소의 Linux/macOS 제품 구현은 아직 제공하지 않습니다. Windows의 보호된 계정 조회에는 기존 등록 프로필이 필요합니다.
+Python 실행 파일을 지정하려면 `./scripts/check-all.ps1 -Python <python-path>`를 사용합니다. Windows의 첫 전체 빌드는 SQLCipher·OpenSSL을 소스에서 컴파일하므로 수 분 이상 걸릴 수 있습니다. 다음 빌드는 Cargo 캐시를 사용합니다. Linux 개발 환경에서는 Windows 도구 준비를 건너뛰고 `cargo fetch --locked` 후 `sh scripts/check-all` 또는 `python3 scripts/check_all.py`로 검사합니다. 제품 Unix 설치에는 개발 도구가 필요하지 않으며, 비밀 저장소 경계와 사용 방법은 [UNIX-INSTALL.md](docs/latest/UNIX-INSTALL.md)를 따릅니다. Windows의 보호된 계정 조회에는 기존 등록 프로필이 필요합니다.
 
 Windows 코어의 연결 상태를 확인하려면 첫 터미널에서 `python scripts/cargo_native.py run -p mail-hantong-core --locked --offline -- run`을 실행하고 다른 터미널에서 `cargo run -p hantong-cli -- core status --json`을 실행합니다. `--lang ko core status`로 한국어 상태를 볼 수 있습니다. 코어는 Windows Known Folder의 사용자 로컬 앱 데이터 아래 `mail-hantong/data`와 `mail-hantong/secrets`에 암호화 DB·키를 초기화하며, 환경 변수나 명령 인자로 경로를 바꾸지 않습니다. 기존 설정·키·스키마가 올바르지 않으면 시작을 거부합니다. 지원하는 이전 DB는 검증과 단계별 암호화 백업 후 현재 스키마로 이전하고, 서버 서명 키는 Windows 현재 사용자의 CNG에 보관해 다음 실행에도 유지합니다. 활성 서버 키 누락·불일치 시 자동으로 다른 키를 만들지 않습니다. 현재 응답은 전송 준비 상태만 뜻하며 `mail_ready`와 `authenticated`는 false입니다. 코어는 Ctrl+C로 종료합니다. CLI의 본문 읽기·작성·발송·AI·MCP 사용 방법은 위 설치·사용 안내를 따릅니다. 기본 클라이언트 등록은 아래 개발 명령으로도 제공합니다.
 

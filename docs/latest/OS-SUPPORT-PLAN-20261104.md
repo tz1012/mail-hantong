@@ -1,8 +1,9 @@
 # Windows·macOS·Linux CLI/TUI 지원 구현과 검증
 
 2026-11-04 사용자 지시: 기존 지원 대상인 Mac·Linux도 실제로 이용할 수 있도록 구현한다.
-현재 공개 제품은 Windows beta.21이다. 아래 작업은 진행 중이며 완료 표시가 없는
-OS에서 단순 빌드·TUI demo 성공을 메일 지원 완료로 안내하지 않는다.
+현재 beta.22는 Windows x64, macOS 15 Intel/ARM, Linux
+x86_64 (glibc >= 2.39) 자산을 포함한다.
+Linux ARM 자산은 없다. 상세 설치는 [UNIX-INSTALL.md](UNIX-INSTALL.md)를 따른다.
 
 ## 공통 완료 조건
 
@@ -19,16 +20,16 @@ OS에서 단순 빌드·TUI demo 성공을 메일 지원 완료로 안내하지 
 | 묶음 | 상태 | 검증 게이트 |
 | --- | --- | --- |
 | Windows 구버전 업데이트 복구 | 안내 공개·합성 재설치 검증 | 회사 PC 결과는 별도 |
-| Unix 전체 화면·inline 키 입력 | 구현·Linux native 검증 중 | 화살표·본문/뒤로·마우스·resize·모드 복원 |
+| Unix 전체 화면·inline 키 입력 | native smoke 통과 | 화살표·본문/뒤로·마우스·resize·모드 복원 |
 | Windows 인증 형식 보존 | v1 golden fixture 추가 | 기존 canonical bytes 불변 |
 | Unix 인증 v2 | 구현·회귀 보완 | strict codec·커널 peer·다른 이미지/PID 재사용 차단 |
-| Unix 경로·프로필·소켓 | 기반 구현·Linux 합성 검사 통과 | Mac native 검사·실제 실행 검증 필요 |
-| Keychain·Secret Service·opaque signer | 구현 중 | 합성 crypto·가짜 backend·잠김/누락·키 연속성 |
-| Unix SQLCipher·Store | 기반 연결·native 검증 중 | 평문 대체 금지·과거 schema 이행·FK 검사 |
-| Unix Gmail·IMAP·SMTP·Core workers | Core 연결·Linux 합성 통합 검사 중 | 합성 제공자 E2E·복구·다계정 격리 |
-| Unix CLI/TUI·AI/MCP 인증 연결 | Core 소유 중계 연결·native 검사 중 | Secrets 경계·기능 전환·제공자별 외부 전송 설정 |
-| Unix 설치·업데이트·제거 패키지 | Linux 합성 검사·Mac 패키징 연결 중 | 실제 바이너리 새 설치·상향·실행 중 교체·데이터 보존 |
-| Linux headless/SSH | 암호화 금고·보호 입력 구현·통합 검사 중 | Secret Service 없는 환경의 설치·터미널 잠금 해제·재시작 |
+| Unix 경로·프로필·소켓 | macOS/Linux native 검증 통과 | 실제 제공자 작업은 별도 |
+| Keychain·Secret Service·opaque signer | native CI smoke 통과 | desktop Secret Service 미검증·Mac SSH vault 미지원 |
+| Unix SQLCipher·Store | native CI smoke 통과 | 평문 대체 금지·과거 schema 이행·FK 검사 |
+| Unix Gmail·IMAP·SMTP·Core workers | synthetic provider smoke 통과 | 실제 제공자 로그인·발송·Trash 별도 |
+| Unix CLI/TUI·AI/MCP 인증 연결 | startup smoke 통과 | AI provider install/login/capability 별도 |
+| Unix 설치·업데이트·제거 패키지 | disposable install smoke 통과 | 최종 공개·서명/공증 별도 |
+| Linux headless/SSH | protected headless smoke 통과 | Secret Service 없는 환경에서 vault 1 선택·TTY unlock |
 
 ## OS별 native 검증
 
@@ -52,7 +53,7 @@ WSL은 Linux compiler/PTY/합성 검사의 보조 환경이다. 데스크톱 Key
 
 실행 결과와 변경 사항은 [PROGRESS.md](PROGRESS.md)에 계속 누적한다.
 
-## beta.21 외부 확인 반영 — 2026-11-04
+## beta.21 외부 확인 반영 — historical — 2026-11-04
 
 Linux 검토자가 설치 전에 태그를 확인했다. 인증정보 저장·암호화 DB·Unix 통신 기반은
 추가됐으나 `apps/mail-hantong-core/src/main.rs::start`와
@@ -73,3 +74,22 @@ Ponytail 스킬 설치·내용 검증·개발 적용은 완료됐다. 이후 Uni
 저장소/identity/요청 dispatch/worker 수명, CLI의 패키지 검증·시작·연결과 OS별 설치다.
 headless 보호 저장 방식은 ADR-030에서 분리한 별도 제안으로 검토한다. 평문 파일,
 비밀값 argv/env 전달, 인증 생략 또는 기존 DB의 키 자동 재생성으로 우회하지 않는다.
+
+## beta22 native verification — 2026-11-04
+
+macOS 15 native CI run `41801224195` passed on both Intel and Apple Silicon,
+including workspace Clippy, four SQLCipher tests, Core/socket/stop tests,
+cross-process protected-stage checks and the line reader. Disposable package
+installation passed first-run encrypted DB/status/stop/reopen using an unlocked
+CI Keychain. Linux x86_64 (glibc >= 2.39) passed the installed headless and
+GUI/DBus-absent smoke: protected first-start/menu, Core survival after CLI use,
+encrypted DB, verified stop, wrong-unlock ciphertext preservation, reopen and
+non-TTY `HumanStepRequired`. Windows preserves v1 behavior; isolated
+install/uninstall, real pointer/UserPATH and data-sentinel proof passed.
+
+These are startup, storage and synthetic-provider checks. Real Unix provider
+login/send/Trash and AI conversation were not tested. Desktop Secret Service
+remains unverified, macOS SSH vault is unsupported, and human security review
+is pending. macOS signing/notarization is not claimed. Source metadata is
+documented in [UNIX-INSTALL.md](UNIX-INSTALL.md); final packaging/publication
+remains in progress, so this document uses release-candidate language.

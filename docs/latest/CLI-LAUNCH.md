@@ -1,7 +1,8 @@
-# mail-hantong CLI — Windows beta.21
+# mail-hantong CLI — beta.22
 
-beta.21 keeps the Windows PowerShell update path, newest-compatible release
-selection and automatic downgrade protection. New accounts use the same read,
+beta.22 keeps the Windows PowerShell update path, newest-compatible release
+selection and automatic downgrade protection. It also ships native macOS 15
+(Intel/ARM) and Linux x86_64 (glibc >= 2.39) packages. New accounts use the same read,
 body, compose and individually confirmed send flow as existing accounts. Google
 consent is followed by exact scope selection in the same terminal. Generic
 IMAP/SMTP accounts use the same CLI/TUI flow. The sending-account selection is
@@ -18,7 +19,7 @@ and stable error code. Do not send credentials, database files or mail content.
 
 The command is `hantong`. English is the default; use `--lang ko` for Korean. The companion `mail-hantong-core` process handles encrypted local storage, mail operations and policy. The graphical mail application is not included in the CLI package.
 
-**Release: 0.1.0-beta.21.** The [Korean website guide](https://tz1012.github.io/mail-hantong/) covers installation, mail and AI feature switching. Release downloads include checksums and build metadata. Beta.21 is a Windows x64 beta release with targeted regression and package checks. The earlier baseline passed 1,906 full-check test executions; beta.21 does not claim that old count as a new full-suite result. The real Daum authentication, synthetic Gmail send, and 17-mailbox catalog/body-read results are historical beta.20 evidence, not new beta.21 tests. Beta.20 also recorded two synthetic Codex and Claude conversation turns; beta.21 adds no new provider-turn claim. AI code and schema 26 behavior are unchanged. Real Trash movement, AI-driven mail mutations, human security review, clean Windows VM testing and Google publisher verification remain separate open gates. macOS and Linux mail operations are not available in this release. Final beta.21 package verification is recorded separately.
+**Release: 0.1.0-beta.22.** Release assets are Windows x64, Linux x64, macOS Intel and macOS ARM; there is no Linux ARM asset. The source is pinned to `c50c01dd88fe75e2b643e580fb25ba85430639d6a4e9e55650cf7595c86332fd` from `feature/linux-product-20261104` at `3eabc14`. See [Unix installation and use](UNIX-INSTALL.md) for the pinned installer and headless flow. Human security review remains pending; macOS signing/notarization and real Unix provider login/send/Trash or AI conversation are not claimed.
 
 ## What works in this preview
 
@@ -26,7 +27,7 @@ The current beta includes guided installation/startup, Google account selection 
 
 | Available | Not yet available |
 | --- | --- |
-| Windows 11 x64; English/Korean text and JSON output | macOS/Linux product mail operations |
+| Windows 11 x64, macOS 15 Intel/ARM, Linux x86_64 glibc >= 2.39; English/Korean text and JSON output | Linux ARM; macOS SSH vault; advanced custom Google client on Unix |
 | Protected IMAP and multi-account Google browser setup; explicit client registration | Graph OAuth setup and Google publisher verification |
 | Account and cached folder listing; explicit folder refresh | Automatic background synchronization of every mailbox |
 | Bounded UID metadata collection, reconciliation and recovery | General attachment download and rich HTML display |
@@ -121,10 +122,14 @@ To review an agent-created pending request, use `hantong review --kind <kind> --
 
 ## Install with one command
 
+For macOS and Linux, download the pinned installer to a file and run it from a
+protected TTY. See [UNIX-INSTALL.md](UNIX-INSTALL.md); it covers the encrypted
+headless vault, Keychain requirements and SSH/browser boundaries.
+
 Run in PowerShell on Windows x64:
 
 ```powershell
-irm https://raw.githubusercontent.com/tz1012/mail-hantong/main/install.ps1 | iex
+irm https://raw.githubusercontent.com/tz1012/mail-hantong/3eabc14b9ed8463aa58db0304dbf86d6da00bb94/install.ps1 | iex
 ```
 
 The installer selects the latest compatible published preview, verifies its ZIP against `SHA256SUMS`, and installs under the current user's local Programs directory. It adds the owned launcher directory to the user's PATH and the current terminal. Repeating the command updates the installation. It does not start Core, register accounts or log in to an AI provider. No Rust, Git, Python, Docker or WSL is required for the mail executables. The optional AI connections use separately installed official Codex or Claude Code executables.
@@ -317,9 +322,8 @@ Built-in AI also exposes `mail.messages.trash.request` for moving one Gmail mess
 If an older `update hantong` fails with `Join-Path` / null `drive`, run the
 public installation command directly once to replace the old updater. This
 preserves account data and keys. See [Windows recovery and program-only clean
-reinstallation](WINDOWS-RECOVERY.md) for both procedures. macOS and Linux are
-planned support targets with unfinished product implementations; the current
-Windows package does not provide working mail operations on those systems.
+reinstallation](WINDOWS-RECOVERY.md) for both procedures. For macOS and Linux
+installation, update and headless secret handling, see [UNIX-INSTALL.md](UNIX-INSTALL.md).
 
 From beta.5 onward, update in an interactive terminal with either command:
 
@@ -360,7 +364,7 @@ The package tool builds the terminal distribution and core, records versions and
 
 `hantong`은 터미널에서 사용하는 CLI입니다. `--lang ko`로 한국어를 선택하고 자동화에는 `--json`과 종료 코드를 사용합니다.
 
-현재 beta.21 후보는 `/help`, 내장 AI 메일 도구 자동 연결, Gmail과 일반 IMAP 계정의 메일 조회·본문 읽기·작성·개별 발송 확인, 한 통씩 휴지통 이동을 제공합니다. AI 최초 이용에는 같은 터미널에서 제공자별 계정·도구·외부 전송 범위를 확인하며, 설정 후 수동 MCP 등록이나 필수 `/agent on` 없이 연결합니다. 발송·휴지통 이동은 매번 같은 터미널에서 최종 확인합니다. Gmail 휴지통 이동에는 Google Modify 권한이 필요하며 영구·대량 삭제는 지원하지 않습니다. 업데이트만으로 권한을 부여하지 않으며 과거 중단 요청의 범위도 바꾸지 않습니다. 일반 첨부 다운로드·예약·주소록·규칙 자동화와 Mac 제품은 후속입니다.
+현재 beta.22 후보는 `/help`, 내장 AI 메일 도구 자동 연결, Gmail과 일반 IMAP 계정의 메일 조회·본문 읽기·작성·개별 발송 확인, 한 통씩 휴지통 이동을 제공합니다. Unix 실제 제공자 로그인·발송·휴지통과 AI 대화는 아직 시험하지 않았습니다. 일반 첨부 다운로드·예약·주소록·규칙 자동화는 후속입니다.
 
 위 PowerShell 한 줄로 설치·업데이트한 뒤 `hantong --lang ko init`을 실행하세요. 코어는 필요할 때 자동으로 시작합니다. 계정 연결·기능 선택·숨김 입력·메일 전체 검토·보내기/취소는 같은 터미널에서 진행하며, Google 로그인·동의만 브라우저를 사용합니다. 계정 작업 메뉴 4번은 작성·보내기 활성화, 5번은 메일 작성입니다. AI는 별도 `hantong ai login codex`, `hantong ai chat codex` 명령으로 시작하고 `/provider`, `/model`, `/mode`, `/fast`, `/agent`로 지원 기능을 전환합니다. 현재 beta17 후보는 Windows Codex 0.163.0 named profile의 유효 root-read/temp-read 기능 거부를 감지하면 기존 등록을 보존한 채 현지화된 `CAPABILITY_UNSUPPORTED`로 종료합니다. UAC·설정 변경이나 넓은 레거시 프로필 대체는 하지 않으며, 실제 모델 turn·AI 메일 교환은 수행하지 않았습니다. 자세한 순서는 [홈페이지](https://tz1012.github.io/mail-hantong/)에 있습니다.
 
