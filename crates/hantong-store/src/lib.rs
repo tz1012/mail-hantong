@@ -34,7 +34,7 @@ pub mod message_search;
 mod registration_activation;
 mod registrations;
 pub mod scope_refresh;
-#[cfg(all(test, target_os = "linux"))]
+#[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
 mod test_support;
 #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 mod uid_epochs;

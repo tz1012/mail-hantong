@@ -23,6 +23,8 @@ jobs:
           - macos-15
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
+    env:
+      HANTONG_TEST_KEYCHAIN: ${{ runner.temp }}/hantong-ci.keychain-db
     steps:
       - name: Check out source
         uses: actions/checkout@v6.1.0
@@ -42,11 +44,13 @@ jobs:
       - name: Prepare isolated macOS test Keychain
         if: runner.os == 'macOS'
         run: |
+          python -c 'import json,os,pathlib,shlex,subprocess; pathlib.Path(os.environ["RUNNER_TEMP"],"hantong-original-keychain-list.json").write_text(json.dumps(shlex.split(subprocess.check_output(["security","list-keychains","-d","user"],text=True))))'
           security default-keychain -d user | sed 's/^[[:space:]]*"//; s/"[[:space:]]*$//' > "$RUNNER_TEMP/hantong-original-keychain"
           security create-keychain -p 'synthetic-ci-only' "$RUNNER_TEMP/hantong-ci.keychain-db"
           security unlock-keychain -p 'synthetic-ci-only' "$RUNNER_TEMP/hantong-ci.keychain-db"
           security set-keychain-settings -lut 3600 "$RUNNER_TEMP/hantong-ci.keychain-db"
           security default-keychain -d user -s "$RUNNER_TEMP/hantong-ci.keychain-db"
+          security list-keychains -d user -s "$RUNNER_TEMP/hantong-ci.keychain-db"
       - name: Run repository checks offline
         run: python scripts/check_all.py
       - name: Verify native Unix terminal navigation and restoration
@@ -55,6 +59,9 @@ jobs:
       - name: Restore macOS test Keychain
         if: always() && runner.os == 'macOS'
         run: |
+          if [ -f "$RUNNER_TEMP/hantong-original-keychain-list.json" ]; then
+            python -c 'import json,os,pathlib,subprocess; subprocess.run(["security","list-keychains","-d","user","-s",*json.loads(pathlib.Path(os.environ["RUNNER_TEMP"],"hantong-original-keychain-list.json").read_text())],check=True)'
+          fi
           if [ -s "$RUNNER_TEMP/hantong-original-keychain" ]; then
             security default-keychain -d user -s "$(cat "$RUNNER_TEMP/hantong-original-keychain")"
           fi

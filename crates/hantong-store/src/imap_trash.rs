@@ -811,9 +811,9 @@ mod windows {
                 {
                     fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
                 }
-                #[cfg(target_os = "linux")]
+                #[cfg(any(target_os = "linux", target_os = "macos"))]
                 {
-                    crate::test_support::ensure_headless_backend();
+                    crate::test_support::ensure_test_backend();
                 }
                 let root = fs::canonicalize(root).unwrap();
                 let store = Store::open(root.join("data"), root.join("keys")).unwrap();

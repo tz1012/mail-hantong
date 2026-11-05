@@ -38,6 +38,7 @@ jobs:
     timeout-minutes: 60
     env:
       PACKAGE_VERSION: ${{ inputs.version || '0.1.0-beta.29' }}
+      HANTONG_TEST_KEYCHAIN: ${{ runner.temp }}/hantong-ci.keychain-db
     steps:
       - name: Check out source
         uses: actions/checkout@v6.1.0
@@ -70,11 +71,13 @@ jobs:
           test -s packaging/licenses/index.json
       - name: Prepare isolated CI Keychain
         run: |
+          python -c 'import json,os,pathlib,shlex,subprocess; pathlib.Path(os.environ["RUNNER_TEMP"],"hantong-original-keychain-list.json").write_text(json.dumps(shlex.split(subprocess.check_output(["security","list-keychains","-d","user"],text=True))))'
           security default-keychain -d user | sed 's/^[[:space:]]*"//; s/"[[:space:]]*$//' > "$RUNNER_TEMP/hantong-original-keychain"
           security create-keychain -p 'synthetic-ci-only' "$RUNNER_TEMP/hantong-ci.keychain-db"
           security unlock-keychain -p 'synthetic-ci-only' "$RUNNER_TEMP/hantong-ci.keychain-db"
           security set-keychain-settings -lut 1800 "$RUNNER_TEMP/hantong-ci.keychain-db"
           security default-keychain -d user -s "$RUNNER_TEMP/hantong-ci.keychain-db"
+          security list-keychains -d user -s "$RUNNER_TEMP/hantong-ci.keychain-db"
       - name: Check changed native CLI paths
         if: inputs.verification_scope == 'cli'
         run: |
@@ -148,6 +151,7 @@ jobs:
           security unlock-keychain -p 'synthetic-ci-only' "$RUNNER_TEMP/hantong-ci.keychain-db"
           security set-keychain-settings -lut 1800 "$RUNNER_TEMP/hantong-ci.keychain-db"
           security default-keychain -d user -s "$RUNNER_TEMP/hantong-ci.keychain-db"
+          security list-keychains -d user -s "$RUNNER_TEMP/hantong-ci.keychain-db"
       - name: Smoke test the installed macOS product
         run: |
           python -X utf8 scripts/test_macos_installed_product.py \
@@ -156,6 +160,9 @@ jobs:
       - name: Restore CI Keychain
         if: always()
         run: |
+          if [ -f "$RUNNER_TEMP/hantong-original-keychain-list.json" ]; then
+            python -c 'import json,os,pathlib,subprocess; subprocess.run(["security","list-keychains","-d","user","-s",*json.loads(pathlib.Path(os.environ["RUNNER_TEMP"],"hantong-original-keychain-list.json").read_text())],check=True)'
+          fi
           if [ -s "$RUNNER_TEMP/hantong-original-keychain" ]; then
             security default-keychain -d user -s "$(cat "$RUNNER_TEMP/hantong-original-keychain")"
           fi

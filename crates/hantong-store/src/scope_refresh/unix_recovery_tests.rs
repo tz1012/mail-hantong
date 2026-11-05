@@ -27,7 +27,7 @@ impl Fixture {
         fs::create_dir(&root).unwrap();
         fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
         let root = fs::canonicalize(root).unwrap();
-        crate::test_support::ensure_headless_backend();
+        crate::test_support::ensure_test_backend();
         let credential_root = root.join("credential-vault");
         fs::create_dir(&credential_root).unwrap();
         std::fs::set_permissions(

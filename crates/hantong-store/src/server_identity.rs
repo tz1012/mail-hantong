@@ -171,9 +171,9 @@ mod tests {
             {
                 fs::set_permissions(&path, fs::Permissions::from_mode(0o700)).unwrap();
             }
-            #[cfg(target_os = "linux")]
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
             {
-                crate::test_support::ensure_headless_backend();
+                crate::test_support::ensure_test_backend();
             }
             let path = fs::canonicalize(path).unwrap();
             Self(path)
