@@ -6,6 +6,11 @@ on:
     paths:
       - .github/workflows/scope-release-check.yml
       - apps/mail-hantong-core/src/unix_registration.rs
+      - apps/mail-hantong-core/src/unix_scope_refresh.rs
+      - apps/mail-hantong-core/src/unix_setup.rs
+      - crates/hantong-store/src/scope_refresh/**
+      - crates/hantong-store/src/scope_refresh.rs
+      - scripts/test_linux_installed_product.py
   workflow_dispatch:
     inputs:
       version:
@@ -78,7 +83,7 @@ jobs:
       - uses: actions/upload-artifact@v7.0.2
         with:
           name: mail-hantong-${{ env.PACKAGE_VERSION }}-linux-native-gate
-          path: ${{ runner.temp }}/artifacts/${{ inputs.version }}/
+          path: ${{ runner.temp }}/artifacts/${{ env.PACKAGE_VERSION }}/
           if-no-files-found: error
           retention-days: 14
       - uses: actions/cache/save@v6.1.0
