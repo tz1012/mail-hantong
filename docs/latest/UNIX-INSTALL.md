@@ -240,3 +240,20 @@ failed on a particular machine. These corrections reproduce one interrupted
 setup defect with synthetic data; actual Daum authentication and mail reading
 still require reconnecting and testing on the reporting machine. Keep the
 existing app password and encrypted files; do not reset the vault or upload them.
+
+
+## Gmail inbox/sync returned CAPABILITY_UNSUPPORTED (beta.25?26)
+
+A CLI operation-ID generator was still Windows-only. Guided Gmail inbox refresh
+calls it before requesting sync; a `gmail sync` command without explicit operation
+and idempotency IDs also calls it. On Linux/macOS it returned
+`CAPABILITY_UNSUPPORTED`, independently of whether OAuth registration succeeded.
+beta.27 connects that generator to the existing OS-native cryptographic RNG.
+Account scopes, policy, audit, expected sync version and failure/no-retry behavior
+are unchanged. Synthetic tests cover generated IDs and inbox sync/status/list.
+
+This correction removes a deterministic CLI blocker; it does not certify actual
+Gmail reading on a reporting machine. OAuth/token verification, persistent
+registration, successful synchronization and successful message/body reading
+are separate observations. Do not reconnect a working account, replace keys or
+grant broader scopes merely because the old CLI printed this error.

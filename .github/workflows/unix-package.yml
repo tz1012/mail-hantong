@@ -9,7 +9,7 @@ on:
       version:
         description: Release prerelease version to package
         required: true
-        default: 0.1.0-beta.26
+        default: 0.1.0-beta.27
         type: string
 
 permissions:
@@ -31,7 +31,7 @@ jobs:
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     env:
-      PACKAGE_VERSION: ${{ inputs.version || '0.1.0-beta.26' }}
+      PACKAGE_VERSION: ${{ inputs.version || '0.1.0-beta.27' }}
     steps:
       - name: Check out source
         uses: actions/checkout@v6.1.0
@@ -78,6 +78,7 @@ jobs:
           cargo test -p mail-hantong-core --bin mail-hantong-core --locked --offline secret_submit_tests -- --test-threads=1
           cargo test -p mail-hantong-core --bin mail-hantong-core --locked --offline setup_imap::tests -- --test-threads=1
           cargo test -p hantong-cli --bin hantong --locked --offline guided_mail_setup -- --test-threads=1
+          cargo test -p hantong-cli --bin hantong --locked --offline google:: -- --test-threads=1
           cargo test -p hantong-secrets --lib --locked --offline unix_secret_store::tests -- --test-threads=1
           cargo test -p hantong-secrets --lib --locked --offline unix_database::tests -- --test-threads=1
           cargo test -p mail-hantong-core --bin mail-hantong-core --locked --offline unix_core_runtime -- --test-threads=1

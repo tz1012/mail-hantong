@@ -218,14 +218,7 @@ fn resource(lang: Lang, key: &str) -> &'static str {
         .unwrap_or("Google")
 }
 fn nonce() -> Result<String, ErrorCode> {
-    #[cfg(windows)]
-    {
-        Ok(wire_hex::encode(&hantong_platform::random_nonce()?))
-    }
-    #[cfg(not(windows))]
-    {
-        Err(ErrorCode::CapabilityUnsupported)
-    }
+    Ok(wire_hex::encode(&hantong_platform::random_nonce()?))
 }
 fn sync_params(
     mut params: Value,
@@ -1198,6 +1191,31 @@ mod tests {
         assert_eq!(p["label_id"], "INBOX");
     }
     #[test]
+    fn sync02_cli_gmail_implicit_sync_ids_use_native_randomness_and_exact_account() {
+        let account = format!("google_{}", "a".repeat(64));
+        let mut calls = 0;
+        let params = sync_params(
+            json!({"mode":"gmail_page","account_id":account,"limit":20}),
+            &mut |tool, params| {
+                calls += 1;
+                assert_eq!(tool, "mail.folders.list");
+                assert_eq!(params, json!({"mode":"gmail_labels","account_id":account}));
+                Ok(json!({"sync_version":7}))
+            },
+        )
+        .unwrap();
+        assert_eq!(calls, 1);
+        assert_eq!(params["account_id"], account);
+        assert_eq!(params["expected_version"], 7);
+        assert_eq!(params["label_id"], "INBOX");
+        let operation = params["operation_id"].as_str().unwrap();
+        let key = params["idempotency_key"].as_str().unwrap();
+        assert_ne!(wire_hex::decode_fixed::<32>(operation).unwrap(), [0; 32]);
+        assert_ne!(wire_hex::decode_fixed::<32>(key).unwrap(), [0; 32]);
+        assert_ne!(operation, key);
+    }
+
+    #[test]
     fn sync02_cli_targeted_attachment_read_does_not_default_to_inbox() {
         let account = format!("google_{}", "a".repeat(64));
         let action = parse(
@@ -1230,15 +1248,19 @@ mod onboarding_tests {
         let account = format!("google_{}", "a".repeat(64));
         let mut modes = Vec::new();
         let mut pauses = 0;
+        let operation = nonce().unwrap();
+        assert_ne!(wire_hex::decode_fixed::<32>(&operation).unwrap(), [0; 32]);
         let page = inbox_page(
             &account,
-            "guided-fixture",
+            &operation,
             &mut |tool, p| {
                 modes.push((tool.to_owned(), p["mode"].as_str().unwrap().to_owned()));
                 assert_eq!(p["account_id"], account);
                 Ok(match p["mode"].as_str().unwrap() {
                     "gmail_labels" => json!({"sync_version":3}),
                     "gmail_page" => {
+                        assert_eq!(p["operation_id"], operation);
+                        assert_eq!(p["idempotency_key"], operation);
                         assert_eq!(p["expected_version"], 3);
                         assert_eq!(p["limit"], 20);
                         assert_eq!(p["label_id"], "INBOX");
