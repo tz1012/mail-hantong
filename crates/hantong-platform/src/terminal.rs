@@ -279,6 +279,7 @@ mod windows {
 pub use windows::TerminalSession;
 
 #[cfg(unix)]
+#[allow(unsafe_code)]
 mod unix {
     use super::{MouseKind, TerminalEvent, TerminalKey};
     use hantong_contracts::ErrorCode;
@@ -401,7 +402,7 @@ mod unix {
     }
 
     pub struct TerminalSession {
-        saved_mode: String,
+        saved_mode: libc::termios,
         entered: bool,
         alternate_screen: bool,
         cached_size: Cell<Option<(Instant, (u16, u16))>>,
@@ -421,18 +422,20 @@ mod unix {
             if !io::stdin().is_terminal() || !io::stdout().is_terminal() {
                 return Err(ErrorCode::HumanStepRequired);
             }
-            let saved_mode = String::from_utf8(stty(&["-g"])?)
-                .map_err(|_| ErrorCode::CapabilityUnsupported)?
-                .trim()
-                .to_owned();
-            if saved_mode.is_empty() {
+            let mut saved_mode = unsafe { std::mem::zeroed::<libc::termios>() };
+            if unsafe { libc::tcgetattr(libc::STDIN_FILENO, &mut saved_mode) } != 0 {
                 return Err(ErrorCode::CapabilityUnsupported);
             }
-            if stty(&[
-                "-icanon", "-echo", "-isig", "-ixon", "-iexten", "min", "0", "time", "1",
-            ])
-            .is_err()
-            {
+            let mut mode = saved_mode;
+            mode.c_lflag &= !(libc::ICANON | libc::ECHO | libc::ISIG | libc::IEXTEN);
+            mode.c_iflag &= !libc::IXON;
+            mode.c_cc[libc::VMIN] = 0;
+            mode.c_cc[libc::VTIME] = 1;
+            if unsafe { libc::tcsetattr(libc::STDIN_FILENO, libc::TCSANOW, &mode) } != 0 {
+                // A failed attribute change must not strand a partially changed terminal.
+                unsafe {
+                    libc::tcsetattr(libc::STDIN_FILENO, libc::TCSANOW, &saved_mode);
+                }
                 return Err(ErrorCode::CapabilityUnsupported);
             }
             let screen = if alternate_screen { "\x1b[?1049h" } else { "" };
@@ -440,7 +443,9 @@ mod unix {
                 .and_then(|_| io::stdout().flush())
                 .is_err()
             {
-                let _ = stty(&[&saved_mode]);
+                unsafe {
+                    libc::tcsetattr(libc::STDIN_FILENO, libc::TCSANOW, &saved_mode);
+                }
                 return Err(ErrorCode::InternalError);
             }
             Ok(Self {
@@ -570,7 +575,9 @@ mod unix {
             };
             let _ = write!(io::stdout(), "\x1b[?1006l\x1b[?1000l\x1b[?25h{screen}")
                 .and_then(|_| io::stdout().flush());
-            let _ = stty(&[&self.saved_mode]);
+            unsafe {
+                libc::tcsetattr(libc::STDIN_FILENO, libc::TCSANOW, &self.saved_mode);
+            }
             self.entered = false;
         }
     }
@@ -616,7 +623,7 @@ mod unix {
         #[test]
         fn same_position_click_pair_becomes_double_click() {
             let session = TerminalSession {
-                saved_mode: String::new(),
+                saved_mode: unsafe { std::mem::zeroed::<libc::termios>() },
                 entered: false,
                 alternate_screen: false,
                 cached_size: Cell::new(None),
