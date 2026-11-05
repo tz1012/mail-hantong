@@ -446,6 +446,42 @@ impl UnixDirectoryGuard {
         self.open_regular(name, libc::O_RDONLY)
     }
 
+    /// Open a release asset relative to this already-held directory without
+    /// following the final path component. Release files may use permissions
+    /// other than the private 0600 profile/secret shape, but must still be a
+    /// regular file owned by the current user and must not be group/world
+    /// writable.
+    pub(crate) fn open_existing_release_file(
+        &self,
+        name: &str,
+    ) -> Result<std::fs::File, ErrorCode> {
+        let name = leaf_name(name)?;
+        let parent = self.descriptors.last().ok_or(ErrorCode::InternalError)?;
+        let raw = unsafe {
+            libc::openat(
+                parent.0,
+                name.as_ptr(),
+                libc::O_RDONLY | libc::O_NONBLOCK | libc::O_CLOEXEC | libc::O_NOFOLLOW,
+                0,
+            )
+        };
+        if raw < 0 {
+            return Err(match std::io::Error::last_os_error().raw_os_error() {
+                Some(libc::ELOOP) => ErrorCode::ScopeDenied,
+                _ => ErrorCode::CoreUnavailable,
+            });
+        }
+        let file = unsafe { std::fs::File::from_raw_fd(raw) };
+        let stat = file.metadata().map_err(|_| ErrorCode::CoreUnavailable)?;
+        if !stat.file_type().is_file()
+            || stat.uid() != unsafe { libc::geteuid() }
+            || stat.mode() & 0o022 != 0
+        {
+            return Err(ErrorCode::ScopeDenied);
+        }
+        Ok(file)
+    }
+
     pub fn create_new_regular(&self, name: &str) -> Result<std::fs::File, ErrorCode> {
         self.open_regular(name, libc::O_RDWR | libc::O_CREAT | libc::O_EXCL)
     }

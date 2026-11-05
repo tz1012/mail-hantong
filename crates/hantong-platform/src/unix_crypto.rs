@@ -31,6 +31,10 @@ fn bounded_hash(input: &[u8], limit: usize) -> Result<[u8; 32], ErrorCode> {
 }
 pub fn sha256_release_file(path: impl AsRef<Path>) -> Result<[u8; 32], ErrorCode> {
     let mut file = std::fs::File::open(path).map_err(|_| ErrorCode::CoreUnavailable)?;
+    sha256_release_handle(&mut file)
+}
+
+pub(crate) fn sha256_release_handle(file: &mut std::fs::File) -> Result<[u8; 32], ErrorCode> {
     let expected = file
         .metadata()
         .map_err(|_| ErrorCode::CoreUnavailable)?

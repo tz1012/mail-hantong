@@ -10,6 +10,9 @@ on:
       - apps/mail-hantong-core/src/unix_setup.rs
       - crates/hantong-store/src/scope_refresh/**
       - crates/hantong-store/src/scope_refresh.rs
+      - crates/hantong-platform/src/**
+      - scripts/package_unix.py
+      - packaging/unix/**
       - scripts/test_linux_installed_product.py
   workflow_dispatch:
     inputs:
@@ -53,7 +56,8 @@ jobs:
         run: |
           cargo fmt --all -- --check
           python -X utf8 scripts/traceability.py --check
-          cargo clippy -p mail-hantong-core -p hantong-store --all-targets --locked --offline -- -D warnings
+          cargo clippy -p mail-hantong-core -p hantong-store -p hantong-platform --all-targets --locked --offline -- -D warnings
+          cargo test -p hantong-platform --lib --locked --offline
           cargo test -p hantong-store --lib --locked --offline unix_recovery_tests -- --test-threads=1
           cargo test -p mail-hantong-core --bin mail-hantong-core --locked --offline scope -- --test-threads=1
           cargo test -p mail-hantong-core --bin mail-hantong-core --locked --offline channel_tests -- --test-threads=1

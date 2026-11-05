@@ -2,11 +2,14 @@
 
 #![cfg(unix)]
 
-use crate::{MAX_RELEASE_FILE, sha256_release_file};
+use crate::MAX_RELEASE_FILE;
+use crate::unix_paths::UnixDirectoryGuard;
 use hantong_contracts::{ErrorCode, wire_hex};
 use serde_json::{Map, Value};
 use std::collections::BTreeSet;
-use std::os::unix::fs::{FileTypeExt, MetadataExt, PermissionsExt};
+use std::fs::File;
+use std::io::Read;
+use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 
 const MAX_MANIFEST: u64 = 4 * 1024 * 1024;
@@ -24,7 +27,9 @@ pub fn verified_installed_core(caller_name: &str) -> Result<PathBuf, ErrorCode> 
         return Err(ErrorCode::InvalidInput);
     }
     let caller = std::env::current_exe().map_err(|_| ErrorCode::CoreUnavailable)?;
-    let caller_meta = regular_owned(&caller)?;
+    let caller_meta = open_owned(&caller)?
+        .metadata()
+        .map_err(|_| ErrorCode::CoreUnavailable)?;
     if caller.file_name().and_then(|v| v.to_str()) != Some(caller_name) {
         return Err(ErrorCode::ScopeDenied);
     }
@@ -33,7 +38,9 @@ pub fn verified_installed_core(caller_name: &str) -> Result<PathBuf, ErrorCode> 
     let manifest = version.join("release-manifest.json");
     validate_manifest(version, &manifest, caller_name)?;
     let core = bin.join("mail-hantong-core");
-    let core_meta = regular_owned(&core)?;
+    let core_meta = open_owned(&core)?
+        .metadata()
+        .map_err(|_| ErrorCode::CoreUnavailable)?;
     if core_meta.len() == 0 || caller_meta.len() == 0 {
         return Err(ErrorCode::CoreUnavailable);
     }
@@ -41,12 +48,22 @@ pub fn verified_installed_core(caller_name: &str) -> Result<PathBuf, ErrorCode> 
 }
 
 fn validate_manifest(version: &Path, manifest: &Path, caller_name: &str) -> Result<(), ErrorCode> {
-    validate_ancestors(version)?;
-    let metadata = regular_owned(manifest)?;
+    let _version_guard = release_directory(version)?;
+    let mut manifest_file = open_owned(manifest)?;
+    let metadata = manifest_file
+        .metadata()
+        .map_err(|_| ErrorCode::CoreUnavailable)?;
     if metadata.len() == 0 || metadata.len() > MAX_MANIFEST {
         return Err(ErrorCode::CoreUnavailable);
     }
-    let bytes = std::fs::read(manifest).map_err(|_| ErrorCode::CoreUnavailable)?;
+    let mut bytes = Vec::new();
+    (&mut manifest_file)
+        .take(MAX_MANIFEST + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|_| ErrorCode::CoreUnavailable)?;
+    if bytes.len() as u64 != metadata.len() {
+        return Err(ErrorCode::CoreUnavailable);
+    }
     reject_duplicate_keys(&bytes)?;
     let object = parse_exact_object(
         &bytes,
@@ -109,8 +126,14 @@ fn validate_manifest(version: &Path, manifest: &Path, caller_name: &str) -> Resu
             return Err(ErrorCode::CoreUnavailable);
         }
         let path = version.join(relative);
-        let file = regular_owned(&path)?;
-        if file.len() != expected_size || wire_hex::encode(&sha256_release_file(&path)?) != digest {
+        let mut file = open_owned(&path)?;
+        if file
+            .metadata()
+            .map_err(|_| ErrorCode::CoreUnavailable)?
+            .len()
+            != expected_size
+            || wire_hex::encode(&crate::unix_crypto::sha256_release_handle(&mut file)?) != digest
+        {
             return Err(ErrorCode::CoreUnavailable);
         }
     }
@@ -123,8 +146,8 @@ fn validate_manifest(version: &Path, manifest: &Path, caller_name: &str) -> Resu
     {
         return Err(ErrorCode::CoreUnavailable);
     }
-    regular_owned(&core)?;
-    regular_owned(&cli)?;
+    open_owned(&core)?;
+    open_owned(&cli)?;
     Ok(())
 }
 
@@ -150,40 +173,33 @@ fn safe_relative(path: &str) -> bool {
             .any(|part| part.is_empty() || part == "." || part == "..")
 }
 
-fn regular_owned(path: &Path) -> Result<std::fs::Metadata, ErrorCode> {
-    let metadata = std::fs::symlink_metadata(path).map_err(|_| ErrorCode::CoreUnavailable)?;
-    let kind = metadata.file_type();
-    if !kind.is_file()
-        || kind.is_symlink()
-        || kind.is_block_device()
-        || kind.is_char_device()
-        || kind.is_fifo()
-        || kind.is_socket()
+fn open_owned(path: &Path) -> Result<File, ErrorCode> {
+    let parent = path.parent().ok_or(ErrorCode::CoreUnavailable)?;
+    let name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or(ErrorCode::CoreUnavailable)?;
+    release_directory(parent)?.open_existing_release_file(name)
+}
+
+fn release_directory(path: &Path) -> Result<UnixDirectoryGuard, ErrorCode> {
+    let guard = UnixDirectoryGuard::open(path, false).map_err(|error| match error {
+        ErrorCode::CapabilityUnsupported | ErrorCode::ScopeDenied => ErrorCode::ScopeDenied,
+        _ => ErrorCode::CoreUnavailable,
+    })?;
+    let held = guard
+        .directory_fd()?
+        .try_clone_to_owned()
+        .map_err(|_| ErrorCode::CoreUnavailable)?;
+    let metadata = File::from(held)
+        .metadata()
+        .map_err(|_| ErrorCode::CoreUnavailable)?;
+    if metadata.uid() != crate::unix_peer::current_peer_context()?.effective_uid
+        || metadata.permissions().mode() & 0o022 != 0
     {
         return Err(ErrorCode::ScopeDenied);
     }
-    let uid = crate::unix_peer::current_peer_context()?.effective_uid;
-    if metadata.uid() != uid || metadata.permissions().mode() & 0o022 != 0 {
-        return Err(ErrorCode::ScopeDenied);
-    }
-    Ok(metadata)
-}
-
-fn validate_ancestors(path: &Path) -> Result<(), ErrorCode> {
-    let mut cursor = Some(path);
-    while let Some(directory) = cursor {
-        let metadata =
-            std::fs::symlink_metadata(directory).map_err(|_| ErrorCode::CoreUnavailable)?;
-        let mode = metadata.permissions().mode();
-        if !metadata.is_dir()
-            || metadata.file_type().is_symlink()
-            || (mode & 0o022 != 0 && (directory == path || mode & 0o1000 == 0))
-        {
-            return Err(ErrorCode::ScopeDenied);
-        }
-        cursor = directory.parent();
-    }
-    Ok(())
+    Ok(guard)
 }
 
 fn unix_target() -> &'static str {
@@ -255,6 +271,7 @@ fn reject_duplicate_keys(bytes: &[u8]) -> Result<(), ErrorCode> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sha256_release_file;
     use std::os::unix::fs::PermissionsExt;
 
     fn fixture() -> (std::path::PathBuf, std::path::PathBuf) {
@@ -368,6 +385,53 @@ mod tests {
             validate_manifest(&root, &manifest, "hantong"),
             Err(ErrorCode::CoreUnavailable)
         );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn sec03_release_manifest_rejects_symlinked_bin_and_manifest() {
+        let (root, manifest) = fixture();
+        let bin = root.join("bin");
+        let held = root.join("held-bin");
+        std::fs::rename(&bin, &held).unwrap();
+        std::os::unix::fs::symlink(&held, &bin).unwrap();
+        assert_eq!(
+            validate_manifest(&root, &manifest, "hantong"),
+            Err(ErrorCode::ScopeDenied)
+        );
+        std::fs::remove_file(&bin).unwrap();
+        std::fs::rename(&held, &bin).unwrap();
+        let held = root.join("held-manifest.json");
+        std::fs::rename(&manifest, &held).unwrap();
+        std::os::unix::fs::symlink(&held, &manifest).unwrap();
+        assert_eq!(
+            validate_manifest(&root, &manifest, "hantong"),
+            Err(ErrorCode::ScopeDenied)
+        );
+        std::fs::remove_file(&manifest).unwrap();
+        std::fs::rename(&held, &manifest).unwrap();
+        assert_eq!(validate_manifest(&root, &manifest, "hantong"), Ok(()));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn sec03_release_hash_uses_the_owned_open_file_after_path_replacement() {
+        let (root, manifest) = fixture();
+        let core = root.join("bin/mail-hantong-core");
+        let expected = sha256_release_file(&core).unwrap();
+        let mut opened = open_owned(&core).unwrap();
+        std::fs::rename(&core, root.join("held-core")).unwrap();
+        std::fs::write(&core, b"changed").unwrap();
+        std::fs::set_permissions(&core, std::fs::Permissions::from_mode(0o700)).unwrap();
+        assert_eq!(
+            crate::unix_crypto::sha256_release_handle(&mut opened),
+            Ok(expected)
+        );
+        assert_eq!(
+            validate_manifest(&root, &manifest, "hantong"),
+            Err(ErrorCode::CoreUnavailable)
+        );
+        drop(opened);
         let _ = std::fs::remove_dir_all(root);
     }
 
