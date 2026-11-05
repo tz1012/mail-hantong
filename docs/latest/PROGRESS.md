@@ -2220,3 +2220,8 @@ Gmail: confirmed official beta.25 AND beta.26 apps/hantong-cli/src/google.rs::no
 Fresh targeted Google CLI22 tests pass on Linux and Windows; Windows CLI all-target Clippy -D warnings passes. CI configuration4, fmt/diff and regenerated traceability pass; Linux Clippy result follows before freeze. New code is not in public beta.26. Preparing beta.27 with native CLI checks and package/install verification, preserving the beta.26 IMAP recovery fix. Real Daum/Gmail reconnect/read, external account operations and human security review remain unperformed.
 
 Before freeze: Linux CLI all-target Clippy -D warnings also completed successfully.
+
+
+### beta.27 validation scope: preserve the running full check
+
+Windows/Linux Google CLI22 and CLI Clippy pass; Mac ARM full integration+CLI22+installed product smoke pass. Mac Intel run41980992989 remains inside the broad native integration step without a failure result after several minutes. The user explicitly asked not to interrupt ongoing tests; that run is left running. Since the product delta is only the CLI ID generator/test coverage, add an explicit workflow_dispatch verification_scope=cli (default remains full). It runs native CLI all-target Clippy, Google CLI22 and guided IMAP4 while retaining package source/manifest validation, isolated Keychain, full native package build and installed Core/DB/restart smoke. It reuses the separately recorded beta.26 full Core baseline; it does not declare unexecuted Core tests passed or conceal a failed result. New run must pass before using its packages. Workflow/progress-only update leaves canonical source hash57df6ad2f4854766d3d24a257c2fee1d289b79d6debcad455d102348be07169b unchanged.

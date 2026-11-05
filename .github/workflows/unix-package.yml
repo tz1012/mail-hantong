@@ -11,6 +11,12 @@ on:
         required: true
         default: 0.1.0-beta.27
         type: string
+      verification_scope:
+        description: Native validation scope (CLI-only changes may reuse the recorded Core baseline)
+        required: true
+        default: full
+        type: choice
+        options: [full, cli]
 
 permissions:
   contents: read
@@ -69,7 +75,14 @@ jobs:
           security unlock-keychain -p 'synthetic-ci-only' "$RUNNER_TEMP/hantong-ci.keychain-db"
           security set-keychain-settings -lut 1800 "$RUNNER_TEMP/hantong-ci.keychain-db"
           security default-keychain -d user -s "$RUNNER_TEMP/hantong-ci.keychain-db"
+      - name: Check changed native CLI paths
+        if: inputs.verification_scope == 'cli'
+        run: |
+          cargo clippy -p hantong-cli --all-targets --locked --offline -- -D warnings
+          cargo test -p hantong-cli --bin hantong --locked --offline google:: -- --test-threads=1
+          cargo test -p hantong-cli --bin hantong --locked --offline guided_mail_setup -- --test-threads=1
       - name: Check native Unix integration
+        if: inputs.verification_scope != 'cli'
         run: |
           cargo clippy --workspace --all-targets --locked --offline -- -D warnings
           cargo test -p hantong-secrets --lib --locked --offline google:: -- --test-threads=1
