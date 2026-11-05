@@ -33,6 +33,7 @@ imap_port=IMAP 포트:
 imap_tls=IMAP TLS (1=implicit_tls, 2=starttls_required):
 imap_login=IMAP 로그인:
 imap_ready=IMAP 연결이 준비되었습니다. 이제 보내는 메일을 설정합니다.
+imap_resume_prompt=이전 IMAP 설정이 중단되었거나 확인이 필요합니다. 이 터미널에서 계속하려면 1, 그대로 두려면 0을 입력하세요.
 smtp_host=SMTP 서버:
 smtp_port=SMTP 포트:
 smtp_tls=SMTP TLS (1=implicit_tls, 2=starttls_required):

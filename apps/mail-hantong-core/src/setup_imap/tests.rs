@@ -1,5 +1,5 @@
 use super::*;
-#[cfg(target_os = "linux")]
+#[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::{
     cell::{Cell, RefCell},
@@ -71,8 +71,9 @@ impl Fixture {
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
         fs::create_dir(&root).unwrap();
-        #[cfg(target_os = "linux")]
+        #[cfg(unix)]
         fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
+        let root = fs::canonicalize(root).unwrap();
         Self {
             store: Store::open(root.join("data"), root.join("keys")).unwrap(),
             root: Cleanup(root),
@@ -556,4 +557,125 @@ fn setup01_pre_stage_resume_retains_new_account_action_and_fresh_hash() {
         .load_imap_provisioning_state(parent.intent().draft().account_id())
         .unwrap();
     assert_eq!(state.account_version, 2);
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[test]
+fn setup01_reconnect_uses_staged_attempt_and_explicit_fresh_resume() {
+    let f = Fixture::new();
+    let original = f.pending();
+    let staged = stage(&f.store, &original).unwrap();
+    // beta.25 Request created a new account ID despite this hidden Connecting row.
+    let abandoned = create(&f.store, &input()).unwrap();
+    assert_eq!(stage(&f.store, &abandoned), Err(ErrorCode::Conflict));
+    assert_eq!(
+        f.store
+            .load_imap_provisioning_state(original.intent().draft().account_id())
+            .unwrap()
+            .status,
+        hantong_domain::accounts::AccountStatus::Connecting
+    );
+
+    let (existing, fresh) = prepare_request(&f.store, &input()).unwrap();
+    assert!(!fresh);
+    assert_eq!(existing, staged);
+    assert_eq!(
+        progress(&existing, false, false).unwrap().next_action(),
+        ImapSetupNextAction::ResumeRequired
+    );
+    assert_eq!(f.store.list_imap_setup_requests().unwrap().len(), 2);
+
+    let child = prepare_resume(&f.store, &existing).unwrap();
+    assert_eq!(
+        child.intent().draft().account_id(),
+        original.intent().draft().account_id()
+    );
+    assert_ne!(
+        child.intent().review_payload_hash(),
+        original.intent().review_payload_hash()
+    );
+    let effects = Fake::new(&f.store);
+    run(finish_verified(&effects, &child, ())).unwrap();
+    assert_eq!(effects.probes.get(), 1);
+    let (ready, fresh) = prepare_request(&f.store, &input()).unwrap();
+    assert!(!fresh);
+    assert_eq!(
+        progress(&ready, false, false).unwrap().state(),
+        ImapSetupState::Ready
+    );
+    assert_eq!(
+        f.store
+            .load_imap_setup_request(*abandoned.intent().request_id())
+            .unwrap()
+            .unwrap(),
+        abandoned
+    );
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[test]
+fn setup01_reconnect_does_not_replace_changed_target_or_duplicate_pending() {
+    let f = Fixture::new();
+    let pending = f.pending();
+    let (same, fresh) = prepare_request(&f.store, &input()).unwrap();
+    assert_eq!(same, pending);
+    assert!(!fresh);
+    assert_eq!(f.store.list_imap_setup_requests().unwrap().len(), 1);
+    let staged = stage(&f.store, &pending).unwrap();
+    let changed = ImapSetupInput::new(
+        Some("이름".into()),
+        None,
+        "imap.example".into(),
+        994,
+        ImapSetupTls::ImplicitTls,
+        "user name".into(),
+    )
+    .unwrap();
+    assert_eq!(
+        prepare_request(&f.store, &changed),
+        Err(ErrorCode::Conflict)
+    );
+    assert_eq!(
+        f.store
+            .load_imap_setup_request(*staged.intent().request_id())
+            .unwrap()
+            .unwrap(),
+        staged
+    );
+    assert_eq!(f.store.list_imap_setup_requests().unwrap().len(), 1);
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[test]
+fn setup01_closed_existing_resume_keeps_resume_action_without_new_account() {
+    let f = Fixture::new();
+    let staged = stage(&f.store, &f.pending()).unwrap();
+    let child = prepare_resume(&f.store, &staged).unwrap();
+    let closed = f
+        .store
+        .close_imap_setup_review(&child, ErrorCode::ApprovalDenied)
+        .unwrap();
+    let receipt = progress(&closed, false, false).unwrap();
+    assert_eq!(receipt.state(), ImapSetupState::Denied);
+    assert_eq!(
+        receipt.next_action(),
+        ImapSetupNextAction::NewRequestRequired
+    );
+    let (reconnect, new) = prepare_request(&f.store, &input()).unwrap();
+    assert!(!new);
+    assert_eq!(
+        progress(&reconnect, false, false).unwrap().next_action(),
+        ImapSetupNextAction::ResumeRequired
+    );
+    let leaf = f
+        .store
+        .resolve_imap_setup_leaf(*reconnect.intent().request_id())
+        .unwrap();
+    assert_eq!(leaf, closed);
+    let fresh = prepare_resume(&f.store, &leaf).unwrap();
+    assert_eq!(fresh.intent().draft(), staged.intent().draft());
+    assert_ne!(
+        fresh.intent().review_payload_hash(),
+        closed.intent().review_payload_hash()
+    );
 }

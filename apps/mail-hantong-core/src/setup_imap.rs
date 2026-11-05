@@ -110,7 +110,6 @@ fn review_snapshot(
         request.expires_at_utc_ms(),
     )
 }
-#[cfg(windows)]
 pub(super) fn matches(
     request: &ImapSetupRequest,
     input: &ImapSetupInput,
@@ -121,6 +120,70 @@ pub(super) fn matches(
             && intent.draft().display_name() == input.display_name()
             && intent.draft().color() == input.color(),
     )
+}
+
+/// Reuse the exact interrupted attempt; only an explicit Resume may replace it.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub(crate) fn prepare_request(
+    store: &Store,
+    input: &ImapSetupInput,
+) -> Result<(ImapSetupRequest, bool), ErrorCode> {
+    let target = endpoint(input, "candidate")?;
+    let requests = store.list_imap_setup_requests()?;
+    let has_staged_target = |request: &ImapSetupRequest| {
+        existing_resume(request)
+            || request.events().iter().any(|event| {
+                matches!(
+                    event.event(),
+                    ImapSetupEvent::AccountStaged | ImapSetupEvent::ResumeStaged
+                )
+            })
+    };
+    for request in &requests {
+        if has_staged_target(request)
+            && request.intent().endpoint().host() == target.host()
+            && request.intent().endpoint().login_name() == target.login_name()
+            && !matches(request, input)?
+        {
+            return Err(ErrorCode::Conflict);
+        }
+    }
+    let mut matching = Vec::new();
+    for request in &requests {
+        if request.phase() != ImapSetupPhase::Superseded && matches(request, input)? {
+            matching.push(request);
+        }
+    }
+    let staged = matching
+        .iter()
+        .copied()
+        .filter(|request| has_staged_target(request))
+        .collect::<Vec<_>>();
+    if staged.len() > 1 {
+        return Err(ErrorCode::Conflict);
+    }
+    if let Some(request) = staged.first() {
+        if request.phase() == ImapSetupPhase::ReviewClosed {
+            // Keep the closed receipt unchanged. Its superseded parent points
+            // to this chain and already has the contract's interrupted/resume view.
+            if let Some(binding) = request.intent().resume_binding() {
+                return load(store, *binding.parent_request_id()).map(|parent| (parent, false));
+            }
+        }
+        return Ok(((*request).clone(), false));
+    }
+    matching.sort_by_key(|request| (request.created_at_utc_ms(), *request.intent().request_id()));
+    for request in matching.into_iter().rev() {
+        if request.phase() != ImapSetupPhase::ReviewPending {
+            continue;
+        }
+        if now()? >= request.expires_at_utc_ms() {
+            store.close_imap_setup_review(request, ErrorCode::ApprovalExpired)?;
+            continue;
+        }
+        return Ok((request.clone(), false));
+    }
+    create(store, input).map(|request| (request, true))
 }
 pub(super) fn load(store: &Store, id: [u8; 32]) -> Result<ImapSetupRequest, ErrorCode> {
     store
@@ -205,7 +268,6 @@ fn progress(
 
 // Only Core's consumed native pending reaches the production implementation.
 // Test doubles exercise ordering without constructing native verification.
-#[cfg(any(windows, test))]
 trait Effects {
     type Pending;
     fn load(&self, id: [u8; 32]) -> Result<ImapSetupRequest, ErrorCode>;
@@ -229,25 +291,46 @@ trait Effects {
         outcome: &InitialImapProbeOutcome,
     ) -> Result<ImapSetupRequest, ErrorCode>;
 }
-#[cfg(any(windows, test))]
 async fn finish_verified<E: Effects>(
     effects: &E,
     expected: &ImapSetupRequest,
     pending: E::Pending,
 ) -> Result<(), ErrorCode> {
-    let current = effects.load(*expected.intent().request_id())?;
+    let current = effects
+        .load(*expected.intent().request_id())
+        .map_err(|error| setup_failure("load", error))?;
     if &current != expected || current.phase() != ImapSetupPhase::ReviewPending {
-        return Err(ErrorCode::Conflict);
+        return Err(setup_failure("review_state", ErrorCode::Conflict));
     }
-    let staged = effects.stage(&current)?;
-    let started = effects.begin_credential(&staged)?;
+    let staged = effects
+        .stage(&current)
+        .map_err(|error| setup_failure("account_stage", error))?;
+    let started = effects
+        .begin_credential(&staged)
+        .map_err(|error| setup_failure("credential_begin", error))?;
     let result = effects.store_credential(&started, pending);
-    let returned = effects.finish_credential(&started, result)?;
-    result?;
-    let probing = effects.begin_probe(&returned)?;
+    let returned = effects
+        .finish_credential(&started, result)
+        .map_err(|error| setup_failure("credential_finish", error))?;
+    result.map_err(|error| setup_failure("credential_store", error))?;
+    let probing = effects
+        .begin_probe(&returned)
+        .map_err(|error| setup_failure("probe_begin", error))?;
     let outcome = effects.probe(&probing).await;
-    effects.finish_probe(&probing, &outcome)?;
+    effects
+        .finish_probe(&probing, &outcome)
+        .map_err(|error| setup_failure("probe_finish", error))?;
     Ok(())
+}
+
+fn setup_failure(stage: &'static str, error: ErrorCode) -> ErrorCode {
+    use std::io::Write;
+    let _ = writeln!(
+        std::io::stderr().lock(),
+        "hantong_imap_setup stage={stage} kind=transition_failed code={}",
+        error.as_str()
+    );
+    error
 }
 
 fn secret_error(error: hantong_secrets::SecretError) -> ErrorCode {
@@ -262,14 +345,23 @@ fn secret_error(error: hantong_secrets::SecretError) -> ErrorCode {
         _ => ErrorCode::InternalError,
     }
 }
-#[cfg(windows)]
-struct Native<'a> {
+struct StoreEffects<'a> {
     store: &'a Store,
     secrets_root: &'a std::path::Path,
 }
-#[cfg(windows)]
-impl Effects for Native<'_> {
-    type Pending = hantong_secrets::PendingImapCredential;
+enum CapturedCredential {
+    #[cfg(windows)]
+    Native(Box<hantong_secrets::PendingImapCredential>),
+    Terminal(
+        Box<(
+            TerminalSecretTicket,
+            TerminalSecretHandle,
+            TerminalSecretBinding,
+        )>,
+    ),
+}
+impl Effects for StoreEffects<'_> {
+    type Pending = CapturedCredential;
     fn load(&self, id: [u8; 32]) -> Result<ImapSetupRequest, ErrorCode> {
         load(self.store, id)
     }
@@ -285,16 +377,35 @@ impl Effects for Native<'_> {
         pending: Self::Pending,
     ) -> Result<(), ErrorCode> {
         let i = r.intent();
-        if pending.setup_request_id() != i.request_id()
-            || pending.setup_payload_hash() != i.review_payload_hash()
-        {
-            return Err(ErrorCode::ScopeDenied);
+        match pending {
+            #[cfg(windows)]
+            CapturedCredential::Native(pending) => {
+                if pending.setup_request_id() != i.request_id()
+                    || pending.setup_payload_hash() != i.review_payload_hash()
+                {
+                    return Err(ErrorCode::ScopeDenied);
+                }
+                hantong_secrets::SecretStore::open(self.secrets_root)
+                    .map_err(secret_error)?
+                    .store_pending_imap_credential(*pending, i.draft().account_id(), i.endpoint())
+                    .map(drop)
+                    .map_err(secret_error)
+            }
+            CapturedCredential::Terminal(captured) => {
+                let (ticket, handle, binding) = *captured;
+                hantong_secrets::SecretStore::open(self.secrets_root)
+                    .map_err(secret_error)?
+                    .consume_terminal_imap_credential(
+                        ticket,
+                        handle,
+                        binding,
+                        i.draft().account_id(),
+                        i.endpoint(),
+                    )
+                    .map(drop)
+                    .map_err(secret_error)
+            }
         }
-        hantong_secrets::SecretStore::open(self.secrets_root)
-            .map_err(secret_error)?
-            .store_pending_imap_credential(pending, i.draft().account_id(), i.endpoint())
-            .map(drop)
-            .map_err(secret_error)
     }
     fn finish_credential(
         &self,
@@ -370,12 +481,12 @@ pub(super) async fn review(
     match verified.and_then(|v| v.consume(&review)) {
         Ok(pending) => {
             finish_verified(
-                &Native {
+                &StoreEffects {
                     store,
                     secrets_root,
                 },
                 &expected,
-                pending,
+                CapturedCredential::Native(Box::new(pending)),
             )
             .await
         }
@@ -410,40 +521,15 @@ pub(super) async fn terminal_submit(
     expected_binding: TerminalSecretBinding,
 ) -> Result<(), ErrorCode> {
     let expected = load(store, id)?;
-    if expected.phase() != ImapSetupPhase::ReviewPending {
-        return Err(ErrorCode::Conflict);
-    }
-    let staged = stage(store, &expected)?;
-    let started = store.begin_imap_credential_store(&staged)?;
-    let i = started.intent();
-    let result = hantong_secrets::SecretStore::open(secrets_root)
-        .map_err(secret_error)?
-        .consume_terminal_imap_credential(
-            ticket,
-            handle,
-            expected_binding,
-            i.draft().account_id(),
-            i.endpoint(),
-        )
-        .map(|_| ())
-        .map_err(secret_error);
-    let returned = store.finish_imap_credential_store(&started, result)?;
-    result?;
-    let probing = store.begin_initial_imap_probe(&returned)?;
-    let outcome = match hantong_secrets::SecretStore::open(secrets_root) {
-        Ok(secrets) => {
-            secrets
-                .probe_imap(
-                    probing.intent().draft().account_id(),
-                    probing.intent().endpoint(),
-                )
-                .await
-        }
-        Err(e) => Err(hantong_secrets::MailProbeError::Credential(e)),
-    };
-    let outcome = probe_outcome(outcome, probing.intent().endpoint().settings_version());
-    store.finish_imap_setup_probe(&probing, &outcome)?;
-    Ok(())
+    finish_verified(
+        &StoreEffects {
+            store,
+            secrets_root,
+        },
+        &expected,
+        CapturedCredential::Terminal(Box::new((ticket, handle, expected_binding))),
+    )
+    .await
 }
 
 #[cfg(test)]

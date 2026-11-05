@@ -33,6 +33,7 @@ imap_port=IMAP port:
 imap_tls=IMAP TLS (1=implicit_tls, 2=starttls_required):
 imap_login=IMAP login:
 imap_ready=IMAP mailbox is ready. Now configure outgoing mail.
+imap_resume_prompt=A previous IMAP setup is paused or needs attention. Enter 1 to continue it in this terminal, or 0 to leave it unchanged.
 smtp_host=SMTP server:
 smtp_port=SMTP port:
 smtp_tls=SMTP TLS (1=implicit_tls, 2=starttls_required):

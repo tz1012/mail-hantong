@@ -56,6 +56,47 @@ fn imap_setup_error(state: ImapSetupState) -> ErrorCode {
     }
 }
 
+fn imap_resume_candidate(state: ImapSetupState) -> bool {
+    matches!(
+        state,
+        ImapSetupState::Interrupted
+            | ImapSetupState::AuthRequired
+            | ImapSetupState::TlsFailed
+            | ImapSetupState::Offline
+            | ImapSetupState::Error
+    )
+}
+
+fn resume_choice(value: &str) -> Result<bool, ErrorCode> {
+    match value.trim() {
+        "1" => Ok(true),
+        "0" => Ok(false),
+        _ => Err(ErrorCode::InvalidInput),
+    }
+}
+
+fn resume_interrupted_imap<F>(
+    receipt: &hantong_contracts::imap_setup::ImapSetupReceipt,
+    lang: Lang,
+    io: &mut dyn Io,
+    mut resume: F,
+) -> Result<hantong_contracts::imap_setup::ImapSetupReceipt, ErrorCode>
+where
+    F: FnMut([u8; 32], Lang) -> Result<hantong_contracts::imap_setup::ImapSetupReceipt, ErrorCode>,
+{
+    if receipt.next_action() != hantong_contracts::imap_setup::ImapSetupNextAction::ResumeRequired
+        && !imap_resume_candidate(receipt.state())
+    {
+        return Ok(receipt.clone());
+    }
+    onboarding::say(io, lang, "imap_resume_prompt")?;
+    let choice = io.read_text_line(8)?.ok_or(ErrorCode::HumanStepRequired)?;
+    match resume_choice(&choice)? {
+        true => resume(*receipt.request_id(), lang),
+        false => Err(ErrorCode::ApprovalDenied),
+    }
+}
+
 fn smtp(input: SmtpSetupInput, lang: Lang) -> Result<(), ErrorCode> {
     let receipt = hantong_ipc_client::smtp_setup::exchange(SmtpSetupCommand::Request(input))?;
     let receipt = if receipt.state == SmtpSetupState::Pending {
@@ -138,6 +179,9 @@ pub(super) fn run(lang: Lang, io: &mut dyn Io) -> Result<String, ErrorCode> {
     let display_name = format!("{login} @ {host}").chars().take(128).collect();
     let input = ImapSetupInput::new(Some(display_name), None, host, port, tls, login)?;
     let receipt = super::terminal_workflows::imap(ImapSetupCommand::Request(input), lang)?;
+    let receipt = resume_interrupted_imap(&receipt, lang, io, |request_id, lang| {
+        super::terminal_workflows::imap(ImapSetupCommand::Resume(request_id), lang)
+    })?;
     if receipt.state() != ImapSetupState::Ready {
         return Err(imap_setup_error(receipt.state()));
     }
@@ -167,7 +211,26 @@ pub(super) fn run(lang: Lang, io: &mut dyn Io) -> Result<String, ErrorCode> {
 #[cfg(test)]
 mod tests {
     use super::imap_setup_error;
-    use hantong_contracts::{ErrorCode, imap_setup::ImapSetupState};
+    use super::{imap_resume_candidate, resume_choice, resume_interrupted_imap};
+    use crate::{Lang, onboarding::Io};
+    use hantong_contracts::{
+        ErrorCode,
+        imap_setup::{ImapSetupNextAction, ImapSetupReceipt, ImapSetupState},
+    };
+
+    struct TestIo {
+        answer: Option<String>,
+    }
+
+    impl Io for TestIo {
+        fn write(&mut self, _text: &str) -> Result<(), ErrorCode> {
+            Ok(())
+        }
+
+        fn read_line(&mut self) -> Result<Option<String>, ErrorCode> {
+            Ok(self.answer.take())
+        }
+    }
 
     #[test]
     fn imap_setup_states_keep_stable_cli_errors() {
@@ -186,5 +249,62 @@ mod tests {
         for (state, expected) in cases {
             assert_eq!(imap_setup_error(state), expected);
         }
+    }
+
+    #[test]
+    fn imap_resume_candidate_requires_explicit_resume() {
+        assert!(imap_resume_candidate(ImapSetupState::Interrupted));
+        assert!(imap_resume_candidate(ImapSetupState::AuthRequired));
+        assert!(imap_resume_candidate(ImapSetupState::TlsFailed));
+        assert!(imap_resume_candidate(ImapSetupState::Offline));
+        assert!(imap_resume_candidate(ImapSetupState::Error));
+        assert!(!imap_resume_candidate(ImapSetupState::Cancelled));
+        assert!(!imap_resume_candidate(ImapSetupState::Expired));
+        assert!(!imap_resume_candidate(ImapSetupState::Ready));
+    }
+
+    #[test]
+    fn imap_resume_choice_does_not_auto_resume_or_accept_other_input() {
+        assert_eq!(resume_choice("1"), Ok(true));
+        assert_eq!(resume_choice(" 0 "), Ok(false));
+        assert_eq!(resume_choice("2"), Err(ErrorCode::InvalidInput));
+    }
+
+    #[test]
+    fn imap_resume_operation_is_explicit_and_uses_original_request_id_once() {
+        let receipt = ImapSetupReceipt::new(
+            [7; 32],
+            1,
+            ImapSetupState::Interrupted,
+            ImapSetupNextAction::ResumeRequired,
+        )
+        .unwrap();
+        let mut calls = 0;
+        let mut io = TestIo {
+            answer: Some("1".into()),
+        };
+        let resumed = resume_interrupted_imap(&receipt, Lang::En, &mut io, |request_id, _| {
+            calls += 1;
+            assert_eq!(request_id, [7; 32]);
+            Ok(receipt.clone())
+        })
+        .unwrap();
+        assert_eq!(resumed.request_id(), &[7; 32]);
+        assert_eq!(calls, 1);
+
+        for answer in [Some("0".into()), None, Some("2".into())] {
+            let expected = match answer.as_deref() {
+                Some("0") => Err(ErrorCode::ApprovalDenied),
+                Some(_) => Err(ErrorCode::InvalidInput),
+                None => Err(ErrorCode::HumanStepRequired),
+            };
+            let mut io = TestIo { answer };
+            let result = resume_interrupted_imap(&receipt, Lang::En, &mut io, |_, _| {
+                calls += 1;
+                Ok(receipt.clone())
+            });
+            assert_eq!(result, expected);
+        }
+        assert_eq!(calls, 1);
     }
 }

@@ -9,7 +9,7 @@ on:
       version:
         description: Release prerelease version to package
         required: true
-        default: 0.1.0-beta.25
+        default: 0.1.0-beta.26
         type: string
 
 permissions:
@@ -31,7 +31,7 @@ jobs:
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     env:
-      PACKAGE_VERSION: ${{ inputs.version || '0.1.0-beta.25' }}
+      PACKAGE_VERSION: ${{ inputs.version || '0.1.0-beta.26' }}
     steps:
       - name: Check out source
         uses: actions/checkout@v6.1.0
@@ -62,6 +62,13 @@ jobs:
         run: |
           python -X utf8 scripts/traceability.py --check
           test -s packaging/licenses/index.json
+      - name: Prepare isolated CI Keychain
+        run: |
+          security default-keychain -d user | sed 's/^[[:space:]]*"//; s/"[[:space:]]*$//' > "$RUNNER_TEMP/hantong-original-keychain"
+          security create-keychain -p 'synthetic-ci-only' "$RUNNER_TEMP/hantong-ci.keychain-db"
+          security unlock-keychain -p 'synthetic-ci-only' "$RUNNER_TEMP/hantong-ci.keychain-db"
+          security set-keychain-settings -lut 1800 "$RUNNER_TEMP/hantong-ci.keychain-db"
+          security default-keychain -d user -s "$RUNNER_TEMP/hantong-ci.keychain-db"
       - name: Check native Unix integration
         run: |
           cargo clippy --workspace --all-targets --locked --offline -- -D warnings
@@ -69,6 +76,8 @@ jobs:
           cargo test -p mail-hantong-core --bin mail-hantong-core --locked --offline unix_google -- --test-threads=1
           cargo test -p mail-hantong-core --bin mail-hantong-core --locked --offline unix_terminal_review_frontend -- --test-threads=1
           cargo test -p mail-hantong-core --bin mail-hantong-core --locked --offline secret_submit_tests -- --test-threads=1
+          cargo test -p mail-hantong-core --bin mail-hantong-core --locked --offline setup_imap::tests -- --test-threads=1
+          cargo test -p hantong-cli --bin hantong --locked --offline guided_mail_setup -- --test-threads=1
           cargo test -p hantong-secrets --lib --locked --offline unix_secret_store::tests -- --test-threads=1
           cargo test -p hantong-secrets --lib --locked --offline unix_database::tests -- --test-threads=1
           cargo test -p mail-hantong-core --bin mail-hantong-core --locked --offline unix_core_runtime -- --test-threads=1
@@ -97,13 +106,6 @@ jobs:
             --version "$PACKAGE_VERSION" \
             --output-dir "$RUNNER_TEMP/artifacts" \
             --publisher-config "$RUNNER_TEMP/google-desktop.json"
-      - name: Prepare isolated CI Keychain
-        run: |
-          security default-keychain -d user | sed 's/^[[:space:]]*"//; s/"[[:space:]]*$//' > "$RUNNER_TEMP/hantong-original-keychain"
-          security create-keychain -p 'synthetic-ci-only' "$RUNNER_TEMP/hantong-ci.keychain-db"
-          security unlock-keychain -p 'synthetic-ci-only' "$RUNNER_TEMP/hantong-ci.keychain-db"
-          security set-keychain-settings -lut 1800 "$RUNNER_TEMP/hantong-ci.keychain-db"
-          security default-keychain -d user -s "$RUNNER_TEMP/hantong-ci.keychain-db"
       - name: Smoke test the installed macOS product
         run: |
           python -X utf8 scripts/test_macos_installed_product.py \

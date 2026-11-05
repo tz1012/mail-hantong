@@ -204,3 +204,39 @@ and expiry rules still apply; preserving a review does not extend its lifetime.
 Keep any existing encrypted stage and app password while investigating; do not
 open or upload the stage, DB or key files. These diagnostics narrow the failure
 boundary and do not by themselves fix or prove the reported provider connection.
+
+
+## Interrupted IMAP setup and retry (beta.26)
+
+A queued protected-input job is not evidence of a successful provider login.
+An earlier interrupted attempt can leave a Connecting account and endpoint.
+Creating another account with the same canonical server/login then conflicts
+before authentication. beta.26 reuses the exact recorded attempt and offers an
+explicit Continue/Cancel choice. Continue creates a fresh resume request bound
+to the existing account, current endpoint versions and observations. Enter the
+existing app password again through protected input; old encrypted stages are
+not silently reused. Cancel creates no resume child or provider job.
+
+Changing the server, port, TLS mode or account display settings for an already
+staged target is rejected rather than overwriting the earlier configuration.
+An active capture, queued job or running job cannot receive another capture
+ticket or duplicate submit. A failed worker no longer remains shown as running
+when no job exists. Existing accounts, keys and setup history are preserved.
+
+Core also emits fixed `hantong_imap_setup stage=... kind=transition_failed`
+records with the stable error code. Stages distinguish `load`, `review_state`,
+`account_stage`, `credential_begin`, `credential_finish`, `credential_store`,
+`probe_begin` and `probe_finish`. Use the foreground Core procedure above and
+share only the following records:
+
+```sh
+grep -E '^hantong_(secret_store|terminal_secret|imap_setup) stage=' \
+  "$HOME/hantong-google-diagnostic.log"
+```
+
+No record includes credentials, account/request IDs, provider replies or file
+paths. A `CONFLICT` summary from beta.25 does not establish which transition
+failed on a particular machine. These corrections reproduce one interrupted
+setup defect with synthetic data; actual Daum authentication and mail reading
+still require reconnecting and testing on the reporting machine. Keep the
+existing app password and encrypted files; do not reset the vault or upload them.

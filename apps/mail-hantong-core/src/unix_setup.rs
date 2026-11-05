@@ -15,7 +15,7 @@ use hantong_ipc_server::setup_dispatch::{SetupCommand, SetupReceipt};
 use hantong_secrets::TerminalSecretTicket;
 use hantong_store::Store;
 use std::{
-    cell::RefCell,
+    cell::{Cell, RefCell},
     collections::{BTreeMap, VecDeque},
     path::Path,
     rc::Rc,
@@ -57,6 +57,7 @@ pub(crate) struct State {
     action_reviews: RefCell<BTreeMap<[u8; 32], ActionReview>>,
     action_jobs: RefCell<VecDeque<ActionReview>>,
     secret_jobs: RefCell<VecDeque<SecretJob>>,
+    active_secret_job: Cell<Option<[u8; 32]>>,
     action_notify: Rc<tokio::sync::Notify>,
     pub(crate) policy: Rc<RefCell<hantong_policy::ReadPolicy>>,
 }
@@ -71,6 +72,7 @@ impl State {
             action_reviews: RefCell::new(BTreeMap::new()),
             action_jobs: RefCell::new(VecDeque::new()),
             secret_jobs: RefCell::new(VecDeque::new()),
+            active_secret_job: Cell::new(None),
             action_notify: Rc::new(tokio::sync::Notify::new()),
             policy: Rc::new(RefCell::new(hantong_policy::ReadPolicy::new())),
         }
@@ -81,6 +83,39 @@ impl State {
     /// callers and is consumed exactly once.
     pub(crate) fn take_secret_review(&self, id: [u8; 32]) -> Option<SecretReview> {
         self.secret_reviews.borrow_mut().remove(&id)
+    }
+
+    fn has_secret_job(&self, id: [u8; 32]) -> bool {
+        self.active_secret_job.get() == Some(id)
+            || self
+                .secret_jobs
+                .borrow()
+                .iter()
+                .any(|job| job.request_id == id)
+    }
+
+    fn has_secret_review(&self, id: [u8; 32]) -> bool {
+        self.secret_reviews
+            .borrow()
+            .values()
+            .any(|review| review.request_id == id)
+    }
+
+    fn has_any_secret_work(&self) -> bool {
+        self.active_secret_job.get().is_some()
+            || !self.secret_jobs.borrow().is_empty()
+            || !self.secret_reviews.borrow().is_empty()
+    }
+
+    fn check_secret_review_slot(&self, id: [u8; 32]) -> Result<(), ErrorCode> {
+        if self.secret_reviews.borrow().len() >= 64
+            || self.has_secret_review(id)
+            || self.has_secret_job(id)
+        {
+            Err(ErrorCode::RateLimited)
+        } else {
+            Ok(())
+        }
     }
 
     /// Moves one confirmed send/trash operation into the Core-owned worker
@@ -139,6 +174,7 @@ impl State {
         secrets_root: &Path,
     ) -> Option<Result<(), ErrorCode>> {
         let job = self.secret_jobs.borrow_mut().pop_front()?;
+        self.active_secret_job.set(Some(job.request_id));
         let result = match job.kind {
             TerminalReviewKind::ImapSetup => {
                 crate::setup_imap::terminal_submit(
@@ -165,6 +201,7 @@ impl State {
             }
             _ => Err(ErrorCode::CapabilityUnsupported),
         };
+        self.active_secret_job.set(None);
         if let Err(error) = result {
             report_secret_submit("secret_job_execute", "job_failed", error);
         }
@@ -303,18 +340,43 @@ pub(crate) fn dispatch(
     match command {
         SetupCommand::Imap(command) => match command {
             ImapSetupCommand::Request(input) => {
-                let request = crate::setup_imap::create(store, &input)?;
-                crate::setup_imap::status(store, *request.intent().request_id(), true)
+                let (request, fresh) = crate::setup_imap::prepare_request(store, &input)?;
+                imap_status(state, store, *request.intent().request_id(), fresh)
                     .map(SetupReceipt::Imap)
             }
             ImapSetupCommand::Resume(id) => {
-                let parent = crate::setup_imap::load(store, id)?;
+                let parent = store.resolve_imap_setup_leaf(id)?;
+                let id = *parent.intent().request_id();
+                if state.has_secret_job(id)
+                    || state.has_secret_review(id)
+                    || parent.events().last().is_some_and(|event| {
+                        matches!(
+                            event.event(),
+                            hantong_store::imap_setup::ImapSetupEvent::ProbeFinished(
+                                hantong_store::account_provisioning::InitialImapProbeOutcome::Ready(
+                                    _
+                                )
+                            )
+                        )
+                    })
+                {
+                    return imap_status(state, store, id, false).map(SetupReceipt::Imap);
+                }
+                if state.has_any_secret_work() {
+                    return Err(ErrorCode::RateLimited);
+                }
+                if parent.phase() == hantong_store::imap_setup::ImapSetupPhase::ReviewPending
+                    && parent.intent().resume_binding().is_some()
+                    && now_ms()? < parent.expires_at_utc_ms()
+                {
+                    return imap_status(state, store, id, true).map(SetupReceipt::Imap);
+                }
                 let child = crate::setup_imap::prepare_resume(store, &parent)?;
-                crate::setup_imap::status(store, *child.intent().request_id(), true)
+                imap_status(state, store, *child.intent().request_id(), true)
                     .map(SetupReceipt::Imap)
             }
             ImapSetupCommand::Status(id) => {
-                crate::setup_imap::status(store, id, true).map(SetupReceipt::Imap)
+                imap_status(state, store, id, false).map(SetupReceipt::Imap)
             }
         },
         SetupCommand::Smtp(command) => match command {
@@ -335,6 +397,29 @@ pub(crate) fn dispatch(
         SetupCommand::Google(_) => Err(ErrorCode::CapabilityUnsupported),
         SetupCommand::ScopeRefresh(command) => scope_refresh_request(store, server, command),
     }
+}
+
+fn imap_status(
+    state: &State,
+    store: &Store,
+    id: [u8; 32],
+    fresh: bool,
+) -> Result<hantong_contracts::imap_setup::ImapSetupReceipt, ErrorCode> {
+    use hantong_contracts::imap_setup::{ImapSetupNextAction, ImapSetupReceipt, ImapSetupState};
+    let request = crate::setup_imap::load(store, id)?;
+    if state.has_secret_job(id)
+        && request.phase() == hantong_store::imap_setup::ImapSetupPhase::ReviewPending
+    {
+        return ImapSetupReceipt::new(
+            id,
+            request.expires_at_utc_ms(),
+            ImapSetupState::Connecting,
+            ImapSetupNextAction::Wait,
+        )?
+        .with_account_id(request.intent().draft().account_id().to_owned());
+    }
+    let reviewing = state.has_secret_review(id);
+    crate::setup_imap::status(store, id, fresh || reviewing || state.has_secret_job(id))
 }
 
 fn scope_refresh_request(
@@ -991,6 +1076,10 @@ fn submit_secret_with(
             review.ticket.opaque_id(),
         )
     };
+    if state.has_secret_job(request_id) {
+        report_secret_submit("secret_job_submit", "duplicate_job", ErrorCode::Conflict);
+        return Err(ErrorCode::Conflict);
+    }
     if expected_binding.is_expired() {
         report_secret_submit("secret_job_submit", "expired", ErrorCode::ApprovalExpired);
         return Err(ErrorCode::ApprovalExpired);
@@ -1064,10 +1153,11 @@ fn terminal_secret_get(
     ) {
         return Err(ErrorCode::CapabilityUnsupported);
     }
-    if state.secret_reviews.borrow().len() >= 64 {
-        return Err(ErrorCode::RateLimited);
-    }
+    state.check_secret_review_slot(get.request_id)?;
     let (account, hash, version, expires, endpoint) = if get.kind == TerminalReviewKind::ImapSetup {
+        if state.has_secret_job(get.request_id) {
+            return Err(ErrorCode::RateLimited);
+        }
         let setup = crate::setup_imap::load(store, get.request_id)?;
         let i = setup.intent();
         if setup.phase() != hantong_store::imap_setup::ImapSetupPhase::ReviewPending {
@@ -1242,6 +1332,37 @@ mod secret_submit_tests {
             )),
             Err(ErrorCode::Conflict)
         ));
+        assert_eq!(state.secret_reviews.borrow().len(), 1);
+        assert!(state.secret_jobs.borrow().is_empty());
+    }
+
+    #[test]
+    fn sec08_running_setup_rejects_second_review_before_stage_open() {
+        let (state, peer, request) = fixture();
+        state.active_secret_job.set(Some([1; 32]));
+        assert!(matches!(
+            submit_secret_with(&state, [1; 16], peer, request, |_, _| panic!(
+                "a running setup must not open another captured stage"
+            )),
+            Err(ErrorCode::Conflict)
+        ));
+        assert!(state.secret_jobs.borrow().is_empty());
+        assert_eq!(state.secret_reviews.borrow().len(), 1);
+    }
+
+    #[test]
+    fn sec08_same_pending_review_or_running_job_cannot_issue_another_capture_ticket() {
+        let (state, _, _) = fixture();
+        assert_eq!(
+            state.check_secret_review_slot([1; 32]),
+            Err(ErrorCode::RateLimited)
+        );
+        assert_eq!(state.check_secret_review_slot([9; 32]), Ok(()));
+        state.active_secret_job.set(Some([9; 32]));
+        assert_eq!(
+            state.check_secret_review_slot([9; 32]),
+            Err(ErrorCode::RateLimited)
+        );
         assert_eq!(state.secret_reviews.borrow().len(), 1);
         assert!(state.secret_jobs.borrow().is_empty());
     }
