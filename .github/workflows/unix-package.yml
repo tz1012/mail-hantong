@@ -16,7 +16,7 @@ on:
         required: true
         default: full
         type: choice
-        options: [full, cli, imap]
+        options: [full, cli, imap, scope]
 
 permissions:
   contents: read
@@ -90,7 +90,7 @@ jobs:
           cargo test -p hantong-secrets --lib --locked --offline unix_secret_store::tests -- --test-threads=1
           cargo test -p hantong-secrets --lib --locked --offline terminal_secret -- --test-threads=1
       - name: Check native Unix integration
-        if: inputs.verification_scope != 'cli' && inputs.verification_scope != 'imap'
+        if: inputs.verification_scope != 'cli' && inputs.verification_scope != 'imap' && inputs.verification_scope != 'scope'
         run: |
           cargo clippy --workspace --all-targets --locked --offline -- -D warnings
           cargo test -p hantong-secrets --lib --locked --offline google:: -- --test-threads=1
@@ -109,6 +109,14 @@ jobs:
           cargo test -p hantong-store --lib --locked --offline unix_schema_tests -- --test-threads=1
           cargo test -p hantong-approval -p hantong-secrets -p mail-hantong-core --all-targets --locked --offline mcp07 -- --test-threads=1
           cargo test -p hantong-contracts -p hantong-ipc-client -p hantong-ipc-server --lib --locked --offline mcp -- --test-threads=1
+      - name: Check changed native scope recovery paths
+        if: inputs.verification_scope == 'scope'
+        run: |
+          cargo clippy -p mail-hantong-core -p hantong-store --all-targets --locked --offline -- -D warnings
+          cargo test -p mail-hantong-core --bin mail-hantong-core --locked --offline channel_tests -- --test-threads=1
+          cargo test -p mail-hantong-core --bin mail-hantong-core --locked --offline setup_imap::tests -- --test-threads=1
+          cargo test -p mail-hantong-core --bin mail-hantong-core --locked --offline secret_submit_tests -- --test-threads=1
+          cargo test -p hantong-secrets --lib --locked --offline unix_secret_store::tests -- --test-threads=1
       - name: Download and isolate reviewed publisher asset
         env:
           PUBLISHER_URL: https://github.com/tz1012/mail-hantong/releases/download/v0.1.0-beta.21/mail-hantong-cli-0.1.0-beta.21-windows-x86_64.zip

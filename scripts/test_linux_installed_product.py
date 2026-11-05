@@ -29,7 +29,9 @@ def console(command, env, first, wrong=False):
                     data.extend(chunk)
                     transcript.extend(chunk)
                 else:
-                    break
+                    # PTY EOF can arrive before waitpid reports the child's exit.
+                    # Keep polling within the original deadline, without accepting EOF as success.
+                    time.sleep(.01)
             if first and sent == 0 and b'Choice:' in data:
                 os.write(fd, b'1\n')
                 sent = 1
