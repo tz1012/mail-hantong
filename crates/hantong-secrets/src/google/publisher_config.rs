@@ -407,6 +407,10 @@ mod tests {
         let root = std::env::temp_dir().join(format!("hantong-publisher-{}", std::process::id()));
         let body = r#"{"installed":{"client_id":"fixture.apps.googleusercontent.com","client_secret":"fixture-secret","auth_uri":"https://accounts.google.com/o/oauth2/auth","token_uri":"https://oauth2.googleapis.com/token","redirect_uris":["http://localhost"]}}"#;
         fixture(&root, body);
+        // macOS temp_dir may use /var -> /private/var. Validate the actual
+        // fixture location without weakening the product's symlink guard.
+        #[cfg(unix)]
+        let root = fs::canonicalize(root).unwrap();
         let config = load_from_root(&root).unwrap().unwrap();
         assert_eq!(config.client_id, "fixture.apps.googleusercontent.com");
         assert!(!format!("{config:?}").contains("fixture-secret"));
@@ -420,6 +424,8 @@ mod tests {
             &root,
             r#"{"installed":{"client_id":"fixture.apps.googleusercontent.com","client_id":"other","client_secret":"x","auth_uri":"https://accounts.google.com/o/oauth2/auth","token_uri":"https://oauth2.googleapis.com/token","redirect_uris":["http://localhost"]}}"#,
         );
+        #[cfg(unix)]
+        let root = fs::canonicalize(root).unwrap();
         assert!(matches!(
             load_from_root(&root),
             Err(ErrorCode::InvalidInput)
@@ -444,6 +450,8 @@ mod tests {
         let root =
             std::env::temp_dir().join(format!("hantong-publisher-size-{}", std::process::id()));
         fixture(&root, r#"{"installed":{}}"#);
+        #[cfg(unix)]
+        let root = fs::canonicalize(root).unwrap();
         let path = root.join(MANIFEST);
         let mut manifest: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
         manifest["files"][0]["size"] = 1.into();
