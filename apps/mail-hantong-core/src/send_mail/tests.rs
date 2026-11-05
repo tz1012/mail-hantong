@@ -19,24 +19,15 @@ impl Fixture {
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
         std::fs::create_dir(&root).unwrap();
-        #[cfg(target_os = "linux")]
+        #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
             std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o700)).unwrap();
-            let _keys =
-                hantong_platform::unix_paths::UnixDirectoryGuard::prepare(&root.join("keys"))
-                    .unwrap();
-            let _data =
-                hantong_platform::unix_paths::UnixDirectoryGuard::prepare(&root.join("data"))
-                    .unwrap();
-            let vault = hantong_secrets::headless_vault::HeadlessVault::initialize(
-                &root.join("keys"),
-                "synthetic-send-passphrase".to_owned().into(),
-            )
-            .unwrap()
-            .into_shared();
-            hantong_secrets::unix_secret_store::UnixSecretStore::install_headless_backend(vault)
-                .unwrap();
+        }
+        let root = std::fs::canonicalize(root).unwrap();
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        {
+            crate::test_support::ensure_test_backend();
         }
         drop(Store::open(root.join("data"), root.join("keys")).unwrap());
         let mut key = [0; 72];

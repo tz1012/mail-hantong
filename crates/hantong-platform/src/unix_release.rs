@@ -273,6 +273,9 @@ mod tests {
     use super::*;
     use crate::sha256_release_file;
     use std::os::unix::fs::PermissionsExt;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
 
     fn fixture() -> (std::path::PathBuf, std::path::PathBuf) {
         // macOS exposes `/var` as a symlink to `/private/var`; release
@@ -280,15 +283,17 @@ mod tests {
         // the fixture below the canonical temporary directory.
         let temp = std::fs::canonicalize(std::env::temp_dir()).expect("canonical temp dir");
         let root = temp.join(format!(
-            "hantong-release-{}-{}",
+            "hantong-release-{}-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .expect("clock")
-                .as_nanos()
+                .as_nanos(),
+            NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed)
         ));
         let bin = root.join("bin");
-        std::fs::create_dir_all(&bin).expect("fixture directories");
+        std::fs::create_dir(&root).expect("fixture root");
+        std::fs::create_dir(&bin).expect("fixture bin");
         std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o700)).unwrap();
         std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o700)).unwrap();
         for (name, bytes) in [

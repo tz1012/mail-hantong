@@ -943,6 +943,9 @@ mod tests {
 mod unix_tests {
     use super::*;
     use std::os::unix::fs::{PermissionsExt, symlink};
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
 
     fn fixture() -> (std::path::PathBuf, std::path::PathBuf) {
         // macOS exposes `/var` as a symlink to `/private/var`.  The product
@@ -951,15 +954,17 @@ mod unix_tests {
         // handle-relative path rather than testing that platform alias.
         let temp = std::fs::canonicalize(std::env::temp_dir()).expect("canonical temp dir");
         let root = temp.join(format!(
-            "hantong-profile-unix-{}-{}",
+            "hantong-profile-unix-{}-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .expect("clock")
-                .as_nanos()
+                .as_nanos(),
+            NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed)
         ));
         let profiles = root.join("profiles");
-        std::fs::create_dir_all(&profiles).expect("profiles");
+        std::fs::create_dir(&root).expect("root");
+        std::fs::create_dir(&profiles).expect("profiles");
         std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o700)).expect("root mode");
         std::fs::set_permissions(&profiles, std::fs::Permissions::from_mode(0o700))
             .expect("profiles mode");

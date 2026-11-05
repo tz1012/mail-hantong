@@ -48,13 +48,7 @@ async fn cli07_unix_bootstrap_registration_then_authenticated_accounts() {
     let paths = hantong_platform::app_directories().unwrap();
     let _keys = hantong_platform::unix_paths::UnixDirectoryGuard::prepare(&paths.secrets).unwrap();
     let _data = hantong_platform::unix_paths::UnixDirectoryGuard::prepare(&paths.data).unwrap();
-    let vault = hantong_secrets::headless_vault::HeadlessVault::initialize(
-        &paths.secrets,
-        "synthetic-product-passphrase".to_owned().into(),
-    )
-    .unwrap()
-    .into_shared();
-    hantong_secrets::unix_secret_store::UnixSecretStore::install_headless_backend(vault).unwrap();
+    crate::test_support::ensure_test_backend();
     let store = Store::open(&paths.data, &paths.secrets).unwrap();
     store.initialize_config("UTC").unwrap();
     let draft = hantong_domain::account_provisioning::NewImapAccountDraft::new(

@@ -352,14 +352,7 @@ pub(crate) mod tests {
             hantong_platform::unix_paths::UnixDirectoryGuard::prepare(&paths.secrets).unwrap();
         let _data_guard =
             hantong_platform::unix_paths::UnixDirectoryGuard::prepare(&paths.data).unwrap();
-        let vault = hantong_secrets::headless_vault::HeadlessVault::initialize(
-            &paths.secrets,
-            "synthetic-scope-passphrase".to_owned().into(),
-        )
-        .unwrap()
-        .into_shared();
-        hantong_secrets::unix_secret_store::UnixSecretStore::install_headless_backend(vault)
-            .unwrap();
+        crate::test_support::ensure_test_backend();
         let store = Store::open(&paths.data, &paths.secrets).unwrap();
         let mut server =
             hantong_secrets::unix_signing::create_server_signing_key(&paths.secrets, [7; 32])

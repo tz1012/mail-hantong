@@ -8,48 +8,6 @@ use std::{
     sync::atomic::{AtomicU64, Ordering},
 };
 
-#[cfg(target_os = "linux")]
-fn ensure_headless_backend() {
-    static READY: std::sync::OnceLock<()> = std::sync::OnceLock::new();
-    READY.get_or_init(|| {
-        let root = std::env::temp_dir().join(format!(
-            "hantong-imap-headless-vault-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .expect("system clock before Unix epoch")
-                .as_nanos()
-        ));
-        fs::create_dir(&root).expect("create private IMAP headless vault root");
-        fs::set_permissions(&root, fs::Permissions::from_mode(0o700))
-            .expect("protect IMAP headless vault root");
-        let vault = match hantong_secrets::headless_vault::HeadlessVault::initialize(
-            &root,
-            "synthetic-imap-test-passphrase".to_owned().into(),
-        ) {
-            Ok(vault) => vault,
-            Err(error) => {
-                let _ = fs::remove_dir_all(&root);
-                panic!("initialize IMAP headless vault fixture: {error}");
-            }
-        };
-        match hantong_secrets::unix_secret_store::UnixSecretStore::install_headless_backend(
-            vault.into_shared(),
-        ) {
-            Ok(()) => {}
-            Err(hantong_secrets::unix_secret_store::UnixSecretError::Conflict) => {
-                // Another Linux fixture already installed the process-global backend.
-                // Keep that documented arrangement and remove this unused vault.
-                fs::remove_dir_all(&root).expect("remove unused IMAP headless vault fixture");
-            }
-            Err(error) => {
-                let _ = fs::remove_dir_all(&root);
-                panic!("install IMAP headless vault fixture: {error}");
-            }
-        }
-    });
-}
-
 struct Fixture {
     store: Store,
     root: Cleanup,
@@ -63,8 +21,8 @@ impl Drop for Cleanup {
 impl Fixture {
     fn new() -> Self {
         static NEXT: AtomicU64 = AtomicU64::new(0);
-        #[cfg(target_os = "linux")]
-        ensure_headless_backend();
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        crate::test_support::ensure_test_backend();
         let root = std::env::temp_dir().join(format!(
             "hantong-core-imap-{}-{}",
             std::process::id(),
