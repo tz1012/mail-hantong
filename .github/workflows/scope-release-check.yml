@@ -3,7 +3,9 @@ name: Scope recovery Linux release gate
 on:
   push:
     branches: [feature/linux-product-20261104]
-    paths: [.github/workflows/scope-release-check.yml]
+    paths:
+      - .github/workflows/scope-release-check.yml
+      - apps/mail-hantong-core/src/unix_registration.rs
   workflow_dispatch:
     inputs:
       version:

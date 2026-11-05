@@ -309,42 +309,6 @@ fn approved_channel_matches(
     }
 }
 
-#[cfg(test)]
-mod channel_tests {
-    use super::approved_channel_matches;
-
-    #[test]
-    fn terminal_refresh_accepts_only_store_supported_base_channels() {
-        for channel in ["approval_helper", "google_oauth", "terminal_cli"] {
-            assert!(approved_channel_matches("terminal_cli", channel, None));
-        }
-        for channel in ["ai_feature", "gui", "unknown", ""] {
-            assert!(!approved_channel_matches("terminal_cli", channel, None));
-        }
-    }
-
-    #[test]
-    fn oauth_refresh_remains_strictly_oauth_origin() {
-        assert!(approved_channel_matches(
-            "google_oauth",
-            "google_oauth",
-            Some("google_oauth")
-        ));
-        for channel in ["approval_helper", "terminal_cli", "ai_feature", "gui"] {
-            assert!(!approved_channel_matches(
-                "google_oauth",
-                channel,
-                Some("google_oauth")
-            ));
-        }
-        assert!(!approved_channel_matches(
-            "terminal_cli",
-            "google_oauth",
-            Some("google_oauth")
-        ));
-    }
-}
-
 /// Performs durable Unix startup recovery before the authenticated server is
 /// exposed. In-flight provider operations are transitioned by Store recovery;
 /// only OAuth-authorized pending scopes and already-staged scopes may resume.
@@ -759,5 +723,41 @@ mod scope_refresh_provenance_tests {
                 hantong_store::scope_refresh::ScopeRefreshPhase::Active
             );
         });
+    }
+}
+
+#[cfg(test)]
+mod channel_tests {
+    use super::approved_channel_matches;
+
+    #[test]
+    fn terminal_refresh_accepts_only_store_supported_base_channels() {
+        for channel in ["approval_helper", "google_oauth", "terminal_cli"] {
+            assert!(approved_channel_matches("terminal_cli", channel, None));
+        }
+        for channel in ["ai_feature", "gui", "unknown", ""] {
+            assert!(!approved_channel_matches("terminal_cli", channel, None));
+        }
+    }
+
+    #[test]
+    fn oauth_refresh_remains_strictly_oauth_origin() {
+        assert!(approved_channel_matches(
+            "google_oauth",
+            "google_oauth",
+            Some("google_oauth")
+        ));
+        for channel in ["approval_helper", "terminal_cli", "ai_feature", "gui"] {
+            assert!(!approved_channel_matches(
+                "google_oauth",
+                channel,
+                Some("google_oauth")
+            ));
+        }
+        assert!(!approved_channel_matches(
+            "terminal_cli",
+            "google_oauth",
+            Some("google_oauth")
+        ));
     }
 }
