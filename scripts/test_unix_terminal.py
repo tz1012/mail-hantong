@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import fcntl
 import json
 import os
@@ -14,6 +15,48 @@ import sys
 import tempfile
 import termios
 import time
+
+
+def mode_difference(original: list, current: list) -> dict:
+    """Only synthetic terminal state, never input bytes or environment paths."""
+    names = ("iflag", "oflag", "cflag", "lflag", "ispeed", "ospeed", "cc")
+    return {
+        "changed_fields": [name for index, name in enumerate(names)
+                           if original[index] != current[index]],
+        "flag_xor": {name: original[index] ^ current[index]
+                     for index, name in enumerate(names[:4])
+                     if original[index] != current[index]},
+        "cc_indices": [index for index, (before, after)
+                       in enumerate(zip(original[6], current[6])) if before != after],
+    }
+
+
+def assert_mode_restored(slave: int, original: list, operation: str) -> None:
+    current = termios.tcgetattr(slave)
+    assert current == original, json.dumps({
+        "synthetic_terminal": True, "operation": operation,
+        **mode_difference(original, current),
+    }, sort_keys=True)
+
+
+def report_native_mode_roundtrip() -> None:
+    """Report the OS's own raw-to-canonical transition before testing the app."""
+    master, slave = os.openpty()
+    original = termios.tcgetattr(slave)
+    try:
+        mode = copy.deepcopy(original)
+        mode[0] &= ~termios.IXON
+        mode[3] &= ~(termios.ICANON | termios.ECHO | termios.ISIG | termios.IEXTEN)
+        mode[6][termios.VMIN] = 0
+        mode[6][termios.VTIME] = 1
+        termios.tcsetattr(slave, termios.TCSANOW, mode)
+        termios.tcsetattr(slave, termios.TCSANOW, original)
+        print(json.dumps({"synthetic_native_roundtrip": True,
+                          **mode_difference(original, termios.tcgetattr(slave))},
+                         sort_keys=True), flush=True)
+    finally:
+        os.close(master)
+        os.close(slave)
 
 
 def wait_for_exit(child: subprocess.Popen[bytes], master: int, timeout: float = 8) -> bytes:
@@ -68,7 +111,7 @@ def exercise(program: Path, exit_key: bytes) -> None:
             os.write(master, exit_key)
             wait_for_exit(child, master)
             assert child.returncode == 0, child.returncode
-            assert termios.tcgetattr(slave) == original, "terminal mode was not restored"
+            assert_mode_restored(slave, original, "quit" if exit_key == b"q" else "ctrl_c")
         finally:
             if child is not None and child.poll() is None:
                 child.kill()
@@ -102,6 +145,7 @@ def main() -> None:
     parser.add_argument("--input-probe", type=Path)
     args = parser.parse_args()
     program = args.program.resolve(strict=True)
+    report_native_mode_roundtrip()
     for key in (b"q", b"\x03"):
         exercise(program, key)
     exercise_output_burst()
@@ -139,7 +183,7 @@ def main() -> None:
                 output.extend(wait_for_exit(child, master))
                 assert child.returncode == 0
                 assert b"\x1b[?1049h" not in output, "inline editor replaced the screen"
-                assert termios.tcgetattr(slave) == original
+                assert_mode_restored(slave, original, "input_probe_" + mode)
             finally:
                 if child.poll() is None:
                     child.kill()

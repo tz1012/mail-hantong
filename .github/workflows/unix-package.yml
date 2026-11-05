@@ -127,6 +127,10 @@ jobs:
           cargo test -p mail-hantong-core --bin mail-hantong-core --locked --offline setup_imap::tests -- --test-threads=1
           cargo test -p mail-hantong-core --bin mail-hantong-core --locked --offline secret_submit_tests -- --test-threads=1
           cargo test -p hantong-secrets --lib --locked --offline unix_secret_store::tests -- --test-threads=1
+      - name: Verify native Unix terminal navigation and restoration
+        run: |
+          cargo build -p hantong-t -p hantong-platform --bins --examples --locked --offline
+          python scripts/test_unix_terminal.py target/debug/hantong-t --input-probe target/debug/examples/terminal_input_probe
       - name: Download and isolate reviewed publisher asset
         env:
           PUBLISHER_URL: https://github.com/tz1012/mail-hantong/releases/download/v0.1.0-beta.21/mail-hantong-cli-0.1.0-beta.21-windows-x86_64.zip
