@@ -170,17 +170,18 @@ fn regular_owned(path: &Path) -> Result<std::fs::Metadata, ErrorCode> {
 }
 
 fn validate_ancestors(path: &Path) -> Result<(), ErrorCode> {
-    let mut cursor = path;
-    while let Some(parent) = cursor.parent() {
-        let metadata = std::fs::symlink_metadata(parent).map_err(|_| ErrorCode::CoreUnavailable)?;
+    let mut cursor = Some(path);
+    while let Some(directory) = cursor {
+        let metadata =
+            std::fs::symlink_metadata(directory).map_err(|_| ErrorCode::CoreUnavailable)?;
         let mode = metadata.permissions().mode();
-        if metadata.file_type().is_symlink() || (mode & 0o022 != 0 && mode & 0o1000 == 0) {
+        if !metadata.is_dir()
+            || metadata.file_type().is_symlink()
+            || (mode & 0o022 != 0 && (directory == path || mode & 0o1000 == 0))
+        {
             return Err(ErrorCode::ScopeDenied);
         }
-        if parent == cursor {
-            break;
-        }
-        cursor = parent;
+        cursor = directory.parent();
     }
     Ok(())
 }
@@ -350,6 +351,14 @@ mod tests {
             validate_manifest(&alias, &alias.join("release-manifest.json"), "hantong"),
             Err(ErrorCode::ScopeDenied)
         );
+        for mode in [0o777, 0o1777] {
+            std::fs::set_permissions(&root, std::fs::Permissions::from_mode(mode)).unwrap();
+            assert_eq!(
+                validate_manifest(&root, &manifest, "hantong"),
+                Err(ErrorCode::ScopeDenied)
+            );
+        }
+        std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o700)).unwrap();
         assert_eq!(
             validate_manifest(&root, &manifest, "missing-caller"),
             Err(ErrorCode::CoreUnavailable)
