@@ -126,6 +126,19 @@ impl fmt::Display for SecretError {
 }
 impl std::error::Error for SecretError {}
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn unix_backend_failure(
+    stage: &'static str,
+    error: unix_secret_store::UnixSecretError,
+) -> unix_secret_store::UnixSecretError {
+    unix_secret_store::UnixSecretStore::report_open_failure(
+        stage,
+        unix_secret_store::UnixSecretStore::diagnostic_kind(error),
+        "INTERNAL_ERROR",
+    );
+    error
+}
+
 #[derive(Clone, Eq, PartialEq)]
 pub struct SecretHandle {
     path: PathBuf,
@@ -360,8 +373,12 @@ impl SecretStore {
         #[cfg(not(windows))]
         {
             let selector = self.unix_selector(a, k)?;
-            let guard = unix_secret_store::UnixSecretMutationGuard::lock(&self.unix_root)
-                .map_err(|_| SecretError::Protection)?;
+            let guard = unix_secret_store::UnixSecretMutationGuard::lock(&self.unix_root).map_err(
+                |error| {
+                    unix_backend_failure("protected_item_lock", error);
+                    SecretError::Protection
+                },
+            )?;
             match self
                 .unix_store
                 .replace(&guard, &selector, b, selector.kind())
@@ -370,8 +387,14 @@ impl SecretStore {
                 Err(unix_secret_store::UnixSecretError::NotFound) => self
                     .unix_store
                     .create(&guard, &selector, b, selector.kind())
-                    .map_err(|_| SecretError::Protection),
-                Err(_) => Err(SecretError::Protection),
+                    .map_err(|error| {
+                        unix_backend_failure("protected_item_create", error);
+                        SecretError::Protection
+                    }),
+                Err(error) => {
+                    unix_backend_failure("protected_item_replace", error);
+                    Err(SecretError::Protection)
+                }
             }
         }
     }

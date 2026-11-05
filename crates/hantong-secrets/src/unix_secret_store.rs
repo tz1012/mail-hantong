@@ -541,6 +541,32 @@ mod tests {
     }
 
     #[test]
+    fn sec08_backend_operation_diagnostics_preserve_every_error() {
+        for error in [
+            UnixSecretError::InvalidSelector,
+            UnixSecretError::InvalidSecret,
+            UnixSecretError::SecretTooLarge,
+            UnixSecretError::Unavailable,
+            UnixSecretError::NotFound,
+            UnixSecretError::Ambiguous,
+            UnixSecretError::StoreFailure,
+            UnixSecretError::AlreadyExists,
+            UnixSecretError::Conflict,
+        ] {
+            assert_eq!(
+                crate::unix_backend_failure("mail_credential_read", error),
+                error
+            );
+            let line = open_failure_line(
+                "mail_credential_read",
+                UnixSecretStore::diagnostic_kind(error),
+                "INTERNAL_ERROR",
+            );
+            assert!(!line.contains('@') && !line.contains('/') && !line.contains("sentinel"));
+        }
+    }
+
+    #[test]
     fn sec01_selector_is_stable_and_redacted() {
         let id = "a".repeat(64);
         let selector =

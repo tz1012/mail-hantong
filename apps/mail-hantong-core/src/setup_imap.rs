@@ -208,6 +208,9 @@ pub(crate) fn status(
     if request.phase() == ImapSetupPhase::ReviewPending && now()? >= request.expires_at_utc_ms() {
         request = store.close_imap_setup_review(&request, ErrorCode::ApprovalExpired)?;
     }
+    if let Some((stage, kind, code)) = stored_failure(&request) {
+        report_setup(stage, kind, code);
+    }
     progress(
         &request,
         active,
@@ -323,14 +326,83 @@ async fn finish_verified<E: Effects>(
     Ok(())
 }
 
-fn setup_failure(stage: &'static str, error: ErrorCode) -> ErrorCode {
+type FailureDiagnostic = (&'static str, &'static str, ErrorCode);
+
+fn diagnostic_line(stage: &'static str, kind: &'static str, code: ErrorCode) -> String {
+    format!(
+        "hantong_imap_setup stage={stage} kind={kind} code={}",
+        code.as_str()
+    )
+}
+fn report_setup(stage: &'static str, kind: &'static str, code: ErrorCode) {
     use std::io::Write;
     let _ = writeln!(
         std::io::stderr().lock(),
-        "hantong_imap_setup stage={stage} kind=transition_failed code={}",
-        error.as_str()
+        "{}",
+        diagnostic_line(stage, kind, code)
     );
+}
+fn setup_failure(stage: &'static str, error: ErrorCode) -> ErrorCode {
+    report_setup(stage, "transition_failed", error);
     error
+}
+fn secret_kind(error: hantong_secrets::SecretError) -> &'static str {
+    use hantong_secrets::SecretError as E;
+    match error {
+        E::InvalidAccountId => "invalid_account",
+        E::EmptySecret => "empty_secret",
+        E::SecretTooLarge => "secret_too_large",
+        E::UnsupportedPlatform => "unsupported_platform",
+        E::InvalidRoot => "invalid_root",
+        E::Io => "io",
+        E::Protection => "protection",
+        E::NotFound => "not_found",
+        E::InvalidCiphertext => "invalid_ciphertext",
+        E::InvalidCredential => "invalid_credential",
+        E::CredentialMismatch => "binding_mismatch",
+        E::InvalidInputWindow => "invalid_input_window",
+        E::InputExpired => "expired",
+    }
+}
+fn secret_failure(stage: &'static str, error: hantong_secrets::SecretError) -> ErrorCode {
+    let code = secret_error(error);
+    report_setup(stage, secret_kind(error), code);
+    code
+}
+fn probe_failure(error: hantong_secrets::MailProbeError) -> FailureDiagnostic {
+    use hantong_secrets::MailProbeError as E;
+    match error {
+        E::Credential(error) => ("probe_credential", secret_kind(error), secret_error(error)),
+        E::InvalidAccount => ("probe", "invalid_account", ErrorCode::InvalidInput),
+        E::UnsupportedPlatform => (
+            "probe",
+            "unsupported_platform",
+            ErrorCode::CapabilityUnsupported,
+        ),
+        E::Connection => ("probe", "connection", ErrorCode::Offline),
+        E::Tls => ("probe", "tls", ErrorCode::Offline),
+        E::MechanismUnsupported => (
+            "probe",
+            "mechanism_unsupported",
+            ErrorCode::CapabilityUnsupported,
+        ),
+        E::Authentication => ("probe", "authentication", ErrorCode::AuthRequired),
+        E::Protocol => ("probe", "protocol", ErrorCode::InternalError),
+        E::Timeout => ("probe", "timeout", ErrorCode::Offline),
+    }
+}
+fn stored_failure(request: &ImapSetupRequest) -> Option<FailureDiagnostic> {
+    match request.events().last()?.event() {
+        ImapSetupEvent::CredentialStoreReturned(Err(error)) => {
+            Some(("stored_credential", "failed", *error))
+        }
+        ImapSetupEvent::ProbeFinished(InitialImapProbeOutcome::Error) => Some((
+            "stored_probe",
+            "details_unavailable",
+            ErrorCode::InternalError,
+        )),
+        _ => None,
+    }
 }
 
 fn secret_error(error: hantong_secrets::SecretError) -> ErrorCode {
@@ -386,15 +458,15 @@ impl Effects for StoreEffects<'_> {
                     return Err(ErrorCode::ScopeDenied);
                 }
                 hantong_secrets::SecretStore::open(self.secrets_root)
-                    .map_err(secret_error)?
+                    .map_err(|error| secret_failure("credential_store_open", error))?
                     .store_pending_imap_credential(*pending, i.draft().account_id(), i.endpoint())
                     .map(drop)
-                    .map_err(secret_error)
+                    .map_err(|error| secret_failure("credential_publish", error))
             }
             CapturedCredential::Terminal(captured) => {
                 let (ticket, handle, binding) = *captured;
                 hantong_secrets::SecretStore::open(self.secrets_root)
-                    .map_err(secret_error)?
+                    .map_err(|error| secret_failure("credential_store_open", error))?
                     .consume_terminal_imap_credential(
                         ticket,
                         handle,
@@ -403,7 +475,7 @@ impl Effects for StoreEffects<'_> {
                         i.endpoint(),
                     )
                     .map(drop)
-                    .map_err(secret_error)
+                    .map_err(|error| secret_failure("credential_consume", error))
             }
         }
     }
@@ -424,7 +496,10 @@ impl Effects for StoreEffects<'_> {
                     .probe_imap(r.intent().draft().account_id(), r.intent().endpoint())
                     .await
             }
-            Err(e) => Err(hantong_secrets::MailProbeError::Credential(e)),
+            Err(error) => {
+                secret_failure("probe_store_open", error);
+                Err(hantong_secrets::MailProbeError::Credential(error))
+            }
         };
         probe_outcome(result, r.intent().endpoint().settings_version())
     }
@@ -441,6 +516,16 @@ fn probe_outcome(
     version: u64,
 ) -> InitialImapProbeOutcome {
     use hantong_secrets::MailProbeError as E;
+    match &result {
+        Err(error) => {
+            let (stage, kind, code) = probe_failure(*error);
+            report_setup(stage, kind, code);
+        }
+        Ok(receipt) if receipt.settings_version() != version => {
+            report_setup("probe", "settings_mismatch", ErrorCode::Conflict)
+        }
+        Ok(_) => {}
+    }
     match result {
         Ok(receipt) if receipt.settings_version() == version => {
             InitialImapProbeOutcome::Ready(receipt.capabilities().to_ids())

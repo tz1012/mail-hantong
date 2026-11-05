@@ -243,13 +243,12 @@ impl SecretStore {
         #[cfg(not(windows))]
         {
             let selector = self.unix_selector(account, SecretKind::Mail(binding.slot()))?;
-            let protected = self
-                .unix_store
-                .read(&selector)
-                .map_err(|error| match error {
+            let protected = self.unix_store.read(&selector).map_err(|error| {
+                match unix_backend_failure("mail_credential_read", error) {
                     unix_secret_store::UnixSecretError::NotFound => SecretError::NotFound,
                     _ => SecretError::Protection,
-                })?;
+                }
+            })?;
             let rest = protected
                 .as_bytes_in_secrets()
                 .strip_prefix(prefix.as_slice())

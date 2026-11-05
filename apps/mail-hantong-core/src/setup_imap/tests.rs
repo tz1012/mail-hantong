@@ -679,3 +679,117 @@ fn setup01_closed_existing_resume_keeps_resume_action_without_new_account() {
         closed.intent().review_payload_hash()
     );
 }
+
+#[test]
+fn setup01_stored_error_diagnostics_distinguish_storage_and_probe_without_effects() {
+    for credential_failure in [true, false] {
+        let f = Fixture::new();
+        let original = f.pending();
+        let mut effects = Fake::new(&f.store);
+        effects.credential_error = credential_failure;
+        effects.outcome = InitialImapProbeOutcome::Error;
+        assert_eq!(
+            run(finish_verified(&effects, &original, ())),
+            if credential_failure {
+                Err(ErrorCode::ScopeDenied)
+            } else {
+                Ok(())
+            }
+        );
+        let id = *original.intent().request_id();
+        let before = load(&f.store, id).unwrap();
+        assert_eq!(
+            stored_failure(&before),
+            Some(if credential_failure {
+                ("stored_credential", "failed", ErrorCode::ScopeDenied)
+            } else {
+                (
+                    "stored_probe",
+                    "details_unavailable",
+                    ErrorCode::InternalError,
+                )
+            })
+        );
+        let receipt = status(&f.store, id, false).unwrap();
+        assert_eq!(receipt.state(), ImapSetupState::Error);
+        assert_eq!(receipt.next_action(), ImapSetupNextAction::ResumeRequired);
+        assert_eq!(load(&f.store, id).unwrap(), before);
+        assert_eq!(effects.probes.get(), usize::from(!credential_failure));
+    }
+}
+
+#[test]
+fn sec08_imap_probe_diagnostics_keep_fixed_failure_categories_and_no_raw_text() {
+    use hantong_secrets::{MailProbeError as P, SecretError as S};
+    for (error, kind, code) in [
+        (
+            P::InvalidAccount,
+            "invalid_account",
+            ErrorCode::InvalidInput,
+        ),
+        (
+            P::UnsupportedPlatform,
+            "unsupported_platform",
+            ErrorCode::CapabilityUnsupported,
+        ),
+        (P::Connection, "connection", ErrorCode::Offline),
+        (P::Tls, "tls", ErrorCode::Offline),
+        (
+            P::MechanismUnsupported,
+            "mechanism_unsupported",
+            ErrorCode::CapabilityUnsupported,
+        ),
+        (P::Authentication, "authentication", ErrorCode::AuthRequired),
+        (P::Protocol, "protocol", ErrorCode::InternalError),
+        (P::Timeout, "timeout", ErrorCode::Offline),
+    ] {
+        let diagnostic = probe_failure(error);
+        assert_eq!(diagnostic, ("probe", kind, code));
+        let line = diagnostic_line(diagnostic.0, diagnostic.1, diagnostic.2);
+        assert_eq!(
+            line,
+            format!(
+                "hantong_imap_setup stage=probe kind={kind} code={}",
+                code.as_str()
+            )
+        );
+        assert!(!line.contains('@') && !line.contains('/') && !line.contains('\\'));
+    }
+    for error in [
+        S::InvalidAccountId,
+        S::EmptySecret,
+        S::SecretTooLarge,
+        S::UnsupportedPlatform,
+        S::InvalidRoot,
+        S::Io,
+        S::Protection,
+        S::NotFound,
+        S::InvalidCiphertext,
+        S::InvalidCredential,
+        S::CredentialMismatch,
+        S::InvalidInputWindow,
+        S::InputExpired,
+    ] {
+        assert_eq!(
+            probe_failure(P::Credential(error)),
+            ("probe_credential", secret_kind(error), secret_error(error))
+        );
+        assert!(
+            secret_kind(error)
+                .bytes()
+                .all(|b| b.is_ascii_lowercase() || b == b'_')
+        );
+    }
+    assert_eq!(
+        probe_failure(P::Credential(S::NotFound)),
+        ("probe_credential", "not_found", ErrorCode::InternalError)
+    );
+    assert_eq!(
+        probe_failure(P::Credential(S::CredentialMismatch)),
+        (
+            "probe_credential",
+            "binding_mismatch",
+            ErrorCode::ScopeDenied
+        )
+    );
+}

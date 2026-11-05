@@ -257,3 +257,57 @@ Gmail reading on a reporting machine. OAuth/token verification, persistent
 registration, successful synchronization and successful message/body reading
 are separate observations. Do not reconnect a working account, replace keys or
 grant broader scopes merely because the old CLI printed this error.
+
+
+## Separating IMAP error/resume_required causes (beta.28 diagnostics)
+
+The public setup receipt deliberately retains its existing state/action schema.
+Both credential storage failure and a generic probe failure can be
+`error / resume_required`; that state alone does not establish a bad password,
+a locked vault, or an IMAP server authentication attempt. beta.28 adds closed
+Core/Secrets diagnostics without changing that receipt or retrying the request.
+
+| Fixed stage/kind | Interpretation |
+| --- | --- |
+| `credential_store_open` | Secrets could not open before credential consumption |
+| `credential_consume` | Ticket/stage validation or endpoint-bound credential publication failed |
+| `protected_item_lock`, `protected_item_create`, `protected_item_replace` | Host-store operation failed; fixed backend kind distinguishes unavailable, missing, ambiguous, conflict or store failure |
+| `probe_store_open` | Secrets could not open for the connection check |
+| `mail_credential_read` | Host-store credential lookup failed; backend kind is preserved before public error mapping |
+| `probe_credential` | Lookup, ciphertext/envelope or endpoint binding failed during the probe; this is not a server password rejection |
+| `probe kind=mechanism_unsupported` | No supported authentication mechanism was advertised |
+| `probe kind=protocol` | IMAP parsing/protocol handling failed; authentication success is not established |
+| `probe kind=authentication` | The probe returned the authentication-failure category |
+| `stored_credential kind=failed` | A read-only status lookup found a durable credential-store failure |
+| `stored_probe kind=details_unavailable` | Status found a durable generic probe failure; the old journal never retained its finer cause |
+
+Use the foreground Core procedure above to capture Core stderr. A known local
+setup request can be queried with `hantong setup imap status LOCAL_ID`;
+keep the ID local and do not share the full command/transcript. Status does not
+consume a stage, open a provider connection, create a resume child or change the
+stored failure. If the ID is unavailable, reopening the same IMAP setup finds
+the recorded attempt; choose Cancel at the Continue prompt to avoid fresh
+capture or a provider check. Existing expiry rules for unstarted requests still
+apply. Older generic probe details cannot be recovered from the receipt alone.
+
+```sh
+grep -E '^hantong_(secret_store|terminal_secret|imap_setup) stage=' \
+  "$HOME/hantong-google-diagnostic.log"
+```
+
+Share only these fixed stage/kind/code records. No password, digest, length,
+selector, account/request ID, host, provider reply or backend exception text is
+accepted in these records. A missing-item result used for normal first-time
+create is not logged as a failure. Credential storage failure still prevents
+probe execution; diagnostic output never changes outcomes, authority, expiry,
+TLS validation or automatic retry behavior.
+
+Keep the existing app password, keyring and encrypted files. Do not reset the
+vault, delete a Connecting account or create replacement credentials to resolve
+this ambiguous state. After identifying the failing stage, investigate that
+specific backend/binding/protocol condition before changing stored settings.
+The locked dependency documents that its blocking Secret Service API can stall
+an async runtime; current probe code can call that API in async context. This is
+a source-supported integration risk, not a reproduced explanation of this
+machine's failure. No speculative runtime, credential or permission migration
+is included in this diagnostic correction.

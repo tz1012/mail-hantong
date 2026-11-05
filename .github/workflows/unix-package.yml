@@ -9,14 +9,14 @@ on:
       version:
         description: Release prerelease version to package
         required: true
-        default: 0.1.0-beta.27
+        default: 0.1.0-beta.28
         type: string
       verification_scope:
-        description: Native validation scope (CLI-only changes may reuse the recorded Core baseline)
+        description: Native validation scope; choose a bounded scope only for matching changes
         required: true
         default: full
         type: choice
-        options: [full, cli]
+        options: [full, cli, imap]
 
 permissions:
   contents: read
@@ -37,7 +37,7 @@ jobs:
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     env:
-      PACKAGE_VERSION: ${{ inputs.version || '0.1.0-beta.27' }}
+      PACKAGE_VERSION: ${{ inputs.version || '0.1.0-beta.28' }}
     steps:
       - name: Check out source
         uses: actions/checkout@v6.1.0
@@ -81,8 +81,15 @@ jobs:
           cargo clippy -p hantong-cli --all-targets --locked --offline -- -D warnings
           cargo test -p hantong-cli --bin hantong --locked --offline google:: -- --test-threads=1
           cargo test -p hantong-cli --bin hantong --locked --offline guided_mail_setup -- --test-threads=1
+      - name: Check changed native IMAP diagnostic paths
+        if: inputs.verification_scope == 'imap'
+        run: |
+          cargo clippy -p mail-hantong-core -p hantong-secrets --all-targets --locked --offline -- -D warnings
+          cargo test -p mail-hantong-core --bin mail-hantong-core --locked --offline setup_imap::tests -- --test-threads=1
+          cargo test -p hantong-secrets --lib --locked --offline unix_secret_store::tests -- --test-threads=1
+          cargo test -p hantong-secrets --lib --locked --offline terminal_secret -- --test-threads=1
       - name: Check native Unix integration
-        if: inputs.verification_scope != 'cli'
+        if: inputs.verification_scope != 'cli' && inputs.verification_scope != 'imap'
         run: |
           cargo clippy --workspace --all-targets --locked --offline -- -D warnings
           cargo test -p hantong-secrets --lib --locked --offline google:: -- --test-threads=1
