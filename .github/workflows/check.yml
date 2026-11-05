@@ -23,8 +23,6 @@ jobs:
           - macos-15
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
-    env:
-      HANTONG_TEST_KEYCHAIN: ${{ runner.temp }}/hantong-ci.keychain-db
     steps:
       - name: Check out source
         uses: actions/checkout@v6.1.0
@@ -44,6 +42,7 @@ jobs:
       - name: Prepare isolated macOS test Keychain
         if: runner.os == 'macOS'
         run: |
+          echo "HANTONG_TEST_KEYCHAIN=$RUNNER_TEMP/hantong-ci.keychain-db" >> "$GITHUB_ENV"
           python -c 'import json,os,pathlib,shlex,subprocess; pathlib.Path(os.environ["RUNNER_TEMP"],"hantong-original-keychain-list.json").write_text(json.dumps(shlex.split(subprocess.check_output(["security","list-keychains","-d","user"],text=True))))'
           security default-keychain -d user | sed 's/^[[:space:]]*"//; s/"[[:space:]]*$//' > "$RUNNER_TEMP/hantong-original-keychain"
           security create-keychain -p 'synthetic-ci-only' "$RUNNER_TEMP/hantong-ci.keychain-db"
