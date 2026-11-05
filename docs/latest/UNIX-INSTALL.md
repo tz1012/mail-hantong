@@ -131,3 +131,42 @@ they do not include URLs, account/request IDs, authorization codes, tokens,
 credentials, or provider response text. They cannot recover diagnostics that
 were discarded by an earlier `/dev/null` run. Never send a credential, callback
 URL, database or key file with a bug report.
+
+## Diagnosing protected IMAP/SMTP input (post-beta.23 correction)
+
+beta.23 collapsed failures from hidden terminal input and encrypted temporary
+staging into `APPROVAL_REQUIRED` (exit18). That code did not establish that an
+extra approval was missing, nor that the provider had accepted the credential.
+The corrected foreground helper preserves these existing stable categories:
+
+| Failure | Error code |
+| --- | --- |
+| Empty or invalid input | `INVALID_INPUT` |
+| No usable protected TTY | `HUMAN_STEP_REQUIRED` |
+| Capture I/O failure | `INTERNAL_ERROR` |
+| Ticket expired before or after input | `APPROVAL_EXPIRED` |
+| Protected staging/root failure | `INTERNAL_ERROR` |
+| Credential/ticket binding mismatch | `SCOPE_DENIED` |
+
+Secrets emits `hantong_terminal_secret stage=input` or
+`stage=protected_staging` with a fixed kind such as `empty_input`,
+`tty_unavailable`, `input_io`, `timeout`, `timeout_after_input` or
+`protected_store`. The foreground helper emits a separate `stage=capture`
+result and stable error code. Input and staging errors do not submit a provider
+login; cancellation cleanup is attempted once. If cleanup fails its stable
+error may be returned, while an already expired capture remains expired.
+
+To capture these foreground helper diagnostics, use an interactive terminal:
+
+```sh
+umask 077
+hantong --lang ko 2> "$HOME/hantong-input-diagnostic.log"
+grep '^hantong_terminal_secret ' "$HOME/hantong-input-diagnostic.log"
+```
+
+The records contain no password, content, length, digest, path, account ID or
+key. Keep the existing app password and stored account files. Do not create a
+new app password or grant broader permissions merely because beta.23 printed
+exit18. A successful hidden input is still separate from successful IMAP/SMTP
+authentication. The existing protected input reader can wait for Enter; ticket
+expiry is rechecked before staging and cannot authorize an expired submission.

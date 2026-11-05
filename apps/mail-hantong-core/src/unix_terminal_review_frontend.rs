@@ -6,6 +6,91 @@
 use hantong_contracts::{ErrorCode, terminal_review::*, wire_hex};
 use std::io::{self, IsTerminal, Write};
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SecretCaptureKind {
+    EmptyInput,
+    InvalidInput,
+    IoFailure,
+    TtyUnavailable,
+    Timeout,
+    ProtectedStore,
+    BindingMismatch,
+    MissingStage,
+    Unsupported,
+}
+
+impl SecretCaptureKind {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::EmptyInput => "empty_input",
+            Self::InvalidInput => "invalid_input",
+            Self::IoFailure => "capture_io",
+            Self::TtyUnavailable => "tty_unavailable",
+            Self::Timeout => "timeout",
+            Self::ProtectedStore => "protected_store",
+            Self::BindingMismatch => "binding_mismatch",
+            Self::MissingStage => "missing_stage",
+            Self::Unsupported => "unsupported",
+        }
+    }
+}
+
+fn classify_secret_capture_error(
+    error: hantong_secrets::SecretError,
+) -> (SecretCaptureKind, ErrorCode) {
+    use hantong_secrets::SecretError;
+    match error {
+        SecretError::EmptySecret => (SecretCaptureKind::EmptyInput, ErrorCode::InvalidInput),
+        SecretError::InvalidInputWindow => (
+            SecretCaptureKind::TtyUnavailable,
+            ErrorCode::HumanStepRequired,
+        ),
+        SecretError::InputExpired => (SecretCaptureKind::Timeout, ErrorCode::ApprovalExpired),
+        SecretError::InvalidCredential | SecretError::SecretTooLarge => {
+            (SecretCaptureKind::InvalidInput, ErrorCode::InvalidInput)
+        }
+        SecretError::Io => (SecretCaptureKind::IoFailure, ErrorCode::InternalError),
+        SecretError::Protection | SecretError::InvalidRoot => {
+            (SecretCaptureKind::ProtectedStore, ErrorCode::InternalError)
+        }
+        SecretError::CredentialMismatch | SecretError::InvalidCiphertext => {
+            (SecretCaptureKind::BindingMismatch, ErrorCode::ScopeDenied)
+        }
+        SecretError::NotFound => (SecretCaptureKind::MissingStage, ErrorCode::NotFound),
+        SecretError::UnsupportedPlatform => (
+            SecretCaptureKind::Unsupported,
+            ErrorCode::CapabilityUnsupported,
+        ),
+        SecretError::InvalidAccountId => {
+            (SecretCaptureKind::BindingMismatch, ErrorCode::ScopeDenied)
+        }
+    }
+}
+
+fn report_secret_capture_failure(error: hantong_secrets::SecretError) -> ErrorCode {
+    let (kind, code) = classify_secret_capture_error(error);
+    let _ = writeln!(
+        io::stderr().lock(),
+        "hantong_terminal_secret stage=capture kind={} code={}",
+        kind.as_str(),
+        code.as_str()
+    );
+    code
+}
+
+fn capture_failure_with_cleanup(
+    error: hantong_secrets::SecretError,
+    cleanup: impl FnOnce() -> Result<(), ErrorCode>,
+) -> ErrorCode {
+    let mapped = report_secret_capture_failure(error);
+    let cleanup = cleanup();
+    if mapped == ErrorCode::ApprovalExpired {
+        mapped
+    } else {
+        cleanup.err().unwrap_or(mapped)
+    }
+}
+
 pub(crate) fn run(args: &[std::ffi::OsString]) -> Result<(), ErrorCode> {
     if !io::stdin().is_terminal() || !io::stdout().is_terminal() {
         return Err(ErrorCode::HumanStepRequired);
@@ -61,8 +146,17 @@ pub(crate) fn run(args: &[std::ffi::OsString]) -> Result<(), ErrorCode> {
         let secret_ticket = hantong_secrets::TerminalSecretTicket::from_opaque(opaque)
             .map_err(|_| ErrorCode::CoreUnavailable)?;
         let directories = hantong_platform::app_directories()?;
-        let handle = capture_secret(&directories.secrets, &secret_ticket)
-            .map_err(|_| ErrorCode::ApprovalRequired)?;
+        let handle = match capture_secret(&directories.secrets, &secret_ticket) {
+            Ok(handle) => handle,
+            Err(error) => {
+                return Err(capture_failure_with_cleanup(error, || {
+                    hantong_ipc_client::terminal_review::exchange(&TerminalReviewCommand::Cancel(
+                        TerminalReviewCancel::new(request, ticket)?,
+                    ))
+                    .and_then(|receipt| receipt.validate())
+                }));
+            }
+        };
         let submit = match TerminalReviewSecretSubmit::new(
             ticket,
             receipt.snapshot_hash,
@@ -186,4 +280,71 @@ fn terminal_safe(value: &str) -> String {
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sec08_secret_capture_cleanup_is_once_and_preserves_expiry_without_submission() {
+        use hantong_secrets::SecretError;
+        for (error, expected) in [
+            (SecretError::EmptySecret, ErrorCode::InvalidInput),
+            (
+                SecretError::InvalidInputWindow,
+                ErrorCode::HumanStepRequired,
+            ),
+            (SecretError::Io, ErrorCode::InternalError),
+            (SecretError::InputExpired, ErrorCode::ApprovalExpired),
+            (SecretError::Protection, ErrorCode::InternalError),
+        ] {
+            let mut cancellations = 0;
+            assert_eq!(
+                capture_failure_with_cleanup(error, || {
+                    cancellations += 1;
+                    Ok(())
+                }),
+                expected
+            );
+            assert_eq!(cancellations, 1);
+        }
+        for cleanup_error in [ErrorCode::CoreUnavailable, ErrorCode::PolicyBlocked] {
+            assert_eq!(
+                capture_failure_with_cleanup(SecretError::Protection, || Err(cleanup_error)),
+                cleanup_error
+            );
+            assert_eq!(
+                capture_failure_with_cleanup(SecretError::InputExpired, || Err(cleanup_error)),
+                ErrorCode::ApprovalExpired
+            );
+        }
+    }
+
+    #[test]
+    fn sec08_secret_capture_error_mapping_keeps_input_and_staging_failures_distinct() {
+        assert_eq!(
+            classify_secret_capture_error(hantong_secrets::SecretError::EmptySecret),
+            (SecretCaptureKind::EmptyInput, ErrorCode::InvalidInput)
+        );
+        assert_eq!(
+            classify_secret_capture_error(hantong_secrets::SecretError::InvalidInputWindow),
+            (
+                SecretCaptureKind::TtyUnavailable,
+                ErrorCode::HumanStepRequired
+            )
+        );
+        assert_eq!(
+            classify_secret_capture_error(hantong_secrets::SecretError::InputExpired),
+            (SecretCaptureKind::Timeout, ErrorCode::ApprovalExpired)
+        );
+        assert_eq!(
+            classify_secret_capture_error(hantong_secrets::SecretError::Protection),
+            (SecretCaptureKind::ProtectedStore, ErrorCode::InternalError)
+        );
+        assert_eq!(
+            classify_secret_capture_error(hantong_secrets::SecretError::CredentialMismatch),
+            (SecretCaptureKind::BindingMismatch, ErrorCode::ScopeDenied)
+        );
+    }
 }

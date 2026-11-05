@@ -479,12 +479,16 @@ impl SecretStore {
         ticket: &TerminalSecretTicket,
     ) -> Result<TerminalSecretHandle, SecretError> {
         let root = root.as_ref();
-        validate_path(root)?;
-        if ticket.is_expired() {
-            return Err(SecretError::InputExpired);
+        if let Err(error) = validate_path(root) {
+            report_terminal_capture_failure(
+                TerminalCaptureStage::ProtectedStaging,
+                terminal_stage_kind(error),
+            );
+            return Err(error);
         }
-        let secret = read_masked_terminal_line()?;
-        Self::stage_terminal_secret_bytes_at(root, ticket, secret)
+        capture_terminal_secret_after_ticket(ticket, read_masked_terminal_line, |secret| {
+            Self::stage_terminal_secret_bytes_at(root, ticket, secret)
+        })
     }
 
     /// Removes one staged value after a cancelled or failed review. The
@@ -787,7 +791,10 @@ unsafe fn wipe_wide(bytes: &mut [u16]) {
 }
 
 fn validate_terminal_secret(bytes: &[u8]) -> Result<(), SecretError> {
-    if bytes.is_empty() || bytes.len() > MAX_TERMINAL_SECRET {
+    if bytes.is_empty() {
+        return Err(SecretError::EmptySecret);
+    }
+    if bytes.len() > MAX_TERMINAL_SECRET {
         return Err(SecretError::InvalidCredential);
     }
     let text = std::str::from_utf8(bytes).map_err(|_| SecretError::InvalidCredential)?;
@@ -795,6 +802,134 @@ fn validate_terminal_secret(bytes: &[u8]) -> Result<(), SecretError> {
         return Err(SecretError::InvalidCredential);
     }
     Ok(())
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum TerminalCaptureStage {
+    Input,
+    ProtectedStaging,
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum TerminalCaptureKind {
+    EmptyInput,
+    TtyUnavailable,
+    Timeout,
+    TimeoutAfterInput,
+    InputIo,
+    InvalidInput,
+    ProtectedStore,
+    BindingMismatch,
+    MissingStage,
+    StageQuota,
+    Failure,
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+impl TerminalCaptureStage {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Input => "input",
+            Self::ProtectedStaging => "protected_staging",
+        }
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+impl TerminalCaptureKind {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::EmptyInput => "empty_input",
+            Self::TtyUnavailable => "tty_unavailable",
+            Self::Timeout => "timeout",
+            Self::TimeoutAfterInput => "timeout_after_input",
+            Self::InputIo => "input_io",
+            Self::InvalidInput => "invalid_input",
+            Self::ProtectedStore => "protected_store",
+            Self::BindingMismatch => "binding_mismatch",
+            Self::MissingStage => "missing_stage",
+            Self::StageQuota => "stage_quota",
+            Self::Failure => "failure",
+        }
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn terminal_input_kind(error: SecretError) -> TerminalCaptureKind {
+    match error {
+        SecretError::EmptySecret => TerminalCaptureKind::EmptyInput,
+        SecretError::InvalidInputWindow => TerminalCaptureKind::TtyUnavailable,
+        SecretError::InputExpired => TerminalCaptureKind::Timeout,
+        SecretError::Io => TerminalCaptureKind::InputIo,
+        SecretError::SecretTooLarge | SecretError::InvalidCredential => {
+            TerminalCaptureKind::InvalidInput
+        }
+        _ => TerminalCaptureKind::Failure,
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn terminal_stage_kind(error: SecretError) -> TerminalCaptureKind {
+    match error {
+        SecretError::InputExpired => TerminalCaptureKind::TimeoutAfterInput,
+        SecretError::Protection | SecretError::InvalidRoot | SecretError::Io => {
+            TerminalCaptureKind::ProtectedStore
+        }
+        SecretError::CredentialMismatch | SecretError::InvalidCiphertext => {
+            TerminalCaptureKind::BindingMismatch
+        }
+        SecretError::NotFound => TerminalCaptureKind::MissingStage,
+        SecretError::SecretTooLarge => TerminalCaptureKind::StageQuota,
+        _ => TerminalCaptureKind::Failure,
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn report_terminal_capture_failure(stage: TerminalCaptureStage, kind: TerminalCaptureKind) {
+    let _ = writeln!(
+        std::io::stderr().lock(),
+        "hantong_terminal_secret stage={} kind={}",
+        stage.as_str(),
+        kind.as_str()
+    );
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn capture_terminal_secret_after_ticket<R, S>(
+    ticket: &TerminalSecretTicket,
+    read: R,
+    stage: S,
+) -> Result<TerminalSecretHandle, SecretError>
+where
+    R: FnOnce() -> Result<SensitiveBuffer, SecretError>,
+    S: FnOnce(SensitiveBuffer) -> Result<TerminalSecretHandle, SecretError>,
+{
+    if ticket.is_expired() {
+        report_terminal_capture_failure(TerminalCaptureStage::Input, TerminalCaptureKind::Timeout);
+        return Err(SecretError::InputExpired);
+    }
+    let secret = match read() {
+        Ok(secret) => secret,
+        Err(error) => {
+            report_terminal_capture_failure(
+                TerminalCaptureStage::Input,
+                terminal_input_kind(error),
+            );
+            return Err(error);
+        }
+    };
+    match stage(secret) {
+        Ok(handle) => Ok(handle),
+        Err(error) => {
+            report_terminal_capture_failure(
+                TerminalCaptureStage::ProtectedStaging,
+                terminal_stage_kind(error),
+            );
+            Err(error)
+        }
+    }
 }
 
 /// Read one protected-input line without waiting for EOF. A terminal stays
@@ -1063,10 +1198,120 @@ mod tests {
 
     #[test]
     fn terminal_secret_input_rejects_eof_empty_controls_and_oversize() {
-        assert!(validate_terminal_secret(b"").is_err());
+        assert_eq!(validate_terminal_secret(b""), Err(SecretError::EmptySecret));
         assert!(validate_terminal_secret(b"secret\n").is_err());
         assert!(validate_terminal_secret(&vec![b'x'; MAX_TERMINAL_SECRET + 1]).is_err());
         assert!(validate_terminal_secret(b" exact ").is_ok());
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn sec08_terminal_secret_capture_failure_kinds_are_fixed_and_stage_specific() {
+        assert_eq!(
+            terminal_input_kind(SecretError::EmptySecret),
+            TerminalCaptureKind::EmptyInput
+        );
+        assert_eq!(
+            terminal_input_kind(SecretError::InvalidInputWindow),
+            TerminalCaptureKind::TtyUnavailable
+        );
+        assert_eq!(
+            terminal_input_kind(SecretError::InputExpired),
+            TerminalCaptureKind::Timeout
+        );
+        assert_eq!(
+            terminal_stage_kind(SecretError::InputExpired),
+            TerminalCaptureKind::TimeoutAfterInput
+        );
+        assert_eq!(
+            terminal_stage_kind(SecretError::Protection),
+            TerminalCaptureKind::ProtectedStore
+        );
+        assert_eq!(
+            terminal_stage_kind(SecretError::CredentialMismatch),
+            TerminalCaptureKind::BindingMismatch
+        );
+        assert_eq!(
+            terminal_stage_kind(SecretError::NotFound),
+            TerminalCaptureKind::MissingStage
+        );
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn sec08_terminal_secret_capture_seam_stops_before_stage_on_input_error() {
+        let ticket = TerminalSecretTicket {
+            binding: binding(now_utc_ms() + TICKET_TTL_MS),
+            ticket_id: [9; 32],
+            nonce: [10; 32],
+        };
+        for error in [
+            SecretError::EmptySecret,
+            SecretError::InvalidInputWindow,
+            SecretError::Io,
+            SecretError::InputExpired,
+        ] {
+            let mut staged = false;
+            let result = capture_terminal_secret_after_ticket(
+                &ticket,
+                || Err(error),
+                |_secret| {
+                    staged = true;
+                    unreachable!("input failure must never stage or submit")
+                },
+            );
+            assert!(matches!(result, Err(actual) if actual == error));
+            assert!(!staged);
+        }
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn sec08_terminal_secret_capture_seam_reports_post_input_expiry_as_staging_failure() {
+        let ticket = TerminalSecretTicket {
+            binding: binding(now_utc_ms() + TICKET_TTL_MS),
+            ticket_id: [9; 32],
+            nonce: [10; 32],
+        };
+        for error in [
+            SecretError::Protection,
+            SecretError::InvalidRoot,
+            SecretError::Io,
+            SecretError::InputExpired,
+        ] {
+            let mut stages = 0;
+            let result = capture_terminal_secret_after_ticket(
+                &ticket,
+                || Ok(SensitiveBuffer(b"synthetic".to_vec())),
+                |_secret| {
+                    stages += 1;
+                    Err(error)
+                },
+            );
+            assert!(matches!(result, Err(actual) if actual == error));
+            assert_eq!(stages, 1);
+        }
+        assert_eq!(
+            terminal_stage_kind(SecretError::InputExpired),
+            TerminalCaptureKind::TimeoutAfterInput
+        );
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn sec08_terminal_secret_expired_ticket_does_not_read_or_stage() {
+        let mut ticket = TerminalSecretTicket {
+            binding: binding(now_utc_ms() + TICKET_TTL_MS),
+            ticket_id: [9; 32],
+            nonce: [10; 32],
+        };
+        ticket.binding.expires_at_utc_ms = 0;
+        let result = capture_terminal_secret_after_ticket(
+            &ticket,
+            || unreachable!("expired ticket must not read input"),
+            |_| unreachable!("expired ticket must not stage"),
+        );
+        assert!(matches!(result, Err(SecretError::InputExpired)));
     }
 
     #[test]
