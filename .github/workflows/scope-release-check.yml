@@ -1,0 +1,78 @@
+name: Scope recovery Linux release gate
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Candidate prerelease version
+        required: true
+        default: 0.1.0-beta.30
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  scope-linux:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      CARGO_INCREMENTAL: '0'
+      PACKAGE_VERSION: ${{ inputs.version }}
+    steps:
+      - uses: actions/checkout@v6.1.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7.1.0
+        with:
+          python-version: '3.12'
+      - name: Install pinned Rust
+        run: |
+          rustup toolchain install 1.95.0 --profile minimal --component clippy,rustfmt
+          rustup default 1.95.0
+      - uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            target
+          key: scope-linux-1.95.0-${{ hashFiles('Cargo.lock') }}-${{ github.sha }}
+          restore-keys: scope-linux-1.95.0-${{ hashFiles('Cargo.lock') }}-
+      - name: Fetch locked dependencies
+        run: cargo fetch --locked
+      - name: Validate scope security transitions
+        run: |
+          cargo fmt --all -- --check
+          python -X utf8 scripts/traceability.py --check
+          cargo clippy -p mail-hantong-core -p hantong-store --all-targets --locked --offline -- -D warnings
+          cargo test -p hantong-store --lib --locked --offline unix_recovery_tests -- --test-threads=1
+          cargo test -p mail-hantong-core --bin mail-hantong-core --locked --offline scope -- --test-threads=1
+          cargo test -p mail-hantong-core --bin mail-hantong-core --locked --offline channel_tests -- --test-threads=1
+      - name: Verify synthetic packaging and installer behavior
+        run: |
+          python -X utf8 -m unittest discover -s tests/Build -p test_unix_package.py
+          python -X utf8 scripts/test_linux_installer.py
+      - name: Prepare unchanged public publisher asset
+        run: |
+          curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' \
+            --connect-timeout 15 --max-time 300 --max-filesize 268435456 \
+            'https://github.com/tz1012/mail-hantong/releases/download/v0.1.0-beta.21/mail-hantong-cli-0.1.0-beta.21-windows-x86_64.zip' \
+            --output "$RUNNER_TEMP/publisher.zip"
+          python -X utf8 scripts/prepare_public_publisher.py \
+            --archive "$RUNNER_TEMP/publisher.zip" --output "$RUNNER_TEMP/google-desktop.json" \
+            --expected-sha256 b6d15b610ef74e63e17f881a4a01802ac22cecc49bf69b0059664142b3c370fc
+      - name: Package candidate
+        run: |
+          python -X utf8 scripts/package_unix.py --version "$PACKAGE_VERSION" \
+            --output-dir "$RUNNER_TEMP/artifacts" --publisher-config "$RUNNER_TEMP/google-desktop.json"
+      - name: Verify installed headless startup and restart
+        run: |
+          mkdir "$RUNNER_TEMP/installed-smoke"
+          tar -xzf "$RUNNER_TEMP/artifacts/$PACKAGE_VERSION/mail-hantong-cli-$PACKAGE_VERSION-linux-x86_64.tar.gz" \
+            -C "$RUNNER_TEMP/installed-smoke"
+          python -X utf8 scripts/test_linux_installed_product.py "$RUNNER_TEMP/installed-smoke"
+      - uses: actions/upload-artifact@v7.0.2
+        with:
+          name: mail-hantong-${{ inputs.version }}-linux-native-gate
+          path: ${{ runner.temp }}/artifacts/${{ inputs.version }}/
+          if-no-files-found: error
+          retention-days: 14
