@@ -53,8 +53,14 @@ fn require_isolated_keychain() {
             .map(|line| fs::canonicalize(line.trim().trim_matches('"')).unwrap())
             .collect::<Vec<_>>()
     };
-    assert_eq!(read_paths("default-keychain"), [expected.clone()]);
-    assert_eq!(read_paths("list-keychains"), [expected]);
+    assert_eq!(
+        read_paths("default-keychain").as_slice(),
+        std::slice::from_ref(&expected)
+    );
+    assert_eq!(
+        read_paths("list-keychains").as_slice(),
+        std::slice::from_ref(&expected)
+    );
 }
 
 #[cfg(target_os = "linux")]
