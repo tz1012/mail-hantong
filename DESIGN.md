@@ -1,7 +1,7 @@
 # Design
 
 ## Source of truth
-- Status: Active; refreshed 2026-11-04.
+- Status: Active; refreshed 2026-11-05.
 - Surfaces: index.html installation/product guide; download.html; shared legal pages.
 - User direction: follow https://zele.sh/ design and contents structure, while highlighting HanTong's strengths. This authorizes that reference direction, not a pixel clone.
 - Evidence: public zele HTML and 1440x1100 headless capture in the owned development target; existing beta22 guides, immutable release notes, synthetic TUI assets and tools/check-share-preview.py.
@@ -29,7 +29,7 @@
 ## Design principles
 - Adopt zele's white-space, restrained dividers, serif hero, document-like code/table content and grouped sidebar.
 - Give HanTong's screenshot and distinctive advantages higher placement; do not import reference product claims.
-- Keep one source of product truth: release23 source and verification record, including historical caveats.
+- Keep one source of product truth: release24 source and verification record, including historical caveats.
 
 ## Visual language
 - Neutral white/ink, forest-green accents, muted gray and subtle rules; optional dark display theme.
