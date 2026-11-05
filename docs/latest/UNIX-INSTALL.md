@@ -338,3 +338,46 @@ accept the same app password through protected input. A failed old request is
 not silently retried or marked successful. No new app password is required by
 this fix. Actual provider authentication/read still requires a subsequent user
 trial; a synthetic ticket/staging test is not proof of Daum server acceptance.
+
+
+## Unreleased: clients refresh conflict diagnosis and recovery
+
+This change is a local candidate pending the pre-deployment report; it is not
+part of published beta.29. No account, vault, credential, mailbox or permission
+reset is involved. Existing public IPC receipts remain unchanged.
+
+Foreground Core stderr can now emit fixed records such as:
+
+```text
+hantong_scope_refresh stage=request_conflict field=accounts code=CONFLICT
+```
+
+Only `accounts`, `tools`, `base_registration`, `server_binding`, and
+`decision_channel` are accepted field labels. Multiple differences emit multiple
+records. No values, addresses, counts, IDs, key hashes, credentials or provider
+text are printed. Use the existing foreground Core capture procedure, and filter
+only `^hantong_scope_refresh stage=` records; do not share the full transcript.
+These records describe the particular attempted refresh, not a new grant.
+
+Expired pending rows are processed through the existing Store UTC/exact-snapshot
+CAS before comparing a replacement target. Status performs the same normal
+expiry check. A live pending row is never overwritten: if its local ID is known,
+open the existing terminal review with
+`hantong review --kind scope_refresh --request-id LOCAL_ID` and choose Cancel.
+Keep the ID local. If no ID is available, allow the existing five-minute expiry
+and start `hantong clients refresh` again. No forced timestamp edit or DB query
+is needed. Neither cancellation nor expiration changes active grants.
+
+A fresh request still displays the exact account/tool target and requires
+Confirm in the verified foreground terminal. A Google OAuth-origin initial CLI
+registration can receive this terminal-reviewed update while its original
+provenance/identity is retained. This does not permit a terminal decision to use
+the OAuth automatic-completion route. OAuth-only completion remains OAuth-only.
+
+A staged row already records a prior confirmation. It is never denied, expired,
+removed or replaced by the pending-recovery path. Its progress is provisioning;
+the existing exact-key/pin/profile/epoch publication and startup recovery must
+finish it. Existing provisioning-session restrictions remain in force until
+that recovery completes. Pending rows are not automatically confirmed during
+startup. Human security review and an actual Songpa multi-account verification
+remain separate from synthetic test results.

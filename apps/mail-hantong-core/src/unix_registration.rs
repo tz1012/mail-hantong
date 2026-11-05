@@ -182,7 +182,7 @@ pub(crate) fn activate_scope_refresh(
         server,
         refresh_id,
         "terminal_cli",
-        "terminal_cli",
+        None,
     )
 }
 
@@ -202,7 +202,7 @@ pub(crate) fn activate_google_scope_refresh(
         server,
         refresh_id,
         "google_oauth",
-        "google_oauth",
+        Some("google_oauth"),
     )
 }
 
@@ -212,7 +212,7 @@ fn activate_scope_refresh_for_channel(
     server: &mut impl OpaqueSigner,
     refresh_id: [u8; 32],
     decision_channel: &str,
-    approved_channel: &str,
+    required_approved_channel: Option<&str>,
 ) -> Result<RegistrationRecord, ErrorCode> {
     let pending = store
         .load_cli_scope_refresh(refresh_id)?
@@ -222,7 +222,11 @@ fn activate_scope_refresh_for_channel(
         hantong_store::scope_refresh::ScopeRefreshPhase::Pending
             | hantong_store::scope_refresh::ScopeRefreshPhase::Staged
     ) || pending.decision_channel() != decision_channel
-        || pending.base_registration().approved_channel != approved_channel
+        || !approved_channel_matches(
+            decision_channel,
+            &pending.base_registration().approved_channel,
+            required_approved_channel,
+        )
     {
         return Err(ErrorCode::Conflict);
     }
@@ -286,6 +290,59 @@ fn activate_scope_refresh_for_channel(
     let active = store.activate_cli_scope_refresh(&staged)?;
     hantong_platform::unix_profile_publication::cleanup_profile_refresh_backup(&mut publication)?;
     Ok(active)
+}
+
+fn approved_channel_matches(
+    decision_channel: &str,
+    base_approved_channel: &str,
+    required_approved_channel: Option<&str>,
+) -> bool {
+    match required_approved_channel {
+        Some(required) => decision_channel == required && base_approved_channel == required,
+        None => {
+            decision_channel == "terminal_cli"
+                && matches!(
+                    base_approved_channel,
+                    "approval_helper" | "google_oauth" | "terminal_cli"
+                )
+        }
+    }
+}
+
+#[cfg(test)]
+mod channel_tests {
+    use super::approved_channel_matches;
+
+    #[test]
+    fn terminal_refresh_accepts_only_store_supported_base_channels() {
+        for channel in ["approval_helper", "google_oauth", "terminal_cli"] {
+            assert!(approved_channel_matches("terminal_cli", channel, None));
+        }
+        for channel in ["ai_feature", "gui", "unknown", ""] {
+            assert!(!approved_channel_matches("terminal_cli", channel, None));
+        }
+    }
+
+    #[test]
+    fn oauth_refresh_remains_strictly_oauth_origin() {
+        assert!(approved_channel_matches(
+            "google_oauth",
+            "google_oauth",
+            Some("google_oauth")
+        ));
+        for channel in ["approval_helper", "terminal_cli", "ai_feature", "gui"] {
+            assert!(!approved_channel_matches(
+                "google_oauth",
+                channel,
+                Some("google_oauth")
+            ));
+        }
+        assert!(!approved_channel_matches(
+            "terminal_cli",
+            "google_oauth",
+            Some("google_oauth")
+        ));
+    }
 }
 
 /// Performs durable Unix startup recovery before the authenticated server is
@@ -562,4 +619,145 @@ fn now_ms() -> Result<i64, ErrorCode> {
         .ok()
         .and_then(|d| i64::try_from(d.as_millis()).ok())
         .ok_or(ErrorCode::InternalError)
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod scope_refresh_provenance_tests {
+    use super::*;
+    use hantong_contracts::{
+        scope_refresh::ScopeRefreshCommand,
+        terminal_review::{
+            TerminalReviewCommand, TerminalReviewConfirm, TerminalReviewGet, TerminalReviewKind,
+        },
+    };
+    use hantong_ipc_server::setup_dispatch::{SetupCommand, SetupReceipt};
+
+    #[test]
+    fn cli_scope_confirm_accepts_oauth_origin_base_without_changing_identity() {
+        const NAME: &str = "unix_registration::scope_refresh_provenance_tests::cli_scope_confirm_accepts_oauth_origin_base_without_changing_identity";
+        crate::unix_scope_refresh::tests::with_fixture_origin(
+            NAME,
+            "google_oauth",
+            |store, paths, server, active| {
+                let pending =
+                    crate::unix_scope_refresh::prepare(store, server, ScopeRefreshCommand::Request)
+                        .unwrap();
+                assert_eq!(pending.decision_channel(), "terminal_cli");
+                assert_eq!(
+                    pending.phase(),
+                    hantong_store::scope_refresh::ScopeRefreshPhase::Pending
+                );
+                assert_eq!(
+                    activate_google_scope_refresh(
+                        store,
+                        &paths.secrets,
+                        server,
+                        *pending.refresh_id()
+                    ),
+                    Err(ErrorCode::Conflict)
+                );
+                assert_eq!(
+                    store
+                        .load_cli_scope_refresh(*pending.refresh_id())
+                        .unwrap()
+                        .unwrap()
+                        .phase(),
+                    hantong_store::scope_refresh::ScopeRefreshPhase::Pending
+                );
+                let (google, _) = crate::unix_google::State::new();
+                let state = crate::unix_setup::State::new(google);
+                let peer = hantong_platform::unix_peer::current_peer_context().unwrap();
+                let get = TerminalReviewGet::new(
+                    TerminalReviewKind::ScopeRefresh,
+                    *pending.refresh_id(),
+                    None,
+                    [0; 32],
+                )
+                .unwrap();
+                let runtime = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .unwrap();
+                let preview = runtime
+                    .block_on(crate::unix_setup::dispatch_async(
+                        &state,
+                        store,
+                        &paths.secrets,
+                        server,
+                        active.registration_id,
+                        peer.clone(),
+                        SetupCommand::TerminalReview(TerminalReviewCommand::Get(get.clone())),
+                    ))
+                    .unwrap();
+                let SetupReceipt::TerminalReview(preview) = preview else {
+                    panic!("scope refresh preview required")
+                };
+                let ticket = preview.ticket.unwrap();
+                let confirmed = runtime
+                    .block_on(crate::unix_setup::dispatch_async(
+                        &state,
+                        store,
+                        &paths.secrets,
+                        server,
+                        active.registration_id,
+                        peer,
+                        SetupCommand::TerminalReview(TerminalReviewCommand::Confirm(
+                            TerminalReviewConfirm::new(ticket, preview.snapshot_hash).unwrap(),
+                        )),
+                    ))
+                    .unwrap();
+                let SetupReceipt::TerminalReview(receipt) = confirmed else {
+                    panic!("scope refresh confirmation receipt required")
+                };
+                assert_eq!(receipt.state, "ready");
+                let activated = store.load_default_cli_registration().unwrap().unwrap();
+                assert_eq!(activated.registration_id, active.registration_id);
+                assert_eq!(activated.public_key, active.public_key);
+                assert_eq!(activated.profile_epoch, active.profile_epoch + 1);
+                assert_eq!(activated.scope.accounts(), pending.target_accounts());
+                assert_eq!(activated.scope.tools(), pending.target_tools());
+            },
+        );
+    }
+
+    #[test]
+    fn terminal_pending_waits_for_confirm_but_staged_recovery_preserves_identity() {
+        const NAME: &str = "unix_registration::scope_refresh_provenance_tests::terminal_pending_waits_for_confirm_but_staged_recovery_preserves_identity";
+        crate::unix_scope_refresh::tests::with_fixture(NAME, |store, paths, server, active| {
+            let pending =
+                crate::unix_scope_refresh::prepare(store, server, ScopeRefreshCommand::Request)
+                    .unwrap();
+            let before = store.load_default_cli_registration().unwrap().unwrap();
+            recover_startup(store, &paths.secrets, server).unwrap();
+            let still_pending = store
+                .load_cli_scope_refresh(*pending.refresh_id())
+                .unwrap()
+                .unwrap();
+            assert_eq!(
+                still_pending.phase(),
+                hantong_store::scope_refresh::ScopeRefreshPhase::Pending
+            );
+            assert_eq!(
+                store.load_default_cli_registration().unwrap().unwrap(),
+                before
+            );
+
+            let staged = store.stage_cli_scope_refresh(&still_pending).unwrap();
+            recover_startup(store, &paths.secrets, server).unwrap();
+            let after = store.load_default_cli_registration().unwrap().unwrap();
+            assert_eq!(after.registration_id, active.registration_id);
+            assert_eq!(after.public_key, active.public_key);
+            assert_eq!(after.profile_epoch, active.profile_epoch + 1);
+            assert_eq!(after.scope.accounts(), staged.target_accounts());
+            assert_eq!(after.scope.tools(), staged.target_tools());
+            assert_eq!(
+                store
+                    .load_cli_scope_refresh(*staged.refresh_id())
+                    .unwrap()
+                    .unwrap()
+                    .phase(),
+                hantong_store::scope_refresh::ScopeRefreshPhase::Active
+            );
+        });
+    }
 }

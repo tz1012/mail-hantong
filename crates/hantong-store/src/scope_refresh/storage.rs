@@ -1327,3 +1327,7 @@ pub(super) fn validate_history_v25(c: &Connection) -> rusqlite::Result<()> {
         .map(|_| ())
         .map_err(|_| rusqlite::Error::InvalidQuery)
 }
+
+#[cfg(all(test, target_os = "linux"))]
+#[path = "unix_recovery_tests.rs"]
+mod unix_recovery_tests;

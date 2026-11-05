@@ -429,31 +429,7 @@ fn scope_refresh_request(
 ) -> Result<SetupReceipt, ErrorCode> {
     match command {
         ScopeRefreshCommand::Status(id) => {
-            let refresh = store
-                .load_cli_scope_refresh(id)?
-                .ok_or(ErrorCode::NotFound)?;
-            let state = match refresh.phase() {
-                hantong_store::scope_refresh::ScopeRefreshPhase::Pending => {
-                    ScopeRefreshProgress::Pending
-                }
-                hantong_store::scope_refresh::ScopeRefreshPhase::Staged => {
-                    ScopeRefreshProgress::Provisioning
-                }
-                hantong_store::scope_refresh::ScopeRefreshPhase::Active => {
-                    ScopeRefreshProgress::Ready
-                }
-                hantong_store::scope_refresh::ScopeRefreshPhase::Denied => {
-                    ScopeRefreshProgress::Denied
-                }
-                hantong_store::scope_refresh::ScopeRefreshPhase::Expired => {
-                    ScopeRefreshProgress::Expired
-                }
-            };
-            Ok(SetupReceipt::ScopeRefresh(ScopeRefreshReceipt::new(
-                *refresh.refresh_id(),
-                refresh.expires_at_utc_ms(),
-                state,
-            )?))
+            crate::unix_scope_refresh::status(store, id).map(SetupReceipt::ScopeRefresh)
         }
         command @ (ScopeRefreshCommand::Request
         | ScopeRefreshCommand::RequestManage(_)
@@ -465,7 +441,11 @@ fn scope_refresh_request(
             Ok(SetupReceipt::ScopeRefresh(ScopeRefreshReceipt::new(
                 *refresh.refresh_id(),
                 refresh.expires_at_utc_ms(),
-                ScopeRefreshProgress::Pending,
+                if refresh.phase() == hantong_store::scope_refresh::ScopeRefreshPhase::Staged {
+                    ScopeRefreshProgress::Provisioning
+                } else {
+                    ScopeRefreshProgress::Pending
+                },
             )?))
         }
     }
@@ -740,6 +720,20 @@ async fn action_review(
                 let reviews = state.action_reviews.borrow();
                 let review = reviews.get(&ticket).ok_or(ErrorCode::Conflict)?;
                 match review.kind {
+                    TerminalReviewKind::ScopeRefresh => {
+                        let refresh = store
+                            .load_cli_scope_refresh(review.request_id)?
+                            .ok_or(ErrorCode::NotFound)?;
+                        if refresh.phase()
+                            != hantong_store::scope_refresh::ScopeRefreshPhase::Pending
+                            || refresh.decision_channel() != "terminal_cli"
+                            || refresh.base_registration().registration_id != review.owner
+                            || refresh.base_registration().profile_epoch != review.epoch
+                            || refresh.payload_hash() != &review.payload_hash
+                        {
+                            return Err(ErrorCode::Conflict);
+                        }
+                    }
                     TerminalReviewKind::ImapTrash => {
                         let pending = store.pending_imap_trash(review.request_id)?;
                         check_mcp_action_owner(
@@ -826,16 +820,46 @@ async fn action_review(
             };
             result.map(|_| SetupReceipt::TerminalReview(receipt))
         }
-        TerminalReviewCommand::Cancel(TerminalReviewCancel { ticket, .. }) => {
+        TerminalReviewCommand::Cancel(TerminalReviewCancel { ticket, get }) => {
+            {
+                let reviews = state.action_reviews.borrow();
+                let review = reviews.get(&ticket).ok_or(ErrorCode::NotFound)?;
+                if review.owner != owner || review.peer != peer {
+                    return Err(ErrorCode::PolicyBlocked);
+                }
+                if review.kind == TerminalReviewKind::ScopeRefresh {
+                    if get.kind != review.kind
+                        || get.request_id != review.request_id
+                        || get.account_id.is_some()
+                        || (get.payload_hash != [0; 32] && get.payload_hash != review.payload_hash)
+                    {
+                        return Err(ErrorCode::PolicyBlocked);
+                    }
+                    if review.expires_at_utc_ms <= now {
+                        return Err(ErrorCode::ApprovalExpired);
+                    }
+                    let refresh = store
+                        .load_cli_scope_refresh(review.request_id)?
+                        .ok_or(ErrorCode::NotFound)?;
+                    if refresh.phase() != hantong_store::scope_refresh::ScopeRefreshPhase::Pending
+                        || refresh.decision_channel() != "terminal_cli"
+                        || refresh.base_registration().registration_id != review.owner
+                        || refresh.base_registration().profile_epoch != review.epoch
+                        || refresh.payload_hash() != &review.payload_hash
+                    {
+                        return Err(ErrorCode::Conflict);
+                    }
+                    // Deny only the exact still-pending snapshot; a racing staged decision is untouched.
+                    store.deny_cli_scope_refresh(&refresh)?;
+                }
+            }
             let review = state
                 .action_reviews
                 .borrow_mut()
                 .remove(&ticket)
-                .ok_or(ErrorCode::NotFound)?;
-            if review.owner != owner || review.peer != peer {
-                return Err(ErrorCode::PolicyBlocked);
-            }
+                .ok_or(ErrorCode::Conflict)?;
             match review.kind {
+                TerminalReviewKind::ScopeRefresh => {}
                 TerminalReviewKind::ImapTrash => {
                     store.deny_imap_trash(review.request_id, ErrorCode::ApprovalDenied)?
                 }
@@ -1403,5 +1427,279 @@ mod secret_submit_tests {
         ] {
             assert_eq!(secret_submit_failure("stage_handle_open", error), code);
         }
+    }
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod scope_cancel_tests {
+    use super::*;
+    use crate::unix_scope_refresh::tests::with_fixture;
+    use hantong_contracts::terminal_review::{TerminalReviewCancel, TerminalReviewGet};
+
+    #[test]
+    fn cli15_scope_cancel_checks_owner_peer_snapshot_expiry_and_preserves_access() {
+        const NAME: &str = "unix_setup::scope_cancel_tests::cli15_scope_cancel_checks_owner_peer_snapshot_expiry_and_preserves_access";
+        with_fixture(NAME, |store, paths, server, active| {
+            let (google, _) = crate::unix_google::State::new();
+            let state = State::new(google);
+            let peer = hantong_platform::unix_peer::current_peer_context().unwrap();
+            let refresh =
+                crate::unix_scope_refresh::prepare(store, server, ScopeRefreshCommand::Request)
+                    .unwrap();
+            let get = TerminalReviewGet::new(
+                TerminalReviewKind::ScopeRefresh,
+                *refresh.refresh_id(),
+                None,
+                [0; 32],
+            )
+            .unwrap();
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+            let before_profile = hantong_platform::load_default_client_profile()
+                .unwrap()
+                .bytes()
+                .to_vec();
+            let receipt = rt
+                .block_on(dispatch_async(
+                    &state,
+                    store,
+                    &paths.secrets,
+                    server,
+                    active.registration_id,
+                    peer.clone(),
+                    SetupCommand::TerminalReview(TerminalReviewCommand::Get(get.clone())),
+                ))
+                .unwrap();
+            let SetupReceipt::TerminalReview(receipt) = receipt else {
+                panic!("scope preview required")
+            };
+            assert!(receipt.fields.iter().any(|field| field.label == "accounts"
+                && field.value == refresh.target_accounts().join(", ")));
+            assert!(
+                receipt.fields.iter().any(|field| field.label == "tools"
+                    && field.value == refresh.target_tools().join(", "))
+            );
+            let ticket = receipt.ticket.unwrap();
+            let cancel = |get: TerminalReviewGet| {
+                SetupCommand::TerminalReview(TerminalReviewCommand::Cancel(
+                    TerminalReviewCancel::new(get, ticket).unwrap(),
+                ))
+            };
+            for scenario in 0..5 {
+                let mut owner = active.registration_id;
+                let mut observed = peer.clone();
+                let mut selector = get.clone();
+                match scenario {
+                    0 => owner = [99; 16],
+                    1 => observed.process_instance[0] ^= 1,
+                    2 => selector.request_id = [99; 32],
+                    3 => selector.payload_hash = [99; 32],
+                    _ => {
+                        state
+                            .action_reviews
+                            .borrow_mut()
+                            .get_mut(&ticket)
+                            .unwrap()
+                            .expires_at_utc_ms = 1
+                    }
+                }
+                let command = cancel(selector);
+                let result = if scenario == 4 {
+                    // Exercise the inner expiry guard before dispatcher pruning removes the ticket.
+                    let SetupCommand::TerminalReview(command) = command else {
+                        unreachable!()
+                    };
+                    rt.block_on(action_review(
+                        &state,
+                        store,
+                        &paths.secrets,
+                        server,
+                        owner,
+                        observed,
+                        command,
+                    ))
+                } else {
+                    rt.block_on(dispatch_async(
+                        &state,
+                        store,
+                        &paths.secrets,
+                        server,
+                        owner,
+                        observed,
+                        command,
+                    ))
+                };
+                assert!(matches!(
+                    result,
+                    Err(ErrorCode::PolicyBlocked | ErrorCode::ApprovalExpired)
+                ));
+                assert!(state.action_reviews.borrow().contains_key(&ticket));
+                assert_eq!(
+                    store.load_default_cli_registration().unwrap().as_ref(),
+                    Some(active)
+                );
+                assert_eq!(
+                    store
+                        .load_cli_scope_refresh(*refresh.refresh_id())
+                        .unwrap()
+                        .unwrap()
+                        .phase(),
+                    hantong_store::scope_refresh::ScopeRefreshPhase::Pending
+                );
+            }
+            state
+                .action_reviews
+                .borrow_mut()
+                .get_mut(&ticket)
+                .unwrap()
+                .expires_at_utc_ms = receipt.expires_at_utc_ms;
+            let cancelled = rt
+                .block_on(dispatch_async(
+                    &state,
+                    store,
+                    &paths.secrets,
+                    server,
+                    active.registration_id,
+                    peer.clone(),
+                    cancel(get.clone()),
+                ))
+                .unwrap();
+            let SetupReceipt::TerminalReview(cancelled) = cancelled else {
+                panic!("cancel receipt required")
+            };
+            assert_eq!(cancelled.state, "denied");
+            assert!(!state.action_reviews.borrow().contains_key(&ticket));
+            assert!(state.action_jobs.borrow().is_empty());
+            assert_eq!(
+                store
+                    .load_cli_scope_refresh(*refresh.refresh_id())
+                    .unwrap()
+                    .unwrap()
+                    .phase(),
+                hantong_store::scope_refresh::ScopeRefreshPhase::Denied
+            );
+            assert!(matches!(
+                rt.block_on(dispatch_async(
+                    &state,
+                    store,
+                    &paths.secrets,
+                    server,
+                    active.registration_id,
+                    peer,
+                    cancel(get)
+                )),
+                Err(ErrorCode::Conflict)
+            ));
+            let fresh =
+                crate::unix_scope_refresh::prepare(store, server, ScopeRefreshCommand::Request)
+                    .unwrap();
+            assert_ne!(fresh.refresh_id(), refresh.refresh_id());
+            assert_eq!(
+                fresh.phase(),
+                hantong_store::scope_refresh::ScopeRefreshPhase::Pending
+            );
+            assert_eq!(
+                store.load_default_cli_registration().unwrap().as_ref(),
+                Some(active)
+            );
+            assert_eq!(
+                hantong_platform::load_default_client_profile()
+                    .unwrap()
+                    .bytes(),
+                before_profile
+            );
+            assert_eq!(
+                store.list_registrable_account_ids().unwrap(),
+                ["fixture_account"]
+            );
+        });
+    }
+
+    #[test]
+    fn cli15_scope_cancel_cannot_replace_a_staged_decision() {
+        const NAME: &str =
+            "unix_setup::scope_cancel_tests::cli15_scope_cancel_cannot_replace_a_staged_decision";
+        with_fixture(NAME, |store, paths, server, active| {
+            let (google, _) = crate::unix_google::State::new();
+            let state = State::new(google);
+            let peer = hantong_platform::unix_peer::current_peer_context().unwrap();
+            let refresh =
+                crate::unix_scope_refresh::prepare(store, server, ScopeRefreshCommand::Request)
+                    .unwrap();
+            let get = TerminalReviewGet::new(
+                TerminalReviewKind::ScopeRefresh,
+                *refresh.refresh_id(),
+                None,
+                [0; 32],
+            )
+            .unwrap();
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+            let receipt = rt
+                .block_on(dispatch_async(
+                    &state,
+                    store,
+                    &paths.secrets,
+                    server,
+                    active.registration_id,
+                    peer.clone(),
+                    SetupCommand::TerminalReview(TerminalReviewCommand::Get(get.clone())),
+                ))
+                .unwrap();
+            let SetupReceipt::TerminalReview(receipt) = receipt else {
+                panic!("scope preview required")
+            };
+            let staged = store.stage_cli_scope_refresh(&refresh).unwrap();
+            let after_stage = store.load_default_cli_registration().unwrap().unwrap();
+            let command = SetupCommand::TerminalReview(TerminalReviewCommand::Cancel(
+                TerminalReviewCancel::new(get, receipt.ticket.unwrap()).unwrap(),
+            ));
+            assert!(matches!(
+                rt.block_on(dispatch_async(
+                    &state,
+                    store,
+                    &paths.secrets,
+                    server,
+                    active.registration_id,
+                    peer,
+                    command
+                )),
+                Err(ErrorCode::Conflict)
+            ));
+            assert_eq!(
+                store
+                    .load_cli_scope_refresh(*staged.refresh_id())
+                    .unwrap()
+                    .unwrap(),
+                staged
+            );
+            assert_eq!(
+                store.load_default_cli_registration().unwrap().unwrap(),
+                after_stage
+            );
+            assert_eq!(after_stage.scope, active.scope);
+            let reused =
+                crate::unix_scope_refresh::prepare(store, server, ScopeRefreshCommand::Request)
+                    .unwrap();
+            assert_eq!(reused, staged);
+            let status = dispatch(
+                &state,
+                store,
+                &paths.secrets,
+                server,
+                active.registration_id,
+                hantong_platform::unix_peer::current_peer_context().unwrap(),
+                SetupCommand::ScopeRefresh(ScopeRefreshCommand::Request),
+            )
+            .unwrap();
+            let SetupReceipt::ScopeRefresh(status) = status else {
+                panic!("scope progress required")
+            };
+            assert_eq!(status.state(), ScopeRefreshProgress::Provisioning);
+        });
     }
 }
