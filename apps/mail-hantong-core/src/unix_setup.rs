@@ -1064,6 +1064,7 @@ fn submit_secret_with(
         if review.owner != owner
             || review.peer != peer
             || review.payload_hash != request.snapshot_hash
+            || review.ticket.to_opaque().as_slice() != request.secret_ticket_opaque.as_slice()
         {
             return Err(ErrorCode::Conflict);
         }
@@ -1330,6 +1331,26 @@ mod secret_submit_tests {
             submit_secret_with(&state, [1; 16], peer, request, |_, _| panic!(
                 "invalid binding must not open protected storage"
             )),
+            Err(ErrorCode::Conflict)
+        ));
+        assert_eq!(state.secret_reviews.borrow().len(), 1);
+        assert!(state.secret_jobs.borrow().is_empty());
+    }
+
+    #[test]
+    fn sec08_changed_capture_material_never_opens_stage_or_queues() {
+        use std::hash::{Hash, Hasher};
+        let (state, peer, mut request) = fixture();
+        request.secret_ticket_opaque[288] ^= 1;
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        request.secret_ticket_opaque[..312].hash(&mut hasher);
+        request.secret_ticket_opaque[312..].copy_from_slice(&hasher.finish().to_be_bytes());
+        // Valid encoding and unchanged public binding/ID must not permit different capture material.
+        TerminalSecretTicket::from_opaque(&request.secret_ticket_opaque).unwrap();
+        assert!(matches!(
+            submit_secret_with(&state, [1; 16], peer, request, |_, _| {
+                panic!("changed capture material must not open protected storage")
+            }),
             Err(ErrorCode::Conflict)
         ));
         assert_eq!(state.secret_reviews.borrow().len(), 1);

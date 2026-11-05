@@ -9,7 +9,7 @@ on:
       version:
         description: Release prerelease version to package
         required: true
-        default: 0.1.0-beta.28
+        default: 0.1.0-beta.29
         type: string
       verification_scope:
         description: Native validation scope; choose a bounded scope only for matching changes
@@ -37,7 +37,7 @@ jobs:
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     env:
-      PACKAGE_VERSION: ${{ inputs.version || '0.1.0-beta.28' }}
+      PACKAGE_VERSION: ${{ inputs.version || '0.1.0-beta.29' }}
     steps:
       - name: Check out source
         uses: actions/checkout@v6.1.0
@@ -86,6 +86,7 @@ jobs:
         run: |
           cargo clippy -p mail-hantong-core -p hantong-secrets --all-targets --locked --offline -- -D warnings
           cargo test -p mail-hantong-core --bin mail-hantong-core --locked --offline setup_imap::tests -- --test-threads=1
+          cargo test -p mail-hantong-core --bin mail-hantong-core --locked --offline secret_submit_tests -- --test-threads=1
           cargo test -p hantong-secrets --lib --locked --offline unix_secret_store::tests -- --test-threads=1
           cargo test -p hantong-secrets --lib --locked --offline terminal_secret -- --test-threads=1
       - name: Check native Unix integration

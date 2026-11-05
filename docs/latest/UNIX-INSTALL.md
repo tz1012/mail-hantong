@@ -311,3 +311,30 @@ an async runtime; current probe code can call that API in async context. This is
 a source-supported integration risk, not a reproduced explanation of this
 machine's failure. No speculative runtime, credential or permission migration
 is included in this diagnostic correction.
+
+
+## Foreground capture ticket consistency (beta.29)
+
+The beta.28 `credential_consume / binding_mismatch / SCOPE_DENIED` report
+identified a local encrypted-stage problem before the IMAP connection check.
+An issued ticket retained 32 random capture bytes, while the existing 320-byte
+opaque format transmitted 24 bytes plus an 8-byte checksum. Foreground input
+reconstructed that representation, but Unix Core queued the original ticket.
+Their full capture material differed, so the encrypted stage could not be opened.
+This is independent of whether the app password is accepted by the server.
+
+beta.29 canonicalizes each newly issued ticket through the existing opaque
+format before retaining it. Foreground and Core therefore use identical capture
+material; the format and stored credential envelopes are unchanged. Unix submit
+also requires the exact server-issued opaque bytes, in addition to the existing
+owner/peer/request/payload/binding/expiry checks. No alternative decryption key,
+unchecked retry, plaintext fallback or looser binding check is added.
+
+Preserve the existing app password, keyring, account files and old encrypted
+stages. This update does not reinterpret or decrypt abandoned stages from old
+processes. After updating and restarting Core through the documented lifecycle,
+the existing explicit Resume flow can issue a new child request and ticket and
+accept the same app password through protected input. A failed old request is
+not silently retried or marked successful. No new app password is required by
+this fix. Actual provider authentication/read still requires a subsequent user
+trial; a synthetic ticket/staging test is not proof of Daum server acceptance.

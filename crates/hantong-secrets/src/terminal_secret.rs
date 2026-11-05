@@ -417,11 +417,13 @@ impl SecretStore {
         let mut nonce = [0; 32];
         random_bytes(&mut ticket_id)?;
         random_bytes(&mut nonce)?;
-        Ok(TerminalSecretTicket {
+        let ticket = TerminalSecretTicket {
             binding,
             ticket_id,
             nonce,
-        })
+        };
+        // Keep the issuer's capture material identical to the foreground wire representation.
+        TerminalSecretTicket::from_opaque(&ticket.to_opaque())
     }
 
     /// Stages a captured value as a DPAPI-protected opaque file.  The reader
@@ -1383,6 +1385,78 @@ mod tests {
         tampered[0] = 0;
         assert!(TerminalSecretTicket::from_opaque(&tampered).is_err());
         assert!(TerminalSecretTicket::from_opaque(&encoded[..319]).is_err());
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn sec08_issued_terminal_ticket_consumes_foreground_wire_stage_once() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = std::env::temp_dir().join(format!(
+            "hantong-wire-ticket-{}-{}",
+            std::process::id(),
+            now_utc_ms()
+        ));
+        fs::create_dir(&root).unwrap();
+        fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
+        let root = root.canonicalize().unwrap();
+        // Ticket generation/staging needs no host keyring or provider connection.
+        let store = SecretStore {
+            root: root.clone(),
+            unix_root: UnixDirectoryGuard::open(&root, true).unwrap(),
+            unix_store: crate::unix_secret_store::UnixSecretStore::new(),
+        };
+        for kind in [*b"terminal-imap-v1", *b"terminal-smtp-v1"] {
+            let mut expected = binding(now_utc_ms() + TICKET_TTL_MS);
+            expected.request_kind = kind;
+            let ticket = store.issue_terminal_secret_ticket(expected).unwrap();
+            let wire = ticket.to_opaque();
+            let foreground = TerminalSecretTicket::from_opaque(&wire).unwrap();
+            let handle = store
+                .stage_terminal_secret(&foreground, Cursor::new(b"synthetic-wire-credential"))
+                .unwrap();
+            let ciphertext = fs::read(&handle.path).unwrap();
+            let copy = || TerminalSecretTicket {
+                binding: ticket.binding,
+                ticket_id: ticket.ticket_id,
+                nonce: ticket.nonce,
+            };
+            let mut wrong = expected;
+            wrong.request_id = [99; 32];
+            let wrong_handle = store
+                .terminal_secret_handle_from_opaque(&ticket, handle.opaque_id())
+                .unwrap();
+            assert_eq!(
+                store.consume_terminal_bound(copy(), wrong_handle, wrong, |_| {
+                    panic!("mismatched request must not publish a credential")
+                }),
+                Err(SecretError::CredentialMismatch)
+            );
+            assert_eq!(fs::read(&handle.path).unwrap(), ciphertext);
+            let path = handle.path.clone();
+            let replay = copy();
+            let replay_handle = store
+                .terminal_secret_handle_from_opaque(&ticket, handle.opaque_id())
+                .unwrap();
+            store
+                .consume_terminal_bound(ticket, handle, expected, |bytes| {
+                    assert_eq!(bytes, b"synthetic-wire-credential");
+                    Ok(SecretHandle {
+                        path: root.join("synthetic-published"),
+                        account_id: "fixture".into(),
+                        kind: SecretKind::AppPassword,
+                    })
+                })
+                .unwrap();
+            assert!(!path.exists());
+            assert_eq!(
+                store.consume_terminal_bound(replay, replay_handle, expected, |_| {
+                    panic!("consumed stage must not publish twice")
+                }),
+                Err(SecretError::CredentialMismatch)
+            );
+        }
+        drop(store);
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]
