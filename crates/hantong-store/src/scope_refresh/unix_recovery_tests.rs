@@ -4,37 +4,10 @@ use hantong_contracts::{ErrorCode, auth::RequestedScope, wire_hex};
 use rusqlite::params;
 use std::{
     fs,
+    os::unix::fs::PermissionsExt,
     path::PathBuf,
     sync::atomic::{AtomicU64, Ordering},
 };
-
-fn ensure_headless_backend() {
-    static READY: std::sync::OnceLock<()> = std::sync::OnceLock::new();
-    READY.get_or_init(|| {
-        let root = std::env::temp_dir().join(format!(
-            "hantong-scope-refresh-vault-{}-{}",
-            std::process::id(),
-            AtomicU64::new(0).fetch_add(1, Ordering::Relaxed)
-        ));
-        fs::create_dir(&root).unwrap();
-        std::fs::set_permissions(&root, std::os::unix::fs::PermissionsExt::from_mode(0o700))
-            .unwrap();
-        let vault = hantong_secrets::headless_vault::HeadlessVault::initialize(
-            &root,
-            "synthetic-scope-refresh-passphrase".to_owned().into(),
-        )
-        .unwrap();
-        match hantong_secrets::unix_secret_store::UnixSecretStore::install_headless_backend(
-            vault.into_shared(),
-        ) {
-            Ok(()) => {}
-            Err(hantong_secrets::unix_secret_store::UnixSecretError::Conflict) => {
-                let _ = fs::remove_dir_all(&root);
-            }
-            Err(error) => panic!("install synthetic scope refresh vault: {error}"),
-        }
-    });
-}
 
 struct Fixture {
     store: Option<Store>,
@@ -52,7 +25,9 @@ impl Fixture {
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
         fs::create_dir(&root).unwrap();
-        ensure_headless_backend();
+        fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
+        let root = fs::canonicalize(root).unwrap();
+        crate::test_support::ensure_headless_backend();
         let credential_root = root.join("credential-vault");
         fs::create_dir(&credential_root).unwrap();
         std::fs::set_permissions(

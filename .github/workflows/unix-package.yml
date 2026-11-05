@@ -82,7 +82,9 @@ jobs:
           cargo test -p hantong-cli --bin hantong --locked --offline google:: -- --test-threads=1
           cargo test -p hantong-cli --bin hantong --locked --offline guided_mail_setup -- --test-threads=1
       - name: Check native release path trust boundaries
-        run: cargo test -p hantong-platform --lib --locked --offline
+        run: |
+          cargo test -p hantong-platform --lib --locked --offline
+          cargo test -p hantong-store --lib --locked --offline
       - name: Check changed native IMAP diagnostic paths
         if: inputs.verification_scope == 'imap'
         run: |

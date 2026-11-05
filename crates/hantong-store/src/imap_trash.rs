@@ -769,6 +769,8 @@ mod windows {
             mailboxes::{ImapMailboxDescriptor, ImapMailboxName, MailboxChildren, MailboxEncoding},
         };
         use rusqlite::params;
+        #[cfg(unix)]
+        use std::os::unix::fs::PermissionsExt;
         use std::{
             fs,
             path::PathBuf,
@@ -805,6 +807,15 @@ mod windows {
                     NEXT.fetch_add(1, Ordering::Relaxed)
                 ));
                 fs::create_dir(&root).unwrap();
+                #[cfg(unix)]
+                {
+                    fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
+                }
+                #[cfg(target_os = "linux")]
+                {
+                    crate::test_support::ensure_headless_backend();
+                }
+                let root = fs::canonicalize(root).unwrap();
                 let store = Store::open(root.join("data"), root.join("keys")).unwrap();
                 store
                     .with_connection(|c| {

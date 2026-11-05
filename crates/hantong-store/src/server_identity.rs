@@ -150,6 +150,8 @@ fn read_identity(c: &rusqlite::Connection) -> rusqlite::Result<Option<ServerIden
 #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 mod tests {
     use super::*;
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt;
     use std::{
         fs,
         path::PathBuf,
@@ -165,6 +167,15 @@ mod tests {
                 NEXT.fetch_add(1, Ordering::Relaxed)
             ));
             fs::create_dir(&path).unwrap();
+            #[cfg(unix)]
+            {
+                fs::set_permissions(&path, fs::Permissions::from_mode(0o700)).unwrap();
+            }
+            #[cfg(target_os = "linux")]
+            {
+                crate::test_support::ensure_headless_backend();
+            }
+            let path = fs::canonicalize(path).unwrap();
             Self(path)
         }
         fn open(&self) -> Store {
