@@ -10,9 +10,23 @@ from pathlib import Path
 import select
 import struct
 import subprocess
+import sys
 import tempfile
 import termios
 import time
+
+
+def wait_for_exit(child: subprocess.Popen[bytes], master: int, timeout: float = 8) -> bytes:
+    """Drain the PTY while waiting so a verbose TUI cannot block on output."""
+    deadline = time.monotonic() + timeout
+    output = bytearray()
+    while time.monotonic() < deadline:
+        if select.select([master], [], [], 0.1)[0]:
+            output.extend(os.read(master, 65536))
+        elif child.poll() is not None:
+            child.wait(timeout=1)
+            return bytes(output)
+    raise AssertionError("synthetic terminal child did not exit with drained output")
 
 
 def exercise(program: Path, exit_key: bytes) -> None:
@@ -52,7 +66,7 @@ def exercise(program: Path, exit_key: bytes) -> None:
             fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 28, 100, 0, 0))
             read_until(b"\x1b[2J")
             os.write(master, exit_key)
-            child.wait(timeout=8)
+            wait_for_exit(child, master)
             assert child.returncode == 0, child.returncode
             assert termios.tcgetattr(slave) == original, "terminal mode was not restored"
         finally:
@@ -63,6 +77,25 @@ def exercise(program: Path, exit_key: bytes) -> None:
             os.close(slave)
 
 
+def exercise_output_burst() -> None:
+    """Prove shutdown drains output larger than a typical PTY buffer."""
+    master, slave = os.openpty()
+    child = subprocess.Popen(
+        [sys.executable, "-c", "import sys; sys.stdout.write('x' * 524288); sys.stdout.flush()"],
+        stdin=subprocess.DEVNULL, stdout=slave, stderr=slave, start_new_session=True,
+    )
+    try:
+        output = wait_for_exit(child, master)
+        assert len(output) >= 524288
+        assert child.returncode == 0
+    finally:
+        if child.poll() is None:
+            child.kill()
+            child.wait(timeout=5)
+        os.close(master)
+        os.close(slave)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("program", type=Path)
@@ -71,6 +104,7 @@ def main() -> None:
     program = args.program.resolve(strict=True)
     for key in (b"q", b"\x03"):
         exercise(program, key)
+    exercise_output_burst()
     headless = subprocess.run([str(program), "--demo"], input=b"", capture_output=True,
                               timeout=8, check=False)
     assert headless.returncode != 0
@@ -102,7 +136,7 @@ def main() -> None:
                 if mode == "prompt":
                     os.write(master, b"\x1b[B\r")
                     wait_for(b"PROBE_RESULT=/help")
-                child.wait(timeout=8)
+                output.extend(wait_for_exit(child, master))
                 assert child.returncode == 0
                 assert b"\x1b[?1049h" not in output, "inline editor replaced the screen"
                 assert termios.tcgetattr(slave) == original
