@@ -202,21 +202,34 @@ impl Drop for UnixLocalServer {
 mod tests {
     use super::*;
     use std::os::unix::fs::PermissionsExt;
+    use std::sync::atomic::{AtomicU64, Ordering};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     fn temp_dir(label: &str) -> PathBuf {
-        let path = std::env::temp_dir().join(format!(
-            "hantong-unix-transport-{label}-{}-{}",
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        // Resolve macOS's /var alias and keep the fixture below its shorter sun_path limit.
+        let path = std::env::temp_dir().canonicalize().unwrap().join(format!(
+            "ht-{label}-{:x}-{:x}",
             std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .expect("clock")
-                .as_nanos()
+            NEXT.fetch_add(1, Ordering::Relaxed)
         ));
         std::fs::create_dir(&path).expect("temp directory");
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700))
             .expect("private temp directory");
         path
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn sec03_overlong_socket_path_fails_without_creating_endpoint() {
+        let root = temp_dir("long");
+        let dir = root.join("x".repeat(120));
+        let path = dir.join(SOCKET_NAME);
+        assert!(matches!(
+            UnixLocalServer::bind_at(&dir, &path),
+            Err(ErrorCode::Conflict)
+        ));
+        assert!(!path.exists());
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[tokio::test(flavor = "current_thread")]

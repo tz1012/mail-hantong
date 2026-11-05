@@ -1220,7 +1220,8 @@ fn cli15_v8_real_legacy_history_migrates_without_rehash_or_scope_change() {
 fn restore_v8_scope_schema(f: &Fixture) {
     f.store().with_connection(|c| {
             let tx=rusqlite::Transaction::new_unchecked(c,rusqlite::TransactionBehavior::Immediate)?;
-            for table in ["ai_consents", "smtp_sender_addresses"] {
+            // Assert post-v8 tables are empty before restoring the exact frozen object set.
+            for table in ["ai_consents", "smtp_sender_addresses", "mail_event_tracking", "mail_event_log", "mail_event_sources", "mail_event_cursors"] {
                 assert_eq!(tx.query_row(&format!("SELECT count(*) FROM {table}"), [], |r| r.get::<_, i64>(0))?, 0);
                 tx.execute_batch(&format!("DROP TABLE {table};"))?;
             }

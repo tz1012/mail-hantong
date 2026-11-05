@@ -34,6 +34,21 @@ fn assert_v26_tables_empty(c: &rusqlite::Connection) -> rusqlite::Result<()> {
     }
     Ok(())
 }
+fn assert_v27_tables_empty(c: &rusqlite::Connection) -> rusqlite::Result<()> {
+    for table in [
+        "mail_event_tracking",
+        "mail_event_log",
+        "mail_event_sources",
+        "mail_event_cursors",
+    ] {
+        assert_eq!(
+            c.query_row(&format!("SELECT count(*) FROM {table}"), [], |r| r.get::<_, i64>(0))?,
+            0,
+            "migration must not enable tracking, create events or subscribers: {table}"
+        );
+    }
+    Ok(())
+}
 fn seed_v18_fixture(f: &Fixture) {
     seed_v17_fixture(f);
     Store {
@@ -79,7 +94,7 @@ fn acc01_sync02_v18_to_v19_preserves_every_frozen_table_highwater_and_no_consent
     store
         .with_connection(|c| {
             assert_eq!(before, v18_product_rows(c)?);
-            assert_eq!(product_table_names(c)?.len(), 52);
+            assert_eq!(product_table_names(c)?.len(), 56);
             assert_eq!(
                 c.query_row(
                     "SELECT seq FROM sqlite_sequence WHERE name='audit_starts'",
@@ -90,6 +105,7 @@ fn acc01_sync02_v18_to_v19_preserves_every_frozen_table_highwater_and_no_consent
             );
             assert_v19_tables_empty(c)?;
             assert_v26_tables_empty(c)?;
+            assert_v27_tables_empty(c)?;
             assert_v18_tables_empty(c)?;
             validate_schema(c, SCHEMA, CURRENT_SCHEMA_VERSION)
         })

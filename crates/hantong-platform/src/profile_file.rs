@@ -945,7 +945,12 @@ mod unix_tests {
     use std::os::unix::fs::{PermissionsExt, symlink};
 
     fn fixture() -> (std::path::PathBuf, std::path::PathBuf) {
-        let root = std::env::temp_dir().join(format!(
+        // macOS exposes `/var` as a symlink to `/private/var`.  The product
+        // loader deliberately opens every ancestor with O_NOFOLLOW, so use
+        // the canonical temporary directory in this fixture as a valid
+        // handle-relative path rather than testing that platform alias.
+        let temp = std::fs::canonicalize(std::env::temp_dir()).expect("canonical temp dir");
+        let root = temp.join(format!(
             "hantong-profile-unix-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
@@ -974,6 +979,12 @@ mod unix_tests {
         assert_eq!(loaded.bytes(), b"profile");
         assert_eq!(format!("{loaded:?}"), "LoadedClientProfile { <redacted> }");
         drop(loaded);
+        let alias = root.join("profiles-alias");
+        symlink(&profiles, &alias).expect("ancestor symlink");
+        assert!(matches!(
+            unix::load(&alias, "default.json"),
+            Err(ErrorCode::CapabilityUnsupported | ErrorCode::ScopeDenied)
+        ));
         let _ = std::fs::remove_dir_all(root);
     }
 

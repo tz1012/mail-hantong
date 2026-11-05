@@ -261,6 +261,28 @@ mod tests {
     #[cfg(not(windows))]
     #[test]
     fn inst01_non_windows_does_not_use_fake_paths() {
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        {
+            let native = crate::unix_paths::app_directories().unwrap();
+            let actual = app_directories().unwrap();
+            assert_eq!(actual.data, native.data);
+            assert_eq!(actual.secrets, native.secrets);
+            assert_eq!(actual.profiles, native.profiles);
+            assert!(actual.data.is_absolute());
+            assert!(actual.secrets.is_absolute());
+            assert!(actual.profiles.is_absolute());
+            assert_eq!(actual.data.file_name().unwrap(), "data");
+            assert_eq!(
+                actual.secrets,
+                actual.data.parent().unwrap().join("secrets")
+            );
+            assert_eq!(actual.profiles.file_name().unwrap(), "profiles");
+            assert_eq!(
+                format!("{actual:?}"),
+                "AppDirectories { data: \"<redacted>\", secrets: \"<redacted>\", profiles: \"<redacted>\" }"
+            );
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
         assert_eq!(app_directories(), Err(ErrorCode::CapabilityUnsupported));
     }
 

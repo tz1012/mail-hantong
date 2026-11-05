@@ -257,7 +257,11 @@ mod tests {
     use std::os::unix::fs::PermissionsExt;
 
     fn fixture() -> (std::path::PathBuf, std::path::PathBuf) {
-        let root = std::env::temp_dir().join(format!(
+        // macOS exposes `/var` as a symlink to `/private/var`; release
+        // validation intentionally rejects symlinked ancestors, so construct
+        // the fixture below the canonical temporary directory.
+        let temp = std::fs::canonicalize(std::env::temp_dir()).expect("canonical temp dir");
+        let root = temp.join(format!(
             "hantong-release-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
@@ -340,6 +344,12 @@ mod tests {
     fn sec03_release_manifest_binds_caller_and_file_hashes() {
         let (root, manifest) = fixture();
         assert_eq!(validate_manifest(&root, &manifest, "hantong"), Ok(()));
+        let alias = root.join("alias");
+        std::os::unix::fs::symlink(&root, &alias).expect("ancestor symlink");
+        assert_eq!(
+            validate_manifest(&alias, &alias.join("release-manifest.json"), "hantong"),
+            Err(ErrorCode::ScopeDenied)
+        );
         assert_eq!(
             validate_manifest(&root, &manifest, "missing-caller"),
             Err(ErrorCode::CoreUnavailable)

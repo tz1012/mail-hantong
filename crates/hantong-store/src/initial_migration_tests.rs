@@ -174,11 +174,12 @@ fn sync01_fresh_v19_has_exact_table_count_and_empty_initial_preview_ledgers() {
     let store = f.open().unwrap();
     store
         .with_connection(|c| {
-            assert_eq!(product_table_names(c)?.len(), 52);
+            assert_eq!(product_table_names(c)?.len(), 56);
             assert_initial_tables_empty(c)?;
             assert_v18_tables_empty(c)?;
             assert_v19_tables_empty(c)?;
             assert_v26_tables_empty(c)?;
+            assert_v27_tables_empty(c)?;
             validate_schema(c, SCHEMA, CURRENT_SCHEMA_VERSION)
         })
         .unwrap();

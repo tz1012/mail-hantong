@@ -1693,7 +1693,7 @@ mod tests {
                     |row| row.get::<_, i64>(0)
                 ))
                 .unwrap(),
-            52
+            56
         );
         keyed
             .with_connection(|connection| {
@@ -1712,6 +1712,7 @@ mod tests {
                         "fresh schema must start empty: {table}"
                     );
                 }
+                assert_v27_tables_empty(connection)?;
                 Ok::<_, rusqlite::Error>(())
             })
             .unwrap();
