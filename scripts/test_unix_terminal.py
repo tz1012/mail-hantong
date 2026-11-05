@@ -17,6 +17,29 @@ import termios
 import time
 
 
+# Darwin adds this kernel-owned state when canonical input is restored. It is
+# accepted only when the independent native round trip demonstrates it.
+_DYNAMIC_LFLAG = termios.PENDIN if sys.platform == "darwin" else 0
+
+
+def expected_mode(original: list, reference_before: list, reference_after: list) -> list:
+    assert len(original) == len(reference_before) == len(reference_after) == 7
+    assert reference_before[4:] == reference_after[4:], "native reference changed speeds/CC"
+    controlled = (termios.IXON, 0, 0,
+                  termios.ICANON | termios.ECHO | termios.ISIG | termios.IEXTEN)
+    allowed = (0, 0, 0, _DYNAMIC_LFLAG)
+    expected = copy.deepcopy(original)
+    for index in range(4):
+        before, after = reference_before[index], reference_after[index]
+        changed = before ^ after
+        assert not changed & controlled[index], "native reference changed controlled flags"
+        assert not changed & ~allowed[index], "native reference changed unknown flags"
+        assert original[index] & controlled[index] == before & controlled[index], "reference baseline differs"
+        added, removed = after & ~before, before & ~after
+        expected[index] = (original[index] | added) & ~removed
+    return expected
+
+
 def mode_difference(original: list, current: list) -> dict:
     """Only synthetic terminal state, never input bytes or environment paths."""
     names = ("iflag", "oflag", "cflag", "lflag", "ispeed", "ospeed", "cc")
@@ -31,15 +54,17 @@ def mode_difference(original: list, current: list) -> dict:
     }
 
 
-def assert_mode_restored(slave: int, original: list, operation: str) -> None:
+def assert_mode_restored(slave: int, original: list, operation: str,
+                         reference: tuple[list, list]) -> None:
     current = termios.tcgetattr(slave)
-    assert current == original, json.dumps({
+    expected = expected_mode(original, *reference)
+    assert current == expected, json.dumps({
         "synthetic_terminal": True, "operation": operation,
-        **mode_difference(original, current),
+        **mode_difference(expected, current),
     }, sort_keys=True)
 
 
-def report_native_mode_roundtrip() -> None:
+def report_native_mode_roundtrip() -> tuple[list, list]:
     """Report the OS's own raw-to-canonical transition before testing the app."""
     master, slave = os.openpty()
     original = termios.tcgetattr(slave)
@@ -51,9 +76,12 @@ def report_native_mode_roundtrip() -> None:
         mode[6][termios.VTIME] = 1
         termios.tcsetattr(slave, termios.TCSANOW, mode)
         termios.tcsetattr(slave, termios.TCSANOW, original)
+        restored = termios.tcgetattr(slave)
+        expected_mode(original, original, restored)
         print(json.dumps({"synthetic_native_roundtrip": True,
-                          **mode_difference(original, termios.tcgetattr(slave))},
+                          **mode_difference(original, restored)},
                          sort_keys=True), flush=True)
+        return original, restored
     finally:
         os.close(master)
         os.close(slave)
@@ -72,7 +100,7 @@ def wait_for_exit(child: subprocess.Popen[bytes], master: int, timeout: float = 
     raise AssertionError("synthetic terminal child did not exit with drained output")
 
 
-def exercise(program: Path, exit_key: bytes) -> None:
+def exercise(program: Path, exit_key: bytes, reference: tuple[list, list]) -> None:
     master, slave = os.openpty()
     original = termios.tcgetattr(slave)
     fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 40, 140, 0, 0))
@@ -111,7 +139,7 @@ def exercise(program: Path, exit_key: bytes) -> None:
             os.write(master, exit_key)
             wait_for_exit(child, master)
             assert child.returncode == 0, child.returncode
-            assert_mode_restored(slave, original, "quit" if exit_key == b"q" else "ctrl_c")
+            assert_mode_restored(slave, original, "quit" if exit_key == b"q" else "ctrl_c", reference)
         finally:
             if child is not None and child.poll() is None:
                 child.kill()
@@ -145,9 +173,9 @@ def main() -> None:
     parser.add_argument("--input-probe", type=Path)
     args = parser.parse_args()
     program = args.program.resolve(strict=True)
-    report_native_mode_roundtrip()
+    reference = report_native_mode_roundtrip()
     for key in (b"q", b"\x03"):
-        exercise(program, key)
+        exercise(program, key, reference)
     exercise_output_burst()
     headless = subprocess.run([str(program), "--demo"], input=b"", capture_output=True,
                               timeout=8, check=False)
@@ -183,7 +211,7 @@ def main() -> None:
                 output.extend(wait_for_exit(child, master))
                 assert child.returncode == 0
                 assert b"\x1b[?1049h" not in output, "inline editor replaced the screen"
-                assert_mode_restored(slave, original, "input_probe_" + mode)
+                assert_mode_restored(slave, original, "input_probe_" + mode, reference)
             finally:
                 if child.poll() is None:
                     child.kill()
