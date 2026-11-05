@@ -106,6 +106,14 @@ jobs:
             --version "$PACKAGE_VERSION" \
             --output-dir "$RUNNER_TEMP/artifacts" \
             --publisher-config "$RUNNER_TEMP/google-desktop.json"
+      - name: Reset synthetic Keychain between test and product identities
+        run: |
+          security default-keychain -d user -s "$(cat "$RUNNER_TEMP/hantong-original-keychain")"
+          security delete-keychain "$RUNNER_TEMP/hantong-ci.keychain-db"
+          security create-keychain -p 'synthetic-ci-only' "$RUNNER_TEMP/hantong-ci.keychain-db"
+          security unlock-keychain -p 'synthetic-ci-only' "$RUNNER_TEMP/hantong-ci.keychain-db"
+          security set-keychain-settings -lut 1800 "$RUNNER_TEMP/hantong-ci.keychain-db"
+          security default-keychain -d user -s "$RUNNER_TEMP/hantong-ci.keychain-db"
       - name: Smoke test the installed macOS product
         run: |
           python -X utf8 scripts/test_macos_installed_product.py \
