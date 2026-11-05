@@ -337,18 +337,26 @@ impl SecretStore {
         ticket: &TerminalSecretTicket,
         opaque_id: [u8; 32],
     ) -> Result<TerminalSecretHandle, SecretError> {
-        if ticket.is_expired() || opaque_id == [0; 32] || opaque_id != ticket.ticket_id {
+        if ticket.is_expired() {
+            return Err(SecretError::InputExpired);
+        }
+        if opaque_id == [0; 32] || opaque_id != ticket.ticket_id {
             return Err(SecretError::CredentialMismatch);
         }
         let path = self.terminal_secret_path(&opaque_id);
         validate_path(&self.root)?;
         #[cfg(any(target_os = "linux", target_os = "macos"))]
-        if fs::symlink_metadata(&path)
-            .ok()
-            .filter(|meta| meta.is_file() && !meta.file_type().is_symlink())
-            .is_none()
         {
-            return Err(SecretError::CredentialMismatch);
+            let meta = fs::symlink_metadata(&path).map_err(|error| {
+                if error.kind() == std::io::ErrorKind::NotFound {
+                    SecretError::NotFound
+                } else {
+                    SecretError::Io
+                }
+            })?;
+            if !meta.is_file() || meta.file_type().is_symlink() {
+                return Err(SecretError::CredentialMismatch);
+            }
         }
         #[cfg(not(any(target_os = "linux", target_os = "macos")))]
         if fs::symlink_metadata(&path).is_err() {
@@ -1519,11 +1527,16 @@ mod tests {
         store
             .consume_terminal_imap_credential(ticket, handle, expected, "fixture", endpoint.imap())
             .unwrap();
-        assert!(
-            store
-                .terminal_secret_handle_from_opaque(&replay_ticket, opaque)
-                .is_err()
-        );
+        assert!(matches!(
+            store.terminal_secret_handle_from_opaque(&replay_ticket, opaque),
+            Err(SecretError::NotFound)
+        ));
+        std::fs::create_dir(store.terminal_secret_path(&opaque)).unwrap();
+        assert!(matches!(
+            store.terminal_secret_handle_from_opaque(&replay_ticket, opaque),
+            Err(SecretError::CredentialMismatch)
+        ));
+        std::fs::remove_dir(store.terminal_secret_path(&opaque)).unwrap();
         drop(store);
         std::fs::remove_dir_all(root).unwrap();
     }

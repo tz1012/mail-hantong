@@ -170,3 +170,37 @@ new app password or grant broader permissions merely because beta.23 printed
 exit18. A successful hidden input is still separate from successful IMAP/SMTP
 authentication. The existing protected input reader can wait for Enter; ticket
 expiry is rechecked before staging and cannot authorize an expired submission.
+
+## Diagnosing IMAP/SMTP submission after protected staging (beta.25)
+
+Successful protected input and an encrypted stage do not establish that the
+background Core opened its credential backend or authenticated with IMAP.
+An unlocked GNOME vault and working D-Bus are useful evidence; do not infer
+that another unlock or a new app password is required from `INTERNAL_ERROR`.
+
+beta.25 separates these failure boundaries:
+
+| Record | Meaning |
+| --- | --- |
+| `hantong_secret_store stage=root_validation` | Protected directory guard rejected the root; includes the existing stable guard error code |
+| `hantong_secret_store stage=platform_store_init` | Host credential backend initialization failed; includes a closed backend error category |
+| `hantong_terminal_secret stage=store_open` | Core could not open Secrets for submission |
+| `hantong_terminal_secret stage=stage_handle_open` | Encrypted stage lookup, ticket expiry or binding validation failed |
+| `hantong_terminal_secret stage=secret_job_submit` | Job admission failed, for example queue capacity or expiry |
+| `hantong_terminal_secret stage=secret_job_execute` | An admitted setup job failed later; this alone does not establish an IMAP login attempt |
+
+Use the foreground Core diagnostic procedure above to retain Core-side stderr;
+redirecting only `hantong` cannot capture a detached Core's diagnostics. Share
+only matching closed records from the protected log:
+
+```sh
+grep -E '^hantong_(secret_store|terminal_secret) stage=' "$HOME/hantong-google-diagnostic.log"
+```
+
+These records contain no credential, path, account/request/ticket ID, backend
+exception text or encrypted file content. A failed store/stage open leaves
+the live review intact and admits no provider job. Normal foreground cancellation
+and expiry rules still apply; preserving a review does not extend its lifetime.
+Keep any existing encrypted stage and app password while investigating; do not
+open or upload the stage, DB or key files. These diagnostics narrow the failure
+boundary and do not by themselves fix or prove the reported provider connection.

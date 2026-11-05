@@ -176,10 +176,26 @@ impl SecretStore {
             #[cfg(any(target_os = "linux", target_os = "macos"))]
             {
                 let root = root.as_ref();
-                let unix_root = hantong_platform::unix_paths::UnixDirectoryGuard::open(root, true)
-                    .map_err(|_| SecretError::InvalidRoot)?;
-                unix_secret_store::UnixSecretStore::install_platform_store()
-                    .map_err(|_| SecretError::UnsupportedPlatform)?;
+                let unix_root =
+                    match hantong_platform::unix_paths::UnixDirectoryGuard::open(root, true) {
+                        Ok(root) => root,
+                        Err(error) => {
+                            unix_secret_store::UnixSecretStore::report_open_failure(
+                                "root_validation",
+                                "guard_rejected",
+                                error.as_str(),
+                            );
+                            return Err(SecretError::InvalidRoot);
+                        }
+                    };
+                if let Err(error) = unix_secret_store::UnixSecretStore::install_platform_store() {
+                    unix_secret_store::UnixSecretStore::report_open_failure(
+                        "platform_store_init",
+                        unix_secret_store::UnixSecretStore::diagnostic_kind(error),
+                        "UNSUPPORTED_PLATFORM",
+                    );
+                    return Err(SecretError::UnsupportedPlatform);
+                }
                 Ok(Self {
                     root: root.to_path_buf(),
                     unix_root,

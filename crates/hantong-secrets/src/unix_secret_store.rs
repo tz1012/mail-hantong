@@ -6,6 +6,8 @@
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use keyring_core::Entry;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+use std::io::Write;
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use hantong_platform::unix_paths::UnixDirectoryGuard;
@@ -197,6 +199,34 @@ pub struct UnixSecretStore {
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 impl UnixSecretStore {
+    /// Emit a closed diagnostic for failures while opening the host store.
+    ///
+    /// Keep this boundary deliberately free of paths, selectors, provider
+    /// details, and backend error text.  The Core maps the public result to a
+    /// stable error, while this line identifies the internal stage that
+    /// failed for local troubleshooting.
+    pub(crate) fn report_open_failure(stage: &'static str, kind: &'static str, code: &'static str) {
+        let _ = writeln!(
+            std::io::stderr().lock(),
+            "{}",
+            open_failure_line(stage, kind, code)
+        );
+    }
+
+    pub(crate) const fn diagnostic_kind(error: UnixSecretError) -> &'static str {
+        match error {
+            UnixSecretError::InvalidSelector => "invalid_selector",
+            UnixSecretError::InvalidSecret => "invalid_secret",
+            UnixSecretError::SecretTooLarge => "secret_too_large",
+            UnixSecretError::Unavailable => "unavailable",
+            UnixSecretError::NotFound => "not_found",
+            UnixSecretError::Ambiguous => "ambiguous",
+            UnixSecretError::StoreFailure => "store_failure",
+            UnixSecretError::AlreadyExists => "already_exists",
+            UnixSecretError::Conflict => "conflict",
+        }
+    }
+
     /// Installs the real host credential store for this process.
     ///
     /// Linux uses freedesktop Secret Service over zbus.  macOS uses the
@@ -208,11 +238,10 @@ impl UnixSecretStore {
             return Ok(());
         }
         #[cfg(target_os = "linux")]
-        let store = zbus_secret_service_keyring_store::Store::new()
-            .map_err(|_| UnixSecretError::Unavailable)?;
+        let store = zbus_secret_service_keyring_store::Store::new().map_err(map_keyring_error)?;
         #[cfg(target_os = "macos")]
-        let store = apple_native_keyring_store::keychain::Store::new()
-            .map_err(|_| UnixSecretError::Unavailable)?;
+        let store =
+            apple_native_keyring_store::keychain::Store::new().map_err(map_keyring_error)?;
         keyring_core::set_default_store(store);
         Ok(())
     }
@@ -368,6 +397,11 @@ impl UnixSecretStore {
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
+fn open_failure_line(stage: &str, kind: &str, code: &str) -> String {
+    format!("hantong_secret_store stage={stage} kind={kind} code={code}")
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 pub struct UnixSecretMutationGuard {
     file: std::fs::File,
 }
@@ -458,6 +492,53 @@ impl Default for UnixSecretStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sec08_open_diagnostics_are_closed_and_redacted() {
+        let line = open_failure_line("root_validation", "guard_rejected", "SCOPE_DENIED");
+        assert_eq!(
+            line,
+            "hantong_secret_store stage=root_validation kind=guard_rejected code=SCOPE_DENIED"
+        );
+        assert!(!line.contains("/"));
+        assert!(!line.contains("password"));
+    }
+
+    #[test]
+    fn sec08_keyring_failures_map_to_closed_diagnostic_kinds() {
+        assert_eq!(
+            UnixSecretStore::diagnostic_kind(map_keyring_error(
+                keyring_core::Error::NoDefaultStore
+            )),
+            "unavailable"
+        );
+        assert_eq!(
+            UnixSecretStore::diagnostic_kind(map_keyring_error(keyring_core::Error::NoEntry)),
+            "not_found"
+        );
+        assert_eq!(
+            UnixSecretStore::diagnostic_kind(map_keyring_error(
+                keyring_core::Error::NoStorageAccess(Box::new(std::io::Error::other(
+                    "sentinel secret"
+                )),)
+            )),
+            "unavailable"
+        );
+        assert_eq!(
+            UnixSecretStore::diagnostic_kind(map_keyring_error(
+                keyring_core::Error::PlatformFailure(Box::new(std::io::Error::other(
+                    "sentinel secret"
+                )),)
+            )),
+            "store_failure"
+        );
+        let line = open_failure_line(
+            "platform_store_init",
+            "store_failure",
+            "UNSUPPORTED_PLATFORM",
+        );
+        assert!(!line.contains("sentinel"));
+    }
 
     #[test]
     fn sec01_selector_is_stable_and_redacted() {

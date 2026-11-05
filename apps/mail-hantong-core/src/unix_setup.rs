@@ -165,6 +165,9 @@ impl State {
             }
             _ => Err(ErrorCode::CapabilityUnsupported),
         };
+        if let Err(error) = result {
+            report_secret_submit("secret_job_execute", "job_failed", error);
+        }
         Some(result)
     }
 
@@ -913,7 +916,61 @@ async fn submit_secret(
     peer: hantong_contracts::unix_auth::UnixPeerContextV2,
     request: hantong_contracts::terminal_review::TerminalReviewSecretSubmit,
 ) -> Result<SetupReceipt, ErrorCode> {
+    submit_secret_with(state, owner, peer, request, |ticket, handle| {
+        let secrets = hantong_secrets::SecretStore::open(secrets_root)
+            .map_err(|error| secret_submit_failure("store_open", error))?;
+        secrets
+            .terminal_secret_handle_from_opaque(ticket, handle)
+            .map_err(|error| secret_submit_failure("stage_handle_open", error))
+    })
+}
+
+fn secret_submit_failure(stage: &'static str, error: hantong_secrets::SecretError) -> ErrorCode {
+    use hantong_secrets::SecretError;
+    let (kind, code) = match error {
+        SecretError::InputExpired => ("expired", ErrorCode::ApprovalExpired),
+        SecretError::InvalidRoot => ("invalid_root", ErrorCode::InternalError),
+        SecretError::UnsupportedPlatform => {
+            ("platform_unavailable", ErrorCode::CapabilityUnsupported)
+        }
+        SecretError::Io => ("io", ErrorCode::InternalError),
+        SecretError::Protection => ("protection", ErrorCode::InternalError),
+        SecretError::NotFound => ("not_found", ErrorCode::NotFound),
+        SecretError::CredentialMismatch | SecretError::InvalidCiphertext => {
+            ("binding_mismatch", ErrorCode::ScopeDenied)
+        }
+        SecretError::InvalidInputWindow => ("tty_unavailable", ErrorCode::HumanStepRequired),
+        SecretError::InvalidCredential
+        | SecretError::InvalidAccountId
+        | SecretError::EmptySecret
+        | SecretError::SecretTooLarge => ("invalid_input", ErrorCode::InvalidInput),
+    };
+    report_secret_submit(stage, kind, code);
+    code
+}
+
+fn report_secret_submit(stage: &'static str, kind: &'static str, code: ErrorCode) {
+    use std::io::Write;
+    // Only call-site constants and closed error labels; never backend text or identifiers.
+    let _ = writeln!(
+        std::io::stderr().lock(),
+        "hantong_terminal_secret stage={stage} kind={kind} code={}",
+        code.as_str()
+    );
+}
+
+fn submit_secret_with(
+    state: &State,
+    owner: [u8; 16],
+    peer: hantong_contracts::unix_auth::UnixPeerContextV2,
+    request: hantong_contracts::terminal_review::TerminalReviewSecretSubmit,
+    open_handle: impl FnOnce(
+        &TerminalSecretTicket,
+        [u8; 32],
+    ) -> Result<hantong_secrets::TerminalSecretHandle, ErrorCode>,
+) -> Result<SetupReceipt, ErrorCode> {
     if state.secret_jobs.borrow().len() >= 16 {
+        report_secret_submit("secret_job_submit", "queue_full", ErrorCode::RateLimited);
         return Err(ErrorCode::RateLimited);
     }
     let (kind, request_id, account_id, payload_hash, expected_binding, expected_opaque_id) = {
@@ -934,27 +991,29 @@ async fn submit_secret(
             review.ticket.opaque_id(),
         )
     };
+    if expected_binding.is_expired() {
+        report_secret_submit("secret_job_submit", "expired", ErrorCode::ApprovalExpired);
+        return Err(ErrorCode::ApprovalExpired);
+    }
     let opaque = TerminalSecretTicket::from_opaque(&request.secret_ticket_opaque)
         .map_err(|_| ErrorCode::InvalidInput)?;
     if opaque.binding() != expected_binding || opaque.opaque_id() != expected_opaque_id {
         return Err(ErrorCode::Conflict);
     }
-    let review = state
-        .take_secret_review(request.ticket)
-        .ok_or(ErrorCode::Conflict)?;
-    let secrets =
-        hantong_secrets::SecretStore::open(secrets_root).map_err(|_| ErrorCode::InternalError)?;
-    let handle = secrets
-        .terminal_secret_handle_from_opaque(&review.ticket, request.staged_handle)
-        .map_err(|_| ErrorCode::ScopeDenied)?;
-    state.secret_jobs.borrow_mut().push_back(SecretJob {
-        kind,
-        request_id,
-        ticket: review.ticket,
-        handle,
-        binding: expected_binding,
-    });
-    state.action_notify.notify_one();
+    // A failed open must leave the review intact and never enqueue a provider job.
+    let handle = {
+        let reviews = state.secret_reviews.borrow();
+        let review = reviews.get(&request.ticket).ok_or(ErrorCode::Conflict)?;
+        if review.ticket.is_expired() {
+            report_secret_submit("secret_job_submit", "expired", ErrorCode::ApprovalExpired);
+            return Err(ErrorCode::ApprovalExpired);
+        }
+        open_handle(&review.ticket, request.staged_handle)?
+    };
+    if expected_binding.is_expired() {
+        report_secret_submit("secret_job_submit", "expired", ErrorCode::ApprovalExpired);
+        return Err(ErrorCode::ApprovalExpired);
+    }
     let receipt = TerminalReviewReceipt {
         kind,
         request_id,
@@ -973,6 +1032,17 @@ async fn submit_secret(
         ],
     };
     receipt.validate().map_err(|_| ErrorCode::InternalError)?;
+    let review = state
+        .take_secret_review(request.ticket)
+        .ok_or(ErrorCode::Conflict)?;
+    state.secret_jobs.borrow_mut().push_back(SecretJob {
+        kind,
+        request_id,
+        ticket: review.ticket,
+        handle,
+        binding: expected_binding,
+    });
+    state.action_notify.notify_one();
     Ok(SetupReceipt::TerminalReview(receipt))
 }
 
@@ -1105,4 +1175,91 @@ fn now_ms() -> Result<i64, ErrorCode> {
         .duration_since(std::time::UNIX_EPOCH)
         .map_err(|_| ErrorCode::InternalError)?
         .as_millis() as i64)
+}
+
+#[cfg(test)]
+mod secret_submit_tests {
+    use super::*;
+    use hantong_contracts::terminal_review::TerminalReviewSecretSubmit;
+
+    fn fixture() -> (
+        State,
+        hantong_contracts::unix_auth::UnixPeerContextV2,
+        TerminalReviewSecretSubmit,
+    ) {
+        // Public opaque format only: synthetic metadata, no credential or host keyring access.
+        use std::hash::{Hash, Hasher};
+        let mut bytes = vec![1; 312];
+        bytes[144..152].copy_from_slice(&1_u64.to_be_bytes());
+        bytes[248..256].copy_from_slice(&i64::MAX.to_be_bytes());
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        bytes.as_slice().hash(&mut hasher);
+        bytes.extend_from_slice(&hasher.finish().to_be_bytes());
+        let ticket = TerminalSecretTicket::from_opaque(&bytes).unwrap();
+        let peer = hantong_platform::unix_peer::current_peer_context().unwrap();
+        let (google, _) = crate::unix_google::State::new();
+        let state = State::new(google);
+        let request =
+            TerminalReviewSecretSubmit::new([2; 32], [1; 32], bytes, ticket.opaque_id()).unwrap();
+        state.secret_reviews.borrow_mut().insert(
+            [2; 32],
+            SecretReview {
+                kind: TerminalReviewKind::ImapSetup,
+                request_id: [1; 32],
+                account_id: "synthetic-account".into(),
+                payload_hash: [1; 32],
+                ticket,
+                peer: peer.clone(),
+                owner: [1; 16],
+            },
+        );
+        (state, peer, request)
+    }
+
+    #[test]
+    fn sec08_failed_store_or_stage_open_preserves_review_and_never_queues() {
+        for error in [
+            ErrorCode::InternalError,
+            ErrorCode::CapabilityUnsupported,
+            ErrorCode::NotFound,
+            ErrorCode::ScopeDenied,
+        ] {
+            let (state, peer, request) = fixture();
+            let result = submit_secret_with(&state, [1; 16], peer, request, |_, _| Err(error));
+            assert!(matches!(result, Err(actual) if actual == error));
+            assert_eq!(state.secret_reviews.borrow().len(), 1);
+            assert!(state.secret_jobs.borrow().is_empty());
+        }
+    }
+
+    #[test]
+    fn sec08_changed_submit_binding_never_opens_stage_or_queues() {
+        let (state, peer, mut request) = fixture();
+        request.snapshot_hash = [3; 32];
+        assert!(matches!(
+            submit_secret_with(&state, [1; 16], peer, request, |_, _| panic!(
+                "invalid binding must not open protected storage"
+            )),
+            Err(ErrorCode::Conflict)
+        ));
+        assert_eq!(state.secret_reviews.borrow().len(), 1);
+        assert!(state.secret_jobs.borrow().is_empty());
+    }
+
+    #[test]
+    fn sec08_submit_failure_retains_stable_error_categories() {
+        use hantong_secrets::SecretError;
+        for (error, code) in [
+            (SecretError::InvalidRoot, ErrorCode::InternalError),
+            (
+                SecretError::UnsupportedPlatform,
+                ErrorCode::CapabilityUnsupported,
+            ),
+            (SecretError::NotFound, ErrorCode::NotFound),
+            (SecretError::CredentialMismatch, ErrorCode::ScopeDenied),
+            (SecretError::InputExpired, ErrorCode::ApprovalExpired),
+        ] {
+            assert_eq!(secret_submit_failure("stage_handle_open", error), code);
+        }
+    }
 }
