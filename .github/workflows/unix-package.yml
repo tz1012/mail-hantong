@@ -9,7 +9,7 @@ on:
       version:
         description: Release prerelease version to package
         required: true
-        default: 0.1.0-beta.23
+        default: 0.1.0-beta.24
         type: string
 
 permissions:
@@ -31,7 +31,7 @@ jobs:
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     env:
-      PACKAGE_VERSION: ${{ inputs.version || '0.1.0-beta.23' }}
+      PACKAGE_VERSION: ${{ inputs.version || '0.1.0-beta.24' }}
     steps:
       - name: Check out source
         uses: actions/checkout@v6.1.0
@@ -65,6 +65,8 @@ jobs:
       - name: Check native Unix integration
         run: |
           cargo clippy --workspace --all-targets --locked --offline -- -D warnings
+          cargo test -p hantong-secrets --lib --locked --offline google:: -- --test-threads=1
+          cargo test -p mail-hantong-core --bin mail-hantong-core --locked --offline unix_google -- --test-threads=1
           cargo test -p hantong-secrets --lib --locked --offline unix_database::tests -- --test-threads=1
           cargo test -p mail-hantong-core --bin mail-hantong-core --locked --offline unix_core_runtime -- --test-threads=1
           cargo test -p hantong-secrets --lib --locked --offline terminal_secret_linux_stage_is_encrypted_and_cross_process_readable

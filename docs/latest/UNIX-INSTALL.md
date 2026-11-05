@@ -77,3 +77,57 @@ ordinary bundled publisher path is supported.
 
 Human security review remains pending. macOS signing and notarization are not
 claimed.
+
+## Diagnosing Google callback failures (post-beta.23 correction)
+
+An OAuth callback only confirms that the browser returned. Token exchange,
+verified identity, protected credential storage, account registration and local
+profile activation must also finish. `CLIENT_NOT_REGISTERED` and an empty
+account list after an earlier OAuth failure do not establish which stage failed.
+
+The beta.23 Unix HTTP reader could classify a fully received response as
+`OFFLINE` when a TLS peer omitted `close_notify`. The correction validates exact
+Content-Length or chunked termination and returns once that bounded frame is
+complete. Truncated/ambiguous frames and TLS verification failures still fail;
+certificate checks remain enabled. This reproduced defect is not proof that it
+caused every reported OAuth failure. Close-delimited bodies and chunk trailers
+remain unsupported by this strict transport.
+
+Background Core detaches its standard streams. For an intentional Linux diagnostic
+run, use the installed Core in a foreground terminal instead. Stop any existing
+Core through its verified lifecycle command, then keep the first terminal open:
+
+```sh
+root="${XDG_DATA_HOME:-$HOME/.local/share}/mail-hantong-cli"
+version=$(cat "$root/current.txt")
+core="$root/versions/$version/bin/mail-hantong-core"
+"$core" unix-stop
+umask 077
+"$core" run 2> "$HOME/hantong-google-diagnostic.log"
+```
+
+This uses the default Linux installation location; use your chosen installation root
+if you installed elsewhere. On macOS, use
+`root="$HOME/Library/Application Support/mail-hantong-cli"` instead. The stop command preserves accounts and encrypted
+data; it does not unlock the vault. Complete any protected vault input in that
+terminal, run `hantong` in a second terminal and repeat your own Google consent.
+Do not redirect the foreground Core's stderr to `/dev/null`. Ctrl+C in the first
+terminal ends this diagnostic run.
+
+Only share the closed diagnostic records, not a complete terminal transcript:
+
+```sh
+grep -E '"event":"google_(oauth|transport)_stage"|^hantong_google stage=' \
+  "$HOME/hantong-google-diagnostic.log"
+```
+
+Transport records distinguish DNS/connect/TLS/write/read/framing and fixed
+timeout/EOF/I/O/TLS/frame/quota kinds. Existing OAuth records distinguish token
+exchange, response validation and verified identity. Core records distinguish
+OAuth completion, secret store, account registration, profile publication and
+scope activation at the instrumented failure boundaries. An absent stage record
+does not prove that a stage succeeded. These diagnostics accept only fixed stage/kind/error values;
+they do not include URLs, account/request IDs, authorization codes, tokens,
+credentials, or provider response text. They cannot recover diagnostics that
+were discarded by an earlier `/dev/null` run. Never send a credential, callback
+URL, database or key file with a bug report.

@@ -46,6 +46,89 @@ impl Stage {
     }
 }
 
+/// Fixed stages for the Unix HTTP boundary. These values deliberately avoid
+/// carrying provider text or transport-library error messages.
+#[cfg(any(test, target_os = "linux", target_os = "macos"))]
+#[derive(Clone, Copy)]
+pub(super) enum TransportStage {
+    Dns,
+    Connect,
+    Tls,
+    Write,
+    Read,
+    Framing,
+}
+
+#[cfg(any(test, target_os = "linux", target_os = "macos"))]
+impl TransportStage {
+    fn name(self) -> &'static str {
+        match self {
+            Self::Dns => "dns",
+            Self::Connect => "connect",
+            Self::Tls => "tls",
+            Self::Write => "write",
+            Self::Read => "read",
+            Self::Framing => "framing",
+        }
+    }
+}
+
+/// Closed transport failure categories. The stable ErrorCode remains the
+/// machine-facing category; this kind identifies the failure boundary.
+#[cfg(any(test, target_os = "linux", target_os = "macos"))]
+#[derive(Clone, Copy)]
+pub(super) enum TransportFailureKind {
+    Timeout,
+    UnexpectedEof,
+    Io,
+    Tls,
+    InvalidFrame,
+    Quota,
+}
+
+#[cfg(any(test, target_os = "linux", target_os = "macos"))]
+impl TransportFailureKind {
+    fn name(self) -> &'static str {
+        match self {
+            Self::Timeout => "timeout",
+            Self::UnexpectedEof => "unexpected_eof",
+            Self::Io => "io",
+            Self::Tls => "tls",
+            Self::InvalidFrame => "invalid_frame",
+            Self::Quota => "quota",
+        }
+    }
+}
+
+#[cfg(any(test, target_os = "linux", target_os = "macos"))]
+fn endpoint_name(host: http::Host) -> &'static str {
+    match host {
+        http::Host::Token => "token",
+        http::Host::Identity => "identity",
+        http::Host::Gmail => "gmail",
+    }
+}
+
+/// Emits one bounded transport diagnostic. Only closed enums and stable
+/// ErrorCode values cross this boundary; no URL, path, ID, or provider text.
+#[cfg(any(test, target_os = "linux", target_os = "macos"))]
+pub(super) fn transport_failure(
+    host: http::Host,
+    stage: TransportStage,
+    kind: TransportFailureKind,
+    error: ErrorCode,
+) {
+    emit(serde_json::json!({
+        "schema_version": 1,
+        "event": "google_transport_stage",
+        "endpoint": endpoint_name(host),
+        "stage": stage.name(),
+        "kind": kind.name(),
+        "outcome": "failed",
+        "error_code": error.as_str(),
+    }));
+}
+
 static NEXT_ATTEMPT: AtomicU64 = AtomicU64::new(1);
 pub(super) struct Trace {
     attempt: u64,
@@ -164,4 +247,53 @@ pub(super) fn capture<T>(operation: impl FnOnce() -> T) -> (T, Vec<String>) {
     let result = operation();
     let lines = CAPTURE.with(|c| c.borrow_mut().take().unwrap());
     (result, lines)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sec08_transport_diagnostic_uses_closed_allowlists() {
+        let (_, lines) = capture(|| {
+            for host in [http::Host::Token, http::Host::Identity, http::Host::Gmail] {
+                for stage in [
+                    TransportStage::Dns,
+                    TransportStage::Connect,
+                    TransportStage::Tls,
+                    TransportStage::Write,
+                    TransportStage::Read,
+                    TransportStage::Framing,
+                ] {
+                    for kind in [
+                        TransportFailureKind::Timeout,
+                        TransportFailureKind::UnexpectedEof,
+                        TransportFailureKind::Io,
+                        TransportFailureKind::Tls,
+                        TransportFailureKind::InvalidFrame,
+                        TransportFailureKind::Quota,
+                    ] {
+                        transport_failure(host, stage, kind, ErrorCode::Offline);
+                    }
+                }
+            }
+        });
+        assert_eq!(lines.len(), 3 * 6 * 6);
+        for line in lines {
+            let value: serde_json::Value = serde_json::from_str(&line).unwrap();
+            assert_eq!(value["event"], "google_transport_stage");
+            assert_eq!(value["outcome"], "failed");
+            assert_eq!(value["error_code"], "OFFLINE");
+            for secret in [
+                "oauth2.googleapis.com",
+                "authorization_code",
+                "access_token",
+                "refresh_token",
+                "client_secret",
+                "provider_error",
+            ] {
+                assert!(!line.contains(secret), "diagnostic leaked {secret}");
+            }
+        }
+    }
 }

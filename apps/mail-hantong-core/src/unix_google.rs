@@ -15,6 +15,7 @@ use hantong_store::{ClientKind, DEFAULT_CLI_LABEL, Store};
 use std::{
     cell::RefCell,
     collections::{BTreeMap, VecDeque},
+    io::Write,
     path::Path,
     rc::Rc,
 };
@@ -39,6 +40,45 @@ struct Finalization {
     input: GoogleSetupInput,
     attempts: u8,
     queued: bool,
+}
+
+#[derive(Clone, Copy)]
+enum SetupStage {
+    OAuthCompletion,
+    SecretStore,
+    AccountRegistration,
+    ProfilePublication,
+    ScopeActivation,
+}
+
+impl SetupStage {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::OAuthCompletion => "oauth_completion",
+            Self::SecretStore => "secret_store",
+            Self::AccountRegistration => "account_registration",
+            Self::ProfilePublication => "profile_publication",
+            Self::ScopeActivation => "scope_activation",
+        }
+    }
+}
+
+fn setup_diagnostic_line(stage: SetupStage, error: ErrorCode) -> String {
+    format!(
+        "hantong_google stage={} outcome=failed code={}",
+        stage.as_str(),
+        error.as_str()
+    )
+}
+
+fn report_setup_failure(stage: SetupStage, error: ErrorCode) {
+    // Keep this line closed: no request IDs, account IDs, URLs, response text,
+    // authorization codes, tokens, paths, or provider error descriptions.
+    let _ = writeln!(
+        std::io::stderr().lock(),
+        "{}",
+        setup_diagnostic_line(stage, error)
+    );
 }
 
 pub(crate) struct State {
@@ -288,7 +328,13 @@ impl Worker {
                 session.expires_at_utc_ms,
             )
         };
-        let pending = auth.complete().await?;
+        let pending = match auth.complete().await {
+            Ok(pending) => pending,
+            Err(error) => {
+                report_setup_failure(SetupStage::OAuthCompletion, error);
+                return Err(error);
+            }
+        };
         if now()? >= expires_at_utc_ms {
             return Err(ErrorCode::ApprovalExpired);
         }
@@ -308,19 +354,34 @@ impl Worker {
         if binding.client_id != client_id || identity.access_mode != input.access_mode {
             return Err(ErrorCode::Conflict);
         }
-        let secrets =
-            hantong_secrets::SecretStore::open(root).map_err(|_| ErrorCode::InternalError)?;
+        let secrets = match hantong_secrets::SecretStore::open(root) {
+            Ok(secrets) => secrets,
+            Err(_) => {
+                report_setup_failure(SetupStage::SecretStore, ErrorCode::InternalError);
+                return Err(ErrorCode::InternalError);
+            }
+        };
         if let Some(session) = self.sessions.borrow_mut().get_mut(&id) {
             session.side_effect_started = true;
         }
-        pending.store(&secrets, &binding)?;
-        let actual = store.activate_google_account(
+        if let Err(error) = pending.store(&secrets, &binding) {
+            report_setup_failure(SetupStage::SecretStore, error);
+            return Err(error);
+        }
+        let actual = match store.activate_google_account(
             &identity,
             &client_id,
             expected,
             input.display_name.as_deref(),
-        )?;
+        ) {
+            Ok(actual) => actual,
+            Err(error) => {
+                report_setup_failure(SetupStage::AccountRegistration, error);
+                return Err(error);
+            }
+        };
         if actual != binding {
+            report_setup_failure(SetupStage::AccountRegistration, ErrorCode::Conflict);
             return Err(ErrorCode::Conflict);
         }
         if let Some(session) = self.sessions.borrow_mut().get_mut(&id) {
@@ -352,10 +413,19 @@ impl Worker {
         };
         // Recover any registration/scope row left staged by a prior attempt
         // before creating a new row. This path never repeats OAuth/token work.
-        crate::unix_registered_profiles::recover_startup(store, root, server)?;
-        crate::unix_registration::recover_startup(store, root, server)?;
-        if store.load_default_cli_registration()?.is_none() {
-            publish_initial_cli(store, server, &account_id, root)?;
+        if let Err(error) = crate::unix_registered_profiles::recover_startup(store, root, server) {
+            report_setup_failure(SetupStage::ProfilePublication, error);
+            return Err(error);
+        }
+        if let Err(error) = crate::unix_registration::recover_startup(store, root, server) {
+            report_setup_failure(SetupStage::ProfilePublication, error);
+            return Err(error);
+        }
+        if store.load_default_cli_registration()?.is_none()
+            && let Err(error) = publish_initial_cli(store, server, &account_id, root)
+        {
+            report_setup_failure(SetupStage::ProfilePublication, error);
+            return Err(error);
         }
         let record = store
             .load_default_cli_registration()?
@@ -417,7 +487,12 @@ impl Worker {
             }
             _ => store.create_google_oauth_cli_scope_refresh(refresh_id, target, pin)?,
         };
-        crate::unix_scope_refresh::complete_google(store, root, server, &refresh)?;
+        if let Err(error) =
+            crate::unix_scope_refresh::complete_google(store, root, server, &refresh)
+        {
+            report_setup_failure(SetupStage::ScopeActivation, error);
+            return Err(error);
+        }
         if let Some(session) = self.sessions.borrow_mut().get_mut(&id) {
             session.finalization = None;
             session.receipt.state = "ready".into();
@@ -604,5 +679,24 @@ mod tests {
 
         state.enqueue_finalization([1; 32]);
         assert!(state.queue.borrow().is_empty());
+    }
+
+    #[test]
+    fn sec08_google_setup_failure_diagnostic_is_closed_and_stable() {
+        let line = setup_diagnostic_line(SetupStage::OAuthCompletion, ErrorCode::Offline);
+        assert_eq!(
+            line,
+            "hantong_google stage=oauth_completion outcome=failed code=OFFLINE"
+        );
+        for secret in [
+            "authorization_code",
+            "access_token",
+            "refresh_token",
+            "client_secret",
+            "account_id",
+            "https://",
+        ] {
+            assert!(!line.contains(secret), "diagnostic leaked {secret}");
+        }
     }
 }

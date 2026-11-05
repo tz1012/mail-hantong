@@ -9,14 +9,30 @@ pub(super) fn parse_response(
     bytes: &[u8],
     limit: usize,
 ) -> Result<(u32, SensitiveBuffer), ErrorCode> {
+    framed_response(bytes, limit, true)?.ok_or(ErrorCode::Offline)
+}
+
+// Only self-delimited responses can finish before a clean TLS close. In
+// particular, an unframed empty buffer is not proof of response completion.
+pub(super) fn framed_response(
+    bytes: &[u8],
+    limit: usize,
+    eof: bool,
+) -> Result<Option<(u32, SensitiveBuffer)>, ErrorCode> {
     if limit == 0 || limit > 2 * 1024 * 1024 {
         return Err(ErrorCode::InvalidInput);
     }
     let end = bytes
         .windows(4)
         .position(|w| w == b"\r\n\r\n")
-        .map(|i| i + 4)
-        .ok_or(ErrorCode::Offline)?;
+        .map(|i| i + 4);
+    let Some(end) = end else {
+        return if bytes.len() >= MAX_HEADER_BYTES {
+            Err(ErrorCode::QuotaExceeded)
+        } else {
+            Ok(None)
+        };
+    };
     if end > MAX_HEADER_BYTES {
         return Err(ErrorCode::QuotaExceeded);
     }
@@ -75,20 +91,28 @@ pub(super) fn parse_response(
         return Err(ErrorCode::Offline);
     }
     let body = if chunked {
-        decode_chunked(&bytes[end..], limit)?
+        let Some(body) = decode_chunked(&bytes[end..], limit)? else {
+            return Ok(None);
+        };
+        body
     } else if let Some(n) = length {
+        if bytes[end..].len() < n {
+            return Ok(None);
+        }
         if bytes[end..].len() != n {
             return Err(ErrorCode::Offline);
         }
         let mut out = SensitiveBuffer(Vec::with_capacity(n));
         out.0.extend_from_slice(&bytes[end..]);
         out
-    } else if bytes[end..].is_empty() {
+    } else if bytes[end..].is_empty() && eof {
         SensitiveBuffer(Vec::new())
+    } else if bytes[end..].is_empty() {
+        return Ok(None);
     } else {
         return Err(ErrorCode::Offline);
     };
-    Ok((status, body))
+    Ok(Some((status, body)))
 }
 
 fn parse_status(line: &[u8]) -> Result<u32, ErrorCode> {
@@ -119,13 +143,12 @@ fn trim_ows(mut v: &[u8]) -> &[u8] {
     v
 }
 
-fn decode_chunked(mut input: &[u8], limit: usize) -> Result<SensitiveBuffer, ErrorCode> {
+fn decode_chunked(mut input: &[u8], limit: usize) -> Result<Option<SensitiveBuffer>, ErrorCode> {
     let mut out = SensitiveBuffer(Vec::with_capacity(limit.min(4096)));
     loop {
-        let line_end = input
-            .windows(2)
-            .position(|w| w == b"\r\n")
-            .ok_or(ErrorCode::Offline)?;
+        let Some(line_end) = input.windows(2).position(|w| w == b"\r\n") else {
+            return Ok(None);
+        };
         let size = &input[..line_end];
         if size.is_empty()
             || size
@@ -141,14 +164,20 @@ fn decode_chunked(mut input: &[u8], limit: usize) -> Result<SensitiveBuffer, Err
         .map_err(|_| ErrorCode::Offline)?;
         input = &input[line_end + 2..];
         if n == 0 {
+            if input.len() < 2 {
+                return Ok(None);
+            }
             if input != b"\r\n" {
                 return Err(ErrorCode::Offline);
             }
-            return Ok(out);
+            return Ok(Some(out));
         }
         let needed = n.checked_add(2).ok_or(ErrorCode::QuotaExceeded)?;
-        if n > limit.saturating_sub(out.0.len()) || input.len() < needed {
+        if n > limit.saturating_sub(out.0.len()) {
             return Err(ErrorCode::QuotaExceeded);
+        }
+        if input.len() < needed {
+            return Ok(None);
         }
         if &input[n..needed] != b"\r\n" {
             return Err(ErrorCode::Offline);
@@ -161,6 +190,20 @@ fn decode_chunked(mut input: &[u8], limit: usize) -> Result<SensitiveBuffer, Err
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn sec03_unix_http_partial_frames_never_complete_before_the_boundary() {
+        for frame in [
+            b"HTTP/1.1 200 OK\r\nContent-Length: 4\r\n\r\nmail".as_slice(),
+            b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n4\r\nmail\r\n0\r\n\r\n"
+                .as_slice(),
+        ] {
+            for end in 0..frame.len() {
+                assert!(framed_response(&frame[..end], 64, false).unwrap().is_none());
+                assert!(parse_response(&frame[..end], 64).is_err());
+            }
+            assert!(framed_response(frame, 64, false).unwrap().is_some());
+        }
+    }
     #[test]
     fn sec03_unix_http_parser_accepts_chunked_body() {
         let response =
