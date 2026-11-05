@@ -1,6 +1,9 @@
 name: Scope recovery Linux release gate
 
 on:
+  push:
+    branches: [feature/linux-product-20261104]
+    paths: [.github/workflows/scope-release-check.yml]
   workflow_dispatch:
     inputs:
       version:
@@ -18,7 +21,7 @@ jobs:
     timeout-minutes: 60
     env:
       CARGO_INCREMENTAL: '0'
-      PACKAGE_VERSION: ${{ inputs.version }}
+      PACKAGE_VERSION: ${{ inputs.version || '0.1.0-beta.30' }}
     steps:
       - uses: actions/checkout@v6.1.0
         with:
@@ -30,7 +33,7 @@ jobs:
         run: |
           rustup toolchain install 1.95.0 --profile minimal --component clippy,rustfmt
           rustup default 1.95.0
-      - uses: actions/cache@v5
+      - uses: actions/cache/restore@v6.1.0
         with:
           path: |
             ~/.cargo/registry
@@ -72,7 +75,14 @@ jobs:
           python -X utf8 scripts/test_linux_installed_product.py "$RUNNER_TEMP/installed-smoke"
       - uses: actions/upload-artifact@v7.0.2
         with:
-          name: mail-hantong-${{ inputs.version }}-linux-native-gate
+          name: mail-hantong-${{ env.PACKAGE_VERSION }}-linux-native-gate
           path: ${{ runner.temp }}/artifacts/${{ inputs.version }}/
           if-no-files-found: error
           retention-days: 14
+      - uses: actions/cache/save@v6.1.0
+        if: success()
+        with:
+          path: |
+            ~/.cargo/registry
+            target
+          key: scope-linux-1.95.0-${{ hashFiles('Cargo.lock') }}-${{ github.sha }}
