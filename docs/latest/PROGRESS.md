@@ -2445,3 +2445,11 @@ Mac 호환성 로그의 관측성 공백도 수정했다. 이전 source upgrade�
 probe는 새 프로세스에서 초기 상호작용 허용 상태를 확인하고 guard의 true→false→true 전이를 검사한다. guard Drop이 항상 true로 돌리는 upstream 특성 때문에 처음부터 false면 변경하지 않고 실패한다. CI/RUNNER_TEMP 및 고정 합성 root·정확한 Keychain 경로·소유자·유형을 확인하고 해당 Keychain의 기존 합성 IMAP 값만 읽는다. 반환 버퍼는 Security.framework RAII로 해제하고 원문·selector·오류 문자열은 출력하지 않는다. OSStatus는 Apple SecBase.h와 대조해 -25308을 interaction_not_allowed, -25291/-25294를 unavailable, -25293을 auth_failed, -25300을 not_found, 나머지를 other_error로 제한했다. 분류는 잠금·ACL·서명 원인 확정을 대신하지 않는다.
 
 probe 성공/실패 모두 원래 upgrade/reopen gate를 대체하지 않는다. probe 실패 후 원래 시험도 실행하고 전체 실패는 유지하며, baseline은 실패 시에도 재검사한다. 로컬 관련 Python20시험과 문서29시험 통과, manifest/lock metadata 및 fmt/diff 검사 통과. 독립 최종 검토 후 Mac Intel/ARM 실제 재시험을 이어간다. 이 승인을 사람 보안 검토 완료·실제 사용자 Keychain 접근·ACL 변경·자동 확인·배포 조건 면제로 해석하지 않는다.
+
+### 2026-11-06 ADR-032 승인 범위 재확인·필수 CI 시험 경쟁 수정
+
+사용자가 승인 전 설명을 명확히 전달했다. 이미 잠금 파일에 있던 security-framework 3.7.0을 Mac 시험 전용 직접 의존성으로 추가하고 격리된 합성 자격증명의 오류 상태만 확인하는 범위에 대해 실제 원문 “승인할게”로 동의했다. 실제 사용자 Keychain·ACL/trusted-app/partition-list 변경, 바이너리 재서명, OS 확인 자동화는 승인되지 않았다. 의존성 승인과 AGENTS §6의 별도 Secrets 사람 검토를 구분한다. 95349fed75eb3b0faa2a547d0bf79b531878f67d의 Mac 재시험42223324904는 중복 시작·취소하지 않고 유지했다.
+
+같은 소스의 일반 CI42223319723에서 Mac ARM의 기존 MCP idle 알림 시험이 실패했다. 30ms 뒤 EOF를 넣던 시험 입력이 실제 알림보다 먼저 종료되는 경쟁으로, 제품 이벤트 루프는 변경하지 않았다. 시험 입력은 완전한 notifications/resources/updated JSON이 실제 flush된 뒤에만 후속 resource 읽기와 EOF를 제공하도록 바꿨다. 5초 실패 watchdog은 유지하고 누락·불완전·미flush·응답 내 유사 문자열은 통과시키지 않는 음성 시험을 추가했다. 원래 알림 및 resource 내용 검증과 알림→읽기 순서 검증을 유지했다. Linux WSL 대상 bin 시험24개 전부 통과, targeted Clippy -D warnings 통과. 독립 코드 검토에서 차단 사항 없음. 최종 네 플랫폼 CI의 대체 증거로 표시하지 않는다.
+
+Python 음성 시험에서 의도적으로 발생시키던 probe 실패 마커는 캡처한 뒤 정확한 문자열을 assertion한다. 운영 진단과 혼동되는 출력만 제거했으며 실제 harness의 실패 판정·원래 호환성 gate는 유지했다. 관련 Python20개 전부 통과. Mac 읽기 거부는 호환성 성공으로 처리하지 않으며 공식 배포는 계속 보류한다.

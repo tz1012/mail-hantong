@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import contextlib
+from io import StringIO
 import importlib.util
 from pathlib import Path
 import subprocess
@@ -105,10 +107,12 @@ class MacCompatibilityDiagnosticsTests(unittest.TestCase):
 
     def test_sec03_failed_probe_keeps_all_original_phases_and_fails_overall(self):
         args = (Path("old"), Path("new"), Path("old-target"), Path("new-target"), Path("root"), Path("keychain"))
-        with mock.patch.object(compat, "run_test") as phase, mock.patch.object(compat, "run_probe", side_effect=RuntimeError("probe failed")):
+        output = StringIO()
+        with mock.patch.object(compat, "run_test") as phase, mock.patch.object(compat, "run_probe", side_effect=RuntimeError("probe failed")), contextlib.redirect_stdout(output):
             with self.assertRaisesRegex(RuntimeError, "probe failed"):
                 compat.run_phases(*args)
         self.assertEqual([call.args[3] for call in phase.call_args_list], ["seed", "upgrade", "reopen"])
+        self.assertEqual(output.getvalue().strip(), "HANTONG_KEYCHAIN_PROBE_RESULT result=failed")
 
     def test_sec03_probe_rechecks_baseline_even_after_failure(self):
         keychain = Path("keychain")
@@ -136,8 +140,6 @@ class MacCompatibilityDiagnosticsTests(unittest.TestCase):
             "test macos_keychain_probe::mac_keychain_read_probe ... ok",
             "private-value",
         ]), None)
-        from io import StringIO
-        import contextlib
         output = StringIO()
         with mock.patch.object(compat, "_baseline", return_value=(keychain, (keychain,))), mock.patch.object(compat.subprocess, "Popen", return_value=process) as start, contextlib.redirect_stdout(output):
             compat.run_probe(Path("source"), Path("target"), Path("root"), keychain)

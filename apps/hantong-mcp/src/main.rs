@@ -1800,6 +1800,116 @@ mod tests {
         assert_eq!(server.backend.reads, 2);
     }
 
+    struct SubscriptionReader {
+        initial: io::Cursor<Vec<u8>>,
+        followup: io::Cursor<Vec<u8>>,
+        release: Option<mpsc::Receiver<()>>,
+    }
+
+    impl SubscriptionReader {
+        fn new(initial: Vec<u8>, followup: Vec<u8>, release: mpsc::Receiver<()>) -> Self {
+            Self {
+                initial: io::Cursor::new(initial),
+                followup: io::Cursor::new(followup),
+                release: Some(release),
+            }
+        }
+    }
+
+    impl io::Read for SubscriptionReader {
+        fn read(&mut self, output: &mut [u8]) -> io::Result<usize> {
+            if output.is_empty() {
+                return Ok(0);
+            }
+            let count = io::Read::read(&mut self.initial, output)?;
+            if count != 0 {
+                return Ok(count);
+            }
+            if let Some(release) = self.release.take() {
+                // Safety watchdog: a missing notification must fail, never hang or pass.
+                release.recv_timeout(Duration::from_secs(5)).map_err(|_| {
+                    io::Error::new(
+                        io::ErrorKind::TimedOut,
+                        "subscription notification was not flushed",
+                    )
+                })?;
+            }
+            io::Read::read(&mut self.followup, output)
+        }
+    }
+
+    struct NotificationWriter {
+        output: Vec<u8>,
+        release: Option<mpsc::Sender<()>>,
+    }
+
+    impl NotificationWriter {
+        fn new(release: mpsc::Sender<()>) -> Self {
+            Self {
+                output: Vec::new(),
+                release: Some(release),
+            }
+        }
+    }
+
+    impl Write for NotificationWriter {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            self.output.extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            let notification_flushed = self.output.ends_with(b"\n")
+                && self
+                    .output
+                    .split(|byte| *byte == b'\n')
+                    .rev()
+                    .find(|line| !line.is_empty())
+                    .and_then(|line| serde_json::from_slice::<Value>(line).ok())
+                    .is_some_and(|value| value["method"] == "notifications/resources/updated");
+            if notification_flushed && let Some(release) = self.release.take() {
+                release.send(()).map_err(|_| {
+                    io::Error::new(
+                        io::ErrorKind::BrokenPipe,
+                        "subscription reader exited before notification flush",
+                    )
+                })?;
+            }
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn mcp07_notification_gate_requires_a_complete_flushed_notification() {
+        let (release, received) = mpsc::channel();
+        let mut writer = NotificationWriter::new(release);
+        writer
+            .write_all(
+                b"{\"jsonrpc\":\"2.0\",\"id\":9,\"result\":\"notifications/resources/updated\"}\n",
+            )
+            .unwrap();
+        writer.flush().unwrap();
+        assert!(matches!(
+            received.try_recv(),
+            Err(mpsc::TryRecvError::Empty)
+        ));
+        writer.write_all(b"{\"jsonrpc\":\"2.0\",\"method\":\"notifications/resources/updated\",\"params\":{}}" ).unwrap();
+        writer.flush().unwrap();
+        assert!(matches!(
+            received.try_recv(),
+            Err(mpsc::TryRecvError::Empty)
+        ));
+        writer.write_all(b"\n").unwrap();
+        assert!(matches!(
+            received.try_recv(),
+            Err(mpsc::TryRecvError::Empty)
+        ));
+        writer.flush().unwrap();
+        assert_eq!(received.try_recv(), Ok(()));
+        writer.flush().unwrap();
+        assert!(received.try_recv().is_err());
+    }
+
     struct TimedReader {
         bytes: Vec<u8>,
         position: usize,
@@ -1888,6 +1998,14 @@ mod tests {
             .collect()
     }
 
+    fn protocol_output(output: &[u8]) -> Vec<Value> {
+        output
+            .split(|byte| *byte == b'\n')
+            .filter(|line| !line.is_empty())
+            .map(|line| serde_json::from_slice(line).unwrap())
+            .collect()
+    }
+
     fn event_protocol_frames(extra: impl IntoIterator<Item = Value>) -> Vec<Value> {
         let mut frames = vec![
             json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"fake-host","version":"1"}}}),
@@ -1900,13 +2018,18 @@ mod tests {
 
     #[test]
     fn mcp07_idle_subscription_notifies_host_then_host_reads_resource() {
-        let reader = TimedReader::new(
+        let (release_sender, release_receiver) = mpsc::channel();
+        let reader = io::BufReader::new(SubscriptionReader::new(
             protocol_frames(&event_protocol_frames(std::iter::empty::<Value>())),
-            usize::MAX,
-            Duration::ZERO,
-            Duration::from_millis(30),
-        );
-        let mut output = Vec::new();
+            protocol_frames(&[json!({
+                "jsonrpc":"2.0",
+                "id":3,
+                "method":"resources/read",
+                "params":{"uri":EVENTS_URI}
+            })]),
+            release_receiver,
+        ));
+        let mut output = NotificationWriter::new(release_sender);
         serve_with_events(
             reader,
             &mut output,
@@ -1914,10 +2037,23 @@ mod tests {
             Duration::from_millis(5),
         )
         .unwrap();
-        let notifications = notification_output(&output);
+        let values = protocol_output(&output.output);
+        let notifications = notification_output(&output.output);
         assert!(!notifications.is_empty());
         assert_eq!(notifications[0]["params"], json!({"uri": EVENTS_URI}));
         assert!(notifications[0]["params"].get("content").is_none());
+        let notification_index = values
+            .iter()
+            .position(|value| value["method"] == "notifications/resources/updated")
+            .unwrap();
+        let read_index = values.iter().position(|value| value["id"] == 3).unwrap();
+        assert!(notification_index < read_index);
+        assert!(
+            values[read_index]["result"]["contents"][0]["text"]
+                .as_str()
+                .unwrap()
+                .contains("mail.received")
+        );
     }
 
     #[test]
