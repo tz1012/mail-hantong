@@ -554,6 +554,14 @@ mod tests {
 
     static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
 
+    fn replacement_program() -> &'static str {
+        if cfg!(target_os = "macos") {
+            "/usr/bin/false"
+        } else {
+            "/bin/false"
+        }
+    }
+
     fn fixture() -> (std::path::PathBuf, std::path::PathBuf) {
         // macOS exposes `/var` as a symlink to `/private/var`; release
         // validation intentionally rejects symlinked ancestors, so construct
@@ -759,7 +767,7 @@ mod tests {
             match change {
                 0 => {
                     std::fs::rename(&core, root.join("held-core")).unwrap();
-                    std::fs::copy("/bin/false", &core).unwrap();
+                    std::fs::copy(replacement_program(), &core).unwrap();
                 }
                 1 => {
                     std::fs::rename(&core, root.join("held-core")).unwrap();
@@ -777,7 +785,7 @@ mod tests {
                 _ => {
                     std::fs::rename(root.join("bin"), root.join("held-bin")).unwrap();
                     std::fs::create_dir(root.join("bin")).unwrap();
-                    std::fs::copy("/bin/false", &core).unwrap();
+                    std::fs::copy(replacement_program(), &core).unwrap();
                 }
             }
             assert!(
@@ -793,7 +801,7 @@ mod tests {
     fn sec03_verified_launch_keeps_hash_snapshot_before_command_construction() {
         let (root, file, snapshot, digest) = executable_fixture();
         let core = root.join("bin/mail-hantong-core");
-        std::fs::copy("/bin/false", &core).unwrap();
+        std::fs::copy(replacement_program(), &core).unwrap();
         let mut command = guarded_command(&core, file, snapshot, digest).unwrap();
         assert!(command.output().is_err());
         drop(command);
@@ -807,7 +815,7 @@ mod tests {
             let (root, file, snapshot, digest) = executable_fixture();
             let core = root.join("bin/mail-hantong-core");
             let replacement = root.join("replacement");
-            std::fs::copy("/bin/false", &replacement).unwrap();
+            std::fs::copy(replacement_program(), &replacement).unwrap();
             let mut command = guarded_command(&core, file, snapshot, digest).unwrap();
             let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
             let concurrent = barrier.clone();
@@ -862,7 +870,7 @@ mod tests {
                 validate_manifest_asset(&root, &manifest, "hantong", asset).unwrap();
             let mut command = guarded_command(&path, file, snapshot, digest).unwrap();
             std::fs::rename(&path, root.join("held-asset")).unwrap();
-            std::fs::copy("/bin/false", &path).unwrap();
+            std::fs::copy(replacement_program(), &path).unwrap();
             assert!(command.output().is_err());
             drop(command);
             std::fs::remove_dir_all(root).unwrap();
@@ -918,7 +926,7 @@ mod tests {
         let (root, file, snapshot, digest) = executable_fixture();
         let core = root.join("bin/mail-hantong-core");
         let replacement = root.join("replacement");
-        std::fs::copy("/bin/false", &replacement).unwrap();
+        std::fs::copy(replacement_program(), &replacement).unwrap();
         let replacement = std::ffi::CString::new(replacement.as_os_str().as_bytes()).unwrap();
         let destination = std::ffi::CString::new(core.as_os_str().as_bytes()).unwrap();
         let mut command = guarded_command(&core, file, snapshot, digest).unwrap();

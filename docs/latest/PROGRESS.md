@@ -2399,3 +2399,5 @@ Reports: docs/latest/CI-REPAIR-20261105.md and docs/latest/HUMAN-SECURITY-REVIEW
 - Mac 하네스는 정확한 CI Keychain 기본값·검색 목록, 기존 앱 루트·runtime socket 부재, 종료 뒤 socket 소멸을 검사한다. 살아 있는 socket이 남으면 데이터 정리를 거부한다. 시간 초과 Cargo 그룹은 회수하며 시험 정확히 1개 실행을 요구한다. 기존 Keychain ACL·검색 복원 경계를 완화하지 않는다. 이 Windows 로컬 결과를 실제 Mac 통과로 주장하지 않는다.
 
 다음: 고정 소스의 네 플랫폼 전체 CI·Linux 설치 gate·Mac 두 아키텍처 교차 버전 gate 결과를 수집한다. 실패를 숨기거나 기존 사용자 확인으로 새 변경을 승인 처리하지 않는다. 새 사람 검토 대상과 남은 기술·실제 환경 한계를 결과 보고에 명시한다.
+
+초기 고정 커밋 2f5fc163514beadbe775e568e369774362952eb5의 Linux 설치 gate 42195685673은 성공했다. Mac ARM package gate 42195688470/job127818266590은 플랫폼 44/47 통과, 새 시험 3개가 /bin/false 부재(ENOENT)로 실패했다. /bin/echo 실행과 script FD 시험은 통과했다. Mac의 실제 /usr/bin/false로 fixture 경로만 정렬하며 동일한 거부 assertion을 유지한다. 실패 기록은 target/toctou-mac-arm-job.log에 보존한다. 최종 전체 CI는 수정 커밋으로 다시 실행하며 앞선 결과로 대체하지 않는다.
