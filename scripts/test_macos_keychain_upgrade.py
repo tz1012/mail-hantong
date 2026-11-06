@@ -11,6 +11,7 @@ import argparse
 import os
 from pathlib import Path
 import platform
+import re
 import shutil
 import signal
 import stat
@@ -21,6 +22,11 @@ from run_macos_test import _baseline, _validate_environment
 FIXTURE = Path("scripts/fixtures/macos_keychain_compat_module.rs")
 TEST = Path("crates/hantong-secrets/src/macos_keychain_compat.rs")
 MODULE_MARKER = b"mod macos_keychain_compat;"
+MARKER_RE = re.compile(
+    r"^HANTONG_COMPAT_MARKER phase=(seed|upgrade|reopen) "
+    r"step=(open|opened|read|read-old|write-new|read-new|done)$",
+    re.MULTILINE,
+)
 
 
 def fail(message: str) -> None:
@@ -46,6 +52,10 @@ def _kill_process_group(process: subprocess.Popen[str]) -> None:
     process.wait(timeout=10)
 
 
+def _markers(output: str) -> str:
+    return ",".join(f"{phase}:{step}" for phase, step in MARKER_RE.findall(output))[-512:] or "none"
+
+
 def run_test(source: Path, target: Path, root: Path, phase: str, expected_keychain: Path) -> None:
     current_default, current_list = _baseline()
     if current_default != expected_keychain or current_list != (expected_keychain,):
@@ -60,7 +70,7 @@ def run_test(source: Path, target: Path, root: Path, phase: str, expected_keycha
     env.pop("CARGO_TARGET_AARCH64_APPLE_DARWIN_RUNNER", None)
     process = subprocess.Popen(
         ["cargo", "test", "-p", "hantong-secrets", "--lib", "--locked", "--offline", "--",
-         "--exact", "macos_keychain_compat::mac_keychain_compatibility_fixture"],
+         "--exact", "macos_keychain_compat::mac_keychain_compatibility_fixture", "--nocapture"],
         cwd=source, env=env, start_new_session=True,
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
     )
@@ -68,11 +78,17 @@ def run_test(source: Path, target: Path, root: Path, phase: str, expected_keycha
         output, _ = process.communicate(timeout=900)
     except subprocess.TimeoutExpired:
         _kill_process_group(process)
-        raise RuntimeError(f"{phase} compatibility test timed out")
+        output, _ = process.communicate()
+        started = "running 1 test" in output
+        raise RuntimeError(
+            f"{phase} compatibility test timed out; fixture_started={str(started).lower()}"
+            f"; markers={_markers(output)}"
+        )
     if process.returncode != 0:
-        raise RuntimeError(f"{phase} compatibility test failed: {output[-4096:]}")
+        raise RuntimeError(f"{phase} compatibility test failed; markers={_markers(output)}")
     if "running 1 test" not in output or "mac_keychain_compatibility_fixture ... ok" not in output:
         raise RuntimeError(f"{phase} compatibility test did not execute exactly one passing fixture")
+    print(f"HANTONG_COMPAT_RESULT phase={phase} markers={_markers(output)}", flush=True)
     current_default, current_list = _baseline()
     if current_default != expected_keychain or current_list != (expected_keychain,):
         fail(f"Keychain baseline changed after {phase}")

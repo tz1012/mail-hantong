@@ -30,28 +30,44 @@ fn matches_bytes(store: &SecretStore, credential_slot: MailCredentialSlot, expec
     protected.as_bytes_in_secrets() == expected
 }
 
+fn marker(phase: &str, step: &str) {
+    eprintln!("\nHANTONG_COMPAT_MARKER phase={phase} step={step}");
+}
+
 #[test]
 fn mac_keychain_compatibility_fixture() {
+    let phase = env::var(PHASE_ENV).expect("compatibility phase");
+    assert!(matches!(phase.as_str(), "seed" | "upgrade" | "reopen"));
+    marker(&phase, "open");
     let store = SecretStore::open(root()).expect("open isolated secret root");
+    marker(&phase, "opened");
     let imap = MailCredentialSlot::ImapOAuthRefresh;
     let smtp = MailCredentialSlot::SmtpOAuthRefresh;
-    match env::var(PHASE_ENV).expect("compatibility phase").as_str() {
+    match phase.as_str() {
         "seed" => {
             store.store_from_reader(ACCOUNT, slot(imap), IMAP_OLD).expect("seed IMAP item");
             store.store_from_reader(ACCOUNT, slot(smtp), SMTP_OLD).expect("seed SMTP item");
+            marker("seed", "read");
             assert!(matches_bytes(&store, imap, IMAP_OLD));
             assert!(matches_bytes(&store, smtp, SMTP_OLD));
+            marker("seed", "done");
         }
         "upgrade" => {
+            marker("upgrade", "read-old");
             assert!(matches_bytes(&store, imap, IMAP_OLD));
             assert!(matches_bytes(&store, smtp, SMTP_OLD));
+            marker("upgrade", "write-new");
             store.store_from_reader(ACCOUNT, slot(imap), IMAP_NEW).expect("update IMAP item");
+            marker("upgrade", "read-new");
             assert!(matches_bytes(&store, imap, IMAP_NEW));
             assert!(matches_bytes(&store, smtp, SMTP_OLD));
+            marker("upgrade", "done");
         }
         "reopen" => {
+            marker("reopen", "read");
             assert!(matches_bytes(&store, imap, IMAP_NEW));
             assert!(matches_bytes(&store, smtp, SMTP_OLD));
+            marker("reopen", "done");
         }
         other => panic!("unsupported compatibility phase: {other}"),
     }

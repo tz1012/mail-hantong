@@ -26,6 +26,10 @@ def fail(message: str) -> None:
     raise RuntimeError(message)
 
 
+def marker(phase: str, step: str) -> None:
+    print(f"HANTONG_PRODUCT_MARKER phase={phase} step={step}", flush=True)
+
+
 def runtime_socket() -> Path:
     result = subprocess.run(["/usr/bin/getconf", "DARWIN_USER_TEMP_DIR"], check=True,
                             text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
@@ -68,6 +72,7 @@ def install(package_root: Path, install_root: Path, bin_dir: Path, environment: 
 
 
 def run_version(package: Path, root: Path, install_root: Path, bin_dir: Path, environment: dict[str, str], restart: bool, socket: Path) -> None:
+    phase = "candidate" if restart else "old"
     stage = root / f"stage-{install_root.parent.name}"
     stage.mkdir(mode=0o700)
     extract_archive(package, stage)
@@ -77,6 +82,7 @@ def run_version(package: Path, root: Path, install_root: Path, bin_dir: Path, en
         if len(nested) != 1 or not (nested[0] / "install.sh").is_file():
             fail("package installer is missing")
         package_root = nested[0]
+    marker(phase, "install")
     cli = install(package_root, install_root, bin_dir, environment)
     versions = install_root / "versions"
     entries = [item for item in versions.iterdir() if item.is_dir() and not item.is_symlink()]
@@ -88,7 +94,9 @@ def run_version(package: Path, root: Path, install_root: Path, bin_dir: Path, en
     try:
         for _ in range(2 if restart else 1):
             stopped = False
+            marker(phase, f"start-{_ + 1}")
             run_cli(cli, environment)
+            marker(phase, f"status-{_ + 1}")
             subprocess.run([str(cli), "core", "status", "--json"], env=environment, stdin=subprocess.DEVNULL,
                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=15, check=True)
             if not database.is_file() or database.stat().st_size == 0:
@@ -96,6 +104,7 @@ def run_version(package: Path, root: Path, install_root: Path, bin_dir: Path, en
             with database.open("rb") as handle:
                 if handle.read(16) == b"SQLite format 3\x00":
                     fail("old/candidate Core created a plaintext database")
+            marker(phase, f"stop-{_ + 1}")
             stop_core(core, environment)
             stopped = True
             deadline = time.monotonic() + 10
@@ -153,6 +162,15 @@ def main() -> int:
 if __name__ == "__main__":
     try:
         raise SystemExit(main())
-    except (OSError, RuntimeError, subprocess.SubprocessError) as error:
-        print(f"error: macOS cross-version product check failed: {error}", file=__import__("sys").stderr)
+    except subprocess.TimeoutExpired:
+        print("error: macOS cross-version product check failed kind=timeout", file=__import__("sys").stderr)
+        raise SystemExit(2)
+    except subprocess.CalledProcessError:
+        print("error: macOS cross-version product check failed kind=process_exit", file=__import__("sys").stderr)
+        raise SystemExit(2)
+    except OSError:
+        print("error: macOS cross-version product check failed kind=os_error", file=__import__("sys").stderr)
+        raise SystemExit(2)
+    except RuntimeError:
+        print("error: macOS cross-version product check failed kind=runtime", file=__import__("sys").stderr)
         raise SystemExit(2)
