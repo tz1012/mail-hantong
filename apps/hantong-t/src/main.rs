@@ -8,7 +8,9 @@ mod unified;
 use serde_json::Value;
 use std::env;
 use std::io::{self, BufRead, Read, Write};
-use std::process::{Command, Stdio};
+#[cfg(windows)]
+use std::process::Command;
+use std::process::Stdio;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -56,6 +58,11 @@ impl Runner {
     }
 
     fn call(&self, args: &[&str]) -> Result<Value, String> {
+        #[cfg(unix)]
+        let mut command =
+            hantong_platform::unix_release::verified_sibling_command("hantong-t", "bin/hantong")
+                .map_err(|_| "unable to verify hantong CLI".to_owned())?;
+        #[cfg(windows)]
         let mut command = Command::new(&self.program);
         command.arg("--lang").arg(self.lang.flag()).arg("--json");
         for arg in args {
@@ -126,7 +133,13 @@ impl Runner {
         {
             return Err("invalid command argument".to_owned());
         }
-        let status = Command::new(&self.program)
+        #[cfg(unix)]
+        let mut command =
+            hantong_platform::unix_release::verified_sibling_command("hantong-t", "bin/hantong")
+                .map_err(|_| "unable to verify hantong CLI".to_owned())?;
+        #[cfg(windows)]
+        let mut command = Command::new(&self.program);
+        let status = command
             .arg("--lang")
             .arg(self.lang.flag())
             .args(args)
@@ -1016,13 +1029,25 @@ fn line_main() -> io::Result<()> {
         }
         match google_login_args(&command) {
             Ok(Some(arguments)) => {
-                let outcome = Command::new(&runner.program)
-                    .args(["--lang", runner.lang.flag()])
-                    .args(&arguments)
-                    .stdin(Stdio::inherit())
-                    .stdout(Stdio::inherit())
-                    .stderr(Stdio::inherit())
-                    .status();
+                #[cfg(unix)]
+                let command = hantong_platform::unix_release::verified_sibling_command(
+                    "hantong-t",
+                    "bin/hantong",
+                );
+                #[cfg(windows)]
+                let command: Result<Command, std::io::Error> = Ok(Command::new(&runner.program));
+                let outcome = command
+                    .map_err(|_| "unable to verify hantong CLI".to_owned())
+                    .and_then(|mut command| {
+                        command
+                            .args(["--lang", runner.lang.flag()])
+                            .args(&arguments)
+                            .stdin(Stdio::inherit())
+                            .stdout(Stdio::inherit())
+                            .stderr(Stdio::inherit())
+                            .status()
+                            .map_err(|_| "unable to run hantong".to_owned())
+                    });
                 if !matches!(outcome,Ok(status) if status.success()) {
                     eprintln!(
                         "{}",
@@ -1060,12 +1085,24 @@ fn line_main() -> io::Result<()> {
                 };
                 // The human explicitly opens this session. Cached mail is not
                 // attached or transferred to a model by this navigation action.
-                let outcome = Command::new(&runner.program)
-                    .args(["--lang", runner.lang.flag(), "ai", action, provider])
-                    .stdin(Stdio::inherit())
-                    .stdout(Stdio::inherit())
-                    .stderr(Stdio::inherit())
-                    .status();
+                #[cfg(unix)]
+                let command = hantong_platform::unix_release::verified_sibling_command(
+                    "hantong-t",
+                    "bin/hantong",
+                );
+                #[cfg(windows)]
+                let command: Result<Command, std::io::Error> = Ok(Command::new(&runner.program));
+                let outcome = command
+                    .map_err(|_| "unable to verify hantong CLI".to_owned())
+                    .and_then(|mut command| {
+                        command
+                            .args(["--lang", runner.lang.flag(), "ai", action, provider])
+                            .stdin(Stdio::inherit())
+                            .stdout(Stdio::inherit())
+                            .stderr(Stdio::inherit())
+                            .status()
+                            .map_err(|_| "unable to run hantong".to_owned())
+                    });
                 if !matches!(outcome,Ok(status) if status.success()) {
                     eprintln!(
                         "{}",

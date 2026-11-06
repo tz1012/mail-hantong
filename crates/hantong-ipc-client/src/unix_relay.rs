@@ -11,7 +11,7 @@ use hantong_contracts::ErrorCode;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::io::{Read, Write};
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
@@ -368,7 +368,7 @@ pub fn call(
             })
             .map_err(|_| ErrorCode::CoreUnavailable)?;
     }
-    let core = hantong_platform::unix_release::verified_installed_core(&caller)?;
+    let core = hantong_platform::unix_release::verified_core_command(&caller)?;
     let frame = request.encode()?;
     let body = tokio::runtime::Builder::new_current_thread()
         .enable_io()
@@ -387,8 +387,11 @@ pub fn call(
     body.pipe_response(&request)
 }
 
-fn run_child(core: std::path::PathBuf, frame: Vec<u8>) -> Result<Vec<u8>, ErrorCode> {
-    let mut child = Command::new(core)
+fn run_child(
+    mut core: hantong_platform::unix_release::VerifiedCoreCommand,
+    frame: Vec<u8>,
+) -> Result<Vec<u8>, ErrorCode> {
+    let mut child = core
         .arg("unix-relay")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())

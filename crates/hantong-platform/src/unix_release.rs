@@ -8,9 +8,13 @@ use hantong_contracts::{ErrorCode, wire_hex};
 use serde_json::{Map, Value};
 use std::collections::BTreeSet;
 use std::fs::File;
-use std::io::Read;
+use std::io::{Read, Seek, SeekFrom};
+use std::os::fd::AsRawFd;
+use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
+use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
+use std::process::{Child, Command, ExitStatus, Output, Stdio};
 
 const MAX_MANIFEST: u64 = 4 * 1024 * 1024;
 
@@ -18,6 +22,108 @@ const MAX_MANIFEST: u64 = 4 * 1024 * 1024;
 /// returns its sibling Core executable. The caller name is only a basename
 /// selector; paths and arbitrary helper names are rejected.
 pub fn verified_installed_core(caller_name: &str) -> Result<PathBuf, ErrorCode> {
+    let (path, _, _, _) = verified_core(caller_name)?;
+    Ok(path)
+}
+
+/// Builds a command retaining the exact Core file hashed by the manifest.
+/// Linux executes through that descriptor, never reopening the executable by
+/// package path. macOS has no fexecve: its final path check narrows, but cannot
+/// eliminate, the same-UID check-to-exec race. Neither permits a path fallback.
+pub fn verified_core_command(caller_name: &str) -> Result<VerifiedCoreCommand, ErrorCode> {
+    verified_sibling_command(caller_name, "bin/mail-hantong-core")
+}
+
+/// Only these fixed package assets may be launched; arbitrary paths are rejected.
+pub fn verified_sibling_command(
+    caller_name: &str,
+    asset: &str,
+) -> Result<VerifiedCoreCommand, ErrorCode> {
+    if !matches!(
+        asset,
+        "bin/mail-hantong-core" | "bin/hantong" | "bin/hantong-t" | "update.sh"
+    ) {
+        return Err(ErrorCode::InvalidInput);
+    }
+    let (path, file, snapshot, digest) = verified_asset(caller_name, asset)?;
+    guarded_command(&path, file, snapshot, digest)
+}
+
+/// No raw Command is exposed: each launch rehashes the retained image in the
+/// parent, before fork. The child only performs async-signal-safe checks.
+pub struct VerifiedCoreCommand {
+    command: Command,
+    file: File,
+    snapshot: FileSnapshot,
+    digest: [u8; 32],
+}
+
+impl VerifiedCoreCommand {
+    pub fn arg(&mut self, arg: impl AsRef<std::ffi::OsStr>) -> &mut Self {
+        self.command.arg(arg);
+        self
+    }
+
+    pub fn args<I, S>(&mut self, args: I) -> &mut Self
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<std::ffi::OsStr>,
+    {
+        self.command.args(args);
+        self
+    }
+
+    pub fn stdin(&mut self, value: impl Into<Stdio>) -> &mut Self {
+        self.command.stdin(value);
+        self
+    }
+
+    pub fn stdout(&mut self, value: impl Into<Stdio>) -> &mut Self {
+        self.command.stdout(value);
+        self
+    }
+
+    pub fn stderr(&mut self, value: impl Into<Stdio>) -> &mut Self {
+        self.command.stderr(value);
+        self
+    }
+
+    fn recheck(&mut self) -> std::io::Result<()> {
+        let denied = || std::io::Error::from_raw_os_error(libc::EPERM);
+        self.file.seek(SeekFrom::Start(0))?;
+        if FileSnapshot::read(&self.file).map_err(|_| denied())? != self.snapshot
+            || crate::unix_crypto::sha256_release_handle(&mut self.file).map_err(|_| denied())?
+                != self.digest
+            || FileSnapshot::read(&self.file).map_err(|_| denied())? != self.snapshot
+        {
+            return Err(denied());
+        }
+        Ok(())
+    }
+
+    pub fn spawn(&mut self) -> std::io::Result<Child> {
+        self.recheck()?;
+        self.command.spawn()
+    }
+
+    pub fn status(&mut self) -> std::io::Result<ExitStatus> {
+        self.spawn()?.wait()
+    }
+
+    pub fn output(&mut self) -> std::io::Result<Output> {
+        self.recheck()?;
+        self.command.output()
+    }
+}
+
+fn verified_core(caller_name: &str) -> Result<(PathBuf, File, FileSnapshot, [u8; 32]), ErrorCode> {
+    verified_asset(caller_name, "bin/mail-hantong-core")
+}
+
+fn verified_asset(
+    caller_name: &str,
+    asset: &str,
+) -> Result<(PathBuf, File, FileSnapshot, [u8; 32]), ErrorCode> {
     if !matches!(
         caller_name,
         "hantong" | "hantong-t" | "hantong-mcp" | "mail-hantong-core"
@@ -36,18 +142,35 @@ pub fn verified_installed_core(caller_name: &str) -> Result<PathBuf, ErrorCode> 
     let bin = caller.parent().ok_or(ErrorCode::CoreUnavailable)?;
     let version = bin.parent().ok_or(ErrorCode::CoreUnavailable)?;
     let manifest = version.join("release-manifest.json");
-    validate_manifest(version, &manifest, caller_name)?;
-    let core = bin.join("mail-hantong-core");
-    let core_meta = open_owned(&core)?
-        .metadata()
-        .map_err(|_| ErrorCode::CoreUnavailable)?;
-    if core_meta.len() == 0 || caller_meta.len() == 0 {
+    let (core_file, snapshot, digest) =
+        validate_manifest_asset(version, &manifest, caller_name, asset)?;
+    let core = version.join(asset);
+    if snapshot.size == 0 || caller_meta.len() == 0 {
         return Err(ErrorCode::CoreUnavailable);
     }
-    Ok(core)
+    Ok((core, core_file, snapshot, digest))
 }
 
+#[cfg(test)]
 fn validate_manifest(version: &Path, manifest: &Path, caller_name: &str) -> Result<(), ErrorCode> {
+    validate_manifest_file(version, manifest, caller_name).map(drop)
+}
+
+#[cfg(test)]
+fn validate_manifest_file(
+    version: &Path,
+    manifest: &Path,
+    caller_name: &str,
+) -> Result<(File, FileSnapshot, [u8; 32]), ErrorCode> {
+    validate_manifest_asset(version, manifest, caller_name, "bin/mail-hantong-core")
+}
+
+fn validate_manifest_asset(
+    version: &Path,
+    manifest: &Path,
+    caller_name: &str,
+    asset: &str,
+) -> Result<(File, FileSnapshot, [u8; 32]), ErrorCode> {
     let _version_guard = release_directory(version)?;
     let mut manifest_file = open_owned(manifest)?;
     let metadata = manifest_file
@@ -96,6 +219,7 @@ fn validate_manifest(version: &Path, manifest: &Path, caller_name: &str) -> Resu
         return Err(ErrorCode::CoreUnavailable);
     }
     let mut paths = BTreeSet::new();
+    let mut core_file = None;
     for item in files {
         let record = item.as_object().ok_or(ErrorCode::CoreUnavailable)?;
         if record.len() != 3
@@ -127,6 +251,7 @@ fn validate_manifest(version: &Path, manifest: &Path, caller_name: &str) -> Resu
         }
         let path = version.join(relative);
         let mut file = open_owned(&path)?;
+        let before = FileSnapshot::read(&file)?;
         if file
             .metadata()
             .map_err(|_| ErrorCode::CoreUnavailable)?
@@ -135,6 +260,16 @@ fn validate_manifest(version: &Path, manifest: &Path, caller_name: &str) -> Resu
             || wire_hex::encode(&crate::unix_crypto::sha256_release_handle(&mut file)?) != digest
         {
             return Err(ErrorCode::CoreUnavailable);
+        }
+        if FileSnapshot::read(&file)? != before {
+            return Err(ErrorCode::ScopeDenied);
+        }
+        if relative == asset {
+            core_file = Some((
+                file,
+                before,
+                wire_hex::decode_fixed::<32>(digest).map_err(|_| ErrorCode::CoreUnavailable)?,
+            ));
         }
     }
     let core = version.join("bin/mail-hantong-core");
@@ -148,7 +283,149 @@ fn validate_manifest(version: &Path, manifest: &Path, caller_name: &str) -> Resu
     }
     open_owned(&core)?;
     open_owned(&cli)?;
-    Ok(())
+    core_file.ok_or(ErrorCode::CoreUnavailable)
+}
+
+#[derive(Clone, Copy, Eq, PartialEq)]
+struct FileSnapshot {
+    device: libc::dev_t,
+    inode: libc::ino_t,
+    mode: libc::mode_t,
+    owner: libc::uid_t,
+    group: libc::gid_t,
+    links: libc::nlink_t,
+    size: libc::off_t,
+    modified: libc::time_t,
+    modified_ns: libc::c_long,
+    changed: libc::time_t,
+    changed_ns: libc::c_long,
+}
+
+impl FileSnapshot {
+    fn from_stat(value: &libc::stat) -> Self {
+        Self {
+            device: value.st_dev,
+            inode: value.st_ino,
+            mode: value.st_mode,
+            owner: value.st_uid,
+            group: value.st_gid,
+            links: value.st_nlink,
+            size: value.st_size,
+            modified: value.st_mtime,
+            modified_ns: value.st_mtime_nsec,
+            changed: value.st_ctime,
+            changed_ns: value.st_ctime_nsec,
+        }
+    }
+
+    #[allow(unsafe_code)]
+    fn read(file: &File) -> Result<Self, ErrorCode> {
+        let mut value = std::mem::MaybeUninit::<libc::stat>::uninit();
+        // SAFETY: fstat initializes the output on success; the File owns fd.
+        if unsafe { libc::fstat(file.as_raw_fd(), value.as_mut_ptr()) } != 0 {
+            return Err(ErrorCode::CoreUnavailable);
+        }
+        let value = unsafe { value.assume_init() };
+        Ok(Self::from_stat(&value))
+    }
+}
+
+#[allow(unsafe_code)]
+fn guarded_command(
+    path: &Path,
+    file: File,
+    expected: FileSnapshot,
+    digest: [u8; 32],
+) -> Result<VerifiedCoreCommand, ErrorCode> {
+    if expected.mode & 0o111 == 0 {
+        return Err(ErrorCode::ScopeDenied);
+    }
+    let mut paths = Vec::new();
+    let script = path.file_name().is_some_and(|name| name == "update.sh");
+    let bin = path.parent().ok_or(ErrorCode::CoreUnavailable)?;
+    let version = if script {
+        bin
+    } else {
+        bin.parent().ok_or(ErrorCode::CoreUnavailable)?
+    };
+    for name in [version, bin, path] {
+        let held = if name == path {
+            file.try_clone().map_err(|_| ErrorCode::CoreUnavailable)?
+        } else {
+            File::from(
+                release_directory(name)?
+                    .directory_fd()?
+                    .try_clone_to_owned()
+                    .map_err(|_| ErrorCode::CoreUnavailable)?,
+            )
+        };
+        let snapshot = if name == path {
+            expected
+        } else {
+            FileSnapshot::read(&held)?
+        };
+        let name = std::ffi::CString::new(name.as_os_str().as_bytes())
+            .map_err(|_| ErrorCode::CoreUnavailable)?;
+        paths.push((name, snapshot));
+    }
+    let held = file.try_clone().map_err(|_| ErrorCode::CoreUnavailable)?;
+    #[cfg(target_os = "linux")]
+    let fd_path = format!("/proc/self/fd/{}", held.as_raw_fd());
+    #[cfg(not(target_os = "linux"))]
+    let fd_path = format!("/dev/fd/{}", held.as_raw_fd());
+    let mut command = if script {
+        let mut shell = Command::new("/bin/sh");
+        shell.arg(&fd_path);
+        shell
+    } else {
+        #[cfg(target_os = "linux")]
+        {
+            Command::new(&fd_path)
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            Command::new(path)
+        }
+    };
+    if !script {
+        command.arg0(path);
+    }
+    // SAFETY: all allocation, path encoding and hashing precede fork. Only
+    // async-signal-safe fstat/lstat and comparisons run in the child. Capturing
+    // File keeps its CLOEXEC descriptor alive through the kernel exec lookup.
+    unsafe {
+        command.pre_exec(move || {
+            let denied = || std::io::Error::from_raw_os_error(libc::EPERM);
+            let mut value = std::mem::MaybeUninit::<libc::stat>::uninit();
+            if libc::fstat(held.as_raw_fd(), value.as_mut_ptr()) != 0
+                || FileSnapshot::from_stat(&value.assume_init()) != expected
+            {
+                return Err(denied());
+            }
+            for (name, snapshot) in &paths {
+                if libc::lstat(name.as_ptr(), value.as_mut_ptr()) != 0
+                    || FileSnapshot::from_stat(&value.assume_init()) != *snapshot
+                {
+                    return Err(denied());
+                }
+            }
+            // The fixed OS shell must read this public script fd after exec.
+            // Only the public asset descriptor loses CLOEXEC; no secret fd does.
+            if script
+                && (libc::lseek(held.as_raw_fd(), 0, libc::SEEK_SET) != 0
+                    || libc::fcntl(held.as_raw_fd(), libc::F_SETFD, 0) != 0)
+            {
+                return Err(denied());
+            }
+            Ok(())
+        });
+    }
+    Ok(VerifiedCoreCommand {
+        command,
+        file,
+        snapshot: expected,
+        digest,
+    })
 }
 
 fn parse_exact_object(bytes: &[u8], keys: &[&str]) -> Result<Map<String, Value>, ErrorCode> {
@@ -438,6 +715,228 @@ mod tests {
         );
         drop(opened);
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    fn executable_fixture() -> (PathBuf, File, FileSnapshot, [u8; 32]) {
+        let (root, manifest) = fixture();
+        let core = root.join("bin/mail-hantong-core");
+        std::fs::copy("/bin/echo", &core).unwrap();
+        std::fs::set_permissions(&core, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let mut value: Value = serde_json::from_slice(&std::fs::read(&manifest).unwrap()).unwrap();
+        let record = value["files"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .find(|record| record["path"] == "bin/mail-hantong-core")
+            .unwrap();
+        record["size"] = Value::from(std::fs::metadata(&core).unwrap().len());
+        record["sha256"] = Value::from(wire_hex::encode(&sha256_release_file(&core).unwrap()));
+        std::fs::write(&manifest, serde_json::to_vec(&value).unwrap()).unwrap();
+        let (file, snapshot, digest) = validate_manifest_file(&root, &manifest, "hantong").unwrap();
+        (root, file, snapshot, digest)
+    }
+
+    #[test]
+    fn sec03_verified_launch_preserves_native_arguments_and_pipes() {
+        let (root, file, snapshot, digest) = executable_fixture();
+        let output = guarded_command(&root.join("bin/mail-hantong-core"), file, snapshot, digest)
+            .unwrap()
+            .arg("synthetic-native-launch")
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        assert_eq!(output.stdout, b"synthetic-native-launch\n");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn sec03_verified_launch_rejects_replacement_symlink_write_and_mode_changes() {
+        use std::io::{Seek, SeekFrom, Write};
+        for change in 0..5 {
+            let (root, file, snapshot, digest) = executable_fixture();
+            let core = root.join("bin/mail-hantong-core");
+            let mut command = guarded_command(&core, file, snapshot, digest).unwrap();
+            match change {
+                0 => {
+                    std::fs::rename(&core, root.join("held-core")).unwrap();
+                    std::fs::copy("/bin/false", &core).unwrap();
+                }
+                1 => {
+                    std::fs::rename(&core, root.join("held-core")).unwrap();
+                    std::os::unix::fs::symlink(root.join("held-core"), &core).unwrap();
+                }
+                2 => {
+                    let mut writer = std::fs::OpenOptions::new().write(true).open(&core).unwrap();
+                    writer.seek(SeekFrom::End(-1)).unwrap();
+                    writer.write_all(b"x").unwrap();
+                    writer.sync_all().unwrap();
+                }
+                3 => {
+                    std::fs::set_permissions(&core, std::fs::Permissions::from_mode(0o777)).unwrap()
+                }
+                _ => {
+                    std::fs::rename(root.join("bin"), root.join("held-bin")).unwrap();
+                    std::fs::create_dir(root.join("bin")).unwrap();
+                    std::fs::copy("/bin/false", &core).unwrap();
+                }
+            }
+            assert!(
+                command.output().is_err(),
+                "changed launch must fail: {change}"
+            );
+            drop(command);
+            std::fs::remove_dir_all(root).unwrap();
+        }
+    }
+
+    #[test]
+    fn sec03_verified_launch_keeps_hash_snapshot_before_command_construction() {
+        let (root, file, snapshot, digest) = executable_fixture();
+        let core = root.join("bin/mail-hantong-core");
+        std::fs::copy("/bin/false", &core).unwrap();
+        let mut command = guarded_command(&core, file, snapshot, digest).unwrap();
+        assert!(command.output().is_err());
+        drop(command);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn sec03_competing_replacement_never_executes_unverified_program() {
+        for _ in 0..16 {
+            let (root, file, snapshot, digest) = executable_fixture();
+            let core = root.join("bin/mail-hantong-core");
+            let replacement = root.join("replacement");
+            std::fs::copy("/bin/false", &replacement).unwrap();
+            let mut command = guarded_command(&core, file, snapshot, digest).unwrap();
+            let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
+            let concurrent = barrier.clone();
+            let writer = std::thread::spawn(move || {
+                concurrent.wait();
+                std::fs::rename(replacement, core).unwrap();
+            });
+            barrier.wait();
+            let result = command.arg("original-only").output();
+            writer.join().unwrap();
+            if let Ok(output) = result {
+                assert!(output.status.success(), "replacement must never execute");
+                assert_eq!(output.stdout, b"original-only\n");
+            }
+            drop(command);
+            std::fs::remove_dir_all(root).unwrap();
+        }
+    }
+
+    #[test]
+    fn sec03_sibling_launch_rejects_arbitrary_asset_paths() {
+        for asset in [
+            "../update.sh",
+            "/bin/sh",
+            "bin/untrusted-tui",
+            "publisher/google-desktop.json",
+        ] {
+            assert!(matches!(
+                verified_sibling_command("hantong", asset),
+                Err(ErrorCode::InvalidInput)
+            ));
+        }
+    }
+
+    #[test]
+    fn sec03_cli_and_tui_assets_reject_replacement_after_manifest_validation() {
+        for asset in ["bin/hantong", "bin/hantong-t"] {
+            let (root, manifest) = fixture();
+            let path = root.join(asset);
+            std::fs::copy("/bin/echo", &path).unwrap();
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700)).unwrap();
+            let mut value: Value =
+                serde_json::from_slice(&std::fs::read(&manifest).unwrap()).unwrap();
+            let entries = value["files"].as_array_mut().unwrap();
+            entries.retain(|entry| entry["path"] != asset);
+            entries.push(serde_json::json!({
+                "path":asset, "size":std::fs::metadata(&path).unwrap().len(),
+                "sha256":wire_hex::encode(&sha256_release_file(&path).unwrap()),
+            }));
+            std::fs::write(&manifest, serde_json::to_vec(&value).unwrap()).unwrap();
+            let (file, snapshot, digest) =
+                validate_manifest_asset(&root, &manifest, "hantong", asset).unwrap();
+            let mut command = guarded_command(&path, file, snapshot, digest).unwrap();
+            std::fs::rename(&path, root.join("held-asset")).unwrap();
+            std::fs::copy("/bin/false", &path).unwrap();
+            assert!(command.output().is_err());
+            drop(command);
+            std::fs::remove_dir_all(root).unwrap();
+        }
+    }
+
+    #[test]
+    #[allow(unsafe_code)]
+    fn sec03_updater_uses_manifest_bound_script_fd_even_after_final_path_replacement() {
+        let (root, manifest) = fixture();
+        let script = root.join("update.sh");
+        std::fs::write(
+            &script,
+            b"#!/bin/sh\nprintf 'verified-script:%s\\n' \"$1\"\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let mut value: Value = serde_json::from_slice(&std::fs::read(&manifest).unwrap()).unwrap();
+        value["files"]
+            .as_array_mut()
+            .unwrap()
+            .push(serde_json::json!({
+                "path":"update.sh", "size":std::fs::metadata(&script).unwrap().len(),
+                "sha256":wire_hex::encode(&sha256_release_file(&script).unwrap()),
+            }));
+        std::fs::write(&manifest, serde_json::to_vec(&value).unwrap()).unwrap();
+        let replacement = root.join("replacement-script");
+        std::fs::write(&replacement, b"#!/bin/sh\nexit 99\n").unwrap();
+        let (file, snapshot, digest) =
+            validate_manifest_asset(&root, &manifest, "hantong", "update.sh").unwrap();
+        let mut command = guarded_command(&script, file, snapshot, digest).unwrap();
+        let replacement = std::ffi::CString::new(replacement.as_os_str().as_bytes()).unwrap();
+        let destination = std::ffi::CString::new(script.as_os_str().as_bytes()).unwrap();
+        unsafe {
+            command.command.pre_exec(move || {
+                if libc::rename(replacement.as_ptr(), destination.as_ptr()) != 0 {
+                    return Err(std::io::Error::from_raw_os_error(libc::EIO));
+                }
+                Ok(())
+            });
+        }
+        let output = command.arg("argument-preserved").output().unwrap();
+        assert!(output.status.success());
+        assert_eq!(output.stdout, b"verified-script:argument-preserved\n");
+        drop(command);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    #[allow(unsafe_code)]
+    fn sec03_descriptor_exec_does_not_execute_replacement_after_final_check() {
+        let (root, file, snapshot, digest) = executable_fixture();
+        let core = root.join("bin/mail-hantong-core");
+        let replacement = root.join("replacement");
+        std::fs::copy("/bin/false", &replacement).unwrap();
+        let replacement = std::ffi::CString::new(replacement.as_os_str().as_bytes()).unwrap();
+        let destination = std::ffi::CString::new(core.as_os_str().as_bytes()).unwrap();
+        let mut command = guarded_command(&core, file, snapshot, digest).unwrap();
+        // Runs after the production pre_exec guard: force the exact remaining
+        // rename race, rather than relying on a scheduler to hit the window.
+        unsafe {
+            command.command.pre_exec(move || {
+                if libc::rename(replacement.as_ptr(), destination.as_ptr()) != 0 {
+                    return Err(std::io::Error::from_raw_os_error(libc::EIO));
+                }
+                Ok(())
+            });
+        }
+        let output = command.arg("held-inode").output().unwrap();
+        assert!(output.status.success());
+        assert_eq!(output.stdout, b"held-inode\n");
+        drop(command);
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

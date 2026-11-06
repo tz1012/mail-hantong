@@ -307,11 +307,7 @@ fn review_in_console(name: &str, receipt: &Value, account: &str) -> Result<(), E
 
 #[cfg(unix)]
 fn review_in_console(name: &str, receipt: &Value, account: &str) -> Result<(), ErrorCode> {
-    use std::{
-        fs::OpenOptions,
-        io::IsTerminal,
-        process::{Command, Stdio},
-    };
+    use std::{fs::OpenOptions, io::IsTerminal, process::Stdio};
     let id = receipt["review_id"]
         .as_str()
         .ok_or(ErrorCode::InvalidInput)?;
@@ -332,8 +328,8 @@ fn review_in_console(name: &str, receipt: &Value, account: &str) -> Result<(), E
     if !input.is_terminal() || !output.is_terminal() {
         return Err(ErrorCode::HumanStepRequired);
     }
-    let core = hantong_platform::unix_release::verified_installed_core("hantong-mcp")?;
-    let status = Command::new(core)
+    let mut command = hantong_platform::unix_release::verified_core_command("hantong-mcp")?;
+    let status = command
         .args([
             "terminal-review",
             "--kind",

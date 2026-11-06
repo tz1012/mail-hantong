@@ -1,6 +1,8 @@
 //! Start only the sibling Core covered by the installed release manifest.
 use hantong_contracts::{ErrorCode, terminal_review::TerminalReviewKind, wire_hex};
-use std::process::{Child, Command, Stdio};
+#[cfg(test)]
+use std::process::Command;
+use std::process::{Child, Stdio};
 use std::time::{Duration, Instant};
 
 pub(super) fn ensure_started() -> Result<(), ErrorCode> {
@@ -10,9 +12,9 @@ pub(super) fn ensure_started() -> Result<(), ErrorCode> {
         Ok(_) => return Err(ErrorCode::CoreUnavailable),
         Err(error) => return Err(error),
     }
-    let core = hantong_platform::unix_release::verified_installed_core("hantong")?;
+    let mut command = hantong_platform::unix_release::verified_core_command("hantong")?;
     // Core/Secrets own any protected TTY input. The CLI never reads credentials.
-    let child = Command::new(core)
+    let child = command
         .arg("run")
         .arg("--background")
         .stdin(Stdio::inherit())
@@ -66,8 +68,7 @@ pub(super) fn review(
     hash: Option<[u8; 32]>,
     lang: crate::Lang,
 ) -> Result<(), ErrorCode> {
-    let core = hantong_platform::unix_release::verified_installed_core("hantong")?;
-    let mut command = Command::new(core);
+    let mut command = hantong_platform::unix_release::verified_core_command("hantong")?;
     command.args([
         "terminal-review",
         "--kind",

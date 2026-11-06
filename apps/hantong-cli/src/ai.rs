@@ -646,21 +646,29 @@ fn slash(session: &mut Session, line: &str, ko: bool) -> Result<Slash, AiError> 
         Some("/status") if arg.is_none() => show_status(session),
         Some("/cli") if arg.is_none() => return Ok(Slash::Exit),
         Some("/tui") if arg.is_none() => {
-            let exe = std::env::current_exe()
+            #[cfg(unix)]
+            hantong_platform::unix_release::verified_sibling_command("hantong", "bin/hantong-t")
                 .map_err(|_| AiError::Io)?
-                .parent()
-                .ok_or(AiError::Io)?
-                .join(if cfg!(windows) {
-                    "hantong-t.exe"
-                } else {
-                    "hantong-t"
-                });
-            if !exe.is_file() {
-                return Err(AiError::ProviderMissing);
-            }
-            std::process::Command::new(exe)
                 .status()
                 .map_err(|_| AiError::Io)?;
+            #[cfg(not(unix))]
+            {
+                let exe = std::env::current_exe()
+                    .map_err(|_| AiError::Io)?
+                    .parent()
+                    .ok_or(AiError::Io)?
+                    .join(if cfg!(windows) {
+                        "hantong-t.exe"
+                    } else {
+                        "hantong-t"
+                    });
+                if !exe.is_file() {
+                    return Err(AiError::ProviderMissing);
+                }
+                std::process::Command::new(exe)
+                    .status()
+                    .map_err(|_| AiError::Io)?;
+            }
             return Ok(Slash::Exit);
         }
         Some("/agent") => {

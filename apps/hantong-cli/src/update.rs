@@ -55,9 +55,7 @@ pub(super) fn run(
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 fn run_unix_updater() -> Result<(), ErrorCode> {
-    #[cfg(unix)]
-    use std::os::unix::fs::PermissionsExt;
-    use std::process::{Command, Stdio};
+    use std::process::Stdio;
     let core = hantong_platform::unix_release::verified_installed_core("hantong")?;
     let version = core
         .parent()
@@ -72,12 +70,9 @@ fn run_unix_updater() -> Result<(), ErrorCode> {
         .and_then(|v| v.to_str())
         .ok_or(ErrorCode::CoreUnavailable)?
         .to_owned();
-    let updater = version.join("update.sh");
-    let updater_meta = std::fs::metadata(&updater).map_err(|_| ErrorCode::CoreUnavailable)?;
-    if !updater_meta.is_file() || updater_meta.permissions().mode() & 0o111 == 0 {
-        return Err(ErrorCode::CoreUnavailable);
-    }
-    let status = Command::new(&updater)
+    let mut updater =
+        hantong_platform::unix_release::verified_sibling_command("hantong", "update.sh")?;
+    let status = updater
         .arg("--install-root")
         .arg(root)
         .stdin(Stdio::inherit())
@@ -93,7 +88,7 @@ fn run_unix_updater() -> Result<(), ErrorCode> {
     if current.trim() == old_version {
         return Ok(());
     }
-    let stop = Command::new(&core)
+    let stop = hantong_platform::unix_release::verified_core_command("hantong")?
         .arg("unix-stop")
         .stdin(Stdio::null())
         .stdout(Stdio::inherit())

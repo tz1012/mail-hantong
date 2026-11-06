@@ -145,11 +145,47 @@ jobs:
       - name: Run synthetic Unix installer checks
         run: python -X utf8 scripts/test_linux_installer.py
       - name: Build and package native Unix artifact
+        id: native-package
         run: |
           python -X utf8 scripts/package_unix.py \
             --version "$PACKAGE_VERSION" \
             --output-dir "$RUNNER_TEMP/artifacts" \
             --publisher-config "$RUNNER_TEMP/google-desktop.json"
+      - name: Verify released beta29 binary to candidate database and Keychain upgrade
+        run: |
+          case "${{ matrix.release_target }}" in
+            macos-aarch64)
+              old_name="mail-hantong-cli-0.1.0-beta.29-macos-aarch64.tar.gz"
+              old_sha="b43ee9bae6b078ad6f21c6731c08c25bd67e1b8383fea34fa83df54c55ae74be" ;;
+            macos-x86_64)
+              old_name="mail-hantong-cli-0.1.0-beta.29-macos-x86_64.tar.gz"
+              old_sha="dc46e62b04c229c7a1ba08587104eb3f274c15bae0b2d5d70b7513117f42bc7e" ;;
+            *) exit 1 ;;
+          esac
+          old_archive="$RUNNER_TEMP/$old_name"
+          curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' \
+            --connect-timeout 15 --max-time 300 --max-filesize 268435456 \
+            "https://github.com/tz1012/mail-hantong/releases/download/v0.1.0-beta.29/$old_name" \
+            --output "$old_archive"
+          echo "$old_sha  $old_archive" | shasum -a 256 -c -
+          candidate_archive="$RUNNER_TEMP/artifacts/$PACKAGE_VERSION/mail-hantong-cli-$PACKAGE_VERSION-${{ matrix.release_target }}.tar.gz"
+          python -X utf8 scripts/test_macos_cross_version_product.py \
+            --old-package "$old_archive" \
+            --candidate-package "$candidate_archive"
+      - name: Verify old-source to candidate macOS Keychain compatibility
+        if: always() && steps.native-package.outcome == 'success'
+        run: |
+          old_source="$RUNNER_TEMP/mail-hantong-beta29-source"
+          old_work="$RUNNER_TEMP/mail-hantong-beta29-work"
+          mkdir -m 700 "$old_source" "$old_work"
+          git fetch --no-tags --depth=1 origin \
+            refs/tags/v0.1.0-beta.29:refs/tags/v0.1.0-beta.29
+          test "$(git rev-parse refs/tags/v0.1.0-beta.29^{commit})" = 5d1e4734dfe1475c951f8d052079212e1437dc50
+          git archive 5d1e4734dfe1475c951f8d052079212e1437dc50 | tar -x -C "$old_source"
+          python -X utf8 scripts/test_macos_keychain_upgrade.py \
+            --old-source "$old_source" \
+            --candidate-source "$GITHUB_WORKSPACE" \
+            --work-dir "$old_work"
       - name: Reset synthetic Keychain between test and product identities
         run: |
           security default-keychain -d user -s "$(cat "$RUNNER_TEMP/hantong-original-keychain")"
