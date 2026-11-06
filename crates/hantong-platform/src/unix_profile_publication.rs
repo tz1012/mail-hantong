@@ -20,6 +20,15 @@ pub struct UnixPublishedProfile {
     backup_name: Option<String>,
 }
 
+impl Drop for UnixPublishedProfile {
+    fn drop(&mut self) {
+        // A concurrent fork can retain this open file description until exec.
+        // Release the owner's lock explicitly rather than waiting for every
+        // inherited descriptor to close. Failure retains the lock until close.
+        let _ = self._lock.unlock();
+    }
+}
+
 impl std::fmt::Debug for UnixPublishedProfile {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("UnixPublishedProfile { <redacted> }")
@@ -375,6 +384,35 @@ mod tests {
             ),
             Err(ErrorCode::InvalidInput)
         ));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn sec03_publication_owner_drop_releases_lock_with_inherited_descriptor() {
+        let (root, profiles) = fixture();
+        drop(publish_new_at(&profiles, ProfileFile::Default, b"old").unwrap());
+        let id = [9; 32];
+        let refreshed = refresh_at(&profiles, ProfileFile::Default, id, b"old", b"new").unwrap();
+        // fork duplicates the same open file description until exec closes it.
+        // Retain that description deterministically without a scheduler race.
+        let inherited = refreshed._lock.try_clone().unwrap();
+        assert!(matches!(
+            refresh_at(&profiles, ProfileFile::Default, id, b"old", b"new"),
+            Err(ErrorCode::Conflict)
+        ));
+        drop(refreshed);
+        let mut recovered = refresh_at(&profiles, ProfileFile::Default, id, b"old", b"new").expect(
+            "owner drop releases publication lock even while a child retains its descriptor",
+        );
+        drop(inherited);
+        assert!(matches!(
+            publish_new_at(&profiles, ProfileFile::Default, b"new"),
+            Err(ErrorCode::Conflict)
+        ));
+        assert_eq!(read_all(&recovered._profile).unwrap(), b"new");
+        cleanup_profile_refresh_backup(&mut recovered).unwrap();
+        drop(recovered);
+        drop(publish_new_at(&profiles, ProfileFile::Default, b"new").unwrap());
         let _ = std::fs::remove_dir_all(root);
     }
 }
