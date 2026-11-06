@@ -18,13 +18,14 @@ import stat
 import subprocess
 
 from run_macos_test import _baseline, _validate_environment
+from macos_compat_diagnostics import diagnose_process_tree
 
 FIXTURE = Path("scripts/fixtures/macos_keychain_compat_module.rs")
 TEST = Path("crates/hantong-secrets/src/macos_keychain_compat.rs")
 MODULE_MARKER = b"mod macos_keychain_compat;"
 MARKER_RE = re.compile(
     r"^HANTONG_COMPAT_MARKER phase=(seed|upgrade|reopen) "
-    r"step=(open|opened|read|read-old|write-new|read-new|done)$",
+    r"step=(open|opened|read|read-old|write-new|read-new|done|(?:imap-old|imap-new|smtp-old)-(?:selector|backend|returned))$",
     re.MULTILINE,
 )
 
@@ -77,7 +78,14 @@ def run_test(source: Path, target: Path, root: Path, phase: str, expected_keycha
     try:
         output, _ = process.communicate(timeout=900)
     except subprocess.TimeoutExpired:
-        _kill_process_group(process)
+        try:
+            cargo = subprocess.run(["rustup", "which", "cargo"], check=True, stdout=subprocess.PIPE,
+                                   stderr=subprocess.DEVNULL, text=True, timeout=3).stdout.strip()
+            diagnose_process_tree(process.pid, {"cargo": Path(cargo)}, phase=phase, test_target=target)
+        except (OSError, subprocess.SubprocessError):
+            print(f"HANTONG_PROCESS_DIAG phase={phase} result=probe-error", flush=True)
+        finally:
+            _kill_process_group(process)
         output, _ = process.communicate()
         started = "running 1 test" in output
         raise RuntimeError(

@@ -18,6 +18,7 @@ import subprocess
 import tarfile
 import tempfile
 import time
+from collections.abc import Callable
 
 
 def fail(message: str) -> None:
@@ -36,7 +37,7 @@ def extract_archive(archive: Path, destination: Path) -> None:
         bundle.extractall(destination, filter="data")
 
 
-def run_cli(executable: Path, environment: dict[str, str]) -> None:
+def run_cli(executable: Path, environment: dict[str, str], observer: Callable[[int], None] | None = None) -> None:
     import pty
     import select
 
@@ -49,8 +50,12 @@ def run_cli(executable: Path, environment: dict[str, str]) -> None:
     deadline = time.monotonic() + 45
     output = bytearray()
     menu_ready = False
+    observed = False
     try:
         while process.poll() is None and time.monotonic() < deadline:
+            if observer is not None and not observed and time.monotonic() >= deadline - 35:
+                observer(process.pid)
+                observed = True
             ready, _, _ = select.select([master], [], [], 0.25)
             if ready:
                 chunk = os.read(master, 16 * 1024)

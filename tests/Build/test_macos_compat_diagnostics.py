@@ -39,6 +39,16 @@ class MacCompatibilityDiagnosticsTests(unittest.TestCase):
         ])
         self.assertEqual(compat._markers(output), "none")
 
+    def test_sec03_backend_boundaries_distinguish_fixed_slots_only(self):
+        output = "\n".join([
+            "HANTONG_COMPAT_MARKER phase=upgrade step=imap-old-selector",
+            "HANTONG_COMPAT_MARKER phase=upgrade step=imap-old-backend",
+            "HANTONG_COMPAT_MARKER phase=upgrade step=smtp-old-returned",
+            "HANTONG_COMPAT_MARKER phase=upgrade step=private-selector",
+            "HANTONG_COMPAT_MARKER phase=upgrade step=imap-old-backend secret",
+        ])
+        self.assertEqual(compat._markers(output), "upgrade:imap-old-selector,upgrade:imap-old-backend,upgrade:smtp-old-returned")
+
     def test_sec03_diagnostic_output_is_bounded(self):
         output = "HANTONG_COMPAT_MARKER phase=upgrade step=read-old\n" * 200
         self.assertLessEqual(len(compat._markers(output)), 512)
@@ -52,10 +62,13 @@ class MacCompatibilityDiagnosticsTests(unittest.TestCase):
         ]
         with mock.patch.object(compat, "_baseline", return_value=(keychain, (keychain,))), \
                 mock.patch.object(compat.subprocess, "Popen", return_value=process), \
-                mock.patch.object(compat, "_kill_process_group") as kill:
+                mock.patch.object(compat, "_kill_process_group") as kill, \
+                mock.patch.object(compat.subprocess, "run", return_value=mock.Mock(stdout="/toolchain/cargo")), \
+                mock.patch.object(compat, "diagnose_process_tree") as diagnose:
             with self.assertRaises(RuntimeError) as failure:
                 compat.run_test(Path("old"), Path("target"), Path("root"), "upgrade", keychain)
         kill.assert_called_once_with(process)
+        diagnose.assert_called_once_with(process.pid, {"cargo": Path("/toolchain/cargo")}, phase="upgrade", test_target=Path("target"))
         self.assertIn("upgrade:read-old", str(failure.exception))
         self.assertNotIn("private-value", str(failure.exception))
         process.communicate.assert_any_call(timeout=900)

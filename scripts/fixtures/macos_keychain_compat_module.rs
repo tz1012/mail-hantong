@@ -22,11 +22,20 @@ fn slot(kind: MailCredentialSlot) -> SecretKind {
     SecretKind::Mail(kind)
 }
 
-fn matches_bytes(store: &SecretStore, credential_slot: MailCredentialSlot, expected: &[u8]) -> bool {
+fn matches_bytes(
+    store: &SecretStore,
+    credential_slot: MailCredentialSlot,
+    expected: &[u8],
+    phase: &str,
+    label: &str,
+) -> bool {
+    marker(phase, &format!("{label}-selector"));
     let selector = store
         .unix_selector(ACCOUNT, slot(credential_slot))
         .expect("mail selector");
+    marker(phase, &format!("{label}-backend"));
     let protected = store.unix_store.read(&selector).expect("read opaque item");
+    marker(phase, &format!("{label}-returned"));
     protected.as_bytes_in_secrets() == expected
 }
 
@@ -45,28 +54,34 @@ fn mac_keychain_compatibility_fixture() {
     let smtp = MailCredentialSlot::SmtpOAuthRefresh;
     match phase.as_str() {
         "seed" => {
-            store.store_from_reader(ACCOUNT, slot(imap), IMAP_OLD).expect("seed IMAP item");
-            store.store_from_reader(ACCOUNT, slot(smtp), SMTP_OLD).expect("seed SMTP item");
+            store
+                .store_from_reader(ACCOUNT, slot(imap), IMAP_OLD)
+                .expect("seed IMAP item");
+            store
+                .store_from_reader(ACCOUNT, slot(smtp), SMTP_OLD)
+                .expect("seed SMTP item");
             marker("seed", "read");
-            assert!(matches_bytes(&store, imap, IMAP_OLD));
-            assert!(matches_bytes(&store, smtp, SMTP_OLD));
+            assert!(matches_bytes(&store, imap, IMAP_OLD, &phase, "imap-old"));
+            assert!(matches_bytes(&store, smtp, SMTP_OLD, &phase, "smtp-old"));
             marker("seed", "done");
         }
         "upgrade" => {
             marker("upgrade", "read-old");
-            assert!(matches_bytes(&store, imap, IMAP_OLD));
-            assert!(matches_bytes(&store, smtp, SMTP_OLD));
+            assert!(matches_bytes(&store, imap, IMAP_OLD, &phase, "imap-old"));
+            assert!(matches_bytes(&store, smtp, SMTP_OLD, &phase, "smtp-old"));
             marker("upgrade", "write-new");
-            store.store_from_reader(ACCOUNT, slot(imap), IMAP_NEW).expect("update IMAP item");
+            store
+                .store_from_reader(ACCOUNT, slot(imap), IMAP_NEW)
+                .expect("update IMAP item");
             marker("upgrade", "read-new");
-            assert!(matches_bytes(&store, imap, IMAP_NEW));
-            assert!(matches_bytes(&store, smtp, SMTP_OLD));
+            assert!(matches_bytes(&store, imap, IMAP_NEW, &phase, "imap-new"));
+            assert!(matches_bytes(&store, smtp, SMTP_OLD, &phase, "smtp-old"));
             marker("upgrade", "done");
         }
         "reopen" => {
             marker("reopen", "read");
-            assert!(matches_bytes(&store, imap, IMAP_NEW));
-            assert!(matches_bytes(&store, smtp, SMTP_OLD));
+            assert!(matches_bytes(&store, imap, IMAP_NEW, &phase, "imap-new"));
+            assert!(matches_bytes(&store, smtp, SMTP_OLD, &phase, "smtp-old"));
             marker("reopen", "done");
         }
         other => panic!("unsupported compatibility phase: {other}"),

@@ -20,6 +20,7 @@ import time
 
 from test_macos_installed_product import extract_archive, run_cli, stop_core
 from run_macos_test import _baseline, _validate_environment
+from macos_compat_diagnostics import diagnose_process_tree
 
 
 def fail(message: str) -> None:
@@ -95,7 +96,13 @@ def run_version(package: Path, root: Path, install_root: Path, bin_dir: Path, en
         for _ in range(2 if restart else 1):
             stopped = False
             marker(phase, f"start-{_ + 1}")
-            run_cli(cli, environment)
+            run_cli(
+                cli,
+                environment,
+                observer=lambda pid: diagnose_process_tree(
+                    pid, {"cli": cli, "core": core}, phase=phase
+                ),
+            )
             marker(phase, f"status-{_ + 1}")
             subprocess.run([str(cli), "core", "status", "--json"], env=environment, stdin=subprocess.DEVNULL,
                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=15, check=True)
