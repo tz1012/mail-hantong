@@ -58,6 +58,12 @@ impl Runner {
     }
 
     fn call(&self, args: &[&str]) -> Result<Value, String> {
+        if args
+            .iter()
+            .any(|arg| arg.bytes().any(|byte| byte == 0 || byte.is_ascii_control()))
+        {
+            return Err("invalid command argument".to_owned());
+        }
         #[cfg(unix)]
         let mut command =
             hantong_platform::unix_release::verified_sibling_command("hantong-t", "bin/hantong")
@@ -65,12 +71,7 @@ impl Runner {
         #[cfg(windows)]
         let mut command = Command::new(&self.program);
         command.arg("--lang").arg(self.lang.flag()).arg("--json");
-        for arg in args {
-            if arg.bytes().any(|byte| byte == 0 || byte.is_ascii_control()) {
-                return Err("invalid command argument".to_owned());
-            }
-            command.arg(arg);
-        }
+        command.args(args);
         let mut child = command
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
