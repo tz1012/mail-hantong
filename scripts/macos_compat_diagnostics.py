@@ -13,7 +13,7 @@ import tempfile
 import re
 
 
-PHASES = {"old", "candidate", "seed", "upgrade", "reopen"}
+PHASES = {"old", "candidate", "seed", "upgrade", "reopen", "probe"}
 SAMPLE_SYMBOLS = {
     "keychain": r"\b(?:SecKeychain[A-Za-z0-9_]*|SecItemCopyMatching)\b",
     "security": r"\b(?:Security::[A-Za-z0-9_:]+|securityd_client[A-Za-z0-9_]*)\b",

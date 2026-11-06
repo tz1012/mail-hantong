@@ -23,6 +23,14 @@ from macos_compat_diagnostics import diagnose_process_tree
 FIXTURE = Path("scripts/fixtures/macos_keychain_compat_module.rs")
 TEST = Path("crates/hantong-secrets/src/macos_keychain_compat.rs")
 MODULE_MARKER = b"mod macos_keychain_compat;"
+PROBE_FIXTURE = Path("scripts/fixtures/macos_keychain_probe_module.rs")
+PROBE_TEST = Path("crates/hantong-secrets/src/macos_keychain_probe.rs")
+PROBE_NAME = "macos_keychain_probe::mac_keychain_read_probe"
+PROBE_RE = re.compile(
+    r"^HANTONG_KEYCHAIN_PROBE stage=(guard|store_open|read|restore) "
+    r"category=(ready|ok|interaction_not_allowed|auth_failed|not_found|unavailable|invalid_item|other_error)$",
+    re.MULTILINE,
+)
 MARKER_RE = re.compile(
     r"^HANTONG_COMPAT_MARKER phase=(seed|upgrade|reopen) "
     r"step=(open|opened|read|read-old|write-new|read-new|done|(?:imap-old|imap-new|smtp-old)-(?:selector|backend|returned))$",
@@ -57,10 +65,26 @@ def _markers(output: str) -> str:
     return ",".join(f"{phase}:{step}" for phase, step in MARKER_RE.findall(output))[-512:] or "none"
 
 
+def _probe_markers(output: str) -> str:
+    return ",".join(f"{stage}:{category}" for stage, category in PROBE_RE.findall(output))[-512:] or "none"
+
+
+def run_probe(source: Path, target: Path, root: Path, expected_keychain: Path) -> None:
+    try:
+        run_test(source, target, root, "probe", expected_keychain)
+    finally:
+        current_default, current_list = _baseline()
+        if current_default != expected_keychain or current_list != (expected_keychain,):
+            fail("Keychain baseline changed after probe")
+
+
 def run_test(source: Path, target: Path, root: Path, phase: str, expected_keychain: Path) -> None:
     current_default, current_list = _baseline()
     if current_default != expected_keychain or current_list != (expected_keychain,):
         fail(f"Keychain baseline changed before {phase}")
+    probe = phase == "probe"
+    test_name = PROBE_NAME if probe else "macos_keychain_compat::mac_keychain_compatibility_fixture"
+    markers = _probe_markers if probe else _markers
     env = dict(os.environ)
     env.update(HANTONG_COMPAT_ROOT=str(root), HANTONG_COMPAT_PHASE=phase)
     env["CARGO_TARGET_DIR"] = str(target)
@@ -71,7 +95,7 @@ def run_test(source: Path, target: Path, root: Path, phase: str, expected_keycha
     env.pop("CARGO_TARGET_AARCH64_APPLE_DARWIN_RUNNER", None)
     process = subprocess.Popen(
         ["cargo", "test", "-p", "hantong-secrets", "--lib", "--locked", "--offline", "--",
-         "--exact", "macos_keychain_compat::mac_keychain_compatibility_fixture", "--nocapture"],
+         "--exact", test_name, "--nocapture"],
         cwd=source, env=env, start_new_session=True,
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
     )
@@ -90,16 +114,40 @@ def run_test(source: Path, target: Path, root: Path, phase: str, expected_keycha
         started = "running 1 test" in output
         raise RuntimeError(
             f"{phase} compatibility test timed out; fixture_started={str(started).lower()}"
-            f"; markers={_markers(output)}"
+            f"; markers={markers(output)}"
         )
     if process.returncode != 0:
-        raise RuntimeError(f"{phase} compatibility test failed; markers={_markers(output)}")
-    if "running 1 test" not in output or "mac_keychain_compatibility_fixture ... ok" not in output:
+        raise RuntimeError(f"{phase} compatibility test failed; markers={markers(output)}")
+    if "running 1 test" not in output or f"{test_name.split('::')[-1]} ... ok" not in output:
         raise RuntimeError(f"{phase} compatibility test did not execute exactly one passing fixture")
-    print(f"HANTONG_COMPAT_RESULT phase={phase} markers={_markers(output)}", flush=True)
+    if probe:
+        result = PROBE_RE.findall(output)
+        if (len(result) != 4 or result[0] != ("guard", "ready")
+                or result[1] != ("store_open", "ready") or result[2][0] != "read"
+                or result[2][1] == "ready" or result[3] != ("restore", "ok")):
+            fail("probe did not emit a complete classified result")
+        print(f"HANTONG_KEYCHAIN_PROBE_RESULT markers={markers(output)}", flush=True)
+    else:
+        print(f"HANTONG_COMPAT_RESULT phase={phase} markers={markers(output)}", flush=True)
     current_default, current_list = _baseline()
     if current_default != expected_keychain or current_list != (expected_keychain,):
         fail(f"Keychain baseline changed after {phase}")
+
+
+def run_phases(old_source: Path, candidate_source: Path, old_target: Path, candidate_target: Path,
+               root: Path, expected_keychain: Path) -> None:
+    run_test(old_source, old_target, root, "seed", expected_keychain)
+    probe_failure = None
+    try:
+        run_probe(candidate_source, candidate_target, root, expected_keychain)
+    except RuntimeError as error:
+        probe_failure = error
+        print("HANTONG_KEYCHAIN_PROBE_RESULT result=failed", flush=True)
+    # Diagnostic success never substitutes for either original compatibility phase.
+    run_test(candidate_source, candidate_target, root, "upgrade", expected_keychain)
+    run_test(candidate_source, candidate_target, root, "reopen", expected_keychain)
+    if probe_failure is not None:
+        raise probe_failure
 
 
 def main() -> int:
@@ -121,6 +169,9 @@ def main() -> int:
     candidate_source = checked_root(args.candidate_source, "candidate source")
     work_dir = checked_root(args.work_dir, "work directory")
     fixture = candidate_source / FIXTURE
+    probe_fixture = candidate_source / PROBE_FIXTURE
+    if not probe_fixture.is_file() or probe_fixture.is_symlink():
+        fail("probe fixture is missing")
     if not fixture.is_file() or fixture.is_symlink():
         fail("compatibility fixture is missing")
     injected = []
@@ -141,8 +192,17 @@ def main() -> int:
             originals[lib] = lib_bytes
             shutil.copyfile(fixture, destination)
             os.chmod(destination, stat.S_IRUSR | stat.S_IWUSR)
-            injected.append((destination, lib))
-            lib.write_bytes(lib_bytes + b"\n#[cfg(all(test, target_os = \"macos\"))]\nmod macos_keychain_compat;\n")
+            injected.append(destination)
+            modules = b"\n#[cfg(all(test, target_os = \"macos\"))]\nmod macos_keychain_compat;\n"
+            if source == candidate_source:
+                probe_destination = source / PROBE_TEST
+                if probe_destination.exists() or probe_destination.is_symlink() or b"mod macos_keychain_probe;" in lib_bytes:
+                    fail("refusing to overwrite an existing probe module")
+                shutil.copyfile(probe_fixture, probe_destination)
+                os.chmod(probe_destination, stat.S_IRUSR | stat.S_IWUSR)
+                injected.append(probe_destination)
+                modules += b"\n#[cfg(all(test, target_os = \"macos\"))]\nmod macos_keychain_probe;\n"
+            lib.write_bytes(lib_bytes + modules)
         root = work_dir / "keychain-compat-secrets"
         root.mkdir(mode=0o700)
         old_target = work_dir / "old-target"
@@ -150,14 +210,13 @@ def main() -> int:
         old_target.mkdir(mode=0o700)
         candidate_target.mkdir(mode=0o700)
         expected_keychain = keychain.resolve(strict=True)
-        run_test(old_source, old_target, root, "seed", expected_keychain)
-        run_test(candidate_source, candidate_target, root, "upgrade", expected_keychain)
-        run_test(candidate_source, candidate_target, root, "reopen", expected_keychain)
+        run_phases(old_source, candidate_source, old_target, candidate_target, root, expected_keychain)
     finally:
-        for destination, lib in injected:
+        for destination in injected:
             if destination.exists() or destination.is_symlink():
                 destination.unlink()
-            lib.write_bytes(originals[lib])
+        for lib, lib_bytes in originals.items():
+            lib.write_bytes(lib_bytes)
         if root.exists():
             shutil.rmtree(root)
     print("macOS old-source Keychain seed, candidate update, and restart preservation passed")

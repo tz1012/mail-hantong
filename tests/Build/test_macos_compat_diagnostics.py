@@ -82,6 +82,70 @@ class MacCompatibilityDiagnosticsTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "exactly one"):
                 compat.run_test(Path("old"), Path("target"), Path("root"), "upgrade", keychain)
 
+    def test_sec03_probe_markers_are_finite_and_non_sensitive(self):
+        output = "\n".join([
+            "HANTONG_KEYCHAIN_PROBE stage=read category=interaction_not_allowed",
+            "HANTONG_KEYCHAIN_PROBE stage=private category=ok",
+            "HANTONG_KEYCHAIN_PROBE stage=read category=ok private-value",
+        ])
+        self.assertEqual(compat._probe_markers(output), "read:interaction_not_allowed")
+
+    def test_sec03_successful_probe_does_not_replace_failed_upgrade(self):
+        calls = []
+        def phase(*args):
+            calls.append(args[3])
+            if args[3] == "upgrade":
+                raise RuntimeError("original upgrade failed")
+        args = (Path("old"), Path("new"), Path("old-target"), Path("new-target"), Path("root"), Path("keychain"))
+        with mock.patch.object(compat, "run_test", side_effect=phase), mock.patch.object(compat, "run_probe") as probe:
+            with self.assertRaisesRegex(RuntimeError, "original upgrade failed"):
+                compat.run_phases(*args)
+        self.assertEqual(calls, ["seed", "upgrade"])
+        probe.assert_called_once()
+
+    def test_sec03_failed_probe_keeps_all_original_phases_and_fails_overall(self):
+        args = (Path("old"), Path("new"), Path("old-target"), Path("new-target"), Path("root"), Path("keychain"))
+        with mock.patch.object(compat, "run_test") as phase, mock.patch.object(compat, "run_probe", side_effect=RuntimeError("probe failed")):
+            with self.assertRaisesRegex(RuntimeError, "probe failed"):
+                compat.run_phases(*args)
+        self.assertEqual([call.args[3] for call in phase.call_args_list], ["seed", "upgrade", "reopen"])
+
+    def test_sec03_probe_rechecks_baseline_even_after_failure(self):
+        keychain = Path("keychain")
+        with mock.patch.object(compat, "run_test", side_effect=RuntimeError("probe failed")), mock.patch.object(compat, "_baseline", return_value=(Path("changed"), ())):
+            with self.assertRaisesRegex(RuntimeError, "baseline changed"):
+                compat.run_probe(Path("source"), Path("target"), Path("root"), keychain)
+
+    def test_sec03_probe_requires_read_and_restoration_markers(self):
+        keychain = Path("keychain")
+        process = mock.Mock(returncode=0)
+        process.communicate.return_value = ("running 1 test\nHANTONG_KEYCHAIN_PROBE stage=guard category=ready\nmac_keychain_read_probe ... ok", None)
+        with mock.patch.object(compat, "_baseline", return_value=(keychain, (keychain,))), mock.patch.object(compat.subprocess, "Popen", return_value=process):
+            with self.assertRaisesRegex(RuntimeError, "complete classified result"):
+                compat.run_test(Path("source"), Path("target"), Path("root"), "probe", keychain)
+
+
+    def test_sec03_classified_probe_uses_exact_probe_target_without_secret_output(self):
+        keychain = Path("keychain")
+        process = mock.Mock(returncode=0)
+        process.communicate.return_value = ("running 1 test\n" + "\n".join([
+            "HANTONG_KEYCHAIN_PROBE stage=guard category=ready",
+            "HANTONG_KEYCHAIN_PROBE stage=store_open category=ready",
+            "HANTONG_KEYCHAIN_PROBE stage=read category=interaction_not_allowed",
+            "HANTONG_KEYCHAIN_PROBE stage=restore category=ok",
+            "test macos_keychain_probe::mac_keychain_read_probe ... ok",
+            "private-value",
+        ]), None)
+        from io import StringIO
+        import contextlib
+        output = StringIO()
+        with mock.patch.object(compat, "_baseline", return_value=(keychain, (keychain,))), mock.patch.object(compat.subprocess, "Popen", return_value=process) as start, contextlib.redirect_stdout(output):
+            compat.run_probe(Path("source"), Path("target"), Path("root"), keychain)
+        self.assertIn(compat.PROBE_NAME, start.call_args.args[0])
+        self.assertIn("read:interaction_not_allowed", output.getvalue())
+        self.assertNotIn("private-value", output.getvalue())
+
+
 
 if __name__ == "__main__":
     unittest.main()

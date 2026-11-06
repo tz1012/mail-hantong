@@ -2437,3 +2437,11 @@ Mac 호환성 로그의 관측성 공백도 수정했다. 이전 source upgrade�
 - Mac 호환성42213301022는 두 아키텍처 모두 실패로 종료했다. 공식 old install/start/status/stop 성공, 후보 install 성공 뒤 start-1 대기. CLI sample=`socket`, Core=`keychain,security,socket,wait`. 별도 source seed는 IMAP·SMTP의 기존 합성 값 읽기까지 성공했고, 후보 upgrade는 `imap-old-backend`에서900초를 초과했다. 해당 시험 sample도 동일한 Keychain/Security 분류다. 기존 IMAP 읽기 반환·SMTP 읽기·갱신·재시작은 성공으로 표시하지 않는다. 두 CI Keychain 복원 성공, package upload 미실행. 새 계정·키·메일·권한 변경은 없다.
 - 후속 조사에서 `ps comm`이 argv[0]임을 확인했다. 48a2abf의 프로세스 분류를 커널 이미지 증거로 확대하지 않는다. 로컬 후속 수정은 CI-only `proc_pidpath`를 사용하고 불가하면 명시적으로 거부한다. 독립 검토 및 관련14시험/문서29시험 통과, 후속 수정의 실제 Mac native 검증은 아직 미실행이다. 제품 인증에 private API를 추가하지 않았다.
 - 잠금·항목 신뢰·OS 확인 필요 여부의 정확한 구분에는 현 backend에 없는 UI 억제 guard/OSStatus API가 필요하다. `docs/adr/proposed/ADR-032-macos-keychain-read-diagnostics.md`와 상세 제안에 Mac 시험 전용 직접 `security-framework = "=3.7.0"` 추가를 정리했다. 새 의존성 명시 승인 및 AGENTS §7의 라이브러리 선택 경계 때문에 아직 구현하지 않았다. 독립 검토는 제안이 원래 실패 gate·합성 금고·읽기 전용 범위와 고정 오류 분류를 유지함을 확인했으며 승인을 대신하지 않는다. hosted Mac CI에 대화형 Keychain 확인을 관찰·응답할 경로도 없다. 이 구체적인 승인·환경 차단을 남기며 배포를 보류한다. 진행 중인 CI는 없고 실제 사용자 계정·금고·메일·인증정보는 보존했다.
+
+### 2026-11-06 ADR-032 명시 승인 후 진단 구현
+
+사용자 원문 “승인할게”를 직전 ADR-032 요청 범위의 승인으로 기록했다. Mac 시험 전용 `security-framework = "=3.7.0"` 직접 의존성을 추가했고 Cargo.lock은 기존 패키지·버전 변경 없이 Secrets 의존 관계 한 줄만 추가됐다. 후보 Secrets 시험에만 임시 probe 모듈을 주입하고 lib 원본 바이트·모듈 파일을 finally에서 복원한다. 기존 구버전 source·공식 바이너리·제품 실행 경로에 이 API를 추가하지 않는다.
+
+probe는 새 프로세스에서 초기 상호작용 허용 상태를 확인하고 guard의 true→false→true 전이를 검사한다. guard Drop이 항상 true로 돌리는 upstream 특성 때문에 처음부터 false면 변경하지 않고 실패한다. CI/RUNNER_TEMP 및 고정 합성 root·정확한 Keychain 경로·소유자·유형을 확인하고 해당 Keychain의 기존 합성 IMAP 값만 읽는다. 반환 버퍼는 Security.framework RAII로 해제하고 원문·selector·오류 문자열은 출력하지 않는다. OSStatus는 Apple SecBase.h와 대조해 -25308을 interaction_not_allowed, -25291/-25294를 unavailable, -25293을 auth_failed, -25300을 not_found, 나머지를 other_error로 제한했다. 분류는 잠금·ACL·서명 원인 확정을 대신하지 않는다.
+
+probe 성공/실패 모두 원래 upgrade/reopen gate를 대체하지 않는다. probe 실패 후 원래 시험도 실행하고 전체 실패는 유지하며, baseline은 실패 시에도 재검사한다. 로컬 관련 Python20시험과 문서29시험 통과, manifest/lock metadata 및 fmt/diff 검사 통과. 독립 최종 검토 후 Mac Intel/ARM 실제 재시험을 이어간다. 이 승인을 사람 보안 검토 완료·실제 사용자 Keychain 접근·ACL 변경·자동 확인·배포 조건 면제로 해석하지 않는다.
