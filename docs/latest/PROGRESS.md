@@ -2453,3 +2453,13 @@ probe 성공/실패 모두 원래 upgrade/reopen gate를 대체하지 않는다.
 같은 소스의 일반 CI42223319723에서 Mac ARM의 기존 MCP idle 알림 시험이 실패했다. 30ms 뒤 EOF를 넣던 시험 입력이 실제 알림보다 먼저 종료되는 경쟁으로, 제품 이벤트 루프는 변경하지 않았다. 시험 입력은 완전한 notifications/resources/updated JSON이 실제 flush된 뒤에만 후속 resource 읽기와 EOF를 제공하도록 바꿨다. 5초 실패 watchdog은 유지하고 누락·불완전·미flush·응답 내 유사 문자열은 통과시키지 않는 음성 시험을 추가했다. 원래 알림 및 resource 내용 검증과 알림→읽기 순서 검증을 유지했다. Linux WSL 대상 bin 시험24개 전부 통과, targeted Clippy -D warnings 통과. 독립 코드 검토에서 차단 사항 없음. 최종 네 플랫폼 CI의 대체 증거로 표시하지 않는다.
 
 Python 음성 시험에서 의도적으로 발생시키던 probe 실패 마커는 캡처한 뒤 정확한 문자열을 assertion한다. 운영 진단과 혼동되는 출력만 제거했으며 실제 harness의 실패 판정·원래 호환성 gate는 유지했다. 관련 Python20개 전부 통과. Mac 읽기 거부는 호환성 성공으로 처리하지 않으며 공식 배포는 계속 보류한다.
+
+### 2026-11-06 ADR-032 두 Mac 재시험 종료·최종 필수 CI 확인
+
+- 진단 소스 `95349fed75eb3b0faa2a547d0bf79b531878f67d`, Mac42223324904의 Intel127910469806·ARM127910470171 모두 실패 종료. 공식 beta29 설치·시작·상태·종료와 후보 설치는 성공했으나 후보 첫 시작은45초 내 미완료했다. Core의 커널 이미지 결속 sample은 keychain/security/socket/wait, CLI는 socket이다.
+- 별도 old-source 합성 IMAP·SMTP seed 및 값 읽기는 성공했다. 두 Mac 모두 probe가 실제 컴파일·실행되어 guard:ready/store_open:ready/read:auth_failed/restore:ok를 반환했다. 이는 Security.framework -25293 분류이며 실제 메일 서버의 암호 거부가 아니다. 잠금·ACL·서명·OS 요청창 중 하나를 원인으로 확정하지 않는다. 원래 후보 upgrade는 imap-old-backend에서900초 초과, 갱신·SMTP 보존·reopen 미입증이다. 읽기 거부를 호환성 성공으로 처리하지 않았고 두 CI Keychain 복원은 성공, 패키지 upload는 미실행했다.
+- 후속 `c2e1aa4f601e8b2094e2911c02bfca14121143f9` / source `bdbc70c3fedba3499192924b86235273f10cc957fb9bf2364bd3a91a2e58e021`의 필수 전체 CI42226733662는 네 플랫폼 및 CI required 전부 성공했다. Rust 실행 합계 Windows1982/Linux1234/Mac Intel1093/ARM1093, 실패·ignored0. Docs각29, Build173 중 기존 Windows prebuild TUI1/Unix Windows전용45 제외만 유지했다. 고유 시험 개수로 표시하지 않는다. 최종 로컬 문서29도 통과했다.
+- 현재 hosted CI에 OS 요청을 관찰·수동 응답할 GUI 경로가 없어 다음 원인 구분은 Intel·ARM 각각 폐기 가능한 비관리자 GUI 시험 사용자와 합성 Keychain·앱 루트가 필요하다. 예상 후보 실행 파일·합성 항목을 지칭하는 실제 OS 요청이 나타난 경우에만 사람이 한 번 허용을 직접 선택하는 조건이며, 항상 허용·ACL/trusted-app/partition-list 수정·재서명·자동 확인·CI 환경 위조는 하지 않는다. 정확한 시험 단계와 공식 바이너리/소스 fixture 증거 구분은 TOCTOU-KEYCHAIN-VALIDATION-20261106.md에 기록했다.
+- 독립 AI 검토는 승인 범위·probe 실패 의미·MCP 시험 전용 변경에 차단 사항을 찾지 않았으나 AGENTS §6의 사람 Secrets 검토가 아니다. `95349fe`의 직접 dev dependency·probe·하네스와 연결 코드에 대한 별도 사람 검토 대상·확인 항목을 기록했다. 이전 `6322b9a` 확인을 새 코드로 확대하지 않는다. 기존 사용자 계정·금고·메일·인증정보·권한을 보존했고 실제 발송·휴지통·자동 권한 부여·송파 차단 우회는 없다.
+
+상태: **Mac 교차 버전 읽기 환경 차단 / 새 보안 변경 사람 검토 필요 / 공식 배포 보류**. 일반 CI 성공을 Mac 필수 호환성·최종 네 플랫폼 자산 검증 완료로 대체하지 않는다. 기존 실행 교체 경쟁의 잔여 문제도 위험 수용으로 처리하지 않는다. 동일한 hosted 재시도만 반복하지 않고 대화형 격리 환경 확보가 다음 필요한 조치다.

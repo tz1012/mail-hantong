@@ -2,7 +2,54 @@
 
 상태: **ADR-032 사용자 승인 후 시험 전용 진단 구현·검증 중 / Mac 호환성 미해결 / 공식 배포 보류**. 사용자 원문 “승인할게”로 직전 요청의 시험 전용 의존성과 비대화 읽기 진단을 승인했다. 아래의 이전 승인 차단은 이 범위에서 해제됐으며 기존 결과는 이력으로 보존한다. 이 문서는 위험 수용 또는 새 코드의 사람 검토 완료 기록이 아니다.
 
-## 48a2abf 재시험 결과와 다음 차단
+## ADR-032 승인 범위와 신규 검토 대상
+
+사용자가 승인 전 설명을 재확인했다. 이미 잠금 파일에 있는 `security-framework 3.7.0`을 Mac 시험 전용 직접 의존성으로 추가해 격리된 합성 자격증명의 오류 상태만 확인하는 설명에 대해 실제 원문 “승인할게”로 동의했다. 실제 사용자 Keychain·ACL/trusted-app/partition-list 변경, 바이너리 재서명, OS 확인 자동화는 승인되지 않았다.
+
+진단 구현 대상은 `95349fed75eb3b0faa2a547d0bf79b531878f67d` / source `67a9ec72b75f9a2be6a136dee9fe5d566c86d2f9a2a25cfc5a66ea8b29eef861`이다. `c2e1aa4f601e8b2094e2911c02bfca14121143f9` / source `bdbc70c3fedba3499192924b86235273f10cc957fb9bf2364bd3a91a2e58e021`는 이후 일반 CI에서 발견한 MCP 시험 경쟁과 음성 시험 출력만 수정하며 Mac probe·호환성 하네스·제품 실행 경로는 바꾸지 않는다. 두 소스의 검증 결과를 구분한다.
+
+`95349fe`의 별도 Secrets 사람 검토 대상은 `Cargo.lock`, `crates/hantong-secrets/Cargo.toml`, `scripts/fixtures/macos_keychain_probe_module.rs`, `scripts/test_macos_keychain_upgrade.py` 및 연결된 진단·회귀 시험이다. 검토자는 정확한 CI Keychain·합성 root 결속, 비밀 바이트의 Secrets 내부 비교, UI guard의 초기 상태 확인과 복원, 고정 오류 분류, 주입 모듈·lib 원복, 실패 이후 원래 upgrade/reopen gate 유지와 비밀 비노출을 확인해야 한다. AGENTS §6 및 기존 사람 검토 범위 문서의 기록 항목에 따라 대상 커밋·읽은 범위·판단·발견 사항·조치를 남겨야 한다. 의존성 추가 승인과 독립 AI 검토는 이 사람 검토를 대신하지 않는다. 이전 사용자 “검토 완료했어”는 `6322b9a`에 대한 확인으로 보존한다.
+
+## 최종 일반 CI와 패키지 조건
+
+[c2e1aa4 네 플랫폼 필수 CI42226733662](https://github.com/tz1012/mail-hantong/actions/runs/42226733662)는 Windows·Linux·Mac Intel·Mac ARM 및 CI required 모두 성공했다. 원래 `95349fe` 일반 CI의 ARM MCP 시험 경쟁 실패는 숨기지 않았고, 실제 출력 flush와 입력 진행을 결속한 시험 수정 후 새 소스 전체를 재검사했다. 제품 이벤트 루프·정책·승인 경로는 이 수정에서 변경하지 않았다.
+
+| 플랫폼 | Rust 실행 합계 | 실패 / ignored | Docs | Build |
+| --- | ---: | --- | --- | --- |
+| Windows | 1982 | 0 / 0 | 29 통과 | 173 중 기존 prebuild TUI 1개 제외, 나머지 통과 |
+| Linux | 1234 | 0 / 0 | 29 통과 | 173 중 기존 Windows 전용 45개 제외, 나머지 통과 |
+| Mac Intel | 1093 | 0 / 0 | 29 통과 | 동일한 기존 45개 제외, 나머지 통과 |
+| Mac ARM | 1093 | 0 / 0 | 29 통과 | 동일한 기존 45개 제외, 나머지 통과 |
+
+실행 합계는 필터·별도 프로세스 실행을 포함하며 고유 시험 수가 아니다. 새 진단·MCP 회귀를 skip/ignore하지 않았고 제한시간·필수 assertion을 줄이지 않았다. 로컬 MCP bin24개·관련 Python20개·문서29개 및 targeted Clippy `-D warnings`·traceability·diff 검사도 통과했다. 이것은 아래 실제 Mac 교차 버전 gate의 실패를 대체하지 않는다.
+
+`95349fe`의 Mac 후보는 네이티브 패키지 생성과 후보 설치까지 도달했지만 필수 교차 버전 검증이 실패해 최종 설치 smoke·자산 업로드를 통과하지 못했다. `c2e1aa4` 전체 소스의 새 네 플랫폼 배포 자산·설치 검증 완료로 표시하지 않는다. 이전 커밋의 Windows/Linux 패키지 해시를 새 릴리스의 해시로 재사용하지 않는다. 공식 release/tag·설치 채널·송파 업데이트는 수행하지 않았다. 새 사람이 검토해야 할 보안 변경, Mac 호환성 및 아래 Linux 같은 inode 쓰기·Mac pathname 실행 경쟁 잔여 조건이 해결되기 전 배포하지 않는다.
+
+## 95349fe 실제 Mac 진단 결과와 환경 차단
+
+[실제 Mac 교차 버전 실행42223324904](https://github.com/tz1012/mail-hantong/actions/runs/42223324904)는 Intel(job127910469806)·ARM(job127910470171) 모두 실패로 종료했다. 재시작·중복 실행 없이 기존 작업을 끝까지 관찰했다.
+
+| 항목 | Intel | ARM |
+| --- | --- | --- |
+| 공식 beta29 설치·시작·상태·종료 | 성공 | 성공 |
+| 후보 설치 | 성공 | 성공 |
+| 후보 첫 시작 | 45초 내 초기 화면 미완료 | 45초 내 초기 화면 미완료 |
+| 고정 old-source 합성 IMAP·SMTP 생성·값 읽기 | 성공 | 성공 |
+| 별도 no-UI probe | guard:ready / store_open:ready / read:auth_failed / restore:ok | 동일 |
+| 원래 후보 upgrade | imap-old-backend에서 900초 시간 초과 | 동일 |
+| IMAP 갱신·SMTP 보존·reopen | 미도달, 성공 미입증 | 동일 |
+| CI Keychain 복원 | 성공 | 성공 |
+| 후속 설치 smoke·패키지 업로드 | 필수 gate 실패로 미실행 | 동일 |
+
+새 probe는 두 Mac에서 실제 컴파일·실행됐고 정확히 1개 시험과 4개 마커를 확인했다. `auth_failed`는 Security.framework `errSecAuthFailed(-25293)`의 고정 분류로, 해당 합성 항목의 비밀값 읽기에서 authorization/authentication 실패가 반환됐다는 증거다. 메일 서버 인증 실패가 아니며 금고 잠금, ACL/trusted-app, 서명, 암호 오류, 실제 승인창의 존재 중 하나를 확정하지 않는다. probe의 분류 시험 성공은 기존 값 읽기 성공 또는 호환성 성공이 아니다. 원래 upgrade 실패와 전체 job 실패를 그대로 유지했다.
+
+커널 이미지로 대상을 확인한 sample은 두 Mac 모두 CLI=`socket`, Core 및 실제 Secrets 시험 자식=`keychain,security,socket,wait`였다. 공식 바이너리 DB 키 경로와 별도로 컴파일한 합성 메일 자격증명 경로를 같은 증거로 취급하지 않는다. 두 경로 모두 대기를 재현했지만, 동일한 항목 정책이나 정확히 같은 원인까지 입증한 것은 아니다.
+
+현재 hosted Mac CI에는 SecurityAgent 화면을 관찰하고 사람이 응답할 경로가 없다. 다음 원인 구분은 Intel·ARM 각각의 폐기 가능한 비관리자 GUI 로그인 환경과 합성 Keychain·앱 루트에서 해야 한다. SSH/headless 또는 실제 사용자 금고로 대체하지 않는다. 정식으로 준비된 대화형 시험 환경에서 동일한 제한시간과 원래 seed→upgrade→reopen 검증을 실행하고, 예상 후보 실행 파일·합성 항목을 명확히 지칭하는 실제 OS 요청이 나타나는 경우에만 사람이 **한 번 허용(Allow Once)**을 직접 선택해야 한다. 요청이 없거나 대상이 다르면 실패를 유지한다. **항상 허용(Always Allow), ACL/trusted-app/partition-list 수정, 바이너리 재서명, OS 확인 자동화는 수행하지 않는다.** 별도 공식 beta29→후보 바이너리 시험으로 합성 DB 키 읽기·두 번 재시작도 확인해야 하며, 소스 fixture만으로 공식 바이너리 메일 자격증명 호환성을 주장하지 않는다. CI 환경 변수를 위조해 실제 사용자 환경에서 하네스 제한을 우회하지 않는다.
+
+독립 검토는 위 해석과 시험·승인 경계를 확인했지만 사람 Secrets 검토 완료가 아니다. 현재 환경에서 대화형 두 Mac 시험을 실행할 수 없으므로 호환성은 구체적인 환경 차단 상태다. 원인을 임의 추정해 제품 저장 형식·신뢰 규칙을 바꾸거나 읽기 거부를 성공으로 처리하지 않는다. 사람 검토·필수 호환성 및 실행 교체 잔여 문제 해결 전 공식 배포는 보류한다.
+
+## 48a2abf 당시 재시험 결과와 승인 차단 이력
 
 검증 커밋 `48a2abfca234ee55f9cb99c67405c32005eb5c84`, source hash `7c2a0e7bbbfa36760be9d8363629684ad6790e57cfaeac5b7201edc46a1e769f`.
 
