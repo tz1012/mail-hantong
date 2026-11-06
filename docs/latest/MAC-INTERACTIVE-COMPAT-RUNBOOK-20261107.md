@@ -1,6 +1,6 @@
 # Mac 대화형 격리 호환성 시험: 준비·재현·복구
 
-상태: **준비 전용 코드와 단위시험 구현 / 실제 Mac 운용 미실행 / 별도 사람 검토 필요 / 배포 보류**.
+상태: **격리 컨트롤러·fake 단위시험 완료 / 실제 Mac 운용 미실행 / 새 전체 커밋 사람 검토 필요 / 배포 보류**.
 
 ## 이번에 제공하는 정상 진입점
 
@@ -8,7 +8,7 @@
 
 `CI`, `GITHUB_ACTIONS`, `RUNNER_TEMP`, `GITHUB_WORKSPACE`, `HANTONG_TEST_KEYCHAIN`, `HANTONG_COMPAT_ROOT/PHASE`, Mac Cargo runner 환경이 있으면 거부한다. 기존 `run_macos_test.py`, `test_macos_keychain_upgrade.py`, `test_macos_cross_version_product.py`의 CI 제한을 삭제하거나 환경 변수 위장으로 넘지 않는다. 이 문서도 CI main을 로컬에서 우회 호출하라는 지시가 아니다.
 
-현재 구현된 범위는 **사전검사와 실행 계획**이다. 실제 교차 버전 실행 controller는 아직 제공하지 않는다. 아래 단계별 실행 설계는 향후 검토 대상이며, 이번 명령을 성공시켰다고 실제 시험·OS 확인·복원·삭제가 승인되거나 완료된 것은 아니다. 새 executor가 필요하면 검증된 interactive context를 명시적으로 받고 각 단계 직전에 재검사하도록 별도 구현·검토한다. 기존 CI 함수의 guard를 끄거나 임의로 직접 호출하는 adapter는 허용하지 않는다.
+후속 사용자 지시로 별도 `run_macos_interactive_compat.py` 컨트롤러와 artifact/host helper를 구현한다. **이번에는 fake 단위시험만 실행한다.** 아래 시작 명령은 실제 Intel/ARM GUI 환경과 새 전체 커밋의 별도 Secrets 사람 검토·운용 승인 이후에만 사용할 재현 절차다. 기존 CI 함수의 guard를 끄거나 환경을 위장하지 않는다. 준비 결과·운영자 선언·`--execution-reviewed` 플래그 자체를 실제 검토 증거로 기록하지 않는다.
 
 ## 환경 준비 조건 — 이번에는 실행하지 않음
 
@@ -65,24 +65,50 @@ source는100,000개 노드, 파일당1GiB·전체8GiB 이하로 제한한다. ig
 
 성공 결과는 `executed=false`, `execution_authorized=false`, `preflight-passed-execution-not-performed`다. 실제 읽기·호환성 성공으로 기록하지 않는다. 실패하면 닫힌 오류 종류만 출력한다. 금고 내용·명령 stderr·계정·메일·비밀번호를 출력하지 않는다.
 
-## C. 향후 실제 실행 순서 — 별도 controller·Mac 환경·운용 검토 필요
+## C. 컨트롤러 시작·중단 — 이번에는 실행하지 않음
+
+후속 검토 기록의 정확한 후보 commit과 플랫폼별 패키지 SHA를 사용한다. `start`는 한 번만 사용할 수 있으며 `controller` 디렉터리가 이미 있으면 거부한다. 상태 파일은 `controller/execution-state.json`, 잠금은 `controller/controller.lock`, 협력 취소 표식은 `controller/cancel-requested`다. PID를 인자로 받거나 저장된 PID를 종료하지 않는다.
+
+빌드 도구는 해당 전용 사용자 소유의 `.rustup/toolchains/1.95.0-<aarch64|x86_64>-apple-darwin/bin/cargo`와 같은 디렉터리의 `rustc`로 고정한다. 사전 설치된 native 도구·오프라인 캐시가 필요하며 자동 설치·rustup 다운로드·개발 도구 OS 확인은 하지 않는다. 전용 `.cargo`는 private이고 사용자 config/credentials 파일이 없어야 한다. 기존 설정이나 권한을 지워서 조건을 맞추지 않는다. 조건을 충족하지 않으면 별도 준비 작업을 보고하고 중단한다.
+
+빌드·소스 복구 후 `controller/artifacts.json`에 UID/run-id/후보 commit·패키지 SHA, 두 소스의 내용·메타데이터 결속, 실행 파일의 정확한 경로·해시·identity·아키텍처 검증 결과를 기록한다. `execution-state.json`은 이 불변 파일의 SHA에 결속한다. 최종 종료 증거는 `controller/shutdown.json`이다. OS 요청 확인 전 이 로컬 합성 기록에서 정확한 requester 경로와 해시를 대조하며, 기록 자체를 사람이 검토했다는 증거나 OS 승인으로 취급하지 않는다.
+
+`controller/synthetic-secrets`는 seed 때만 새로 만들며 upgrade/reopen도 같은 디렉터리 identity를 사용해야 한다. 단계 전후·shutdown·fresh finalize에서 이 결속을 다시 확인한다. 다른 private 디렉터리로 바뀌어도 같은 시험 root로 받아들이지 않는다. 원본을 지우거나 재생성해 시험을 반복하지 않는다.
+
+```sh
+python3 scripts/run_macos_interactive_compat.py \
+  --action start --run-id RUN_ID --disposable-user-confirmed \
+  --candidate-commit CANDIDATE_COMMIT \
+  --candidate-sha256 CANDIDATE_ARCHIVE_SHA256 --execution-reviewed
+```
+
+다른 Terminal에서 중단 요청:
+
+```sh
+python3 scripts/run_macos_interactive_compat.py \
+  --action cancel --run-id RUN_ID --disposable-user-confirmed
+```
+
+이 명령은 취소 표식만 만들고 OS 창에 응답하지 않는다. 향후 실제 시험 중 OS 요청이 떠 있다면 사람도 해당 창을 취소한다. 취소·시간 초과·거부는 성공이 아니며 같은 run-id로 재개하거나 새 seed를 덮지 않는다. 강제 종료·전원 중단으로 원복을 확인하지 못하면 자료를 보존하고 별도 검토 복구 대상으로 남긴다.
+
+## D. 향후 실제 실행 순서 — Mac 환경·사람 검토 필요
 
 다음은 정상 실행 경로의 설계다. 현재 prep 도구에는 `--run` 옵션이 없으며 아래 동작을 실행한 적도 없다. 무검토 shell 복사본이나 CI 환경 변수 위조로 대신하지 않는다. controller는 고정 phase와 검증된 context를 받고 arbitrary command/PID/경로를 받지 않아야 한다. 이번 준비 범위에서는 제품 API·저장 형식·계약 변경이 필요하지 않았다. 이 후속 controller가 금고 선택·복원·삭제 등을 실행하도록 만들 때에는 ADR-032 운용 범위 변경안을 먼저 보고·검토한다.
 
 ### 공식 바이너리: DB·DB 키
 
-1. run root 아래 별도 old/candidate 설치 위치에 각각 해시 고정 아카이브를 설치한다. 안전한 archive member·manifest/hash/target 검증은 기존 패키지 규칙을 그대로 유지한다. 개인 PATH·실제 설치 채널은 변경하지 않는다.
-2. 공식 old `hantong --lang en`으로 무계정 메뉴에 도달한 뒤 종료한다. 계정 연결·Google OAuth·메일·AI를 시작하지 않는다. 암호화 DB와 합성 금고의 `database-key`가 생성되어야 한다. DB 헤더16바이트의 plaintext SQLite 여부만 검사하고 DB 키를 추출하지 않는다.
+1. run root 아래 고정 old/candidate 디렉터리에 해시 고정 아카이브를 안전하게 추출한다. archive member·manifest/hash/target을 검증하고 설치 스크립트를 실행하지 않는다. 따라서 이 경로는 설치 프로그램 검증 결과와 구분한다. 개인 PATH·실제 설치 채널은 변경하지 않는다.
+2. 정확한 공식 old Core를 `run` foreground 자식으로 시작한다. CLI의 daemon 자동 실행이나 초기 메뉴 자동 선택을 사용하지 않는다. 계정 연결·Google OAuth·메일·AI를 시작하지 않는다. 암호화 DB와 합성 금고의 `database-key`가 생성되어야 한다. DB 헤더16바이트의 plaintext SQLite 여부만 검사하고 DB 키를 추출하지 않는다.
 3. old CLI `core status --json`과 정확한 old Core의 `unix-stop`을 사용한다. 호출이 성공하고 해당 owned process가 끝나며 socket이 없어져야 다음으로 간다. arbitrary PID kill이나 다른 실행 파일로 stop하지 않는다.
-4. 후보의 첫 시작이 **동일한** DB·DB 키를 읽고 메뉴·status에 도달해야 한다. 기존45초 제한과 비어 있는 계정 상태를 유지한다. 종료·검증 뒤 같은 후보를 두 번째로 시작해 다시 읽기·status·종료를 확인한다. old/candidate가 같은 파일을 사용했음을 기록한다. OS 응답을 기다리다 제한시간이 지나면 실패이며 시간을 늘리거나 자동 재시도하지 않는다.
+4. 후보의 첫 시작이 **동일한** DB·DB 키를 읽고 status에 도달해야 한다. 기존45초 제한과 비어 있는 계정 상태를 유지한다. 종료·검증 뒤 같은 후보를 두 번째로 시작해 다시 읽기·status·종료를 확인한다. old/candidate가 같은 파일을 사용했음을 기록한다. OS 응답을 기다리다 제한시간이 지나면 실패이며 시간을 늘리거나 자동 재시도하지 않는다. 초기 메뉴 렌더링은 이 직접 Core 경로의 검증 주장에 포함하지 않는다.
 
 ### 별도 소스 fixture: 합성 IMAP·SMTP
 
-1. disposable old/candidate clone의 원본 `lib.rs` 바이트·source hash를 기록한다. 기존 `scripts/fixtures/macos_keychain_compat_module.rs`만 각각 시험 모듈로 임시 주입하고, 정상 제품 빌드·실제 개발 checkout은 변경하지 않는다. controller가 이 복원 책임을 갖는다.
+1. 제품·금고 접근 단계 **전에** disposable old/candidate clone의 원본 `lib.rs` 바이트를 기록한다. 기존 합성 fixture만 임시 주입해 `--no-run`으로 시험 실행 파일을 빌드하고, 원본 소스 바이트·clean 상태를 복구해야 다음으로 진행한다. 정확한 실행 파일의 경로·해시·identity·아키텍처를 결속한다. 정상 제품 빌드·실제 개발 checkout은 변경하지 않는다.
 2. old source에서 exact `macos_keychain_compat::mac_keychain_compatibility_fixture`, phase `seed`를 정확히1개 실행한다. 합성 IMAP/SMTP OAuth slot 생성 뒤 Secrets 내부에서 두 old 값을 비교해야 한다. provider에 연결하지 않는다. 실제 앱 비밀번호가 아니다.
 3. 후보의 phase `upgrade`는 **두 old 값 읽기→IMAP만 새 합성 값으로 갱신→새 IMAP와 보존 SMTP 비교**를 모두 마쳐야 한다. 값 비교는 Secrets 내부에 두고 바이트를 외부로 내보내지 않는다.
 4. 후보를 별도 프로세스로 다시 실행하는 phase `reopen`에서 새 IMAP와 기존 SMTP를 재비교한다. phase마다 정확히1개 시험, 원래900초 제한, `open/opened/.../done` 고정 마커를 요구한다. 기존 no-UI probe 분류는 이 조건을 대신하지 않는다.
-5. 성공·실패·취소 모두 owned process group 종료를 확인한 뒤 주입 파일을 제거하고 `lib.rs` 원본 바이트·source hash를 복원·비교한다. 종료 확인에 실패하면 쓰기·정리하지 않고 보존한다. SIGKILL·전원 중단으로 finally가 안 돌아간 경우도 이후 복구 대상으로 남기며 새 seed로 덮지 않는다.
+5. 빌드 실패·취소에도 원본 소스와 주입 파일을 비교 후 복구하며, 예상하지 못한 변경은 덮어쓰지 않는다. 실제 자격증명 단계는 미리 검증한 실행 파일만 사용한다. SIGKILL·전원 중단으로 finally가 안 돌아간 경우도 이후 복구 대상으로 남기며 새 seed로 덮지 않는다.
 
 공식 바이너리 시험은 DB 키 호환성, 소스 fixture는 시험 바이너리의 합성 메일 slot 호환성이다. 소스 시험 통과를 공식 old 바이너리가 만든 메일 자격증명까지 검증한 것으로 확대하지 않는다. Intel과 ARM 각각 두 경로를 기록해야 한다.
 
@@ -120,6 +146,15 @@ python3 scripts/prepare_macos_interactive_compat.py \
 
 `selection_restored=true`는 경로·순서·original file identity 일치만 뜻한다. `process_shutdown_verified=false`, `cleanup_authorized=false`를 함께 반환한다. 실행 중인 시험이 없다는 증거나 cleanup 허가가 아니다. 원래 금고의 항목·값을 읽어 복원 여부를 검증하지 않는다.
 
+컨트롤러 종료 뒤에는 runtime 디렉터리가 남을 수 있다. 준비 도구의 엄격한 `restore-check`는 이 경우에도 거부하며 이를 우회하려고 디렉터리를 지우지 않는다. 새 컨트롤러의 후속 검증은 자신이 기록한 종료 증거·고정 runtime/socket 상태·소스·원래 baseline을 별도로 검사한다.
+
+```sh
+python3 scripts/run_macos_interactive_compat.py \
+  --action finalize --run-id RUN_ID --disposable-user-confirmed
+```
+
+`finalize`는 정상 종료가 증명된 terminal 기록에만 허용한다. baseline 복원이나 소스·파일 결속을 확인하지 못하면 거부한다. `cleanup_eligible=true`여도 금고·DB·앱 root·runtime·실행 파일·기록을 삭제하지 않는다. 기존 실패 outcome도 `passed`로 바꾸지 않는다. 실제 삭제 명령은 제공하지 않는다. 기록이 `recovery_required`이면 같은 ID를 재실행하지 말고 정확한 대상과 원인부터 별도 검토한다.
+
 6. 이후 별도로 승인된 cleanup에서 owned process 종료, 정확한 baseline 복원, source 원본 바이트 복원, 합성 대상 file identity가 모두 확인돼야 **그 run의 합성 대상만** 제거할 수 있다. 사용자 계정 삭제·전체 home 삭제·기존 앱 데이터 삭제·원래 Keychain 삭제는 정상 cleanup으로 취급하지 않는다. 이 도구에는 삭제 기능이 없다.
 
 ## 결과·검토·남은 일
@@ -132,4 +167,6 @@ python3 scripts/prepare_macos_interactive_compat.py \
 
 새 사람 검토 대상은 `c6d1275`의 `scripts/prepare_macos_interactive_compat.py`, `tests/Build/test_macos_interactive_preparation.py`, 이 문서·계획·ADR-032 보완이다. `95349fe`의 `Cargo.lock`, Secrets Cargo.toml, `macos_keychain_probe_module.rs`, compat fixture와 `test_macos_keychain_upgrade.py`도 연결해 읽는다. 확인 항목은 OS-derived session과 운영자 선언의 구분, ctypes sysctl의 고정 read-only 인자·반환/errno 검사, 조회 명령 허용 목록, baseline 전후 결속, clone 내부 링크·외부 Git 참조 거부, 값 비노출, 실패 보존, 실행/권한변경 기능 부재, cleanup 성공 과장 방지다. 검토자·일시·커밋·읽은 파일·판단·발견 사항·수정/재검증을 기록해야 한다. AI 검토나 “의존성 추가 승인”을 사람 검토 완료로 대체하지 않는다. 앞선 `6322b9a` 이후 제품 실행 경계 변경의 미충족 사람 검토 조건도 이 준비 차분 검토만으로 해제하지 않는다.
 
-남은 작업: 실제 Intel·ARM GUI 시험 환경과 전용 사용자의 운용 준비, 별도 실행 controller의 범위 검토·구현, 정상/거부/취소/실패 복구 실제 시험, 교차 버전 값 보존·갱신·재시작 입증, 새 Secrets 사람 검토 및 기존 실행 파일 교체 경쟁 잔여 조건 해결. **배포 보류는 유지한다.**
+위 `c6d1275`와62개 결과는 이전 준비 도구만의 증거다. 후속 컨트롤러의 새 코드·단위시험 결과와 전체 검토 커밋은 별도 결과 기록으로 확정한다. 컨트롤러 코드는 아직 실제 Mac에서 실행하지 않았다.
+
+남은 작업: 새 전체 커밋의 Secrets 사람 검토, 실제 Intel·ARM GUI 시험 환경과 전용 사용자의 운용 준비, 정상/거부/취소/실패 복구 실제 시험, 교차 버전 값 보존·갱신·재시작 입증 및 기존 실행 파일 교체 경쟁 잔여 조건 해결. 빠르게 종료돼 커널 이미지 관찰을 못한 프로세스도 보수적으로 거부하므로 실제 Mac의 이 동작 확인이 필요하다. process group을 벗어나는 적대적 자식이나 같은 UID의 모든 파일 교체를 OS sandbox 수준으로 봉쇄했다고 주장하지 않는다. **배포 보류는 유지한다.**

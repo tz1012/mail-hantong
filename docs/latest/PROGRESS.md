@@ -2475,3 +2475,18 @@ Python 음성 시험에서 의도적으로 발생시키던 probe 실패 마커�
 - `MAC-INTERACTIVE-COMPAT-RUNBOOK-20261107.md`에 Intel/ARM별 공식 old DB 키→후보 읽기·재시작과 별도 source IMAP/SMTP seed→읽기·보존·갱신→reopen, 예상 OS 실행 파일·정확한 합성 selector, 취소/오류/timeout 보존, baseline 복원 후 비교·정리 조건을 기록했다. 이번에는 어떤 OS 요청에도 응답하지 않았고 Keychain 생성/선택/unlock·권한 변경·실제 사용자 계정/메일 접근·발송/휴지통·데이터 초기화·배포를 수행하지 않았다.
 
 상태: **준비 범위 구현·단위검증 완료 / 사람 Secrets 검토 필요 / 실제 대화형 두 Mac 환경과 실행 controller 후속 작업 남음 / 배포 보류**. 사람 검토의 새 고정 대상은 c6d1275의 준비 코드·시험·계획·런북·ADR 보완 및 연결된95349fe Secrets 진단이다. 검토 항목·기록 요건은 런북에 명시했다. 실제 실행 controller·OS 확인·권한 변경은 이번 준비 결과로 자동 승인하지 않는다. 사용자·금고 내용이 실제로 합성뿐이라는 provenance, same-UID 원자적 실행 및 기존 배포 차단을 위험 수용으로 처리하지 않는다.
+
+### 2026-11-07 격리 실행 컨트롤러·합성 안전성 시험
+
+사용자의 후속 지시 범위는 컨트롤러 코드·재현 절차·fake 단위시험까지다. 실제 Mac 실행·실제 사용자 금고/계정/메일 접근·OS 승인·Keychain 설정/ACL 변경·자동 확인·배포는 제외했다. ADR-032에 이 범위 보완을 먼저 기록했고 제품 계약·Rust·의존성·기존 CI guard는 변경하지 않았다.
+
+- 별도 start/cancel/finalize 컨트롤러에 단일 사용 run-id, private 원자 기록, 파일/디렉터리 fsync, 실행 잠금과 짧은 취소/완료 전이 잠금을 구현했다. 초기 host/잠금 오류도 typed recovery 기록으로 남긴다. 실행 오류와 취소·timeout을 성공으로 바꾸지 않는다.
+- artifact helper는 고정 압축 SHA·manifest·target·Mach-O 검증, 폐기 가능한 source clone의 정확한 fixture 주입·prebuild·CAS 원복을 담당한다. compiler 자식의 종료 증명이 없으면 UnreapedProcessError로 소스를 그대로 보존하고 artifact를 반환하지 않는다. 빌드가 성공해도 소스 내용·clean commit·실행 파일 경로/identity/hash를 재검증해야 한다.
+- native adapter는 전용 OS GUI 세션과 sole synthetic 금고 선택을 재검사한다. 사전 설치된 고정 Rust 도구만 사용하고 환경/CI 위장이나 자동 toolchain 설치를 하지 않는다. 공식 old/candidate 패키지와 source hash를 결속하고, 고정 foreground Core의 old1회·candidate2회 DB 키/종료 경로와 별도 prebuilt fixture의 seed/upgrade/reopen을 분리했다. source fixture는 정확히1개 시험과 IMAP 갱신·SMTP 보존을 포함한 전체 고정 마커를 요구한다.
+- 이미지 FD와 시작 전후 해시·파일 identity를 유지하고 커널 이미지 경로를 관찰한다. 자신이 아직 소유한 live child의 그룹만 종료하며, 종료·원복·socket 부재 증거가 불충분하면 recovery_required로 남긴다. 불변 artifacts.json의 SHA와 shutdown.json에 결속한 fresh-process finalize는 원래 baseline과 소스를 다시 확인할 뿐 금고·DB·시험 결과를 삭제하지 않는다.
+
+진행 중 검증에서 실제 호스트 연결의 누락된 환경·종료 처리·fresh finalize·프로세스 회수 공백을 찾아 보완했다. 이전 준비 도구62개와 현재 controller/host 시험 결과를 섞어 실제 Mac 성공으로 표시하지 않는다. 최종 코드 검토·단위검증 결과와 고정 커밋은 아래 후속 기록에 확정한다. 실제 Intel/ARM GUI 환경, 별도 Secrets 사람 검토, 기존 same-UID TOCTOU 잔여 해결 및 배포 보류는 그대로다.
+
+최종 합성 검증: Windows117개·Linux WSL117개 각각 전부 통과(새 controller22·artifact10·host23, 기존 준비/진단62; skip/ignore0). Windows 문서29개·Python compile·diff·traceability 검사 통과, canonical source hash `b789e013128bd17261be39aa6b5dcfc73e0d65836a512a16459771579f02572e`. 독립 검토에서 남은 MEDIUM인 합성 secret root 교체 공백을 수정하고 재검토로 닫았다. seed/upgrade/reopen 전후·shutdown·fresh finalize까지 exact identity에 결속하며, 교체 시 fixture를 실행하지 않고 원본을 보존하는 시험을 추가했다. 현재 시험 도구 차분의 추가 CRITICAL/HIGH/MEDIUM 차단 사항은 발견하지 못했다. 이 AI 코드 검토는 AGENTS §6 사람 검토가 아니다.
+
+상태: **요청한 컨트롤러·재현 절차·fake 안전성 검증 완료 / 새 전체 커밋 별도 Secrets 사람 검토 필요 / 실제 Intel·ARM Mac 실행 미실행 / 공식 배포 보류**. 새 네 플랫폼 전체 Cargo/패키지/설치 검사는 이번 script-only·실제 Mac 제외 범위에 포함하지 않았으며 이전 CI 결과를 새 코드의 플랫폼 검증으로 전용하지 않는다. 실제 사용자 데이터·키·금고·권한 변경, OS 자동 확인, 실제 메일 작업·배포는 없었다. 실제 시작 전 검토 대상 전체 커밋·파일·OS 요청·최소 사람 조작·시작/취소/finalize 명령은 런북에 고정한다. `finalize`는 정리 적격 확인일 뿐 삭제가 아니다.
