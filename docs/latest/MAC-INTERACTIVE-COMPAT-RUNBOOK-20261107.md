@@ -124,8 +124,12 @@ python3 scripts/prepare_macos_interactive_compat.py \
 
 ## 결과·검토·남은 일
 
+고정 구현 커밋은 `c6d127534733fd3aae4f633c9ff8e1c84145127c`, canonical source hash는 `e6a20668885fb4d623326881b64cdb43a8c0b7f3427feb1c67f75e0d06b002a5`다. 코드·시험 차분은 `git diff 674dc27..c6d1275`로 읽는다. 이후 결과 문서 커밋은 이 코드 대상과 구분한다. 현재 구현은 로컬 제품 worktree에 커밋했으며 새 CI·패키지·배포는 실행하지 않았다.
+
+실제 검증 결과: Windows 및 Linux WSL에서 각각 관련62개(새42개·기존20개) 전부 통과, skip/ignore0. Windows 문서29개, py_compile, diff/traceability 검사도 통과했다. 실제 Windows에서 준비 CLI가 platform 거부·종료2로 끝나 Mac/Keychain 조회 전에 중단되는 것을 확인했다. 독립 코드 검토에서 준비 전용 범위의 추가 CRITICAL/HIGH/MEDIUM 차단 사항은 발견하지 못했으며, 이 검토는 사람 Secrets 검토가 아니다. Mac 네이티브 검사를 실행하지 않았고 기존 `c2e1aa4`의 네 플랫폼 전체 CI 통과를 새 준비 코드의 Mac 실행 결과로 전용하지 않는다.
+
 환경 위장·root/admin·console/GUI/TTY·기존 데이터·unsafe path·ACL·hardlink·baseline 부재/변경·wrong commit/hash·변경 명령 거부는 OS/Keychain mock 단위시험으로 확인한다. mock 통과를 실제 Mac 증거로 표시하지 않는다. 이번에는 네 플랫폼 전체 Cargo/패키지 검사를 다시 실행하지 않는다. 제품 Rust·기존 CI 하네스는 변경하지 않았다.
 
-새 사람 검토 대상: 준비 도구, 해당 Build 시험, 이 문서·계획·ADR-032 보완과 `95349fe`의 Secrets dependency/probe/harness를 연결해 읽는다. 확인 항목은 OS-derived session과 운영자 선언의 구분, 조회 명령 허용 목록, baseline 전후 결속, 값 비노출, 실패 보존, 실행/권한변경 기능 부재, cleanup 성공 과장 방지다. 고정 대상 커밋·파일과 실제 검증 결과는 PROGRESS에 기록한다. AI 검토나 “의존성 추가 승인”을 사람 검토 완료로 대체하지 않는다.
+새 사람 검토 대상은 `c6d1275`의 `scripts/prepare_macos_interactive_compat.py`, `tests/Build/test_macos_interactive_preparation.py`, 이 문서·계획·ADR-032 보완이다. `95349fe`의 `Cargo.lock`, Secrets Cargo.toml, `macos_keychain_probe_module.rs`, compat fixture와 `test_macos_keychain_upgrade.py`도 연결해 읽는다. 확인 항목은 OS-derived session과 운영자 선언의 구분, ctypes sysctl의 고정 read-only 인자·반환/errno 검사, 조회 명령 허용 목록, baseline 전후 결속, clone 내부 링크·외부 Git 참조 거부, 값 비노출, 실패 보존, 실행/권한변경 기능 부재, cleanup 성공 과장 방지다. 검토자·일시·커밋·읽은 파일·판단·발견 사항·수정/재검증을 기록해야 한다. AI 검토나 “의존성 추가 승인”을 사람 검토 완료로 대체하지 않는다. 앞선 `6322b9a` 이후 제품 실행 경계 변경의 미충족 사람 검토 조건도 이 준비 차분 검토만으로 해제하지 않는다.
 
 남은 작업: 실제 Intel·ARM GUI 시험 환경과 전용 사용자의 운용 준비, 별도 실행 controller의 범위 검토·구현, 정상/거부/취소/실패 복구 실제 시험, 교차 버전 값 보존·갱신·재시작 입증, 새 Secrets 사람 검토 및 기존 실행 파일 교체 경쟁 잔여 조건 해결. **배포 보류는 유지한다.**

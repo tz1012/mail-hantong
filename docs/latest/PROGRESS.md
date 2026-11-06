@@ -2463,3 +2463,15 @@ Python 음성 시험에서 의도적으로 발생시키던 probe 실패 마커�
 - 독립 AI 검토는 승인 범위·probe 실패 의미·MCP 시험 전용 변경에 차단 사항을 찾지 않았으나 AGENTS §6의 사람 Secrets 검토가 아니다. `95349fe`의 직접 dev dependency·probe·하네스와 연결 코드에 대한 별도 사람 검토 대상·확인 항목을 기록했다. 이전 `6322b9a` 확인을 새 코드로 확대하지 않는다. 기존 사용자 계정·금고·메일·인증정보·권한을 보존했고 실제 발송·휴지통·자동 권한 부여·송파 차단 우회는 없다.
 
 상태: **Mac 교차 버전 읽기 환경 차단 / 새 보안 변경 사람 검토 필요 / 공식 배포 보류**. 일반 CI 성공을 Mac 필수 호환성·최종 네 플랫폼 자산 검증 완료로 대체하지 않는다. 기존 실행 교체 경쟁의 잔여 문제도 위험 수용으로 처리하지 않는다. 동일한 hosted 재시도만 반복하지 않고 대화형 격리 환경 확보가 다음 필요한 조치다.
+
+### 2026-11-07 대화형 Mac 시험의 읽기 전용 준비 경로
+
+사용자는 준비·구현과 권한을 바꾸지 않는 시험만 요청했으며 실제 OS 승인·권한 변경·자동 확인·ACL 완화를 제외했다. 제품 계약·Rust·기존 CI 진입점은 변경하지 않았고 새 의존성도 없다. 미래 executor가 실제 금고 생성·unlock·선택·복원·삭제 등을 수행하려면 ADR-032 운용 범위 변경안과 별도 사람 검토·실행 승인이 필요함을 먼저 기록했다. 이번에는 이 executor를 구현·실행하거나 기존 CI 제한을 우회하지 않았다.
+
+- 구현 `c6d127534733fd3aae4f633c9ff8e1c84145127c`, source `e6a20668885fb4d623326881b64cdb43a8c0b7f3427feb1c67f75e0d06b002a5`. `prepare_macos_interactive_compat.py`는 baseline/prepared/restore-check 세 읽기 전용 단계만 제공한다. OS UID/passwd home·관리자 그룹·console/GUI/TTY·native architecture를 확인하고 CI/runner 위장·다른 사용자를 거부한다. 합성 전용 사용자/금고 provenance는 운영자 선언과 기술 검증을 구분한다.
+- 전환 전 빈 run root에서 원래 default/search 및 파일 identity를 기록하고, 전환 후 private root의 정확한6입력·sole synthetic Keychain·원래 baseline 결속·고정 beta29/candidate 해시·source commit/내용/메타데이터를 확인한다. 소스 내부 symlink/hardlink/특수 파일·쓰기 권한·외부 Git 참조/config를 거부한다. 마지막 제품·runtime 부재 및 원래 root/금고/source 결속을 재확인한다. 준비 결과는 executed=false/execution_authorized=false이며 restore-check도 cleanup 권한·프로세스 종료 증거가 아니다.
+- 독립 검토가 찾은 Intel ARM OID 부재, 예상 밖 root 항목, 늦은 제품 생성·source 변경, clone 내부 외부 참조 공백을 수정하고 회귀를 추가했다. 추가 독립 검토에서 준비 전용 범위의 CRITICAL/HIGH/MEDIUM 차단 사항 없음. 사람 검토 완료·같은 UID 원자적 executor 보장으로 표시하지 않는다.
+- Windows와 Linux WSL에서 관련62개씩(새42·기존20, skip/ignore0) 통과. 문서29·py_compile·diff/traceability 통과. Windows 실제 준비 명령은 Mac/Keychain 조회 전에 platform 거부·종료2를 확인했다. 실제 Mac OS API·GUI·Keychain 시험은 미실행이다. 변경 영향에 맞춘 검사만 했고 전체 Cargo·네 플랫폼 패키지 검사를 반복하지 않았다. 이전 c2e1aa4 전체 CI를 새 코드 결과로 재사용하지 않는다.
+- `MAC-INTERACTIVE-COMPAT-RUNBOOK-20261107.md`에 Intel/ARM별 공식 old DB 키→후보 읽기·재시작과 별도 source IMAP/SMTP seed→읽기·보존·갱신→reopen, 예상 OS 실행 파일·정확한 합성 selector, 취소/오류/timeout 보존, baseline 복원 후 비교·정리 조건을 기록했다. 이번에는 어떤 OS 요청에도 응답하지 않았고 Keychain 생성/선택/unlock·권한 변경·실제 사용자 계정/메일 접근·발송/휴지통·데이터 초기화·배포를 수행하지 않았다.
+
+상태: **준비 범위 구현·단위검증 완료 / 사람 Secrets 검토 필요 / 실제 대화형 두 Mac 환경과 실행 controller 후속 작업 남음 / 배포 보류**. 사람 검토의 새 고정 대상은 c6d1275의 준비 코드·시험·계획·런북·ADR 보완 및 연결된95349fe Secrets 진단이다. 검토 항목·기록 요건은 런북에 명시했다. 실제 실행 controller·OS 확인·권한 변경은 이번 준비 결과로 자동 승인하지 않는다. 사용자·금고 내용이 실제로 합성뿐이라는 provenance, same-UID 원자적 실행 및 기존 배포 차단을 위험 수용으로 처리하지 않는다.
