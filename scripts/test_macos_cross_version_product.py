@@ -68,7 +68,7 @@ def install(package_root: Path, install_root: Path, bin_dir: Path, environment: 
 
 
 def run_version(package: Path, root: Path, install_root: Path, bin_dir: Path, environment: dict[str, str], restart: bool, socket: Path) -> None:
-    stage = root / f"stage-{install_root.name}"
+    stage = root / f"stage-{install_root.parent.name}"
     stage.mkdir(mode=0o700)
     extract_archive(package, stage)
     package_root = stage
@@ -129,8 +129,8 @@ def main() -> int:
     assert_keychain_baseline(expected_keychain, "before product upgrade")
     temporary = tempfile.TemporaryDirectory(prefix="hantong-macos-cross-version-")
     root = Path(temporary.name).resolve()
-    old_install = root / "old-install"
-    candidate_install = root / "candidate-install"
+    old_install = root / "old-install" / "mail-hantong-cli"
+    candidate_install = root / "candidate-install" / "mail-hantong-cli"
     old_bin = root / "old-bin"
     candidate_bin = root / "candidate-bin"
     for directory in (old_install, candidate_install, old_bin, candidate_bin):

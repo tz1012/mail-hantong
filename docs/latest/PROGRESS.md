@@ -2405,3 +2405,9 @@ Reports: docs/latest/CI-REPAIR-20261105.md and docs/latest/HUMAN-SECURITY-REVIEW
 3be8bc8941f4a98cecf8b75bbbb28becde060936의 Linux 설치 gate 42196808834도 성공했다. 같은 커밋의 전체 Linux·Mac Intel 검사는 기존 tui01_rejects_control_arguments_before_process_spawn에서 44/45 통과 후 실패했다: 새 manifest 검사가 잘못된 인자 거부보다 먼저 실행됐다. 시험 기대값은 유지하고 Runner.call의 입력 검사를 패키지 검증 앞으로 옮겼다. 수정 후 로컬 Linux TUI 45/45 통과. 실패 로그는 target/toctou-full-127822039944.log 및 toctou-full-127822040333.log에 보존한다. 앞선 Build 음성 시험에서 의도적으로 출력한 error 문구를 실제 실패와 혼동하지 않는다.
 
 3be8bc8 Windows 후보의 격리 한글 경로 설치·제거 및 beta.29→beta.30 업그레이드는 각각 성공했다. 미지 파일·별도 합성 데이터·실제 설치 포인터·User PATH 보존을 확인했다. 이는 실제 계정 업그레이드가 아니며 후속 수정 커밋의 최종 패키지 검증과 구분한다. 후보 SHA-256은 1c3169b95c5b149b75ff2067ff12bc7e97ce091e0346b4c9ec45cd0a60c8bbca이다. 중복 수동 CI 요청과 대체된 자체 검사만 취소했고 사용자 별도 시험은 중단하지 않았다.
+
+438af22의 Linux·Mac ARM·Mac Intel 전체 검사는 성공했고 Windows는 진행 중이다. Rust 실행 합계는 Linux1232·Mac각1091(실패/ignore0). 같은 소스 Windows 후보 격리 설치·제거·업그레이드는 통과했고 SHA256은 2a458f1a52798db424b2d1811747f1cf6e23957741e5d1c247b7e89155347093이다. Linux package/install gate42198582098 성공, 다운로드 아카이브 SHA256 a45fe4231d935422b1c914a840af300048f9075a36575400d5327da353509988, source hash3a8fc91daa56434e295824001f4b05a9e52557f1aee6d63834fe6f02d77d43d7 확인.
+
+Mac 실제 호환성의 첫 상세 증거: 3be8bc8 ARM job127821764295의 공식 old-binary 시험은 하네스 install_root가 mail-hantong-cli로 끝나지 않아 구버전 설치에서 exit1로 실패했다. Core·Keychain 도달 실패가 아니며 후보 호환성 실패로 해석하지 않는다. old/candidate 설치 루트 leaf와 stage 구분을 기존 installer 계약에 맞춰 수정했다. 같은 job의 소스 자격증명 seed는 통과했지만 upgrade 단계가900초에 시간 초과해 종료·회수됐다. Keychain 잠금·ACL 원인으로 확정하지 않고 추가 허용도 하지 않았다. 공식 바이너리 시험과 재컴파일한 소스 시험의 증거 범위를 계속 구분한다.
+
+438af22의 Mac ARM package job127827905849는 코드 실행 전 hosted runner를 여러 번 배정받지 못해 GitHub가 취소했다(runner_id0, steps없음). check annotation의 ‘The job was not acquired by Runner of type hosted even after multiple attempts’를 환경 실패 증거로 보존하며 통과로 계산하지 않는다. 최종 사람 검토·배포 조건은 충족되지 않았으므로 공식 공개는 하지 않는다.
