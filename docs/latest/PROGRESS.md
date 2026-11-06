@@ -2490,3 +2490,5 @@ Python 음성 시험에서 의도적으로 발생시키던 probe 실패 마커�
 최종 합성 검증: Windows117개·Linux WSL117개 각각 전부 통과(새 controller22·artifact10·host23, 기존 준비/진단62; skip/ignore0). Windows 문서29개·Python compile·diff·traceability 검사 통과, canonical source hash `b789e013128bd17261be39aa6b5dcfc73e0d65836a512a16459771579f02572e`. 독립 검토에서 남은 MEDIUM인 합성 secret root 교체 공백을 수정하고 재검토로 닫았다. seed/upgrade/reopen 전후·shutdown·fresh finalize까지 exact identity에 결속하며, 교체 시 fixture를 실행하지 않고 원본을 보존하는 시험을 추가했다. 현재 시험 도구 차분의 추가 CRITICAL/HIGH/MEDIUM 차단 사항은 발견하지 못했다. 이 AI 코드 검토는 AGENTS §6 사람 검토가 아니다.
 
 상태: **요청한 컨트롤러·재현 절차·fake 안전성 검증 완료 / 새 전체 커밋 별도 Secrets 사람 검토 필요 / 실제 Intel·ARM Mac 실행 미실행 / 공식 배포 보류**. 새 네 플랫폼 전체 Cargo/패키지/설치 검사는 이번 script-only·실제 Mac 제외 범위에 포함하지 않았으며 이전 CI 결과를 새 코드의 플랫폼 검증으로 전용하지 않는다. 실제 사용자 데이터·키·금고·권한 변경, OS 자동 확인, 실제 메일 작업·배포는 없었다. 실제 시작 전 검토 대상 전체 커밋·파일·OS 요청·최소 사람 조작·시작/취소/finalize 명령은 런북에 고정한다. `finalize`는 정리 적격 확인일 뿐 삭제가 아니다.
+
+고정 코드 커밋: `fefa3c220c6a243c9ec458526e1c522da4b27978` (로컬 제품 worktree). 해당11파일과 연결 코드의 사람 검토 범위, 실제 두 Mac 전제 및 최소 수동 조작을 런북의 “컨트롤러 최종 고정 검토 대상”에 기록했다. 후속 문서 증거 커밋은 이 코드 커밋·source hash와 구분한다. 실제 Mac 실행·Keychain 설정·OS 응답·배포는 계속 미실행이다.

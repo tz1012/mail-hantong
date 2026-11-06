@@ -118,8 +118,8 @@ python3 scripts/run_macos_interactive_compat.py \
 
 | 경로 | 예상 실행 파일 | service / account |
 | --- | --- | --- |
-| 후보 DB 키 읽기 | 해당 후보 설치의 `bin/mail-hantong-core` | `mail-hantong.local-security.v1` / `database-key` |
-| 후보 합성 IMAP | disposable 후보 target의 정확한 `hantong_secrets-*` | 같은 service / `mail-BASE32HEX-imap-oauth-refresh` |
+| 후보 DB 키 읽기 | `controller/candidate-product/bin/mail-hantong-core` | `mail-hantong.local-security.v1` / `database-key` |
+| 후보 합성 IMAP | `controller/candidate-target/debug/deps/hantong_secrets-*`의 고정 해시 실행 파일 | 같은 service / `mail-BASE32HEX-imap-oauth-refresh` |
 | 후보 합성 SMTP | 동일한 후보 시험 실행 파일 | 같은 service / `mail-BASE32HEX-smtp-oauth-refresh` |
 
 `BASE32HEX`는 ASCII `synthetic-upgrade-account`의 padding 없는 lowercase base32hex, 즉 `edsmst38clq6iopdelo6esj1chiiqob3cdnnarjk`다. 따라서 IMAP account 전체는 `mail-edsmst38clq6iopdelo6esj1chiiqob3cdnnarjk-imap-oauth-refresh`, SMTP account 전체는 같은 prefix 뒤 `-smtp-oauth-refresh`다. 코드의 `encoded_account()`·`slot.name()`과 대조해야 하며 평문 계정명을 selector로 오인하지 않는다. 서비스·선택자 확인을 위해 비밀을 출력하는 명령은 사용하지 않는다.
@@ -170,3 +170,26 @@ python3 scripts/run_macos_interactive_compat.py \
 위 `c6d1275`와62개 결과는 이전 준비 도구만의 증거다. 후속 컨트롤러의 새 코드·단위시험 결과와 전체 검토 커밋은 별도 결과 기록으로 확정한다. 컨트롤러 코드는 아직 실제 Mac에서 실행하지 않았다.
 
 남은 작업: 새 전체 커밋의 Secrets 사람 검토, 실제 Intel·ARM GUI 시험 환경과 전용 사용자의 운용 준비, 정상/거부/취소/실패 복구 실제 시험, 교차 버전 값 보존·갱신·재시작 입증 및 기존 실행 파일 교체 경쟁 잔여 조건 해결. 빠르게 종료돼 커널 이미지 관찰을 못한 프로세스도 보수적으로 거부하므로 실제 Mac의 이 동작 확인이 필요하다. process group을 벗어나는 적대적 자식이나 같은 UID의 모든 파일 교체를 OS sandbox 수준으로 봉쇄했다고 주장하지 않는다. **배포 보류는 유지한다.**
+
+## 컨트롤러 최종 고정 검토 대상
+
+코드 대상 전체 커밋은 **`fefa3c220c6a243c9ec458526e1c522da4b27978`**, canonical source hash는 **`b789e013128bd17261be39aa6b5dcfc73e0d65836a512a16459771579f02572e`**다. 차분은 `git diff 09a64cf..fefa3c220c6a243c9ec458526e1c522da4b27978`로 확인한다. 이 절은 이후 문서 증거 커밋이며 새 보안 코드가 추가된 것으로 표시하지 않는다. 로컬 커밋이며 새 CI·Mac 실행·패키지·공식 배포는 없다.
+
+| 파일 | 검토 내용 |
+| --- | --- |
+| `scripts/run_macos_interactive_compat.py` | typed 상태·단일 사용, 초기 오류 복구 기록, 취소/완료 전이 잠금, fsync, 결속된 fresh finalize, 원래 실패 결과 유지 |
+| `scripts/macos_interactive_artifacts.py` | 압축/manifest/Mach-O, 고정 Cargo artifact 선택, no-follow source CAS, partial failure와 unreaped 보존 |
+| `scripts/macos_interactive_host.py` | 전용 GUI 신분, 정확한 이미지·FD·커널 경로, owned group 회수, 패키지/소스 결속, 합성 root identity, Keychain 설정·OS 입력·삭제 없음 |
+| `tests/Build/test_macos_interactive_controller.py` | 상태·경합·취소·timeout·복구·비밀 비노출 회귀 |
+| `tests/Build/test_macos_interactive_artifacts.py` | source 원복·원복 거부·미회수 보존, 잘못된 압축/이미지/해시 거부 |
+| `tests/Build/test_macos_interactive_host.py` | 실제 adapter 인터페이스의 fake 실행, 모든 값 보존 마커·거부·프로세스 및 root 교체·fresh finalize |
+| `docs/adr/proposed/ADR-032-macos-keychain-read-diagnostics.md` | 구현 승인과 실제 운용·사람 검토 승인 범위 구분 |
+| `docs/latest/MAC-INTERACTIVE-COMPAT-PLAN-20261107.md` | 고정 범위와 단계·검증 계획 |
+| `docs/latest/MAC-INTERACTIVE-COMPAT-RUNBOOK-20261107.md` | 실제 두 Mac에 필요한 전제·예상 OS 요청·시작/취소/finalize·실패 보존 |
+| `docs/latest/PROGRESS.md`, `docs/traceability.md` | 실제 검증 결과와 미실행 범위·source hash |
+
+Windows117개·Linux WSL117개 각각 전부 통과했다. 구성은 controller22·artifact10·host23와 기존 준비/진단62개이며 skip/ignore0이다. 문서29·py_compile·diff/traceability 검사도 통과했다. 독립 AI 검토에서 secret root 교체 MEDIUM을 수정·재검토로 닫았으며 현재 차분의 추가 CRITICAL/HIGH/MEDIUM 차단 사항을 찾지 못했다. **이 결과는 사람 검토나 실제 Mac 실행 결과가 아니다.**
+
+실제 시험 전 최소 사람 작업은 별도 승인 아래 (1) 각 native Intel/ARM의 전용 표준 GUI 사용자로 로그인, (2) 원래 baseline을 먼저 보관하고 새 합성 금고만 준비·선택, (3) 검토 기록과 exact commit/hash·offline 도구·source/package를 대조, (4) 실제 나타난 예상 대상 OS 요청에만 직접 일회 허용 또는 거부/취소, (5) 종료 후 원래 default/search를 수동 복원하고 위 검증 명령을 실행하는 것이다. 이번에는 이 조작을 요청하거나 실행하지 않는다. 계정·금고 생성/선택/복원은 컨트롤러가 수행하지 않는다.
+
+AGENTS §6의 별도 Secrets 사람 검토에는 위 전체 커밋·파일과 연결된 `95349fe`의 Secrets dev dependency·probe·fixture 및 기존 제품 실행 경계를 함께 읽어야 한다. 검토자·일시·커밋·파일·판단·발견 사항·수정 및 재검증 기록이 필요하다. `6322b9a`에 대한 과거 사용자 확인이나 ADR-032 의존성 추가 승인으로 이 새 코드의 검토를 충족시키지 않는다. 실제 GUI Mac 두 환경이 현재 작업에 없고 이번 범위에서도 제외됐으므로 Keychain 교차 버전 성공·OS 요청의 실제 모습·native launcher의 짧은 프로세스 관찰은 미입증이다. 새 네 플랫폼 필수 패키지/설치·보안 검토 조건 충족 전 배포는 계속 보류한다.
