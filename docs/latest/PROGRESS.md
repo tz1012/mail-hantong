@@ -2492,3 +2492,17 @@ Python 음성 시험에서 의도적으로 발생시키던 probe 실패 마커�
 상태: **요청한 컨트롤러·재현 절차·fake 안전성 검증 완료 / 새 전체 커밋 별도 Secrets 사람 검토 필요 / 실제 Intel·ARM Mac 실행 미실행 / 공식 배포 보류**. 새 네 플랫폼 전체 Cargo/패키지/설치 검사는 이번 script-only·실제 Mac 제외 범위에 포함하지 않았으며 이전 CI 결과를 새 코드의 플랫폼 검증으로 전용하지 않는다. 실제 사용자 데이터·키·금고·권한 변경, OS 자동 확인, 실제 메일 작업·배포는 없었다. 실제 시작 전 검토 대상 전체 커밋·파일·OS 요청·최소 사람 조작·시작/취소/finalize 명령은 런북에 고정한다. `finalize`는 정리 적격 확인일 뿐 삭제가 아니다.
 
 고정 코드 커밋: `fefa3c220c6a243c9ec458526e1c522da4b27978` (로컬 제품 worktree). 해당11파일과 연결 코드의 사람 검토 범위, 실제 두 Mac 전제 및 최소 수동 조작을 런북의 “컨트롤러 최종 고정 검토 대상”에 기록했다. 후속 문서 증거 커밋은 이 코드 커밋·source hash와 구분한다. 실제 Mac 실행·Keychain 설정·OS 응답·배포는 계속 미실행이다.
+
+### 2026-11-07 Linux 별도 고정 버전 경로의 로컬 준비
+
+사용자는 계약/플랫폼 게이트 변경안을 구분하고 로컬 구현·격리 시험만 허용했다. 새 origin/채널 생성·공개 배포·송파 설치·계정/권한 변경은 승인 대기다. `docs/contracts/proposals/linux-pinned-release-20261107.md`는 미채택 제안이며 기존 계약·Windows/Mac 설치기·공개 Atom/API·패키저·CI workflow는 변경하지 않았다. 구현/후속 게이트는 `LINUX-PINNED-RELEASE-PREPARATION-20261107.md`에 구분했다.
+
+별도 오프라인 prototype은 로컬 고정 descriptor·소스 ZIP·Linux tar의 전체 커밋 표기, canonical source hash, 소스/패키지 digest, Cargo.lock, manifest/inventory/개별 파일 및 네 ELF 헤더 결속을 검사한다. 네트워크·프로세스 실행·설치·권한 부여 기능이 없고 결과는 `verified_only=true / install_authorized=false`다. 커밋 표기의 일치는 Git 커밋/게시자 진위 증명이 아니며 독립적으로 신뢰한 descriptor pin이 필요하다. 기존 패키저는 새 source_commit/SOURCE-COMMIT 결속을 아직 만들지 않으므로 현재 패키지와의 제품 통합 성공으로 표시하지 않는다.
+
+합성 검증은 잘못된 OS/CPU·누락 파일·해시/manifest 불일치·중복 JSON·위험한 압축 경로·링크·특수 파일·크기/개수/확장 한도·잘린 압축·일반 파일의 FIFO 교체를 다룬다. 검토에서 ZIP 중앙 디렉터리 선할당과 tar PAX/GNU 확장 파싱 공백을 찾아 라이브러리 파싱 전 실제 header 개수/범위와 압축 해제 예산을 확인하고, 제품 USTAR에 없는 확장을 거부했다. 위조 count와 extension의 파서 미도달 회귀도 추가했다. 동일 inode 내용 쓰기 후 실행 위험은 이 입력 검증으로 해결되지 않으며 별도 설계·사람 검토 차단이다.
+
+기존 shell installer는 임시 HOME/XDG와 합성 프로그램으로 업데이트, 체크섬/스테이징 실패, current 포인터 전환 직전 중단, 상위 버전 재시도 및 하향 거부를 시험했다. 합성 account/key/profile/vault/mail byte sentinel과 이전 버전을 보존했다. 실제 Core 재시작·DB/프로필/Secret Service 호환성 시험은 아니다. 가짜 curl/uname 및 PowerShell 전송으로 기존 피드를 유지한 Linux/Mac 선택과 Windows 정상 API를 검사했고, Linux-only 첫 태그가 Mac 두 CPU 및 Windows403/429 fallback을 깨뜨리는 기존 위험도 재현했다. 이를 해결 성공으로 바꾸지 않았다.
+
+새 시험20개는 WSL18개 실행·Windows 전용2개 제외, Windows에서는 Unix 전용 시험을 구분해 실행한다. 기존 Windows 선택9개·rate-limit5개·Unix 패키지 shape5개·문서29개를 영향 검사에 포함했다. 최종 고정 커밋의 재실행 로그와 hash는 준비 문서의 후속 증거에 기록하며, 이전 c2e1aa4 전체 CI/9c7f91e Linux 패키지 성공을 새 소스의 결과로 재사용하지 않는다. 현재 WSL의 일반/login PATH에 Cargo/Rust가 없어 새 native Cargo/package/scope 실행은 미실행이다. 외부 CI를 dispatch하거나 실제 설치로 우회하지 않았다.
+
+상태: **허용된 로컬 준비·합성 시험 / 제품 계약 승인 대기 / 동일 inode 보안 설계 및 새 변경 사람 검토 필요 / 배포 보류**. 실제 사용자 데이터·계정·금고·키·권한은 접근·초기화·삭제하지 않았다. 공개 전 최소 결정은 정확한 별도 Linux origin/신뢰 규칙, Mac 실패를 유지한 Linux 독립 gate 정책, production pin/activation 계약이다. 그 뒤 최종 같은 커밋의 native Linux package/install/update/Core 재시작/scope 복구 및 플랫폼 선택 회귀와 별도 사람 검토를 완료해야 한다.
