@@ -1,6 +1,25 @@
 # Unix 실행 경쟁 완화·Mac 교차 버전 검증
 
-상태: **Mac 실패 원인 진단 계속 / 공식 배포 보류 / 새 보안 변경 사람 검토 필요**. 아래의 기존 자동 검증은 종료됐으며, 사용자 후속 지시에 따라 두 대기 지점을 구분하는 진단과 재시험을 이어간다. 이 문서는 위험 수용 기록이 아니다.
+상태: **추가 진단·재시험 종료, Mac 호환성 미해결 / ADR-032 시험 API 승인 필요 / 공식 배포 보류**. 진행 중인 CI는 없으며, 아래의 구체적인 승인·환경 경계에서 다음 진단이 막혀 있다. 이 문서는 위험 수용 기록이 아니다.
+
+## 48a2abf 재시험 결과와 다음 차단
+
+검증 커밋 `48a2abfca234ee55f9cb99c67405c32005eb5c84`, source hash `7c2a0e7bbbfa36760be9d8363629684ad6790e57cfaeac5b7201edc46a1e769f`.
+
+- [네 플랫폼 전체 검사42213296144](https://github.com/tz1012/mail-hantong/actions/runs/42213296144): 모두 성공. Rust 실행 합계 Windows1981, Linux1233, Mac Intel1092, ARM1092, 실패·ignored0. Python 문서29와 Build165도 통과했다. 기존 플랫폼별 제외는 유지했으며 새 진단 시험은 제외하지 않았다. 실행 합계는 고유 시험 수가 아니다.
+- [Mac 실제 호환성42213301022](https://github.com/tz1012/mail-hantong/actions/runs/42213301022): 두 플랫폼 모두 실패. 공식 beta29 install/start/status/stop 성공, 후보 install 성공, 후보 start-1 실패. 샘플 분류는 CLI `socket`, Core `keychain,security,socket,wait`로 동일했다.
+- 별도 합성 source fixture는 두 플랫폼 모두 old IMAP·SMTP 값 읽기까지 seed 성공. 후보는 open/selector를 통과한 뒤 `upgrade:imap-old-backend`에서900초를 초과했다. `imap-old-returned`, SMTP 읽기, write-new, reopen은 도달하지 못했다. 시험 프로세스 샘플도 `keychain,security,socket,wait`로 동일했다. 따라서 초기 메뉴 대기는 CLI 단독 문제로, 합성 읽기 대기는 SMTP 또는 갱신 실패로 단정하지 않는다.
+- 두 job 모두 CI Keychain 복원 성공, 실패 이후 package upload는 실행되지 않았다. 결과를 성공으로 바꾸지 않았고 새 Mac 자산을 배포 대상으로 채택하지 않았다.
+
+이 증거는 Keychain/Security 읽기 대기 위치를 좁히지만 정확한 OSStatus, 잠금, OS 확인 필요, 항목 신뢰 규칙을 구분하지 못한다. `48a2abf`의 sample 대상 경로 비교는 아래 설명처럼 argv 기반의 한계가 있으며 커널 이미지 증거로 취급하지 않는다.
+
+안전한 후속 진단을 위한 [ADR-032](../adr/proposed/ADR-032-macos-keychain-read-diagnostics.md)는 미승인·미구현이다. 현재 backend에는 무대화 읽기 guard/안정적인 OSStatus API가 없다. AGENTS.md §7의 “기술 선택(라이브러리, 프로토콜, 저장 형식)이 필요한데 ADR이 없으면 … 쓰고 멈춘다” 및 새 의존성 명시 승인 규칙에 따라 Mac 시험 전용 직접 `security-framework = "=3.7.0"` 추가를 요청한다. 전이 의존성으로 이미 잠긴 버전이지만 Secrets의 직접 시험 의존성으로 추가하는 변경은 별도다. 제품 저장·인증·ACL은 변경하지 않는다. C API 직접 FFI를 임의 도입해 이 승인 경계를 피하지 않는다.
+
+실제 OS 확인이 필요하다고 판명되면 대화형 격리 Mac의 시험 사용자 확인이 필요하다. 현재 hosted Mac CI에는 그 화면을 관찰·응답할 경로가 없으며 실제 사용자 Keychain이나 자동 확인·ACL 수정으로 대체하지 않는다. 다음 승인 전 probe 구현과 실제 사용자 시험은 중단한다. 독립 읽기 전용 검토는 진단 및 ADR의 범위를 확인했으며 사람 보안 검토 완료 증거가 아니다.
+
+## 후속 진단의 증거 범위
+
+`48a2abf`는 CLI/Core와 실제 Secrets 시험 자식의 sample에서 고정된 stack symbol 분류만 기록하고, IMAP/SMTP별 selector/backend/returned 경계를 추가했다. 이 커밋의 실행 경로 비교에는 `ps comm`이 사용됐으므로 커널 이미지 증거로 해석하지 않는다. Darwin ps의 해당 값은 argv[0]에서 얻는다. 후속 로컬 수정은 CI 진단에서만 `proc_pidpath`를 사용하고 실패하면 `image-path-unavailable`로 중단한다. 이 libproc API는 best-effort 진단이며 제품 인증·실행 권한의 근거가 아니다. fallback·ACL·서명·접근 제어 변경은 없다. 로컬14개 회귀와 독립 검토, 문서29개는 통과했지만 이 후속 수정의 실제 Mac native 검증은 미실행이다. `48a2abf`의 네 플랫폼 성공을 후속 수정의 native 성공으로 표시하지 않는다. 다음 승인된 진단 변경과 묶어서 필수 검증해야 한다.
 
 ## 고정 제품 소스
 

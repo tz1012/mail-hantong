@@ -5,6 +5,8 @@ from io import StringIO
 from pathlib import Path
 import importlib.util
 import tempfile
+import os
+import sys
 import unittest
 from unittest import mock
 
@@ -88,6 +90,31 @@ class MacProcessDiagnosticsTests(unittest.TestCase):
             self.assertEqual([call.args[0][1] for call in sample.call_args_list], ["10", "11"])
             self.assertIn("role=cli", output.getvalue())
             self.assertIn("role=core", output.getvalue())
+
+
+    def test_sec03_missing_kernel_image_never_uses_displayed_argv(self):
+        output = StringIO()
+        rows = {10: (1, "start", "")}
+        with mock.patch.object(diagnostics, "_snapshot", return_value=rows), contextlib.redirect_stdout(output):
+            diagnostics.diagnose_process_tree(10, {}, phase="candidate")
+        self.assertIn("result=image-path-unavailable", output.getvalue())
+        with mock.patch.object(diagnostics.ctypes, "CDLL", side_effect=OSError("private-value")):
+            self.assertEqual(diagnostics._image_path(10), "")
+
+
+    def test_sec03_native_kernel_path_or_nonmac_failure_is_explicit(self):
+        if sys.platform == "darwin":
+            image = diagnostics._image_path(os.getpid())
+            self.assertTrue(image, "macOS kernel image-path diagnostic unavailable")
+            self.assertTrue(Path(image).is_absolute())
+            self.assertTrue(Path(image).is_file())
+            self.assertEqual(diagnostics._image_path(os.getpid()), image)
+            # A framework launcher and sys.executable may differ; argv is not image proof.
+            with Path(image).open("rb") as executable:
+                self.assertIn(executable.read(4), (b"\xcf\xfa\xed\xfe", b"\xfe\xed\xfa\xcf", b"\xca\xfe\xba\xbe", b"\xbe\xba\xfe\xca", b"\xca\xfe\xba\xbf"))
+        else:
+            with mock.patch.object(diagnostics.ctypes, "CDLL", side_effect=OSError("not macOS")):
+                self.assertEqual(diagnostics._image_path(os.getpid()), "")
 
 
 

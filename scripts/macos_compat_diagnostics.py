@@ -5,6 +5,7 @@ or process output is returned.
 """
 from __future__ import annotations
 
+import ctypes
 import os
 from pathlib import Path
 import subprocess
@@ -58,6 +59,23 @@ def _is_test_image(image: str, test_target: Path | None) -> bool:
         return False
 
 
+def _image_path(pid: int) -> str:
+    # CI-only best-effort kernel path query. Never use argv[0] as fallback.
+    try:
+        library = ctypes.CDLL("/usr/lib/libproc.dylib", use_errno=True)
+        query = library.proc_pidpath
+        query.argtypes = [ctypes.c_int, ctypes.c_void_p, ctypes.c_uint32]
+        query.restype = ctypes.c_int
+        buffer = ctypes.create_string_buffer(4096)
+        count = query(pid, buffer, len(buffer))
+        if count <= 0 or count >= len(buffer):
+            return ""
+        value = buffer.value.decode("utf-8", errors="strict")
+        return value if Path(value).is_absolute() else ""
+    except (OSError, AttributeError, UnicodeError):
+        return ""
+
+
 def _snapshot() -> dict[int, tuple[int, str, str]]:
     result = subprocess.run(
         ["/bin/ps", "-ww", "-axo", "pid=,ppid=,lstart=,comm="],
@@ -73,7 +91,7 @@ def _snapshot() -> dict[int, tuple[int, str, str]]:
             pid, ppid = int(fields[0]), int(fields[1])
         except ValueError:
             continue
-        rows[pid] = (ppid, " ".join(fields[2:7]), fields[7])
+        rows[pid] = (ppid, " ".join(fields[2:7]), _image_path(pid))
     return rows
 
 
@@ -111,6 +129,9 @@ def diagnose_process_tree(
                 if ppid in descendants and pid not in descendants:
                     descendants.add(pid)
                     changed = True
+        if not rows[root_pid][2]:
+            print(f"HANTONG_PROCESS_DIAG phase={phase} result=image-path-unavailable", flush=True)
+            return
         if not _allowed_image(rows[root_pid][2], allowed_images, None):
             print(f"HANTONG_PROCESS_DIAG phase={phase} result=image-mismatch", flush=True)
             return

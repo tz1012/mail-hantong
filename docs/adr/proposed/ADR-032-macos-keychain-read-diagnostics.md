@@ -1,0 +1,25 @@
+# ADR-032: Mac 시험 전용 Keychain 읽기 진단
+
+상태: 제안 — 미승인·미구현. 날짜: 2026-11-06.
+
+## 문제
+
+공식 구버전→후보 초기 메뉴와 합성 자격증명 교차 버전 시험이 실패했다. 단계 마커와 process sample은 Keychain/Security 읽기 대기를 좁히지만 정확한 OSStatus나 UI 필요 여부를 확정하지 못한다. 현재 선택된 legacy backend는 이 API를 노출하지 않는다. 실패를 잠금·비밀번호·ACL 중 하나로 임의 분류하지 않는다.
+
+## 선택지
+
+| 선택지 | 영향 | 판단 |
+| --- | --- | --- |
+| 기존 마커·sample만 유지 | 새 API 없음. OSStatus·대화 필요 여부가 계속 미확정 | 현재 적용 범위 |
+| Mac 시험 전용 직접 `security-framework = "=3.7.0"` 및 별도 읽기 probe | 이미 잠긴 전이 버전을 안전한 Rust API로 호출. manifest와 시험 보안 경계 변경 | 승인 요청안 |
+| 시험 모듈에서 Security C API 직접 호출 | 새 Cargo 의존성은 없지만 새 unsafe FFI와 수명·복원 검증 필요 | 우선 적용하지 않음 |
+
+protected store 전환, ACL/trusted-app/partition-list 변경, 기존 바이너리 재서명, 자동 OS 확인은 선택지에 포함하지 않는다.
+
+## 제안 범위와 승인 조건
+
+직접 의존성은 Mac 시험에만 추가한다. probe는 새 프로세스에서 UI를 허용하지 않는 guard와 기존 격리 합성 항목의 읽기만 수행하고, OSStatus를 고정 범주로만 기록한다. 원래 호환성 시험의 읽기·값 보존·갱신·재시작 조건 및 실패 판정은 유지한다. 이 probe가 실패를 성공으로 대체하지 않는다. 실제 사용자 데이터·Keychain·항목 ACL·제품 저장/인증 인터페이스는 변경하지 않는다.
+
+세부 안전 조건과 근거: [Mac 비대화 진단 제안](../../latest/MAC-KEYCHAIN-NOUI-DIAGNOSTIC-PROPOSAL-20261106.md).
+
+AGENTS.md §7의 라이브러리 선택 승인 및 새 의존성 명시 승인 규칙에 따라 구현 전 결정을 요청한다. §6의 Secrets 사람 검토는 배포 전 별도 유지한다. 대화형 OS 확인이 필요하면 격리 Mac의 사람이 수행해야 하며, hosted CI에 현재 그 화면을 관찰·응답할 경로는 없다. 정상 승인·접근 제어를 우회하지 않는다.
