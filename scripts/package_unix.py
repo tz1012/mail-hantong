@@ -66,10 +66,36 @@ def write_archive(path: Path, contents: dict[str, bytes]) -> None:
                     archive.addfile(item, io.BytesIO(data))
 
 
+def smoke_sealed_linux(contents, descriptor, version, commit, roots, runner, root, env):
+    """Exercise the packaged images through their real sealed-entry contract."""
+    with tempfile.TemporaryDirectory(prefix="hantong-r2-package-smoke-") as temporary:
+        install = Path(temporary) / "install"
+        release = install / "versions" / version
+        release.mkdir(parents=True, mode=0o700)
+        for name, data in contents.items():
+            path = release / name
+            path.parent.mkdir(parents=True, mode=0o700, exist_ok=True)
+            path.write_bytes(data)
+            path.chmod(0o700 if name.startswith("bin/") else 0o600)
+        pin = install / "release-pins" / version / commit
+        pin.mkdir(parents=True, mode=0o700)
+        (pin / "descriptor.json").write_bytes(descriptor)
+        (pin / "pin.json").write_bytes(json_bytes({"format_version":1,"target":"linux-x86_64","version":version,"commit":commit,"descriptor_sha256":sha(descriptor)}))
+        for name, binary in BINARIES.items():
+            expected = version if binary in ("hantong", "hantong-t") else roots[name]["version"]
+            for flag in ("--help", "--version"):
+                result = run_command(runner, [str(release / "bin" / binary),flag],root,env,capture=True,timeout=15)
+                if (result.stderr or len(result.stdout)>131_072 or binary.encode() not in result.stdout
+                        or (flag=="--version" and result.stdout.decode().strip()!=f"{binary} {expected}")):
+                    raise PackageError("sealed native executable smoke check failed")
+
+
 def package(root: Path, version: str, output: Path, publisher: Path | None = None) -> Path:
     version = release_version(version)
     system = platform.system()
     machine = platform.machine()
+    if system == "Linux" and machine != "x86_64":
+        raise PackageError("the adopted Linux R2 release identity supports x86_64 only")
     try:
         target, release_target = TARGETS[(system, machine)]
     except KeyError as error:
@@ -115,7 +141,7 @@ def package(root: Path, version: str, output: Path, publisher: Path | None = Non
         executable = binary_root / binary
         data = read_file(executable, Path(metadata["target_directory"]))
         check_native(data, system, machine)
-        for flag in ("--help", "--version"):
+        for flag in (() if pinned_commit is not None else ("--help", "--version")):
             result = run_command(runner, [str(executable), flag], root, env, capture=True, timeout=15)
             expected = version if binary in ("hantong", "hantong-t") else roots[name]["version"]
             if (result.stderr or len(result.stdout) > 131_072 or binary.encode() not in result.stdout
@@ -135,7 +161,7 @@ def package(root: Path, version: str, output: Path, publisher: Path | None = Non
     }
     if pinned_commit is not None:
         build_metadata["source_commit"] = pinned_commit
-        build_metadata["linux_release_readiness"] = "blocked_identity_and_origin"
+        build_metadata["linux_release_readiness"] = "candidate_review_and_native_gates_required"
     contents["BUILD-METADATA.json"] = json_bytes(build_metadata)
     contents["installed-files.txt"] = ("\n".join(sorted([*contents, "installed-files.txt", "release-manifest.json", "FILES.sha256"])) + "\n").encode()
     contents["release-manifest.json"] = json_bytes({
@@ -169,6 +195,7 @@ def package(root: Path, version: str, output: Path, publisher: Path | None = Non
             }))
             # Consistency is not publisher authentication or installation consent.
             verify_candidate(descriptor, archive, source, system, machine)
+            smoke_sealed_linux(contents, descriptor.read_bytes(), version, pinned_commit, roots, runner, root, env)
             if clean_source_commit(root) != pinned_commit or checked_source_hash(root) != before:
                 raise PackageError("source changed before candidate publication")
             outputs.extend([source, descriptor])

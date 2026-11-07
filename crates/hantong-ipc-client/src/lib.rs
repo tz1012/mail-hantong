@@ -425,6 +425,19 @@ pub fn core_status() -> Result<Readiness, ErrorCode> {
         })
 }
 
+/// Exchange readiness on an already connected Unix transport.  Callers that
+/// are already inside a Tokio runtime must use this entry point so that a
+/// second runtime is never nested around the same connection.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub async fn core_status_on_connection(
+    connection: hantong_platform::unix_transport::UnixLocalConnection,
+) -> Result<Readiness, ErrorCode> {
+    if !connection.peer_matches_current_image()? {
+        return Err(ErrorCode::ScopeDenied);
+    }
+    exchange_readiness(connection, "core-status-1").await
+}
+
 #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
 pub fn core_status() -> Result<Readiness, ErrorCode> {
     Err(ErrorCode::CapabilityUnsupported)

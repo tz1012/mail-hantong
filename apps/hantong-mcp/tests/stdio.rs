@@ -1,25 +1,53 @@
 use serde_json::{Value, json};
+#[cfg(not(target_os = "linux"))]
+use std::process::Command;
 use std::{
     io::Write,
-    process::{Child, Command, Stdio},
+    process::{Child, Stdio},
     time::{Duration, Instant},
 };
 
-struct Host(Option<Child>);
+#[cfg(target_os = "linux")]
+#[path = "../../../tests/Fakes/linux_sealed_product_fixture.rs"]
+mod linux_product_fixture;
+
+struct Host {
+    child: Option<Child>,
+    #[cfg(target_os = "linux")]
+    fixture: Option<linux_product_fixture::ProductFixture>,
+}
 impl Host {
     fn start(args: &[&str]) -> Self {
-        Self(Some(
-            Command::new(env!("CARGO_BIN_EXE_hantong-mcp"))
-                .args(args)
-                .stdin(Stdio::piped())
-                .stdout(Stdio::piped())
-                .stderr(Stdio::piped())
-                .spawn()
-                .unwrap(),
-        ))
+        #[cfg(target_os = "linux")]
+        let fixture = linux_product_fixture::ProductFixture::new(
+            "hantong-mcp",
+            env!("CARGO_BIN_EXE_hantong-mcp"),
+        );
+        #[cfg(target_os = "linux")]
+        let child = fixture
+            .command()
+            .args(args)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        #[cfg(not(target_os = "linux"))]
+        let child = Command::new(env!("CARGO_BIN_EXE_hantong-mcp"))
+            .args(args)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        Self {
+            child: Some(child),
+            #[cfg(target_os = "linux")]
+            fixture: Some(fixture),
+        }
     }
     fn finish(mut self, input: &[u8]) -> std::process::Output {
-        let child = self.0.as_mut().unwrap();
+        let child = self.child.as_mut().unwrap();
         child.stdin.take().unwrap().write_all(input).unwrap();
         let deadline = Instant::now() + Duration::from_secs(15);
         while child.try_wait().unwrap().is_none() {
@@ -29,12 +57,12 @@ impl Host {
             );
             std::thread::sleep(Duration::from_millis(10));
         }
-        self.0.take().unwrap().wait_with_output().unwrap()
+        self.child.take().unwrap().wait_with_output().unwrap()
     }
 }
 impl Drop for Host {
     fn drop(&mut self) {
-        if let Some(child) = self.0.as_mut() {
+        if let Some(child) = self.child.as_mut() {
             let _ = child.kill();
             let _ = child.wait();
         }

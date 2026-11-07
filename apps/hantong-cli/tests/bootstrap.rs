@@ -2,7 +2,22 @@ use std::io::{ErrorKind, Write};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
+#[cfg(target_os = "linux")]
+#[path = "../../../tests/Fakes/linux_sealed_product_fixture.rs"]
+mod linux_product_fixture;
+
 fn cli(args: &[&str]) -> std::process::Output {
+    #[cfg(target_os = "linux")]
+    {
+        let fixture =
+            linux_product_fixture::ProductFixture::new("hantong", env!("CARGO_BIN_EXE_hantong"));
+        return fixture
+            .command()
+            .args(args)
+            .output()
+            .expect("sealed CLI process");
+    }
+    #[cfg(not(target_os = "linux"))]
     Command::new(env!("CARGO_BIN_EXE_hantong"))
         .args(args)
         .output()
@@ -59,6 +74,16 @@ fn cli01_inspection_help_and_invalid_input_do_not_access_profiles() {
         assert!(String::from_utf8_lossy(&output.stdout).contains("INVALID_INPUT"));
         assert!(output.stderr.is_empty());
     }
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn r2_fixture_rejects_uninstalled_raw_binary_without_release_roles() {
+    let output = Command::new(env!("CARGO_BIN_EXE_hantong"))
+        .arg("--version")
+        .output()
+        .expect("raw test binary");
+    assert!(!output.status.success());
 }
 
 #[test]
@@ -232,6 +257,19 @@ fn cli02_json_error_has_stable_fields_and_stdout_only() {
 
 #[test]
 fn cli04_no_input_does_not_wait_or_echo_untrusted_input() {
+    #[cfg(target_os = "linux")]
+    let fixture =
+        linux_product_fixture::ProductFixture::new("hantong", env!("CARGO_BIN_EXE_hantong"));
+    #[cfg(target_os = "linux")]
+    let mut child = fixture
+        .command()
+        .args(["--no-input", "send", "execute"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("CLI process");
+    #[cfg(not(target_os = "linux"))]
     let mut child = Command::new(env!("CARGO_BIN_EXE_hantong"))
         .args(["--no-input", "send", "execute"])
         .stdin(Stdio::piped())

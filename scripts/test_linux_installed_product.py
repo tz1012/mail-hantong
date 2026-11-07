@@ -3,6 +3,17 @@ import errno, hashlib, json, os, pty, select, signal, subprocess, sys, tempfile,
 from pathlib import Path
 
 package = Path(sys.argv[1]).resolve()
+candidate_evidence = None
+if len(sys.argv) == 3:
+    from linux_pinned_candidate import verify_candidate
+    descriptor_path = Path(sys.argv[2]).resolve()
+    descriptor = descriptor_path.read_bytes()
+    fields = json.loads(descriptor)
+    report = verify_candidate(descriptor_path, descriptor_path.parent / fields["package_filename"],
+                              descriptor_path.parent / fields["source_filename"], "Linux", "x86_64")
+    candidate_evidence = (descriptor, report)
+elif len(sys.argv) != 2:
+    raise SystemExit("invalid product test arguments")
 phrase = b'synthetic-only-install-smoke-phrase'
 
 def console(command, env, first, wrong=False):
@@ -88,6 +99,28 @@ with tempfile.TemporaryDirectory(prefix='hantong-native-product-') as temporary:
     version = (package/'VERSION').read_text().strip()
     installed = root/'data/mail-hantong-cli/versions'/version
     core = installed/'bin/mail-hantong-core'
+    if candidate_evidence is not None:
+        # Test-owned trust premise: the artifact built by this exact CI commit.
+        # This is not publisher authentication or an E9/user migration approval.
+        descriptor, report = candidate_evidence
+        assert report.version == version
+        manifest = (installed / "release-manifest.json").read_bytes()
+        assert hashlib.sha256(manifest).hexdigest() == report.manifest_sha256
+        for row in json.loads(manifest)["files"]:
+            path = installed / row["path"]
+            assert not path.is_symlink() and path.is_file()
+            assert path.stat().st_size == row["size"]
+            assert hashlib.sha256(path.read_bytes()).hexdigest() == row["sha256"]
+        pin = installed.parents[1] / "release-pins" / version / report.commit
+        pin.mkdir(parents=True, mode=0o700)
+        for name, value in (("descriptor.json", descriptor), ("pin.json", json.dumps({
+                "format_version":1,"target":"linux-x86_64","version":version,
+                "commit":report.commit,"descriptor_sha256":hashlib.sha256(descriptor).hexdigest()
+                },sort_keys=True,separators=(",",":")).encode())):
+            with (pin / name).open("xb") as stream:
+                os.fchmod(stream.fileno(),0o600)
+                stream.write(value)
+                stream.flush(); os.fsync(stream.fileno())
     try:
         code, menu, output = console(cli, env, True)
         assert code == 0 and menu, (code, menu, output[-2048:])

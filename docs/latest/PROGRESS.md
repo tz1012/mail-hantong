@@ -2572,3 +2572,61 @@ R2 채택 패킷 `LINUX-R2-ADOPTION-20261107.md`와 실행 정체성 `docs/contr
 후속 독립 설계 조언에 따라 E9에 **최초 1회 기존 OS Python3 bootstrap 예외**를 구체적인 채택 후보로 추가했다. root 소유 고정 interpreter/stdlib/loader·safe import/isolated/no_site 전제, operator의 검토된 정확한 command payload+독립 tuple/digest, 고정 curl transport와 전체 패키지 검증, staging Core의 sealed-copy 재측정/같은 FD 실행, bootstrap IPC/mail/Secrets 금지 및 E7 잠금 후 활성화, 이후 v2 경로 fallback 금지다. Python을 자동 설치하거나 새 전제를 기존 승인에 포함시키지 않는다. 향후 정확한 payload SHA는 구현 후 실제 사람 검토 기록에 고정해야 하며 이번에 payload 작성/실행은 하지 않았다. 조언은 이 조건부 방향의 일관성을 확인한 것이며 제품/사람 보안 검토 통과가 아니다. 새 E9 전제까지 명시한 최소 결정 문구로 packet을 갱신했다. **제품 통합은 여전히 E1–E9/D1–D6의 명시적 계약 채택 전 차단**이며 배포·송파 실조회 미완료 상태는 변하지 않는다.
 
 E9 추가 후 동일 독립 검토자가 실제 수정 문서를 재검토해 R2 제안의 중대한 모순이 남지 않았음을 확인했다. 이는 계약 수준의 최초 실행 순환/ADR 중복 해소 확인이며, 미작성 payload나 그 hash·제품 구현·native gate·실제 사람 검토 승인이 아니다. 최종 canonical source hash는 `da7d92d192af15a9819eadd6fbf0e8a5d59d3fb5fa1f5227e56ac19251b9a2f7`로 추적표에 갱신했다. 이번 변경의 원본7732cd12 대비 apps/crates/installer/packaging/workflow diff는 없으며 기존 피드 구현 무변경을 확인했다. 새 정적 경로의 최종 제품 검증까지 완료했다는 의미는 아니다.
+
+
+### 2026-11-07 R2 adopted; sealed product integration and native verification
+
+Recorded the current user's conveyed original decision ????? for exact
+572d3b93fc113f08ed1e672e23d40accc1b71cd2 ADR-033 R2 / E1-E9 / D1-D6.
+See LINUX-R2-ADOPTION-RECORD-20261107.md. This is contract adoption, not human
+review of the new code/payload or a release qualification.
+
+Integrated process-specific sealed images, original release/pin context, strict
+peer image/seal/digest/process-instance rechecks, verified sibling launches and
+pidfd lifecycle checks across Linux CLI/Core/TUI/MCP. Helper-only seccomp blocks
+execve/execveat after entry for relay/review/stop, not daemon/browser processes.
+It does not make /proc observations atomic or remove E1 loader/ptrace/initial-trust
+limits. Added bounded native archive/source verification, fixed curl staging,
+locked pointer activation with synced prior-pointer evidence, explicit post-rename
+durability uncertainty and pinned resume with full bundle/file revalidation.
+The E9 bootstrap is bundled stdlib-only isolated OS Python; partial stages are
+preserved, no arbitrary recursive repair, no mutable-file fallback on noexec.
+New candidate packaging smoke runs the four actual images under a private pinned
+release context. Older blocked artifacts are not relabeled or qualified.
+Shared install.sh/install.ps1 and existing installed update/Atom/API feeds are unchanged.
+Linux aarch64 packaging now refuses before build; adopted R2 scope is x86_64.
+
+Fresh local evidence (intermediate source; NOT final-commit release evidence):
+- target/r2-platform-complete.log: native Linux platform 100 passed, 0 failed,
+  including equal-size mutation/exec-after-admission, seccomp and resume guards.
+- target/r2-sealed-product-integration.log: real sealed CLI 13 and MCP 3 passed.
+  Later Core fixture migration still requires the final rerun.
+- target/r2-products-recheck.log: four products all-target compilation passed;
+  later explicit-resume additions require the final gate.
+- target/r2-windows-build-tests-recheck.log: 336 Python tests, 31 platform skips,
+  no failures. target/r2-linux-build-tests-recheck.log: 336 tests, 48 skips,
+  no failures. Later small test/controller changes require targeted/final reruns.
+- Docs 29 tests passed; Python controller/packager syntax checks passed.
+- Independent bounded reviews closed cached-admission, post-rename ambiguity and
+  stale-temporary-pointer findings after corrections. This is not a human review.
+
+Full Linux Rust execution was NOT green: an initial missing Python test-runtime
+path, pre-R2 raw-binary test fixtures and strict input-validation ordering were
+identified and repaired without disabling entry verification. Further full-run
+clock/order failures were investigated rather than waived. On this development
+machine's WSL kernel, a 2-second time.time_ns probe observed 2,102,703 samples with
+one 14,102,569,764-ns backward UTC step; a separate probe and CPU-0-affinity probe
+also observed approximately 14.1-second backward steps. This explains a plausible
+clock-order rejection path, not Songpa's reported failure. Production expiry and
+immutable audit order checks remain unchanged. An unproven fixture timestamp
+rewrite was removed. Final timing-sensitive native evidence needs a stable Linux
+clock (CI), not adjusted security rules. Local clippy is not installed in the
+private minimal toolchain; the required CI installs the pinned component.
+
+The review packet is LINUX-R2-IMPLEMENTATION-REVIEW-20261107.md. The new full target
+commit, actual human review, same-final-commit native package/transition/update/
+restart/scope recovery and delivery checks remain release gates. No Release/tag,
+Pages asset prefix, channel, user installation, grant, account/key/vault/ACL/mail
+change, send or Trash operation has been performed. Mac compatibility failures
+remain failed/unverified. Final completion remains Songpa Gmail2+Daum1 each actual
+list/body reads after normal explicit scope review; none is inferred from tests.

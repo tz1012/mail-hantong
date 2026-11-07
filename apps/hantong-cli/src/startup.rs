@@ -24,6 +24,9 @@ pub(super) fn release_version() -> &'static str {
 /// Reads only the bounded, installer-owned update marker.  The marker is
 /// optional, so startup remains offline-first and never blocks on a feed.
 pub(super) fn cached_update_version() -> Option<String> {
+    if cfg!(target_os = "linux") {
+        return None;
+    } // R2 updates require an independent version/commit/digest tuple.
     let path = product_root()?.join("update-notice.txt");
     let metadata = std::fs::metadata(&path).ok()?;
     if metadata.len() > 64 {
@@ -188,6 +191,9 @@ pub(super) struct UpdateFetch {
 }
 
 pub(super) fn begin_update_fetch() -> UpdateFetch {
+    if cfg!(target_os = "linux") {
+        return UpdateFetch { receiver: None };
+    }
     let (sender, receiver) = mpsc::channel();
     std::thread::spawn(move || {
         let value = fetch_latest_release().filter(|v| is_newer_release(v, release_version()));
@@ -328,6 +334,13 @@ pub(super) fn write_ready_header(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn sec03_linux_pinned_updates_never_select_shared_atom_notice() {
+        assert!(begin_update_fetch().receiver.is_none());
+        assert!(cached_update_version().is_none());
+    }
 
     #[test]
     fn startup_version_uses_release_label_when_present() {

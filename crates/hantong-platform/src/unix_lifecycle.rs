@@ -37,10 +37,28 @@ pub fn stop_verified_core(
     peer: &UnixPeerContextV2,
     verified_image: &Path,
 ) -> Result<(), ErrorCode> {
+    #[cfg(not(test))]
+    {
+        let asset = crate::linux_identity::current_asset()?;
+        if asset != "bin/mail-hantong-core" {
+            return Err(ErrorCode::ScopeDenied);
+        }
+        let root = crate::linux_identity::current_release_root()?;
+        let expected = root.join(asset);
+        if verified_image != expected {
+            return Err(ErrorCode::ScopeDenied);
+        }
+    }
+    #[cfg(test)]
     let expected = std::fs::canonicalize(verified_image).map_err(|_| ErrorCode::CoreUnavailable)?;
+    #[cfg(not(test))]
+    let expected = verified_image.to_path_buf();
+    #[cfg(test)]
     let current =
         std::fs::canonicalize(std::env::current_exe().map_err(|_| ErrorCode::CoreUnavailable)?)
             .map_err(|_| ErrorCode::CoreUnavailable)?;
+    #[cfg(not(test))]
+    let current = crate::linux_identity::current_release_root()?.join("bin/mail-hantong-core");
     if expected != current || peer.effective_uid != unsafe { libc::geteuid() } {
         return Err(ErrorCode::ScopeDenied);
     }
@@ -48,7 +66,10 @@ pub fn stop_verified_core(
         Ok(true) => {}
         Ok(false) => return Err(ErrorCode::ScopeDenied),
         Err(ErrorCode::AuthRequired)
-            if !std::path::Path::new(&format!("/proc/{}/exe", peer.peer_pid)).exists() =>
+            if matches!(
+                std::fs::symlink_metadata(format!("/proc/{}/exe", peer.peer_pid)),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound
+            ) =>
         {
             return Ok(());
         }
@@ -68,7 +89,10 @@ pub fn stop_verified_core(
             Ok(true) => {}
             Ok(false) => return Err(ErrorCode::ScopeDenied),
             Err(ErrorCode::AuthRequired)
-                if !std::path::Path::new(&format!("/proc/{}/exe", peer.peer_pid)).exists() =>
+                if matches!(
+                    std::fs::symlink_metadata(format!("/proc/{}/exe", peer.peer_pid)),
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound
+                ) =>
             {
                 return Ok(());
             }

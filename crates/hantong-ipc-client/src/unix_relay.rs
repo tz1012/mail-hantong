@@ -349,14 +349,24 @@ pub fn call(
         method.to_owned(),
         params.clone(),
     )?;
-    let caller_path = std::env::current_exe()
+    #[cfg(target_os = "linux")]
+    let caller = {
+        let asset = hantong_platform::linux_identity::current_asset()?;
+        asset
+            .strip_prefix("bin/")
+            .ok_or(ErrorCode::CoreUnavailable)?
+            .to_owned()
+    };
+    #[cfg(not(target_os = "linux"))]
+    let caller = std::env::current_exe()
         .map_err(|_| ErrorCode::CoreUnavailable)?
         .file_name()
         .and_then(|name| name.to_str())
         .ok_or(ErrorCode::CoreUnavailable)?
-        .to_owned();
-    let caller = caller_path.to_ascii_lowercase();
+        .to_ascii_lowercase();
     if caller == "mail-hantong-core" {
+        #[cfg(target_os = "linux")]
+        hantong_platform::linux_identity::ensure_entry("bin/mail-hantong-core")?;
         let _ = hantong_platform::unix_release::verified_installed_core(&caller)?;
         return tokio::runtime::Builder::new_current_thread()
             .enable_io()

@@ -1296,6 +1296,11 @@ fn run_event_command(args: &[String]) -> Result<(), ErrorCode> {
 }
 
 fn main() {
+    #[cfg(all(target_os = "linux", not(test)))]
+    if let Err(code) = hantong_platform::linux_identity::ensure_entry("bin/hantong-mcp") {
+        eprintln!("{}", code.as_str());
+        std::process::exit(code.exit_code());
+    }
     let args: Vec<_> = std::env::args().skip(1).collect();
     if args == ["--version"] {
         println!("hantong-mcp {}", env!("CARGO_PKG_VERSION"));
@@ -1310,7 +1315,12 @@ fn main() {
         return;
     }
     if args == ["config"] {
-        match std::env::current_exe()
+        #[cfg(target_os = "linux")]
+        let executable = hantong_platform::linux_identity::current_release_root()
+            .map(|root| root.join("bin/hantong-mcp"));
+        #[cfg(not(target_os = "linux"))]
+        let executable = std::env::current_exe();
+        match executable
             .map_err(|_| ErrorCode::InternalError)
             .and_then(|exe| connection::config(&exe))
         {

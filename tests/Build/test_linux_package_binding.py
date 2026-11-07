@@ -73,6 +73,12 @@ class LinuxPackageBindingTests(unittest.TestCase):
                 patch.object(package_unix, "compiler_info", return_value={"fixture": True}):
             return package_unix.package(self.root, version, self.base / "output")
 
+    def test_SEC03_linux_arm_is_refused_before_build_or_source_mutation(self):
+        with patch.object(package_unix.platform,"system",return_value="Linux"), patch.object(package_unix.platform,"machine",return_value="aarch64"), patch.object(package_unix,"run_command",side_effect=AssertionError("build must not run")):
+            with self.assertRaisesRegex(PackageError,"x86_64 only"):
+                package_unix.package(self.root,"0.1.0-beta.30",self.base/"output")
+        self.assertFalse((self.base/"output").exists())
+
     def test_INST01_assembled_linux_package_binds_source_commit_and_all_checksums(self):
         output = self.assemble()
         source = output / "mail-hantong-source-0.1.0-beta.30.zip"
@@ -83,7 +89,7 @@ class LinuxPackageBindingTests(unittest.TestCase):
         self.assertFalse(result.install_authorized)
         metadata = json.loads((output / "BUILD-METADATA.json").read_bytes())
         self.assertEqual(metadata["source_commit"], self.commit)
-        self.assertEqual(metadata["linux_release_readiness"], "blocked_identity_and_origin")
+        self.assertEqual(metadata["linux_release_readiness"], "candidate_review_and_native_gates_required")
         for line in (output / "SHA256SUMS").read_text().splitlines():
             digest, name = line.split("  ")
             self.assertEqual(hashlib.sha256((output / name).read_bytes()).hexdigest(), digest)

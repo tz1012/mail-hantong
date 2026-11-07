@@ -111,7 +111,7 @@ async fn serve_connections(
                         let trusted = connection.peer_matches_current_image()?;
                         let first = read_first(&mut connection, if trusted { 1_050_112 } else { 131_072 }).await?;
                         if first.method == "core.stop" {
-                            if !trusted || !exact_protocol_params(&first.params) {
+                            if !trusted || !connection.peer_matches_current_image()? || !exact_protocol_params(&first.params) {
                                 return Err(ErrorCode::AuthRequired);
                             }
                             let response = json!({
@@ -123,6 +123,7 @@ async fn serve_connections(
                             // bounded response and ACK. A dropped connection therefore
                             // cannot stop the Core.
                             send_value(&mut connection, &response).await?;
+                            if !connection.peer_matches_current_image()? { return Err(ErrorCode::AuthRequired); }
                             shutdown.set(true);
                             return Ok(());
                         }
@@ -131,7 +132,7 @@ async fn serve_connections(
                             return send_value(&mut connection, &value).await;
                         }
                         if first.method == "core.relay" {
-                            if !trusted || brokers.get() >= 4 { return Err(ErrorCode::AuthRequired); }
+                            if !trusted || !connection.peer_matches_current_image()? || brokers.get() >= 4 { return Err(ErrorCode::AuthRequired); }
                             brokers.set(brokers.get() + 1);
                             struct Slot<'a>(&'a Cell<usize>);
                             impl Drop for Slot<'_> { fn drop(&mut self) { self.0.set(self.0.get() - 1); } }
@@ -266,6 +267,9 @@ async fn broker(
     connection: &hantong_platform::unix_transport::UnixLocalConnection,
     outer: RpcRequest,
 ) -> Result<Value, ErrorCode> {
+    if !connection.peer_matches_current_image()? {
+        return Err(ErrorCode::AuthRequired);
+    }
     use hantong_ipc_client::unix_relay::{RelayProfile, RelayRequest};
     // Decode the canonical inner representation through the client's strict fixed allowlist.
     let bytes = serde_json::to_vec(&outer.params).map_err(|_| ErrorCode::InvalidInput)?;
@@ -329,6 +333,9 @@ async fn broker(
             return Ok(rejected);
         };
         let owner = crate::unix_setup::review_owner(setup, store, &command, owner)?;
+        if !connection.peer_matches_current_image()? {
+            return Err(ErrorCode::AuthRequired);
+        }
         let mut receipt = Some(
             crate::unix_setup::dispatch_async(
                 setup,
@@ -346,6 +353,9 @@ async fn broker(
             request_bytes.len(),
             &mut |_| receipt.take().ok_or(ErrorCode::InternalError)?,
         ));
+    }
+    if !connection.peer_matches_current_image()? {
+        return Err(ErrorCode::AuthRequired);
     }
     let result = profiled_call(store, relay).await;
     match result {

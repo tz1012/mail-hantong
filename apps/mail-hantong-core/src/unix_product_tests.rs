@@ -3,48 +3,33 @@ use super::*;
 use hantong_ipc_client::unix_relay::{RelayProfile, RelayRequest};
 use std::os::unix::fs::PermissionsExt;
 
+#[path = "../../../tests/Fakes/linux_sealed_product_fixture.rs"]
+mod linux_product_fixture;
+
 #[tokio::test]
 async fn cli07_unix_bootstrap_registration_then_authenticated_accounts() {
     const NAME: &str = "unix_core_runtime::product_tests::cli07_unix_bootstrap_registration_then_authenticated_accounts";
     if std::env::var_os("HANTONG_UNIX_PRODUCT_TEST_CHILD").is_none() {
-        let root = std::env::temp_dir().join(format!(
-            "hantong-product-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        std::fs::create_dir(&root).unwrap();
-        std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o700)).unwrap();
-        for name in ["data-home", "config-home", "runtime"] {
-            std::fs::create_dir(root.join(name)).unwrap();
-            std::fs::set_permissions(root.join(name), std::fs::Permissions::from_mode(0o700))
-                .unwrap();
-        }
-        // Production peers are bounded to 64 MiB; debug symbols are not part of that image.
-        let executable = root.join("core-product-test");
-        std::fs::copy(std::env::current_exe().unwrap(), &executable).unwrap();
-        assert!(
-            std::process::Command::new("/usr/bin/strip")
-                .arg("--strip-debug")
-                .arg(&executable)
-                .status()
-                .unwrap()
-                .success()
+        let fixture = linux_product_fixture::ProductFixture::new(
+            "mail-hantong-core",
+            &std::env::current_exe().unwrap().to_string_lossy(),
         );
-        let status = std::process::Command::new(executable)
+        let data_home = fixture.private_dir("data-home");
+        let config_home = fixture.private_dir("config-home");
+        let runtime = fixture.private_dir("runtime");
+        let status = fixture
+            .command()
             .args(["--exact", NAME, "--nocapture"])
             .env("HANTONG_UNIX_PRODUCT_TEST_CHILD", "1")
-            .env("XDG_DATA_HOME", root.join("data-home"))
-            .env("XDG_CONFIG_HOME", root.join("config-home"))
-            .env("XDG_RUNTIME_DIR", root.join("runtime"))
+            .env("XDG_DATA_HOME", data_home)
+            .env("XDG_CONFIG_HOME", config_home)
+            .env("XDG_RUNTIME_DIR", runtime)
             .status()
             .unwrap();
-        std::fs::remove_dir_all(root).unwrap();
         assert!(status.success());
         return;
     }
+    hantong_platform::linux_identity::ensure_entry("bin/mail-hantong-core").unwrap();
     let paths = hantong_platform::app_directories().unwrap();
     let _keys = hantong_platform::unix_paths::UnixDirectoryGuard::prepare(&paths.secrets).unwrap();
     let _data = hantong_platform::unix_paths::UnixDirectoryGuard::prepare(&paths.data).unwrap();

@@ -264,7 +264,7 @@ class HostTests(unittest.TestCase):
         child.stdout.fileno.return_value = 1; child.stderr.fileno.return_value = 2
         with mock.patch.object(runner, "start", return_value=child), mock.patch.object(runner, "_release"), \
              mock.patch.object(runner, "_stop"), \
-             mock.patch.object(host.selectors.DefaultSelector, "get_map", return_value={}), \
+             mock.patch.object(host.selectors, "DefaultSelector", return_value=mock.Mock(get_map=mock.Mock(return_value={}))), \
              mock.patch.object(host.os, "set_blocking"), mock.patch.object(host.os, "killpg", create=True), \
              mock.patch.object(host.os, "O_NONBLOCK", 0, create=True):
             with self.assertRaisesRegex(host.HostError, "process_exit"):
@@ -420,7 +420,7 @@ class HostTests(unittest.TestCase):
         child.stdout.fileno.return_value = 1; child.stderr.fileno.return_value = 2
         child.poll = lambda: None
         with mock.patch.object(runner, "start", return_value=child), mock.patch.object(runner, "_stop"), \
-             mock.patch.object(host.selectors.DefaultSelector, "get_map", return_value={}), mock.patch.object(host.os, "set_blocking"), \
+             mock.patch.object(host.selectors, "DefaultSelector", return_value=mock.Mock(get_map=mock.Mock(return_value={}))), mock.patch.object(host.os, "set_blocking"), \
              mock.patch.object(host.time, "monotonic", side_effect=[0, 0]):
             with self.assertRaises(KeyboardInterrupt):
                 runner.run(["/private/image"], {}, 1, "source-candidate-reopen", image=mock.Mock(path=Path("/private/image")))

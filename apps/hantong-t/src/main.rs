@@ -41,19 +41,34 @@ struct Runner {
 
 impl Runner {
     fn sibling() -> Result<std::path::PathBuf, String> {
-        let current = env::current_exe().map_err(|_| "unable to locate hantong-t".to_owned())?;
-        let parent = current
-            .parent()
-            .ok_or_else(|| "unable to locate hantong executable".to_owned())?;
-        let path = parent.join(if cfg!(windows) {
-            "hantong.exe"
-        } else {
-            "hantong"
-        });
-        if path.is_file() {
-            Ok(path)
-        } else {
-            Err("hantong CLI is not installed beside hantong-t".to_owned())
+        #[cfg(target_os = "linux")]
+        {
+            let asset = hantong_platform::linux_identity::current_asset()
+                .map_err(|_| "unable to verify hantong-t identity".to_owned())?;
+            if asset != "bin/hantong-t" {
+                return Err("unable to verify hantong-t identity".to_owned());
+            }
+            return Ok(hantong_platform::linux_identity::current_release_root()
+                .map_err(|_| "unable to locate hantong executable".to_owned())?
+                .join("bin/hantong"));
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            let current =
+                env::current_exe().map_err(|_| "unable to locate hantong-t".to_owned())?;
+            let parent = current
+                .parent()
+                .ok_or_else(|| "unable to locate hantong executable".to_owned())?;
+            let path = parent.join(if cfg!(windows) {
+                "hantong.exe"
+            } else {
+                "hantong"
+            });
+            if path.is_file() {
+                Ok(path)
+            } else {
+                Err("hantong CLI is not installed beside hantong-t".to_owned())
+            }
         }
     }
 
@@ -1386,6 +1401,11 @@ fn line_main() -> io::Result<()> {
 }
 
 fn main() -> io::Result<()> {
+    #[cfg(all(target_os = "linux", not(test)))]
+    if let Err(code) = hantong_platform::linux_identity::ensure_entry("bin/hantong-t") {
+        eprintln!("{}", code.as_str());
+        std::process::exit(code.exit_code());
+    }
     let args: Vec<String> = env::args().collect();
     if args
         .iter()

@@ -187,3 +187,4 @@ preview_attachments=첨부 파일
 send_prompt=이 메일을 보낼까요? 1) 보내기 0) 취소
 update_help=update: 설치된 업데이터로 최신 공개 버전을 내려받아 설치합니다. 대화형 터미널에서만 실행되며 설치 런처는 update hantong만 받습니다.
 update_failed=업데이트를 완료하지 못했습니다. 위의 설치 오류를 확인해 주세요.
+update_linux_pinned_usage=독립적으로 확인한 Linux 릴리스 값으로 hantong update VERSION FULL_COMMIT DESCRIPTOR_SHA256을 실행하세요.

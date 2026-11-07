@@ -1,6 +1,23 @@
 use std::process::{Command, Output, Stdio};
 use std::time::{Duration, Instant};
 
+#[cfg(target_os = "linux")]
+#[path = "../../../tests/Fakes/linux_sealed_product_fixture.rs"]
+mod linux_product_fixture;
+macro_rules! core_command {
+    ($fixture:ident,$command:ident) => {
+        #[cfg(target_os = "linux")]
+        let $fixture = linux_product_fixture::ProductFixture::new(
+            "mail-hantong-core",
+            env!("CARGO_BIN_EXE_mail-hantong-core"),
+        );
+        #[cfg(target_os = "linux")]
+        let mut $command = $fixture.command();
+        #[cfg(not(target_os = "linux"))]
+        let mut $command = Command::new(env!("CARGO_BIN_EXE_mail-hantong-core"));
+    };
+}
+
 fn bounded_output(mut command: Command) -> Output {
     let mut child = command
         .stdin(Stdio::null())
@@ -31,7 +48,7 @@ fn cli16_core_help_and_version_do_not_start_transport() {
         vec!["--version"],
         vec!["--lang", "ko", "--help"],
     ] {
-        let mut command = Command::new(env!("CARGO_BIN_EXE_mail-hantong-core"));
+        core_command!(fixture, command);
         command.args(&args);
         let output = bounded_output(command);
         assert!(output.status.success());
@@ -46,7 +63,7 @@ fn cli16_core_help_and_version_do_not_start_transport() {
 
 #[test]
 fn sec08_invalid_core_arguments_are_not_reflected() {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_mail-hantong-core"));
+    core_command!(fixture, command);
     command.arg("private@example.invalid");
     let output = bounded_output(command);
     assert_eq!(output.status.code(), Some(2));
@@ -59,7 +76,7 @@ fn sec08_invalid_core_arguments_are_not_reflected() {
 #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
 #[test]
 fn sec03_no_non_windows_product_transport_fallback() {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_mail-hantong-core"));
+    core_command!(fixture, command);
     command.arg("run");
     let output = bounded_output(command);
     assert_eq!(output.status.code(), Some(28));
@@ -72,7 +89,7 @@ fn sec03_native_unix_relay_rejects_missing_frame_without_fallback() {
     // An empty frame is rejected before path discovery, vault access or any
     // broker connection. Native startup itself is covered by the mandatory
     // isolated installed-product gates, never an unbounded local daemon.
-    let mut command = Command::new(env!("CARGO_BIN_EXE_mail-hantong-core"));
+    core_command!(fixture, command);
     command.arg("unix-relay");
     let output = bounded_output(command);
     assert_eq!(output.status.code(), Some(25));
@@ -85,7 +102,7 @@ fn sec03_native_unix_relay_rejects_missing_frame_without_fallback() {
 #[cfg(target_os = "linux")]
 #[test]
 fn sec03_linux_run_rejects_unsafe_storage_root_before_initialization() {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_mail-hantong-core"));
+    core_command!(fixture, command);
     command
         .arg("run")
         .env("XDG_DATA_HOME", "relative-not-authorized")

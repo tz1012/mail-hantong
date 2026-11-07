@@ -128,12 +128,45 @@ pub fn peer_matches_current_image(peer: &UnixPeerContextV2) -> Result<bool, Erro
         if instance != peer.process_instance {
             return Ok(false);
         }
-        let observed = std::fs::canonicalize(format!("/proc/{pid}/exe"))
-            .map_err(|_| ErrorCode::AuthRequired)?;
-        let current = std::env::current_exe()
-            .and_then(std::fs::canonicalize)
-            .map_err(|_| ErrorCode::AuthRequired)?;
-        same_executable(&observed, &current)
+        let peer_session = linux_session_id(pid as libc::pid_t)?;
+        if peer_session != peer.session_id {
+            return Ok(false);
+        }
+        let admitted = match crate::linux_identity::current_asset() {
+            Ok(expected_asset) => crate::linux_identity::peer_same_asset(pid, &expected_asset)?,
+            #[cfg(test)]
+            Err(_) => {
+                let observed = std::fs::canonicalize(format!("/proc/{pid}/exe"))
+                    .map_err(|_| ErrorCode::AuthRequired)?;
+                let current = std::env::current_exe()
+                    .and_then(std::fs::canonicalize)
+                    .map_err(|_| ErrorCode::AuthRequired)?;
+                same_executable(&observed, &current)?
+            }
+            #[cfg(not(test))]
+            Err(error) => return Err(error),
+        };
+        if !admitted {
+            return Ok(false);
+        }
+        let start_after = linux_process_start(pid)?;
+        let boot_after = linux_boot_id()?;
+        let mut instance_after = [0u8; 32];
+        hash_instance(&boot_after, pid, start_after, &mut instance_after);
+        if start_after != start
+            || boot_after != boot
+            || instance_after != peer.process_instance
+            || linux_session_id(pid as libc::pid_t)? != peer.session_id
+        {
+            return Ok(false);
+        }
+        match crate::linux_identity::current_asset() {
+            Ok(expected_asset) => crate::linux_identity::peer_same_asset(pid, &expected_asset),
+            #[cfg(test)]
+            Err(_) => Ok(true),
+            #[cfg(not(test))]
+            Err(error) => Err(error),
+        }
     }
     #[cfg(target_os = "macos")]
     {
@@ -165,6 +198,7 @@ pub fn peer_matches_current_image(peer: &UnixPeerContextV2) -> Result<bool, Erro
     }
 }
 
+#[cfg(any(target_os = "macos", test))]
 fn same_executable(
     observed: &std::path::Path,
     current: &std::path::Path,
@@ -178,6 +212,7 @@ fn same_executable(
     Ok(hash_file(observed)? == hash_file(current)?)
 }
 
+#[cfg(any(target_os = "macos", test))]
 fn hash_file(path: &std::path::Path) -> Result<[u8; 32], ErrorCode> {
     use std::io::Read;
     let metadata = std::fs::metadata(path).map_err(|_| ErrorCode::AuthRequired)?;

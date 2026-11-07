@@ -2,28 +2,49 @@
 
 #![cfg(unix)]
 
-use crate::MAX_RELEASE_FILE;
-use crate::unix_paths::UnixDirectoryGuard;
-use hantong_contracts::{ErrorCode, wire_hex};
+#[cfg(any(not(target_os = "linux"), test))]
+use crate::{MAX_RELEASE_FILE, unix_paths::UnixDirectoryGuard};
+use hantong_contracts::ErrorCode;
+#[cfg(any(not(target_os = "linux"), test))]
+use hantong_contracts::wire_hex;
+#[cfg(any(not(target_os = "linux"), test))]
 use serde_json::{Map, Value};
 use std::collections::BTreeSet;
 use std::fs::File;
-use std::io::{Read, Seek, SeekFrom};
+#[cfg(any(not(target_os = "linux"), test))]
+use std::io::Read;
+use std::io::{Seek, SeekFrom};
 use std::os::fd::AsRawFd;
-use std::os::unix::ffi::OsStrExt;
-use std::os::unix::fs::{MetadataExt, PermissionsExt};
-use std::os::unix::process::CommandExt;
-use std::path::{Path, PathBuf};
+#[cfg(any(not(target_os = "linux"), test))]
+use std::os::unix::{
+    ffi::OsStrExt,
+    fs::{MetadataExt, PermissionsExt},
+    process::CommandExt,
+};
+#[cfg(any(not(target_os = "linux"), test))]
+use std::path::Path;
+use std::path::PathBuf;
 use std::process::{Child, Command, ExitStatus, Output, Stdio};
 
+#[cfg(any(not(target_os = "linux"), test))]
 const MAX_MANIFEST: u64 = 4 * 1024 * 1024;
 
 /// Validates the installed release containing the current executable and
 /// returns its sibling Core executable. The caller name is only a basename
 /// selector; paths and arbitrary helper names are rejected.
 pub fn verified_installed_core(caller_name: &str) -> Result<PathBuf, ErrorCode> {
-    let (path, _, _, _) = verified_core(caller_name)?;
-    Ok(path)
+    #[cfg(target_os = "linux")]
+    {
+        if crate::linux_identity::current_asset()? != format!("bin/{caller_name}") {
+            return Err(ErrorCode::ScopeDenied);
+        }
+        return Ok(crate::linux_identity::current_release_root()?.join("bin/mail-hantong-core"));
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let (path, _, _, _) = verified_core(caller_name)?;
+        Ok(path)
+    }
 }
 
 /// Builds a command retaining the exact Core file hashed by the manifest.
@@ -39,14 +60,24 @@ pub fn verified_sibling_command(
     caller_name: &str,
     asset: &str,
 ) -> Result<VerifiedCoreCommand, ErrorCode> {
-    if !matches!(
-        asset,
-        "bin/mail-hantong-core" | "bin/hantong" | "bin/hantong-t" | "update.sh"
-    ) {
-        return Err(ErrorCode::InvalidInput);
+    #[cfg(target_os = "linux")]
+    {
+        return VerifiedCoreCommand::from_launch(crate::linux_identity::sibling(
+            caller_name,
+            asset,
+        )?);
     }
-    let (path, file, snapshot, digest) = verified_asset(caller_name, asset)?;
-    guarded_command(&path, file, snapshot, digest)
+    #[cfg(not(target_os = "linux"))]
+    {
+        if !matches!(
+            asset,
+            "bin/mail-hantong-core" | "bin/hantong" | "bin/hantong-t" | "update.sh"
+        ) {
+            return Err(ErrorCode::InvalidInput);
+        }
+        let (path, file, snapshot, digest) = verified_asset(caller_name, asset)?;
+        guarded_command(&path, file, snapshot, digest)
+    }
 }
 
 /// No raw Command is exposed: each launch rehashes the retained image in the
@@ -56,9 +87,29 @@ pub struct VerifiedCoreCommand {
     file: File,
     snapshot: FileSnapshot,
     digest: [u8; 32],
+    #[cfg(target_os = "linux")]
+    roles: Option<[File; 5]>,
 }
 
 impl VerifiedCoreCommand {
+    #[cfg(target_os = "linux")]
+    pub(crate) fn from_launch(
+        launch: crate::linux_identity::LaunchImage,
+    ) -> Result<Self, ErrorCode> {
+        let file = launch.roles[1]
+            .try_clone()
+            .map_err(|_| ErrorCode::CoreUnavailable)?;
+        let snapshot = FileSnapshot::read(&file)?;
+        let mut measured = file.try_clone().map_err(|_| ErrorCode::CoreUnavailable)?;
+        let digest = crate::unix_crypto::sha256_release_handle(&mut measured)?;
+        Ok(Self {
+            command: launch.command,
+            file,
+            snapshot,
+            digest,
+            roles: Some(launch.roles),
+        })
+    }
     pub fn arg(&mut self, arg: impl AsRef<std::ffi::OsStr>) -> &mut Self {
         self.command.arg(arg);
         self
@@ -90,6 +141,16 @@ impl VerifiedCoreCommand {
 
     fn recheck(&mut self) -> std::io::Result<()> {
         let denied = || std::io::Error::from_raw_os_error(libc::EPERM);
+        #[cfg(target_os = "linux")]
+        if let Some(roles) = &mut self.roles {
+            crate::linux_sealed::validate_sealed(
+                &mut roles[1],
+                self.snapshot.size as u64,
+                self.digest,
+                true,
+            )
+            .map_err(|_| denied())?;
+        }
         self.file.seek(SeekFrom::Start(0))?;
         if FileSnapshot::read(&self.file).map_err(|_| denied())? != self.snapshot
             || crate::unix_crypto::sha256_release_handle(&mut self.file).map_err(|_| denied())?
@@ -116,10 +177,12 @@ impl VerifiedCoreCommand {
     }
 }
 
+#[cfg(not(target_os = "linux"))]
 fn verified_core(caller_name: &str) -> Result<(PathBuf, File, FileSnapshot, [u8; 32]), ErrorCode> {
     verified_asset(caller_name, "bin/mail-hantong-core")
 }
 
+#[cfg(not(target_os = "linux"))]
 fn verified_asset(
     caller_name: &str,
     asset: &str,
@@ -165,6 +228,7 @@ fn validate_manifest_file(
     validate_manifest_asset(version, manifest, caller_name, "bin/mail-hantong-core")
 }
 
+#[cfg(any(not(target_os = "linux"), test))]
 fn validate_manifest_asset(
     version: &Path,
     manifest: &Path,
@@ -331,6 +395,7 @@ impl FileSnapshot {
 }
 
 #[allow(unsafe_code)]
+#[cfg(any(not(target_os = "linux"), test))]
 fn guarded_command(
     path: &Path,
     file: File,
@@ -425,9 +490,12 @@ fn guarded_command(
         file,
         snapshot: expected,
         digest,
+        #[cfg(target_os = "linux")]
+        roles: None,
     })
 }
 
+#[cfg(any(not(target_os = "linux"), test))]
 fn parse_exact_object(bytes: &[u8], keys: &[&str]) -> Result<Map<String, Value>, ErrorCode> {
     let value: Value = serde_json::from_slice(bytes).map_err(|_| ErrorCode::CoreUnavailable)?;
     let object = value.as_object().ok_or(ErrorCode::CoreUnavailable)?;
@@ -438,7 +506,7 @@ fn parse_exact_object(bytes: &[u8], keys: &[&str]) -> Result<Map<String, Value>,
     Ok(object.clone())
 }
 
-fn safe_relative(path: &str) -> bool {
+pub(crate) fn safe_relative(path: &str) -> bool {
     !path.is_empty()
         && path.len() <= 512
         && !path.starts_with('/')
@@ -450,6 +518,7 @@ fn safe_relative(path: &str) -> bool {
             .any(|part| part.is_empty() || part == "." || part == "..")
 }
 
+#[cfg(any(not(target_os = "linux"), test))]
 fn open_owned(path: &Path) -> Result<File, ErrorCode> {
     let parent = path.parent().ok_or(ErrorCode::CoreUnavailable)?;
     let name = path
@@ -459,6 +528,7 @@ fn open_owned(path: &Path) -> Result<File, ErrorCode> {
     release_directory(parent)?.open_existing_release_file(name)
 }
 
+#[cfg(any(not(target_os = "linux"), test))]
 fn release_directory(path: &Path) -> Result<UnixDirectoryGuard, ErrorCode> {
     let guard = UnixDirectoryGuard::open(path, false).map_err(|error| match error {
         ErrorCode::CapabilityUnsupported | ErrorCode::ScopeDenied => ErrorCode::ScopeDenied,
@@ -479,6 +549,7 @@ fn release_directory(path: &Path) -> Result<UnixDirectoryGuard, ErrorCode> {
     Ok(guard)
 }
 
+#[cfg(any(not(target_os = "linux"), test))]
 fn unix_target() -> &'static str {
     if cfg!(all(target_os = "linux", target_arch = "x86_64")) {
         "linux-x86_64"
@@ -495,7 +566,7 @@ fn unix_target() -> &'static str {
 
 // serde_json follows the last duplicate member. Release metadata must reject
 // that ambiguity instead of allowing a later member to replace an earlier one.
-fn reject_duplicate_keys(bytes: &[u8]) -> Result<(), ErrorCode> {
+pub(crate) fn reject_duplicate_keys(bytes: &[u8]) -> Result<(), ErrorCode> {
     const MAX_OBJECT_DEPTH: usize = 8;
     let mut stack: Vec<BTreeSet<String>> = Vec::new();
     let mut i = 0;

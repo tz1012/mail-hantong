@@ -83,7 +83,8 @@ jobs:
           mkdir "$RUNNER_TEMP/installed-smoke"
           tar -xzf "$RUNNER_TEMP/artifacts/$PACKAGE_VERSION/mail-hantong-cli-$PACKAGE_VERSION-linux-x86_64.tar.gz" \
             -C "$RUNNER_TEMP/installed-smoke"
-          python -X utf8 scripts/test_linux_installed_product.py "$RUNNER_TEMP/installed-smoke"
+          python -X utf8 scripts/test_linux_installed_product.py "$RUNNER_TEMP/installed-smoke" \
+            "$RUNNER_TEMP/artifacts/$PACKAGE_VERSION/linux-pinned-candidate.json"
       - uses: actions/upload-artifact@v7.0.2
         with:
           name: mail-hantong-${{ env.PACKAGE_VERSION }}-linux-native-gate

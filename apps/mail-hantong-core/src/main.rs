@@ -17,6 +17,8 @@ mod google_worker;
 mod identity;
 #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 mod imap_trash;
+#[cfg(target_os = "linux")]
+mod linux_update_v2;
 #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 mod mail_events;
 #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
@@ -312,6 +314,13 @@ fn start(background: bool) -> Result<(), ErrorCode> {
 
 fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> i32 {
     let args: Vec<_> = args.into_iter().collect();
+    #[cfg(target_os = "linux")]
+    if args.first().and_then(|v| v.to_str()) == Some("linux-update-v2") {
+        return match linux_update_v2::run(&args) {
+            Ok(()) => 0,
+            Err(code) => emit_error(code, Lang::En),
+        };
+    }
     #[cfg(unix)]
     if args.first().and_then(|v| v.to_str()) == Some("unix-relay") {
         if args.len() != 1 {
@@ -397,7 +406,21 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> i32 {
 }
 
 fn main() {
-    std::process::exit(run(std::env::args_os().skip(1)));
+    #[cfg(all(target_os = "linux", not(test)))]
+    if let Err(code) = hantong_platform::linux_identity::ensure_entry("bin/mail-hantong-core") {
+        std::process::exit(emit_error(code, Lang::En));
+    }
+    let args: Vec<_> = std::env::args_os().skip(1).collect();
+    #[cfg(all(target_os = "linux", not(test)))]
+    if matches!(
+        args.first().and_then(|a| a.to_str()),
+        Some("unix-relay" | "terminal-review" | "unix-stop")
+    ) {
+        if let Err(code) = hantong_platform::linux_sealed::forbid_helper_exec() {
+            std::process::exit(emit_error(code, Lang::En));
+        }
+    }
+    std::process::exit(run(args));
 }
 
 #[cfg(test)]

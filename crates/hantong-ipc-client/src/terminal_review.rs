@@ -166,6 +166,12 @@ pub fn exchange(command: &TerminalReviewCommand) -> Result<TerminalReviewReceipt
             .and_then(serde_json::Value::as_str)
             .ok_or(ErrorCode::InvalidInput)?;
         let params = envelope.get("params").ok_or(ErrorCode::InvalidInput)?;
+        #[cfg(target_os = "linux")]
+        let caller = hantong_platform::linux_identity::current_asset()?
+            .strip_prefix("bin/")
+            .ok_or(ErrorCode::ScopeDenied)?
+            .to_owned();
+        #[cfg(target_os = "macos")]
         let caller = std::env::current_exe()
             .map_err(|_| ErrorCode::CoreUnavailable)?
             .file_name()

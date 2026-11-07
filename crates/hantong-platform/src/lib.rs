@@ -5,6 +5,16 @@ use hantong_contracts::ErrorCode;
 
 pub mod command_prompt;
 pub mod google_browser;
+#[cfg(target_os = "linux")]
+mod linux_archive;
+#[cfg(target_os = "linux")]
+pub mod linux_identity;
+#[cfg(target_os = "linux")]
+pub mod linux_install;
+#[cfg(target_os = "linux")]
+pub mod linux_pinned_update;
+#[cfg(target_os = "linux")]
+pub mod linux_sealed;
 pub mod mail_charset;
 pub mod mail_display;
 #[allow(unsafe_code)]

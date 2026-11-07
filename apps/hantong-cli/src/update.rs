@@ -15,7 +15,13 @@ pub(super) fn run(
     if command.first().map(String::as_str) != Some("update") {
         return None;
     }
+    #[cfg(not(target_os = "linux"))]
     if command.len() != 1 {
+        return Some(super::emit_error(ErrorCode::InvalidInput, lang, json));
+    }
+    #[cfg(target_os = "linux")]
+    if command.len() != 4 && !(command.len() == 5 && command[1] == "resume") {
+        eprintln!("{}", super::resource(lang, "update_linux_pinned_usage"));
         return Some(super::emit_error(ErrorCode::InvalidInput, lang, json));
     }
     if json
@@ -33,7 +39,14 @@ pub(super) fn run(
             false,
         ))
     }
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[cfg(target_os = "linux")]
+    {
+        Some(match run_linux_updater(&command[1..]) {
+            Ok(()) => 0,
+            Err(code) => super::emit_error(code, lang, false),
+        })
+    }
+    #[cfg(target_os = "macos")]
     {
         Some(match run_unix_updater() {
             Ok(()) => 0,
@@ -53,7 +66,33 @@ pub(super) fn run(
     }
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(target_os = "linux")]
+fn run_linux_updater(tuple: &[String]) -> Result<(), ErrorCode> {
+    use std::process::Stdio;
+    let (mode, values) = if tuple.first().is_some_and(|s| s == "resume") {
+        ("resume", &tuple[1..])
+    } else {
+        ("update", tuple)
+    };
+    let status = hantong_platform::unix_release::verified_core_command("hantong")?
+        .args(["linux-update-v2", mode])
+        .args(values)
+        .stdin(Stdio::inherit())
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
+        .status()
+        .map_err(|_| ErrorCode::CoreUnavailable)?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(ErrorCode::ALL
+            .into_iter()
+            .find(|code| Some(code.exit_code()) == status.code())
+            .unwrap_or(ErrorCode::CoreUnavailable))
+    }
+}
+
+#[cfg(target_os = "macos")]
 fn run_unix_updater() -> Result<(), ErrorCode> {
     use std::process::Stdio;
     let core = hantong_platform::unix_release::verified_installed_core("hantong")?;
@@ -378,7 +417,16 @@ mod tests {
 
     #[test]
     fn update_headless_mode_stops_before_installer() {
-        let result = super::run(&["update".into()], super::super::Lang::En, true, false);
+        #[cfg(target_os = "linux")]
+        let command = vec![
+            "update".into(),
+            "0.1.0-beta.30".into(),
+            "a".repeat(40),
+            "b".repeat(64),
+        ];
+        #[cfg(not(target_os = "linux"))]
+        let command = vec!["update".into()];
+        let result = super::run(&command, super::super::Lang::En, true, false);
         assert_eq!(
             result,
             Some(hantong_contracts::ErrorCode::HumanStepRequired.exit_code())

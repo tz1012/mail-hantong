@@ -1464,6 +1464,10 @@ fn emit_error(code: ErrorCode, lang: Lang, json: bool) -> i32 {
 }
 
 fn main() {
+    #[cfg(all(target_os = "linux", not(test)))]
+    if let Err(code) = hantong_platform::linux_identity::ensure_entry("bin/hantong") {
+        std::process::exit(emit_error(code, Lang::En, false));
+    }
     let mut args = Vec::new();
     for arg in env::args_os().skip(1) {
         let Some(value) = arg.to_str() else {
