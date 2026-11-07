@@ -2630,3 +2630,30 @@ Pages asset prefix, channel, user installation, grant, account/key/vault/ACL/mai
 change, send or Trash operation has been performed. Mac compatibility failures
 remain failed/unverified. Final completion remains Songpa Gmail2+Daum1 each actual
 list/body reads after normal explicit scope review; none is inferred from tests.
+
+## 2026-11-07 R2 candidate native gate repair (after 4b0fb439)
+
+Candidate 4b0fb439d7a2837f06be6a2672d5ca93c5116c28 was pushed only to the
+existing source branch. Scope gate 42357550575 failed at Clippy, before packaging;
+Linux full checks likewise stopped at 24 platform lint errors. Both Mac full
+checks failed in synthetic Python packaging/update tests: temporary paths beneath
+/var include the system symlink alias. Only those test fixture roots were resolved;
+production source-bundle/installer ancestor symlink rejection is unchanged.
+Windows full checks 42357550572 remained running at this checkpoint.
+
+Equivalent lint repairs retain fixed Huffman lengths, checksum/bounds checks,
+non-executable seal checks, cfg branch behavior and fixture lifetime. No lint was
+suppressed, test removed or security expectation relaxed. Independent agent review
+found no concrete regression in the eight-file first lint delta; this is not the
+required actual human security review. Additional tail/collapsible-if lint fixes
+preserve the existing predicates and short-circuit ordering.
+
+Fresh local evidence after lint repairs: native Linux platform library 100 tests
+passed, zero failed/ignored. Pinned Rust 1.95.0 Clippy was installed into the existing
+private temporary toolchain using the official channel manifest's SHA256 (no
+product dependency/toolchain change); workspace/all-targets Clippy now passes with
+-D warnings. Python source-bundle/local-update/package-binding tests: Windows 20
+executed with 8 platform exclusions, Linux all 20 passed. Mac native revalidation
+is still required. Traceability was regenerated; full native package/transition/
+update/restart/scope and actual human review remain release gates. Public assets,
+feeds, user installations, accounts, keys, vaults, permissions and mail are unchanged.

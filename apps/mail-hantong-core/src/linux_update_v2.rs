@@ -171,13 +171,12 @@ fn wait_for_ready(child: &mut Child) -> Result<(), ErrorCode> {
                     let _ = status;
                     return Err(ErrorCode::CoreUnavailable);
                 }
-                if let Ok(connection) = hantong_platform::unix_transport::connect().await {
-                    if let Ok(readiness) =
+                if let Ok(connection) = hantong_platform::unix_transport::connect().await
+                    && let Ok(readiness) =
                         hantong_ipc_client::core_status_on_connection(connection).await
-                        && readiness.transport_ready
-                    {
-                        return Ok(());
-                    }
+                    && readiness.transport_ready
+                {
+                    return Ok(());
                 }
                 if tokio::time::Instant::now() >= deadline {
                     return Err(ErrorCode::CoreUnavailable);

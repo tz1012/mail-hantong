@@ -15,7 +15,11 @@ class LinuxLocalUpdateTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix="hantong-pinned-local-")
         self.addCleanup(self.temp.cleanup)
-        self.root = Path(self.temp.name)
+        # macOS commonly exposes TemporaryDirectory below /var via the
+        # /var -> /private/var alias.  The installer intentionally rejects
+        # symlinked ancestors, so fixtures use the canonical path while
+        # retaining all installer security checks.
+        self.root = Path(self.temp.name).resolve()
         self.home = self.root / "home"
         self.home.mkdir()
         self.env = {**os.environ, "HOME": str(self.home),

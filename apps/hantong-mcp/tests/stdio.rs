@@ -14,7 +14,7 @@ mod linux_product_fixture;
 struct Host {
     child: Option<Child>,
     #[cfg(target_os = "linux")]
-    fixture: Option<linux_product_fixture::ProductFixture>,
+    _fixture: Option<linux_product_fixture::ProductFixture>,
 }
 impl Host {
     fn start(args: &[&str]) -> Self {
@@ -43,7 +43,7 @@ impl Host {
         Self {
             child: Some(child),
             #[cfg(target_os = "linux")]
-            fixture: Some(fixture),
+            _fixture: Some(fixture),
         }
     }
     fn finish(mut self, input: &[u8]) -> std::process::Output {

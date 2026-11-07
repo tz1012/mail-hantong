@@ -38,7 +38,7 @@ pub fn verified_installed_core(caller_name: &str) -> Result<PathBuf, ErrorCode> 
         if crate::linux_identity::current_asset()? != format!("bin/{caller_name}") {
             return Err(ErrorCode::ScopeDenied);
         }
-        return Ok(crate::linux_identity::current_release_root()?.join("bin/mail-hantong-core"));
+        Ok(crate::linux_identity::current_release_root()?.join("bin/mail-hantong-core"))
     }
     #[cfg(not(target_os = "linux"))]
     {
@@ -62,10 +62,7 @@ pub fn verified_sibling_command(
 ) -> Result<VerifiedCoreCommand, ErrorCode> {
     #[cfg(target_os = "linux")]
     {
-        return VerifiedCoreCommand::from_launch(crate::linux_identity::sibling(
-            caller_name,
-            asset,
-        )?);
+        VerifiedCoreCommand::from_launch(crate::linux_identity::sibling(caller_name, asset)?)
     }
     #[cfg(not(target_os = "linux"))]
     {

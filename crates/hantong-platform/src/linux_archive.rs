@@ -207,18 +207,10 @@ fn inflate_raw(data: &[u8], limit: usize) -> Result<(Vec<u8>, usize), ErrorCode>
     let mut output = Vec::new();
     let fixed_lit = {
         let mut lengths = vec![0u8; 288];
-        for i in 0..=143 {
-            lengths[i] = 8;
-        }
-        for i in 144..=255 {
-            lengths[i] = 9;
-        }
-        for i in 256..=279 {
-            lengths[i] = 7;
-        }
-        for i in 280..288 {
-            lengths[i] = 8;
-        }
+        lengths[0..144].fill(8);
+        lengths[144..256].fill(9);
+        lengths[256..280].fill(7);
+        lengths[280..288].fill(8);
         huffman(&lengths)?
     };
     let fixed_dist = huffman(&[5u8; 32])?;
@@ -340,7 +332,7 @@ fn octal(bytes: &[u8]) -> Result<usize, ErrorCode> {
     Ok(value)
 }
 fn tar(bytes: &[u8], limit: usize) -> Result<BTreeMap<String, Vec<u8>>, ErrorCode> {
-    if bytes.len() > limit || bytes.len() % 512 != 0 {
+    if bytes.len() > limit || !bytes.len().is_multiple_of(512) {
         return Err(bad());
     }
     let mut out = BTreeMap::new();
@@ -362,11 +354,11 @@ fn tar(bytes: &[u8], limit: usize) -> Result<BTreeMap<String, Vec<u8>>, ErrorCod
         }
         let stored = octal(&header[148..156])?;
         let mut sum = 0usize;
-        for i in 0..512 {
+        for (i, byte) in header.iter().enumerate() {
             sum += if (148..156).contains(&i) {
                 32
             } else {
-                header[i] as usize
+                *byte as usize
             };
         }
         if stored != sum {
@@ -393,7 +385,7 @@ fn tar(bytes: &[u8], limit: usize) -> Result<BTreeMap<String, Vec<u8>>, ErrorCod
             return Err(bad());
         }
         let body = bytes.get(at..at + size).ok_or_else(bad)?;
-        at += (size + 511) / 512 * 512;
+        at += size.div_ceil(512) * 512;
         if out.insert(name, body.to_vec()).is_some() {
             return Err(bad());
         }

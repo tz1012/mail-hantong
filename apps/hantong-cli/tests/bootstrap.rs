@@ -11,11 +11,11 @@ fn cli(args: &[&str]) -> std::process::Output {
     {
         let fixture =
             linux_product_fixture::ProductFixture::new("hantong", env!("CARGO_BIN_EXE_hantong"));
-        return fixture
+        fixture
             .command()
             .args(args)
             .output()
-            .expect("sealed CLI process");
+            .expect("sealed CLI process")
     }
     #[cfg(not(target_os = "linux"))]
     Command::new(env!("CARGO_BIN_EXE_hantong"))

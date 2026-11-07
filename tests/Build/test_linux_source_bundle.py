@@ -29,7 +29,8 @@ def git(path: Path, *args: str) -> str:
 class LinuxSourceBundleTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix="hantong-source-bundle-")
-        self.root = Path(self.temp.name) / "repo"
+        self.base = Path(self.temp.name).resolve()
+        self.root = self.base / "repo"
         self.root.mkdir()
         git(self.root, "init", "--quiet")
         git(self.root, "config", "user.email", "tests@example.invalid")
@@ -45,7 +46,7 @@ class LinuxSourceBundleTests(unittest.TestCase):
         members = {"apps/example.rs": b"fn main() {}\n", "Cargo.lock": b"# lock\n",
                    "SOURCE-COMMIT": (self.commit + "\n").encode()}
         self.source_hash = _canonical_source_hash(members)
-        self.destination = Path(self.temp.name) / "source.zip"
+        self.destination = self.base / "source.zip"
 
     def tearDown(self):
         self.temp.cleanup()

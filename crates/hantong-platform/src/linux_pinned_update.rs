@@ -427,6 +427,8 @@ fn canonical_source(m: &BTreeMap<String, Vec<u8>>) -> Result<String, ErrorCode> 
     Ok(wire_hex::encode(digest.finish().as_ref()))
 }
 
+type VerifiedBundle = (BTreeMap<String, Vec<u8>>, String, String);
+
 fn verify(
     descriptor: &[u8],
     package: &[u8],
@@ -434,7 +436,7 @@ fn verify(
     version: &str,
     commit: &str,
     expected: &str,
-) -> Result<(BTreeMap<String, Vec<u8>>, String, String), ErrorCode> {
+) -> Result<VerifiedBundle, ErrorCode> {
     if descriptor.is_empty()
         || descriptor.len() > MAX_DESCRIPTOR
         || package.len() > MAX_PACKAGE
@@ -548,7 +550,7 @@ fn verify(
             || !hex64(h)
             || pm
                 .get(n)
-                .map_or(true, |v| v.len() != sz || sha(v) != Ok(h.to_owned()))
+                .is_none_or(|v| v.len() != sz || sha(v) != Ok(h.to_owned()))
         {
             return Err(ErrorCode::Conflict);
         }
@@ -558,13 +560,13 @@ fn verify(
         serde_json::from_slice(&pm["BUILD-METADATA.json"]).map_err(|_| ErrorCode::InvalidInput)?;
     let metadata = metadata_value.as_object().ok_or(ErrorCode::InvalidInput)?;
     if metadata.get("format_version").and_then(Value::as_u64) != Some(1)
-        || text(&metadata, "release_label")? != version
-        || text(&metadata, "target")? != "x86_64-unknown-linux-gnu"
-        || text(&metadata, "source_hash")? != digest(&d, "source_sha256")?
+        || text(metadata, "release_label")? != version
+        || text(metadata, "target")? != "x86_64-unknown-linux-gnu"
+        || text(metadata, "source_hash")? != digest(&d, "source_sha256")?
         || metadata.get("build_performed") != Some(&Value::Bool(true))
-        || text(&metadata, "source_relation")? != "built_from_current_workspace"
-        || text(&metadata, "cargo_lock_sha256")? != digest(&d, "cargo_lock_sha256")?
-        || text(&metadata, "source_commit")? != commit
+        || text(metadata, "source_relation")? != "built_from_current_workspace"
+        || text(metadata, "cargo_lock_sha256")? != digest(&d, "cargo_lock_sha256")?
+        || text(metadata, "source_commit")? != commit
         || metadata
             .get("linux_release_readiness")
             .and_then(Value::as_str)
@@ -766,9 +768,9 @@ fn stage_at(
     expected_descriptor_sha: &str,
 ) -> Result<StagedUpdate, ErrorCode> {
     let (files, _package_version, manifest_hash) = verify(
-        &descriptor,
-        &package,
-        &source,
+        descriptor,
+        package,
+        source,
         version,
         commit,
         expected_descriptor_sha,

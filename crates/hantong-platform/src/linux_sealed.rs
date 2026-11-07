@@ -405,9 +405,7 @@ pub fn checked_role_files(pid: u32) -> Result<[File; 5], ErrorCode> {
                 return Err(invalid());
             }
             validate_elf(file, stat.st_size as u64)?;
-        } else if current_seals & F_SEAL_EXEC == 0 {
-            return Err(invalid());
-        } else if stat.st_mode & 0o111 != 0 {
+        } else if current_seals & F_SEAL_EXEC == 0 || stat.st_mode & 0o111 != 0 {
             return Err(invalid());
         }
         stats.push(stat);

@@ -48,9 +48,9 @@ impl Runner {
             if asset != "bin/hantong-t" {
                 return Err("unable to verify hantong-t identity".to_owned());
             }
-            return Ok(hantong_platform::linux_identity::current_release_root()
+            Ok(hantong_platform::linux_identity::current_release_root()
                 .map_err(|_| "unable to locate hantong executable".to_owned())?
-                .join("bin/hantong"));
+                .join("bin/hantong"))
         }
         #[cfg(not(target_os = "linux"))]
         {

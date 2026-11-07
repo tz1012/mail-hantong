@@ -520,7 +520,7 @@ pub fn activate_resume() -> Result<Activation, ErrorCode> {
     let socket = crate::unix_paths::socket_path()?;
     activate_resume_at(
         install,
-        &candidate_root,
+        candidate_root,
         &socket,
         &crate::unix_paths::app_directories()?.data,
     )
@@ -597,7 +597,7 @@ pub fn activate_bootstrap() -> Result<Activation, ErrorCode> {
     let old_version = current_pointer(install)?;
     let socket = crate::unix_paths::socket_path()?;
     activate_at(
-        &install,
+        install,
         &old_version,
         &current_root,
         &socket,

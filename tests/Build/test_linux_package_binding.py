@@ -21,7 +21,10 @@ class LinuxPackageBindingTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix="hantong-package-binding-")
         self.addCleanup(self.temp.cleanup)
-        self.base = Path(self.temp.name)
+        # Keep synthetic package paths canonical on macOS, where /var is a
+        # standard symlink to /private/var and the package verifier rejects
+        # symlinked ancestors by design.
+        self.base = Path(self.temp.name).resolve()
         self.root = self.base / "source"
         self.root.mkdir()
         for name in ("LICENSE", "packaging/unix/README.md", "docs/latest/CLI-LAUNCH.md",

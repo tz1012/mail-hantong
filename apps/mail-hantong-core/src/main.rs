@@ -415,10 +415,9 @@ fn main() {
     if matches!(
         args.first().and_then(|a| a.to_str()),
         Some("unix-relay" | "terminal-review" | "unix-stop")
-    ) {
-        if let Err(code) = hantong_platform::linux_sealed::forbid_helper_exec() {
-            std::process::exit(emit_error(code, Lang::En));
-        }
+    ) && let Err(code) = hantong_platform::linux_sealed::forbid_helper_exec()
+    {
+        std::process::exit(emit_error(code, Lang::En));
     }
     std::process::exit(run(args));
 }

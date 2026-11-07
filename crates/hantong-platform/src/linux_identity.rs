@@ -352,7 +352,9 @@ impl ReleaseTrust {
     }
 }
 
-fn retained() -> Result<(ReleaseTrust, Map<String, Value>, [File; 5]), ErrorCode> {
+type RetainedRelease = (ReleaseTrust, Map<String, Value>, [File; 5]);
+
+fn retained() -> Result<RetainedRelease, ErrorCode> {
     let mut roles = linux_sealed::checked_role_files(std::process::id())?;
     let context = exact(&bounded(&mut roles[2], 4096)?, CONTEXT_KEYS)?;
     if context.get("protocol_version").and_then(Value::as_u64) != Some(2)

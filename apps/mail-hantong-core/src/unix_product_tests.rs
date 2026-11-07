@@ -1,7 +1,6 @@
 //! Synthetic native first registration and Core broker integration, with no provider I/O.
 use super::*;
 use hantong_ipc_client::unix_relay::{RelayProfile, RelayRequest};
-use std::os::unix::fs::PermissionsExt;
 
 #[path = "../../../tests/Fakes/linux_sealed_product_fixture.rs"]
 mod linux_product_fixture;
