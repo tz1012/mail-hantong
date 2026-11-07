@@ -616,15 +616,29 @@ mod tests {
             assert!(peer_same_asset(std::process::id(), "bin/mail-hantong-core").unwrap());
             if depth == "1" {
                 let mut child = sibling("mail-hantong-core", "bin/mail-hantong-core").unwrap();
-                assert!(child.command.args(["--exact","linux_identity::tests::sec03_product_sealed_entry_and_sibling_preserve_release_context"])
-                    .env("HANTONG_R2_CHILD_DEPTH","2").status().unwrap().success());
+                child.command.args(["--exact","linux_identity::tests::sec03_product_sealed_entry_and_sibling_preserve_release_context"])
+                    .env("HANTONG_R2_CHILD_DEPTH","2");
+                assert!(
+                    crate::unix_release::VerifiedCoreCommand::from_launch(child)
+                        .unwrap()
+                        .status()
+                        .unwrap()
+                        .success()
+                );
             }
             return;
         }
         let f = Fixture::new();
         let mut child = launch(f.trust(), "bin/mail-hantong-core").unwrap();
-        assert!(child.command.args(["--exact","linux_identity::tests::sec03_product_sealed_entry_and_sibling_preserve_release_context"])
-            .env("HANTONG_R2_CHILD_DEPTH","1").status().unwrap().success());
+        child.command.args(["--exact","linux_identity::tests::sec03_product_sealed_entry_and_sibling_preserve_release_context"])
+            .env("HANTONG_R2_CHILD_DEPTH","1");
+        assert!(
+            crate::unix_release::VerifiedCoreCommand::from_launch(child)
+                .unwrap()
+                .status()
+                .unwrap()
+                .success()
+        );
     }
     #[test]
     fn sec03_product_peer_rejects_other_asset_or_root_and_descriptor_changes() {

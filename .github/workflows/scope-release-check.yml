@@ -14,6 +14,9 @@ on:
       - scripts/package_unix.py
       - packaging/unix/**
       - scripts/test_linux_installed_product.py
+      - scripts/test_linux_real_activation.py
+      - scripts/linux_product_pty.py
+      - scripts/test_unix_terminal.py
   workflow_dispatch:
     inputs:
       version:
@@ -75,6 +78,7 @@ jobs:
             --archive "$RUNNER_TEMP/publisher.zip" --output "$RUNNER_TEMP/google-desktop.json" \
             --expected-sha256 b6d15b610ef74e63e17f881a4a01802ac22cecc49bf69b0059664142b3c370fc
       - name: Package candidate
+        id: package_candidate
         run: |
           python -X utf8 scripts/package_unix.py --version "$PACKAGE_VERSION" \
             --output-dir "$RUNNER_TEMP/artifacts" --publisher-config "$RUNNER_TEMP/google-desktop.json"
@@ -85,9 +89,20 @@ jobs:
             -C "$RUNNER_TEMP/installed-smoke"
           python -X utf8 scripts/test_linux_installed_product.py "$RUNNER_TEMP/installed-smoke" \
             "$RUNNER_TEMP/artifacts/$PACKAGE_VERSION/linux-pinned-candidate.json"
+      - name: Build isolated earlier R2 version from the same source
+        run: |
+          python -X utf8 scripts/package_unix.py --version 0.1.0-alpha.r2-smoke \
+            --output-dir "$RUNNER_TEMP/activation-old" --publisher-config "$RUNNER_TEMP/google-desktop.json"
+      - name: Verify offline real Core activation and state preservation
+        run: |
+          python -X utf8 scripts/test_linux_real_activation.py \
+            --old-evidence-dir "$RUNNER_TEMP/activation-old/0.1.0-alpha.r2-smoke" \
+            --candidate-evidence-dir "$RUNNER_TEMP/artifacts/$PACKAGE_VERSION" \
+            --candidate-commit "$GITHUB_SHA"
       - uses: actions/upload-artifact@v7.0.2
+        if: always() && steps.package_candidate.outcome == 'success'
         with:
-          name: mail-hantong-${{ env.PACKAGE_VERSION }}-linux-native-gate
+          name: mail-hantong-${{ env.PACKAGE_VERSION }}-linux-candidate-not-release-qualified
           path: ${{ runner.temp }}/artifacts/${{ env.PACKAGE_VERSION }}/
           if-no-files-found: error
           retention-days: 14

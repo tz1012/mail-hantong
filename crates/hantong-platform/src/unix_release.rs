@@ -98,6 +98,10 @@ impl VerifiedCoreCommand {
             .map_err(|_| ErrorCode::CoreUnavailable)?;
         let snapshot = FileSnapshot::read(&file)?;
         let mut measured = file.try_clone().map_err(|_| ErrorCode::CoreUnavailable)?;
+        // Sealed readback leaves the shared file description at EOF.
+        measured
+            .seek(SeekFrom::Start(0))
+            .map_err(|_| ErrorCode::CoreUnavailable)?;
         let digest = crate::unix_crypto::sha256_release_handle(&mut measured)?;
         Ok(Self {
             command: launch.command,

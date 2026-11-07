@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import copy
 import fcntl
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -21,6 +22,64 @@ import time
 # accepted only when the independent native round trip demonstrates it.
 _DYNAMIC_LFLAG = termios.PENDIN if sys.platform == "darwin" else 0
 
+
+class LinuxPrivateEntry:
+    """Disposable package/pin fixture for the real Linux R2 entry gate."""
+
+    def __init__(self, program: Path, base: Path):
+        if sys.platform != "linux":
+            raise AssertionError("Linux private entry fixture used on non-Linux")
+        if not program.read_bytes().startswith(b"\x7fELF"):
+            raise AssertionError("terminal fixture is not an ELF image")
+        self.root = (base / "install" / "versions" / "0.1.0-r2-terminal").resolve()
+        self.root.joinpath("bin").mkdir(mode=0o700, parents=True)
+        for directory in (self.root, self.root.parent, self.root.parent.parent):
+            os.chmod(directory, 0o700)
+        image_path = self.root / "bin/hantong-t"
+        image_path.write_bytes(program.read_bytes())
+        subprocess.run(["/usr/bin/strip", "--strip-debug", str(image_path)], check=True,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=30)
+        image = image_path.read_bytes()
+        if not 0 < len(image) <= 64 * 1024 * 1024:
+            raise AssertionError("terminal fixture exceeds the executable bound")
+        version = self.root.name
+        commit = "a" * 40
+        source = "b" * 64
+        lock = "c" * 64
+        image_sha = hashlib.sha256(image).hexdigest()
+        descriptor = {
+            "schema_version": 1, "version": version, "package_version": "0.1.0",
+            "target": "linux-x86_64", "commit": commit,
+            "source_filename": f"mail-hantong-source-{version}.zip",
+            "cargo_lock_sha256": lock, "source_sha256": source,
+            "source_archive_sha256": "d" * 64,
+            "package_filename": f"mail-hantong-cli-{version}-linux-x86_64.tar.gz",
+            "package_sha256": "e" * 64,
+        }
+        descriptor_bytes = json.dumps(descriptor, sort_keys=True, separators=(",", ":")).encode()
+        manifest_bytes = json.dumps({
+            "format_version": 1, "version": version, "package_version": "0.1.0",
+            "target": "linux-x86_64",
+            "files": [{"path": "bin/hantong-t", "size": len(image), "sha256": image_sha}],
+        }, sort_keys=True, separators=(",", ":")).encode()
+        metadata_bytes = json.dumps({
+            "source_commit": commit, "source_hash": source,
+            "cargo_lock_sha256": lock, "build_performed": True,
+        }, sort_keys=True, separators=(",", ":")).encode()
+        os.chmod(image_path, 0o700)
+        (self.root / "release-manifest.json").write_bytes(manifest_bytes)
+        (self.root / "BUILD-METADATA.json").write_bytes(metadata_bytes)
+        evidence = self.root.parents[1] / "release-pins" / version / commit
+        evidence.mkdir(mode=0o700, parents=True)
+        (evidence / "descriptor.json").write_bytes(descriptor_bytes)
+        (evidence / "pin.json").write_bytes(json.dumps({
+            "format_version": 1, "target": "linux-x86_64", "version": version,
+            "commit": commit, "descriptor_sha256": hashlib.sha256(descriptor_bytes).hexdigest(),
+        }, sort_keys=True, separators=(",", ":")).encode())
+        for path in (self.root / "release-manifest.json", self.root / "BUILD-METADATA.json",
+                     evidence / "descriptor.json", evidence / "pin.json"):
+            os.chmod(path, 0o600)
+        self.program = image_path
 
 def expected_mode(original: list, reference_before: list, reference_after: list) -> list:
     assert len(original) == len(reference_before) == len(reference_after) == 7
@@ -108,10 +167,16 @@ def exercise(program: Path, exit_key: bytes, reference: tuple[list, list]) -> No
     with tempfile.TemporaryDirectory(prefix="hantong-demo-") as home:
         env = dict(os.environ, HOME=home, XDG_CONFIG_HOME=home, XDG_DATA_HOME=home,
                    TERM="xterm-256color")
+        sealed = LinuxPrivateEntry(program, Path(home)) if sys.platform == "linux" else None
         try:
-            child = subprocess.Popen([str(program), "--demo", "--theme", "bbs8"],
-                                     stdin=slave, stdout=slave, stderr=slave,
-                                     env=env, start_new_session=True)
+            if sealed is None:
+                child = subprocess.Popen([str(program), "--demo", "--theme", "bbs8"],
+                                         stdin=slave, stdout=slave, stderr=slave,
+                                         env=env, start_new_session=True)
+            else:
+                child = subprocess.Popen([str(sealed.program), "--demo", "--theme", "bbs8"],
+                                         stdin=slave, stdout=slave, stderr=slave,
+                                         env=env, start_new_session=True)
 
             def read_until(expected: bytes, timeout: float = 8) -> bytes:
                 output = bytearray()
@@ -177,10 +242,12 @@ def main() -> None:
     for key in (b"q", b"\x03"):
         exercise(program, key, reference)
     exercise_output_burst()
-    headless = subprocess.run([str(program), "--demo"], input=b"", capture_output=True,
-                              timeout=8, check=False)
-    assert headless.returncode != 0
-    assert b"\x1b[?1049h" not in headless.stdout
+    with tempfile.TemporaryDirectory(prefix="hantong-demo-headless-") as home:
+        entry = LinuxPrivateEntry(program, Path(home)).program if sys.platform == "linux" else program
+        headless = subprocess.run([str(entry), "--demo"], input=b"", capture_output=True,
+                                  timeout=8, check=False)
+        assert headless.returncode != 0
+        assert b"\x1b[?1049h" not in headless.stdout
     if args.input_probe:
         probe = args.input_probe.resolve(strict=True)
         for mode, initial, keys, expected in (

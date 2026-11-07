@@ -2657,3 +2657,45 @@ executed with 8 platform exclusions, Linux all 20 passed. Mac native revalidatio
 is still required. Traceability was regenerated; full native package/transition/
 update/restart/scope and actual human review remain release gates. Public assets,
 feeds, user installations, accounts, keys, vaults, permissions and mail are unchanged.
+
+## 2026-11-07 R2 actual wrapper startup defect and native harness integration
+
+4d459484a03da0772c3626fb65deba6e345ddd0b native Linux full Rust checks passed,
+including 72 Core unit tests and 4 Core lifecycle tests. The subsequent terminal
+smoke failed because its raw debug executable lacked the required private release
+pin fixture. Both Mac matrix checks passed on this commit; earlier Keychain
+cross-version compatibility failures are not reclassified by that result. The
+prior 4b0fb439 Windows matrix check passed; 4d459484 Windows remained running here.
+
+The scope job 42358532543 passed native scope/security transitions, synthetic
+packaging and actual candidate packaging, then FAILED installed first startup
+with CORE_UNAVAILABLE. Investigation reproduced the defect by moving the existing
+sealed entry/sibling regression through the actual VerifiedCoreCommand wrapper:
+from_launch hashes a cloned file description left at EOF by sealed readback.
+The RED regression fails at wrapper construction with CoreUnavailable. Seeking
+that sealed description to zero before hashing fixes it without bypassing seal,
+digest, image or peer checks. Native platform 100/100 then passed; workspace
+Clippy/all-targets with -D warnings passed. Independent agent review found no
+concrete validation regression; actual human security review remains outstanding.
+
+The terminal fixture now copies/strips a private binary before freezing its hash,
+creates private public release evidence and invokes normal ensure_entry. No demo
+bypass exists. Actual native terminal smoke passed keyboard/open/back, resize,
+quit/Ctrl-C restoration, headless refusal and inline input checks.
+
+Added an offline two-real-package activation harness and a shared synthetic PTY
+helper. It verifies actual package/source/descriptor evidence and the expected
+candidate full commit, preserves hidden-input checks, stops the old verified Core,
+invokes real sealed candidate bootstrap and checks readiness, then stops it before
+comparing encrypted DB/vault snapshots. Unknown cleanup/lock/process/root identity
+retains evidence. Unit tests cover archive links/traversal, numeric version order,
+busy locks and replaced roots. This is NOT a public-network update or beta29
+legacy migration claim. The CI builds a distinctly labelled earlier R2 fixture
+from the same source; no previous artifact is relabelled. The actual two-package
+flow is wired but has not yet run. Candidate artifacts are retained privately on
+failed native tests and explicitly labelled not-release-qualified; no release
+qualification is inferred from artifact upload.
+
+All publication, final payload/hash review and actual human review gates remain.
+No user installation/account/vault/mail/permission changes or provider operations
+were performed. Final completion remains Songpa Gmail2+Daum1 actual list/body reads.
