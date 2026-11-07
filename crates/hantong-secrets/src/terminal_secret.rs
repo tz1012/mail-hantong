@@ -349,12 +349,12 @@ impl SecretStore {
         expected: TerminalSecretBinding,
         account: &str,
         endpoint: &ImapEndpointConfig,
-        stream: S,
-        tls: std::sync::Arc<rustls::ClientConfig>,
+        transport: (S, std::sync::Arc<rustls::ClientConfig>),
     ) -> Result<TerminalImapVerification, MailProbeError>
     where
         S: AsyncRead + AsyncWrite + Send + Unpin + 'static,
     {
+        let (stream, tls) = transport;
         validate_terminal_imap_binding(&expected, account, endpoint)?;
         let ticket_id = ticket.ticket_id;
         let request_id = expected.request_id;

@@ -233,6 +233,64 @@ struct Cursor<'a> {
     offset: usize,
 }
 
+impl<'a> Cursor<'a> {
+    fn take(&mut self, count: usize) -> Result<&'a [u8], ErrorCode> {
+        let end = self
+            .offset
+            .checked_add(count)
+            .ok_or(ErrorCode::InvalidInput)?;
+        let value = self
+            .bytes
+            .get(self.offset..end)
+            .ok_or(ErrorCode::InvalidInput)?;
+        self.offset = end;
+        Ok(value)
+    }
+    fn u8(&mut self) -> Result<u8, ErrorCode> {
+        Ok(*self.take(1)?.first().ok_or(ErrorCode::InvalidInput)?)
+    }
+    fn u16(&mut self) -> Result<u16, ErrorCode> {
+        Ok(u16::from_le_bytes(
+            self.take(2)?
+                .try_into()
+                .map_err(|_| ErrorCode::InvalidInput)?,
+        ))
+    }
+    fn u32(&mut self) -> Result<u32, ErrorCode> {
+        Ok(u32::from_le_bytes(
+            self.take(4)?
+                .try_into()
+                .map_err(|_| ErrorCode::InvalidInput)?,
+        ))
+    }
+    fn u64(&mut self) -> Result<u64, ErrorCode> {
+        Ok(u64::from_le_bytes(
+            self.take(8)?
+                .try_into()
+                .map_err(|_| ErrorCode::InvalidInput)?,
+        ))
+    }
+    fn i64(&mut self) -> Result<i64, ErrorCode> {
+        Ok(i64::from_le_bytes(
+            self.take(8)?
+                .try_into()
+                .map_err(|_| ErrorCode::InvalidInput)?,
+        ))
+    }
+    fn array<const N: usize>(&mut self) -> Result<[u8; N], ErrorCode> {
+        self.take(N)?
+            .try_into()
+            .map_err(|_| ErrorCode::InvalidInput)
+    }
+    fn bytes(&mut self, max: usize) -> Result<Vec<u8>, ErrorCode> {
+        let len = self.u32()? as usize;
+        if len == 0 || len > max {
+            return Err(ErrorCode::InvalidInput);
+        }
+        Ok(self.take(len)?.to_vec())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -376,63 +434,5 @@ mod tests {
             uid_mismatch.encode(SignerRole::Server),
             Err(ErrorCode::InvalidInput)
         );
-    }
-}
-
-impl<'a> Cursor<'a> {
-    fn take(&mut self, count: usize) -> Result<&'a [u8], ErrorCode> {
-        let end = self
-            .offset
-            .checked_add(count)
-            .ok_or(ErrorCode::InvalidInput)?;
-        let value = self
-            .bytes
-            .get(self.offset..end)
-            .ok_or(ErrorCode::InvalidInput)?;
-        self.offset = end;
-        Ok(value)
-    }
-    fn u8(&mut self) -> Result<u8, ErrorCode> {
-        Ok(*self.take(1)?.first().ok_or(ErrorCode::InvalidInput)?)
-    }
-    fn u16(&mut self) -> Result<u16, ErrorCode> {
-        Ok(u16::from_le_bytes(
-            self.take(2)?
-                .try_into()
-                .map_err(|_| ErrorCode::InvalidInput)?,
-        ))
-    }
-    fn u32(&mut self) -> Result<u32, ErrorCode> {
-        Ok(u32::from_le_bytes(
-            self.take(4)?
-                .try_into()
-                .map_err(|_| ErrorCode::InvalidInput)?,
-        ))
-    }
-    fn u64(&mut self) -> Result<u64, ErrorCode> {
-        Ok(u64::from_le_bytes(
-            self.take(8)?
-                .try_into()
-                .map_err(|_| ErrorCode::InvalidInput)?,
-        ))
-    }
-    fn i64(&mut self) -> Result<i64, ErrorCode> {
-        Ok(i64::from_le_bytes(
-            self.take(8)?
-                .try_into()
-                .map_err(|_| ErrorCode::InvalidInput)?,
-        ))
-    }
-    fn array<const N: usize>(&mut self) -> Result<[u8; N], ErrorCode> {
-        self.take(N)?
-            .try_into()
-            .map_err(|_| ErrorCode::InvalidInput)
-    }
-    fn bytes(&mut self, max: usize) -> Result<Vec<u8>, ErrorCode> {
-        let len = self.u32()? as usize;
-        if len == 0 || len > max {
-            return Err(ErrorCode::InvalidInput);
-        }
-        Ok(self.take(len)?.to_vec())
     }
 }

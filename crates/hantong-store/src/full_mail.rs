@@ -390,6 +390,14 @@ mod tests {
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
         fs::create_dir_all(&root).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        // macOS temp_dir may contain /var, a symlink to /private/var.
+        // Use the physical isolated root, as required by the product guard.
+        let root = fs::canonicalize(root).unwrap();
         let store = Store::open(root.join("data"), root.join("keys")).unwrap();
         let snapshot = {
             use hantong_domain::{

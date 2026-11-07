@@ -349,8 +349,7 @@ async fn sec08_terminal_imap_probe_consumes_fresh_input_without_replacing_stored
             binding,
             "acct",
             &config,
-            left,
-            configs(true).0,
+            (left, configs(true).0),
         ),
     )
     .await
@@ -389,8 +388,7 @@ async fn sec08_terminal_imap_probe_rejects_mismatch_and_replay() {
             changed_binding,
             "acct",
             &changed,
-            left,
-            configs(true).0,
+            (left, configs(true).0),
         )
         .await;
     assert!(matches!(
@@ -408,8 +406,7 @@ async fn sec08_terminal_imap_probe_rejects_mismatch_and_replay() {
             binding,
             "acct",
             &config,
-            left,
-            configs(true).0,
+            (left, configs(true).0),
         )
         .await
         .unwrap();
@@ -422,8 +419,7 @@ async fn sec08_terminal_imap_probe_rejects_mismatch_and_replay() {
             binding,
             "acct",
             &config,
-            left,
-            configs(true).0,
+            (left, configs(true).0),
         )
         .await;
     assert!(matches!(

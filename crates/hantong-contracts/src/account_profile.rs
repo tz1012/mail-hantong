@@ -53,104 +53,6 @@ pub struct ParsedAccountClientProfile {
     scope: AccountScopeV2,
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::account_scope::{AccountGrantV2, AccountScopeV2};
-
-    fn scope() -> AccountScopeV2 {
-        AccountScopeV2::new(
-            vec!["mail.accounts.list".into()],
-            vec![
-                AccountGrantV2::new(
-                    "acct".into(),
-                    vec!["mail.messages.get".into(), "mail.send.execute".into()],
-                    false,
-                )
-                .unwrap(),
-            ],
-        )
-        .unwrap()
-    }
-
-    fn profile() -> ParsedAccountClientProfile {
-        let mut client = [3; 72];
-        let mut server = [4; 72];
-        client[..8].copy_from_slice(b"ECS1\x20\0\0\0");
-        server[..8].copy_from_slice(b"ECS1\x20\0\0\0");
-        ParsedAccountClientProfile::new(
-            AccountProfileSelector::Default,
-            [1; 16],
-            [2; 32],
-            client,
-            server,
-            1,
-            scope(),
-        )
-        .unwrap()
-    }
-
-    #[test]
-    fn sec03_model2_profile_rejects_other_principal_selectors() {
-        for selector in [
-            AccountProfileSelector::Gui,
-            AccountProfileSelector::Mcp,
-            AccountProfileSelector::AiCodex,
-            AccountProfileSelector::AiClaude,
-        ] {
-            let mut value = profile();
-            value.profile = selector;
-            assert_eq!(value.validate(), Err(ErrorCode::CapabilityUnsupported));
-            let encoded = String::from_utf8(profile().to_json().unwrap())
-                .unwrap()
-                .replacen("\"default\"", &format!("\"{}\"", selector.as_str()), 1)
-                .into_bytes();
-            assert_eq!(
-                ParsedAccountClientProfile::from_json(&encoded),
-                Err(ErrorCode::CapabilityUnsupported)
-            );
-        }
-    }
-
-    #[test]
-    fn sec03_model2_profile_roundtrips_and_redacts() {
-        let profile = profile();
-        let bytes = profile.to_json().unwrap();
-        assert_eq!(
-            ParsedAccountClientProfile::from_json(&bytes).unwrap(),
-            profile
-        );
-        assert_eq!(
-            format!("{profile:?}"),
-            "ParsedAccountClientProfile { <redacted> }"
-        );
-    }
-
-    #[test]
-    fn sec03_model2_profile_rejects_unknown_duplicate_and_legacy_schema() {
-        let bytes = profile().to_json().unwrap();
-        let value: Value = serde_json::from_slice(&bytes).unwrap();
-        let raw = serde_json::to_string(&value).unwrap();
-        assert!(
-            ParsedAccountClientProfile::from_json(
-                format!("{{\"unknown\":1,{}", &raw[1..]).as_bytes()
-            )
-            .is_err()
-        );
-        assert!(
-            ParsedAccountClientProfile::from_json(
-                format!("{{\"profile\":\"default\",{}", &raw[1..]).as_bytes()
-            )
-            .is_err()
-        );
-        let mut legacy = value;
-        legacy["schema_version"] = Value::from(1);
-        assert!(
-            ParsedAccountClientProfile::from_json(&serde_json::to_vec(&legacy).unwrap()).is_err()
-        );
-    }
-}
-
 impl fmt::Debug for ParsedAccountClientProfile {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str("ParsedAccountClientProfile { <redacted> }")
@@ -282,5 +184,103 @@ impl ParsedAccountClientProfile {
     }
     pub fn scope(&self) -> &AccountScopeV2 {
         &self.scope
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::account_scope::{AccountGrantV2, AccountScopeV2};
+
+    fn scope() -> AccountScopeV2 {
+        AccountScopeV2::new(
+            vec!["mail.accounts.list".into()],
+            vec![
+                AccountGrantV2::new(
+                    "acct".into(),
+                    vec!["mail.messages.get".into(), "mail.send.execute".into()],
+                    false,
+                )
+                .unwrap(),
+            ],
+        )
+        .unwrap()
+    }
+
+    fn profile() -> ParsedAccountClientProfile {
+        let mut client = [3; 72];
+        let mut server = [4; 72];
+        client[..8].copy_from_slice(b"ECS1\x20\0\0\0");
+        server[..8].copy_from_slice(b"ECS1\x20\0\0\0");
+        ParsedAccountClientProfile::new(
+            AccountProfileSelector::Default,
+            [1; 16],
+            [2; 32],
+            client,
+            server,
+            1,
+            scope(),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn sec03_model2_profile_rejects_other_principal_selectors() {
+        for selector in [
+            AccountProfileSelector::Gui,
+            AccountProfileSelector::Mcp,
+            AccountProfileSelector::AiCodex,
+            AccountProfileSelector::AiClaude,
+        ] {
+            let mut value = profile();
+            value.profile = selector;
+            assert_eq!(value.validate(), Err(ErrorCode::CapabilityUnsupported));
+            let encoded = String::from_utf8(profile().to_json().unwrap())
+                .unwrap()
+                .replacen("\"default\"", &format!("\"{}\"", selector.as_str()), 1)
+                .into_bytes();
+            assert_eq!(
+                ParsedAccountClientProfile::from_json(&encoded),
+                Err(ErrorCode::CapabilityUnsupported)
+            );
+        }
+    }
+
+    #[test]
+    fn sec03_model2_profile_roundtrips_and_redacts() {
+        let profile = profile();
+        let bytes = profile.to_json().unwrap();
+        assert_eq!(
+            ParsedAccountClientProfile::from_json(&bytes).unwrap(),
+            profile
+        );
+        assert_eq!(
+            format!("{profile:?}"),
+            "ParsedAccountClientProfile { <redacted> }"
+        );
+    }
+
+    #[test]
+    fn sec03_model2_profile_rejects_unknown_duplicate_and_legacy_schema() {
+        let bytes = profile().to_json().unwrap();
+        let value: Value = serde_json::from_slice(&bytes).unwrap();
+        let raw = serde_json::to_string(&value).unwrap();
+        assert!(
+            ParsedAccountClientProfile::from_json(
+                format!("{{\"unknown\":1,{}", &raw[1..]).as_bytes()
+            )
+            .is_err()
+        );
+        assert!(
+            ParsedAccountClientProfile::from_json(
+                format!("{{\"profile\":\"default\",{}", &raw[1..]).as_bytes()
+            )
+            .is_err()
+        );
+        let mut legacy = value;
+        legacy["schema_version"] = Value::from(1);
+        assert!(
+            ParsedAccountClientProfile::from_json(&serde_json::to_vec(&legacy).unwrap()).is_err()
+        );
     }
 }

@@ -2975,3 +2975,64 @@ WATCH (no BLOCK or proven bypass). The remaining WATCH is the native Windows
 capability's exclusive-handle lifetime obligation and outstanding human/native
 product gates. This is not human security approval or release approval.
 Windows Store all-target Clippy also passed with warnings denied.
+
+## 2026-11-08 deployment continuation — native release gates
+
+User request: `배포 진행`. This authorizes continuing the release work; it is
+not recorded as human review of the new account-grant security code.
+
+The clean candidate `a28e76c3cfa22e3fc1e339e37eb83958f7b7e184` was pushed to
+`feature/account-mail-grants-20261107`. Same-commit checks started:
+- Four-platform full checks: https://github.com/tz1012/mail-hantong/actions/runs/42421655404
+- Linux package/install/activation gate: https://github.com/tz1012/mail-hantong/actions/runs/42421670196
+- Both native Mac package gates (full): https://github.com/tz1012/mail-hantong/actions/runs/42421670326
+
+These are verification workflows, not a published release. No tag, release,
+Pages payload, installation feed, user installation or account grant changed.
+
+The first run found real failures. Linux and Mac ARM full checks failed Clippy
+`items_after_test_module` in the new account_auth/account_profile codecs. Their
+unchanged test modules were moved after the implementations, with no lint
+suppression. A subsequent native Linux whole-workspace Clippy run exposed an
+eight-argument cfg(test)-only Secrets IMAP probe helper; its existing stream and
+TLS config are grouped into one transport argument and all four callers updated.
+No production probe, credential binding or check was changed.
+
+Mac ARM package validation passed 51 platform tests, then failed one of 41 Store
+tests: full_mail readiness fixture passed raw macOS temp_dir through the strict
+no-symlink guard. The new fixture now uses a canonical physical isolated root
+and Unix mode 0700, matching account_grants and shared Store test setup. The
+product path guard and all stale-binding/atomicity assertions remain intact.
+Actual Mac rerun is required to confirm the correction.
+
+Fresh local validation after these fixes: whole-workspace/all-target Clippy with
+warnings denied passed on Windows and native WSL Linux; Windows full_mail filter
+7 passed. Additional focused tests and fresh final-commit CI remain pending.
+
+The original a28 Windows release package built successfully, source hash
+`30824381b37956fc79072c9e5d994af5a159d855b82da921fc43edf793660bfa`, ZIP SHA256
+`fc48d1d56a2fc6756c115c0c385a2e6db77e89c9f6083c0f16b453d4a5d8eba6`.
+An isolated installation used official beta29 Windows ZIP (GitHub asset digest
+`9a6b4bef735631ec228bd846d3198e515d7bc8339f985d23031d8bd68089b6ed`), then a28
+candidate beta30. Both installs and version smoke passed, 272 manifest file
+hashes were checked for each, the old executable and synthetic sentinel were
+preserved. No PATH/channel change, Core startup or user-store access occurred.
+This proves only isolated Windows installation/update/file preservation, not
+Core restart or real account operation. The a28 ZIP is superseded by the new
+source fixes and must not be published as the final candidate.
+
+Release remains gated on the corrected final commit's required native tests,
+product integration, packages and actual human security review described in
+ACCOUNT-MAIL-GRANTS-REVIEW-20261108.md. The older 6322b9a human-review record
+does not cover this new account-grant implementation. Songpa's three-account
+list/body verification is still outstanding. No real credentials/mail/ACLs were
+read or changed by this verification.
+
+Follow-up verification: native Linux terminal IMAP protected probe 3/3,
+full_mail 5/5, and contracts 116/116 passed. Whole-workspace/all-target Clippy
+passed with warnings denied on both Windows and Linux. The original a28 Linux
+scope/package/installed offline activation gate 42421670196 completed success;
+this is evidence for a28 only and will be rerun for the corrected commit.
+Independent read-only release audit still rejects deployment: actual human
+review and final installed synthetic full-mail integration evidence are absent.
+The hygiene fixes do not discharge those conditions or Mac compatibility gates.
