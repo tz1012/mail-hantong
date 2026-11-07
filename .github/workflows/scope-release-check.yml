@@ -15,6 +15,7 @@ on:
       - packaging/unix/**
       - scripts/test_linux_installed_product.py
       - scripts/test_linux_real_activation.py
+      - tests/Build/test_linux_real_activation_harness.py
       - scripts/linux_product_pty.py
       - scripts/test_unix_terminal.py
   workflow_dispatch:

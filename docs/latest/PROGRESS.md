@@ -2699,3 +2699,16 @@ qualification is inferred from artifact upload.
 All publication, final payload/hash review and actual human review gates remain.
 No user installation/account/vault/mail/permission changes or provider operations
 were performed. Final completion remains Songpa Gmail2+Daum1 actual list/body reads.
+
+## 2026-11-07 Python discovery namespace repair
+
+ceb2078a9c02cdedf9462516dca1170d8fbdd392 full-check matrix stopped before Rust
+because the new Build test had the same basename as its script; prior test modules
+put scripts first on sys.path. Renamed only the test module to
+`test_linux_real_activation_harness.py`; no assertion removed or skipped to hide
+the error. Scope-gate paths include it so the final source commit is rebuilt.
+Fresh native Build discovery with the pinned toolchain on PATH: 342 executed,
+294 passed, 48 existing platform exclusions, zero failures/errors. An earlier
+local attempt omitted Cargo from PATH and failed one environment prerequisite;
+that failure was not counted as a pass. Existing package build remains running;
+no new package/activation success is claimed here. Publication remains withheld.
