@@ -126,6 +126,7 @@ async fn unix_call(
 }
 
 pub mod accounts;
+pub mod account_profile;
 pub mod auth_wire;
 pub mod diagnostic_snapshot;
 pub mod display_settings;

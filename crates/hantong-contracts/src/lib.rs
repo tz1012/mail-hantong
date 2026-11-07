@@ -2,6 +2,8 @@
 
 //! Stable identifiers shared by the CLI and the core.
 
+pub mod account_auth;
+pub mod account_scope;
 pub mod audit;
 pub mod auth;
 pub mod client;
