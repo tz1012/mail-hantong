@@ -3,6 +3,23 @@
 Status: proposal; no runtime contract approval or implementation claimed.
 Related: ADR-030, SEC-02, INST-01/04, Unix relay/terminal review contracts.
 
+Revision R2 recommended adoption set: [identity E1–E9](../../contracts/proposals/linux-execution-identity-v2-r2.md)
+and [delivery D1–D6](../../contracts/proposals/linux-static-pinned-delivery-20261107.md).
+R2 fixes per-process sealed identity, FD197–201, actual peer FD inspection, a native
+Rust state machine with fixed OS curl transport, and offline first beta29 migration.
+Shared-object/fs-verity and a legacy signaling allowlist are not part of R2.
+All sections below Authorization record are historical R1 analysis, not normative
+R2 clauses. Their undecided mechanism, update.sh/interpreter and predecessor
+signaling requirements are superseded for the R2 candidate by E1–E9/D1–D6.
+They are retained only as rejected/unselected alternatives, not parallel rules.
+R2 adds E9 as an explicit one-time OS-Python bootstrap proposal because
+`linux-update-v2` cannot bootstrap itself. This new prerequisite/algorithm needs
+explicit adoption; it is not part of steady-state update and has not run. The
+future exact payload hash, code review and native product gates remain required.
+Adoption means permission to implement these changed contracts, not completed code
+review or publication. The exact minimum decision is in the
+[R2 decision packet](../../latest/LINUX-R2-ADOPTION-20261107.md).
+
 ## Authorization record
 
 The 2026-11-07 user message reports the user's words as

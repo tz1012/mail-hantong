@@ -1,5 +1,10 @@
 # Proposed Linux execution identity v2
 
+R1 historical draft. The concrete adoption candidate is
+[revision R2](linux-execution-identity-v2-r2.md), clauses E1–E8. Neither is adopted.
+R2 chooses a recommended per-process model/FD map/native state machine/offline
+legacy transition instead of leaving those implementation choices open.
+
 Status: review draft, NOT adopted and NOT implemented. ADR-033 describes the
 alternative and unresolved trust/support decisions. Deployment authorization does
 not approve this changed peer/stop identity protocol. No existing inode check is
