@@ -3036,3 +3036,20 @@ this is evidence for a28 only and will be rerun for the corrected commit.
 Independent read-only release audit still rejects deployment: actual human
 review and final installed synthetic full-mail integration evidence are absent.
 The hygiene fixes do not discharge those conditions or Mac compatibility gates.
+
+Second same-commit verification (`3a21411c2f7d9930b8b55faf86459f3637bc991b`):
+Linux package/installed offline activation gate 42422438006 passed. Mac ARM
+package run 42422437895 now passes platform 51/51 and Store 41/41, confirming
+the canonical synthetic-root fix; its next workspace Clippy step rejects an
+unused terminal wrapper. The only caller of read_masked_terminal_line() is
+Linux-only headless_vault; the wrapper is now cfg(target_os="linux"), while the
+shared deadline-bound input implementation remains available on macOS. No
+warning suppression, test deletion, Keychain/ACL change or product input bypass.
+
+Windows package at source 3a21411 built and repeated isolated official beta29
+upgrade passed (272 manifest entries each version, old version/sentinel retained,
+no Core/store/PATH/channel access). ZIP SHA256
+`c8d964462ec47403fec065901b9433bafba858f27af151697c71849836fa08af`, source hash
+`9d241d25f63d64a8f1d6b1115d4eac0b978e6b8a7e68157b97670cfbbdb32d41`.
+This package is again superseded by the Mac cfg correction and is not released.
+Final native gates must be attached to the commit including that correction.

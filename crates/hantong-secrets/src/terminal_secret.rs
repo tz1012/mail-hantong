@@ -1387,7 +1387,7 @@ fn sync_linux_directory(guard: &UnixDirectoryGuard) -> Result<(), SecretError> {
         .map_err(|_| SecretError::Protection)
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(target_os = "linux")]
 #[allow(unsafe_code)]
 pub(crate) fn read_masked_terminal_line() -> Result<SensitiveBuffer, SecretError> {
     read_masked_terminal_line_until(now_utc_ms() + 5 * 60 * 1_000)
