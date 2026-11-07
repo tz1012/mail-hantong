@@ -3071,3 +3071,17 @@ ZIP SHA256 0fce217cf60d881cc36eac0f0184cc4b04f006ad4f6cfe20ddbf3d5c443c27ed.
 It is not the final package after the new test cfg/source metadata correction.
 The ongoing native failures and missing human/full-mail product review gates
 continue to prohibit official release; no release or feed was changed.
+
+## 2026-11-08 user human-review confirmation received
+
+The user answered `모두 완료야` to the exact whole-candidate human-security
+review question for `3a21411c2f7d9930b8b55faf86459f3637bc991b` vs c22e1bf.
+Recorded verbatim in ACCOUNT-MAIL-GRANTS-HUMAN-REVIEW-CONFIRMATION-20261108.md.
+This is actual user confirmation, not agent-created findings. The reviewed
+3a candidate is no longer described as having no human confirmation. The four
+later Secrets cfg changes through product40e57435, future payloads/digests,
+native CI success and real provider tests are not inferred from that response.
+Existing deployment authorization remains valid subject to required gates.
+Mac ARM/Intel and Linux full checks for product40 passed; Windows full still
+running. Mac ARM released-binary Keychain gate failed; remaining compatibility
+workflows are not cancelled and failure details await available job logs.
