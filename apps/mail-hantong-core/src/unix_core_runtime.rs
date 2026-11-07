@@ -108,8 +108,14 @@ async fn serve_connections(
                     // Malformed/disconnected clients cannot stop the daemon.
                     let _ = tokio::time::timeout(Duration::from_secs(40), async {
                         let mut connection = connection;
-                        let trusted = connection.peer_matches_current_image()?;
-                        let first = read_first(&mut connection, if trusted { 1_050_112 } else { 131_072 }).await?;
+                        let admission = connection.peer_matches_current_image();
+                        let first = read_first(&mut connection, if admission.as_ref().is_ok_and(|trusted| *trusted) { 1_050_112 } else { 131_072 }).await?;
+                        // Public transport readiness grants no account, mail, broker or stop authority.
+                        if matches!(first.method.as_str(), "system.readiness" | "system.version") {
+                            let value = hantong_ipc_server::bootstrap::response(first);
+                            return send_value(&mut connection, &value).await;
+                        }
+                        let trusted = admission?;
                         if first.method == "core.stop" {
                             if !trusted || !connection.peer_matches_current_image()? || !exact_protocol_params(&first.params) {
                                 return Err(ErrorCode::AuthRequired);
@@ -126,10 +132,6 @@ async fn serve_connections(
                             if !connection.peer_matches_current_image()? { return Err(ErrorCode::AuthRequired); }
                             shutdown.set(true);
                             return Ok(());
-                        }
-                        if matches!(first.method.as_str(), "system.readiness" | "system.version") {
-                            let value = hantong_ipc_server::bootstrap::response(first);
-                            return send_value(&mut connection, &value).await;
                         }
                         if first.method == "core.relay" {
                             if !trusted || !connection.peer_matches_current_image()? || brokers.get() >= 4 { return Err(ErrorCode::AuthRequired); }

@@ -2712,3 +2712,31 @@ Fresh native Build discovery with the pinned toolchain on PATH: 342 executed,
 local attempt omitted Cargo from PATH and failed one environment prerequisite;
 that failure was not counted as a pass. Existing package build remains running;
 no new package/activation success is claimed here. Publication remains withheld.
+
+## 2026-11-07 Public readiness ordering defect isolated and repaired
+
+The ceb2078 scope artifact reached both hidden synthetic passphrase inputs, then
+installed CLI readiness timed out. A bounded synthetic-only local reproduction
+showed the owned CLI sleeping while its owned Core was serving epoll. No real
+credential/account was read. The Core propagated failed same-image admission
+before even reading the public system.readiness request. Ordinary CLI/unsealed
+bootstrap clients therefore had their connection closed although public readiness
+is explicitly unauthenticated and exposes no mail authority.
+
+Added a real socket/process regression that removes inherited Core role FDs in a
+synthetic ordinary caller. It checks exact readiness fields (authenticated=false,
+mail_ready=false) and rejects both stop and broker dispatch, followed by the
+existing registration/one-use/scope assertions in the full product test. RED:
+ConnectionResetError before the readiness response. GREEN: one native test passed,
+zero failed; broker frame/identity tests 4/4 passed; Core all-targets Clippy with
+-D warnings passed. Only the exact public bootstrap branch precedes propagation
+of admission failure. Non-trusted requests retain the 131072-byte cap; protected
+stop/relay and authenticated paths retain image checks. No grant was automated.
+Independent agent review found no concrete authority widening; this is not actual
+human security review. That new request ordering is explicitly in the review packet.
+
+User confirmed the existing Songpa absolute installation root read-only and beta29
+unchanged, explicitly requiring final code/payload/digest human review and native
+gates before execution/publication. The per-machine path is retained only in a
+private local preparation file, not published in source or artifacts. No Songpa
+command, refresh, grant, install, account/mail/key/vault/ACL change was performed.

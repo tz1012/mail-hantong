@@ -7,7 +7,20 @@ mod linux_product_fixture;
 
 #[tokio::test]
 async fn cli07_unix_bootstrap_registration_then_authenticated_accounts() {
-    const NAME: &str = "unix_core_runtime::product_tests::cli07_unix_bootstrap_registration_then_authenticated_accounts";
+    product_flow(false).await;
+}
+
+#[tokio::test]
+async fn cli07_unsealed_readiness_never_admits_protected_commands() {
+    product_flow(true).await;
+}
+
+async fn product_flow(probe_only: bool) {
+    let name = if probe_only {
+        "unix_core_runtime::product_tests::cli07_unsealed_readiness_never_admits_protected_commands"
+    } else {
+        "unix_core_runtime::product_tests::cli07_unix_bootstrap_registration_then_authenticated_accounts"
+    };
     if std::env::var_os("HANTONG_UNIX_PRODUCT_TEST_CHILD").is_none() {
         let fixture = linux_product_fixture::ProductFixture::new(
             "mail-hantong-core",
@@ -18,7 +31,7 @@ async fn cli07_unix_bootstrap_registration_then_authenticated_accounts() {
         let runtime = fixture.private_dir("runtime");
         let status = fixture
             .command()
-            .args(["--exact", NAME, "--nocapture"])
+            .args(["--exact", name, "--nocapture"])
             .env("HANTONG_UNIX_PRODUCT_TEST_CHILD", "1")
             .env("XDG_DATA_HOME", data_home)
             .env("XDG_CONFIG_HOME", config_home)
@@ -73,6 +86,10 @@ async fn cli07_unix_bootstrap_registration_then_authenticated_accounts() {
     );
     tokio::pin!(server);
     let client = async {
+        ordinary_bootstrap_probe().await;
+        if probe_only {
+            return;
+        }
         let custom_client = rpc(
             "custom-client",
             "setup.google.request",
@@ -210,4 +227,74 @@ async fn rpc(id: &str, method: &str, params: Value) -> Value {
         .await
         .unwrap();
     serde_json::from_slice(&bytes).unwrap()
+}
+
+// An ordinary same-UID bootstrap client has no Core image roles. Readiness must
+// remain unauthenticated; neither broker nor shutdown may accept that client.
+async fn ordinary_bootstrap_probe() {
+    const PROBE: &str = r#"
+import json, os, socket, struct, sys
+for fd in range(197,202):
+    try: os.close(fd)
+    except OSError as error:
+        if error.errno != 9: raise
+
+def connect(method):
+    stream=socket.socket(socket.AF_UNIX)
+    stream.settimeout(5)
+    stream.connect(sys.argv[1])
+    body=json.dumps({'jsonrpc':'2.0','id':'ordinary-probe','method':method,'params':{'protocol_version':1}},separators=(',',':')).encode()
+    stream.sendall(struct.pack('<I',len(body))+body)
+    return stream
+
+def exact(stream,n):
+    data=b''
+    while len(data)<n:
+        part=stream.recv(n-len(data))
+        assert part, 'public readiness was closed before its response'
+        data+=part
+    return data
+
+with connect('system.readiness') as stream:
+    length=struct.unpack('<I',exact(stream,4))[0]
+    assert 0<length<=65536
+    value=json.loads(exact(stream,length))
+    assert value=={'jsonrpc':'2.0','id':'ordinary-probe','result':{'protocol_version':1,'transport_ready':True,'authenticated':False,'mail_ready':False}}
+    stream.sendall(b'\x06')
+for method in ('core.stop','core.relay'):
+    with connect(method) as stream:
+        try: assert stream.recv(1)==b'', 'unsealed caller admitted to protected dispatch'
+        except ConnectionResetError: pass
+"#;
+    struct OwnedProbe(std::process::Child);
+    impl Drop for OwnedProbe {
+        fn drop(&mut self) {
+            if self.0.try_wait().ok().flatten().is_none() {
+                let _ = self.0.kill();
+            }
+            let _ = self.0.wait();
+        }
+    }
+    let mut probe = OwnedProbe(
+        std::process::Command::new("/usr/bin/python3")
+            .args(["-I", "-c", PROBE])
+            .arg(hantong_platform::unix_paths::socket_path().unwrap())
+            .spawn()
+            .unwrap(),
+    );
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
+    loop {
+        if let Some(status) = probe.0.try_wait().unwrap() {
+            assert!(
+                status.success(),
+                "ordinary bootstrap/protected-dispatch probe failed"
+            );
+            return;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "ordinary bootstrap probe timed out"
+        );
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
 }

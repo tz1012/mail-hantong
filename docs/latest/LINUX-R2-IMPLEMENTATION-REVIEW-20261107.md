@@ -13,6 +13,7 @@ Do not substitute the adoption commit, previous 6322b9a review, or an advisor's 
 - `linux_archive.rs`, `linux_pinned_update.rs`: bounded native parsers, fixed OS curl/HTTPS, exact tuple/source/inventory/hash validation, private staging/public evidence and no overwrite.
 - `linux_install.rs`, Core `linux_update_v2.rs`: offline locks, retained old pointer, atomic pointer rename, explicit post-rename durability uncertainty, stop/activate/start/readiness.
 - four product entrypoints, Core broker dispatch, IPC relay and terminal review: no cached-admission or mutable-image fallback.
+- Core public bootstrap ordering: only fixed unauthenticated system.readiness/version responses precede image-admission error propagation; broker, stop and authenticated dispatch retain admission/recheck requirements. Review the unsealed socket probe and protected-command rejection assertions.
 - `scripts/linux_bootstrap_v2.py`: one-time isolated OS Python bundled payload, no mutable project imports, no Secrets/DB before sealed Core activation, fixed OS curl.
 - `scripts/package_unix.py`: newly built candidate metadata and four real sealed-image smoke checks; no requalification of earlier blocked artifacts.
 - synthetic kernel/attack/installation/bootstrap/package tests and migrated real-binary integration fixtures.
