@@ -113,3 +113,64 @@ additional CRITICAL/HIGH parser blocker in the disconnected prototype. This does
 not replace AGENTS section 6 human review. Human review must record the exact local
 preparation commit's seven changed files and later the full production integration
 range; no earlier user confirmation is extended to these new files.
+
+## Continued package integration after conditional deployment authorization
+
+The subsequent user message reports “배포도 승인하고 보안도 오케이해” and directs
+continued work, independent review, actual human security review and successful
+final same-commit gates before deployment. The quote is recorded as reported by
+the user, not a completed human review or a failed-gate exemption.
+
+Linux x86_64 package assembly now requires a clean full Git commit, generates a
+deterministic source ZIP with SOURCE-COMMIT from that exact local Git object,
+binds canonical source hash/Cargo.lock/build metadata, emits a descriptor and
+checksums covering all outputs, and verifies them before producing the candidate.
+The Windows/Mac public bootstraps, existing Unix installer and runtime/IPC/stop
+code are unchanged. Both mocked Mac package assembly routes explicitly bypass
+the Linux source-pin extension. No Linux origin is configured or created.
+
+Source bundling rejects tracked links/gitlinks and oversized input before Git
+archive generation, writes Git output through an anonymous temporary FD, rejects
+linked output parents, pins the Linux output directory FD, and preserves a
+replacement file during failure cleanup. Final archive names, sizes and Git blob
+object IDs must exactly match ls-tree; export-ignore omissions and export-subst
+changes fail, and Git EOL conversion is explicitly disabled for the bundle.
+These are build consistency controls,
+not protection against a hostile compiler or a same-UID actor compromising the
+entire build environment. Source rechecks alone do not prove immutable build
+inputs; trusted build/provenance attestation remains a separate release gate.
+
+The emitted Linux BUILD-METADATA says
+`linux_release_readiness=blocked_identity_and_origin`. In particular, the bundled
+updater still uses the old global feed. The new descriptor is not yet consumed by
+an installed version-pinned updater. This incomplete transport/activation stage
+is an explicit blocker; the artifacts must not be publicly released as a finished
+Linux-only update solution.
+
+[ADR-033](../adr/proposed/ADR-033-linux-sealed-release-identity.md) separates
+installed context, sealed image, peer identity and verified stop. It records
+required copy/seal/readback order, direct entry points, predecessor transition,
+interpreter trust, noexec failure and threat limits. Context format, trusted pin
+origin/authentication and shared-object vs reviewed identity-v2 semantics remain
+undecided. General deployment authorization does not adopt those new contracts.
+An independent architect recommends considering fs-verity to preserve inode/path
+semantics, but its new filesystem support restriction and Songpa availability are
+not accepted or demonstrated. No verity flag, sysctl or ACL has been changed.
+
+Four WSL kernel experiments use only synthetic **non-executable** anonymous
+memfds. After sealing, same-size writes/truncate/writable mapping fail; an already
+writable mapping blocks sealing; a changed copy fails the expected digest; equal
+snapshots have different inode identities. They never execute memfd bytes or
+launch Core and do not close the product same-inode execution risk or demonstrate
+operation under vm.memfd_noexec=2. No security setting is lowered for these tests.
+The WSL host's vm.memfd_noexec value was read as 0; it was not changed. The proposed
+[identity-v2 contract](../contracts/proposals/linux-execution-identity-v2.md) spells
+out the potential comparison/FD roles and the interpreter/predecessor decisions;
+it remains unadopted and no Rust execution/IPC/stop behavior has been changed.
+
+Final actual Linux native package/install/update/Core restart/scope recovery and
+the new human review are still open. Existing approved account/tool previews and
+explicit scope consent must remain in the future Songpa validation. No account,
+key, mail, vault or profile has been changed or reset, and no old permission
+denial is bypassed. The exact future origin is pending the user's requested
+address decision; a proposed new origin must not enter the old shared Atom feed.

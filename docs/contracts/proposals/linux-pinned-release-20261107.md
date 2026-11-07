@@ -73,3 +73,25 @@ the earlier user confirmation are not review of future changes.
 
 The disconnected verifier and synthetic shell tests do not authorize a real
 origin, production wiring, CI dispatch, Songpa installation or public release.
+
+## Subsequent authorization and remaining decisions (2026-11-07)
+
+The user subsequently reports the owner's words “배포도 승인하고 보안도 오케이해”
+and directs implementation, independent review, actual human review and final
+same-commit verification before Linux-only publication and Songpa validation.
+This authorizes continuing the work and conditional publication; it is not a
+review outcome or a waiver of failed gates. The local Linux package provenance
+stage now emits source_commit, a SOURCE-COMMIT source bundle, descriptor and
+checksums and runs the consistency verifier before producing a candidate.
+
+No exact HTTPS origin/repository, descriptor authentication authority, retention
+or redirect policy has been chosen. No origin, feed or public release is created.
+The old Windows/Mac shared Atom/API paths remain unchanged. Origin-dependent
+transport/update activation stays blocked until those explicit trust decisions.
+
+The sealed-image/context proposal is ADR-033. The new execution identity,
+interpreter pin and predecessor stop transition are not adopted by a broad
+deployment authorization. Memfd names, caller-provided paths, equal digest alone
+and removal of existing inode checks are not valid replacements for that contract.
+The latest user steering requires sealed-copy verification and coordinated
+manifest/IPC/stop design and forbids noexec-policy or mutable-image fallbacks.

@@ -17,6 +17,8 @@ import tomllib
 from package_cli import (BINARIES, PackageError, archive_name, checked_source_hash,
                          compiler_info, dependency_licenses, json_bytes, publish,
                          read_file, release_version, run_command, selected_packages, sha)
+from linux_source_bundle import clean_source_commit, write_source_bundle
+from linux_pinned_candidate import verify_candidate
 
 ROOT = Path(__file__).resolve().parents[1]
 TARGETS = {
@@ -76,6 +78,7 @@ def package(root: Path, version: str, output: Path, publisher: Path | None = Non
     env = dict(os.environ)
     env["HANTONG_RELEASE_VERSION"] = version
     runner = subprocess.run
+    pinned_commit = clean_source_commit(root) if release_target == "linux-x86_64" else None
     before = checked_source_hash(root)
     lock = read_file(root / "Cargo.lock", root)
     metadata = json.loads(run_command(runner, ["cargo", "metadata", "--format-version", "1",
@@ -122,14 +125,18 @@ def package(root: Path, version: str, output: Path, publisher: Path | None = Non
         hashes[f"bin/{binary}"] = sha(data)
     contents["VERSION"] = (version + "\n").encode()
     contents["THIRD-PARTY.json"] = inventory
-    contents["BUILD-METADATA.json"] = json_bytes({
+    build_metadata = {
         "format_version": 1, "release_label": version, "target": target, "source_hash": before,
         "build_performed": True, "source_relation": "built_from_current_workspace",
         "build_command": command, "rustc": compiler, "cargo_lock_sha256": sha(lock),
         "binaries": hashes, "google_publisher_config_included": publisher is not None,
         "third_party_inventory_sha256": sha(inventory),
         "build_libc": platform.libc_ver()[1] if system == "Linux" else None,
-    })
+    }
+    if pinned_commit is not None:
+        build_metadata["source_commit"] = pinned_commit
+        build_metadata["linux_release_readiness"] = "blocked_identity_and_origin"
+    contents["BUILD-METADATA.json"] = json_bytes(build_metadata)
     contents["installed-files.txt"] = ("\n".join(sorted([*contents, "installed-files.txt", "release-manifest.json", "FILES.sha256"])) + "\n").encode()
     contents["release-manifest.json"] = json_bytes({
         "format_version": 1, "version": version, "package_version": roots["hantong-cli"]["version"],
@@ -146,8 +153,27 @@ def package(root: Path, version: str, output: Path, publisher: Path | None = Non
         archive = stage / f"mail-hantong-cli-{version}-{release_target}.tar.gz"
         write_archive(archive, contents)
         (stage / "BUILD-METADATA.json").write_bytes(contents["BUILD-METADATA.json"])
+        outputs = [archive, stage / "BUILD-METADATA.json"]
+        if pinned_commit is not None:
+            source = stage / f"mail-hantong-source-{version}.zip"
+            source_digest = write_source_bundle(root, source, pinned_commit, before)
+            descriptor = stage / "linux-pinned-candidate.json"
+            descriptor.write_bytes(json_bytes({
+                "schema_version": 1, "version": version,
+                "package_version": roots["hantong-cli"]["version"],
+                "target": release_target, "commit": pinned_commit,
+                "source_filename": source.name, "source_sha256": before,
+                "source_archive_sha256": source_digest,
+                "cargo_lock_sha256": sha(lock),
+                "package_filename": archive.name, "package_sha256": sha(archive.read_bytes()),
+            }))
+            # Consistency is not publisher authentication or installation consent.
+            verify_candidate(descriptor, archive, source, system, machine)
+            if clean_source_commit(root) != pinned_commit or checked_source_hash(root) != before:
+                raise PackageError("source changed before candidate publication")
+            outputs.extend([source, descriptor])
         (stage / "SHA256SUMS").write_text("".join(f"{sha(item.read_bytes())}  {item.name}\n"
-            for item in (archive, stage / "BUILD-METADATA.json")), encoding="utf-8", newline="\n")
+            for item in outputs), encoding="utf-8", newline="\n")
         destination = output / version
         publish(stage, destination)
     return destination

@@ -2506,3 +2506,19 @@ Python 음성 시험에서 의도적으로 발생시키던 probe 실패 마커�
 새 시험20개는 WSL18개 실행·Windows 전용2개 제외, Windows에서는 Unix 전용 시험을 구분해 실행한다. 기존 Windows 선택9개·rate-limit5개·Unix 패키지 shape5개·문서29개를 영향 검사에 포함했다. 최종 고정 커밋의 재실행 로그와 hash는 준비 문서의 후속 증거에 기록하며, 이전 c2e1aa4 전체 CI/9c7f91e Linux 패키지 성공을 새 소스의 결과로 재사용하지 않는다. 현재 WSL의 일반/login PATH에 Cargo/Rust가 없어 새 native Cargo/package/scope 실행은 미실행이다. 외부 CI를 dispatch하거나 실제 설치로 우회하지 않았다.
 
 상태: **허용된 로컬 준비·합성 시험 / 제품 계약 승인 대기 / 동일 inode 보안 설계 및 새 변경 사람 검토 필요 / 배포 보류**. 실제 사용자 데이터·계정·금고·키·권한은 접근·초기화·삭제하지 않았다. 공개 전 최소 결정은 정확한 별도 Linux origin/신뢰 규칙, Mac 실패를 유지한 Linux 독립 gate 정책, production pin/activation 계약이다. 그 뒤 최종 같은 커밋의 native Linux package/install/update/Core 재시작/scope 복구 및 플랫폼 선택 회귀와 별도 사람 검토를 완료해야 한다.
+
+### 2026-11-07 조건부 배포 승인 후 Linux 소스 결속 통합·실행 정체성 계약 검토
+
+후속 사용자 전달의 인용 원문은 “배포도 승인하고 보안도 오케이해”다. 사용자는 제품 통합·독립 검토·필요한 실제 사람 검토·최종 동일 커밋 검증 후에만 Linux 배포·송파 적용을 진행하도록 지시했다. 이를 작업/조건부 배포 허가로 기록하며 미작성 코드의 사람 검토 완료나 실패 면제로 기록하지 않는다. 새 공식 HTTPS origin/repository와 descriptor 신뢰 출처는 아직 지정되지 않았고 주소 확인 질문이 대기 중이다. 원점·공식 채널·릴리스·송파 설치는 생성/실행하지 않았다.
+
+Linux x86_64 패키저에 clean full HEAD, 정확한 Git blob 원본 ZIP/SOURCE-COMMIT, canonical source hash, Cargo.lock, BUILD-METADATA의 source_commit, descriptor, 전체 산출물 체크섬과 verifier를 연결했다. Git archive의 export-ignore/subst, 링크/gitlink, 출력 부모 링크, 교체된 출력의 실패 cleanup 공백을 독립 검토 후 보완했다. 파일 집합/크기/Git object ID를 ls-tree와 대조하며 익명 임시 FD·Linux dirfd·exclusive write/readback/fsync·소유 inode 비교를 사용한다. 이 검사는 적대적인 컴파일러/동일 UID 빌드 환경 전체를 격리하거나 빌드의 불변성을 증명하지 않는다.
+
+실제 Cargo 대신 합성 ELF/Mach-O·mock compiler로 소스 ZIP부터 최종 manifest/descriptor/checksum까지 패키저 연결을 시험했다. Mac 두 아키텍처는 Linux 프로토콜을 호출하지 않으며 기존 install.sh/install.ps1/Unix installer/Windows·Mac Atom/API/CI·Rust 런타임은 변경하지 않았다. Linux metadata에 `linux_release_readiness=blocked_identity_and_origin`을 명시했다. 설치된 updater는 아직 descriptor를 소비하지 않고 구 Atom 경로를 사용하므로, 이 산출물을 Linux 별도 업데이트 제품 완성/배포 가능으로 표시하지 않는다. 독립 검토의 해당 HIGH 전체 통합 차단은 그대로 남는다.
+
+ADR-033과 linux-execution-identity-v2 제안은 원래 릴리스 문맥과 봉인 실행 객체, peer process instance, stop/pidfd, 구 Core 전환, interpreter와 noexec 정책을 한 경계로 다룬다. memfd 이름/argv/env를 신뢰하거나 기존 inode 검사를 삭제하지 않았다. 사용자의 추가 제안대로 복사→봉인 확인→봉인 사본 길이/해시→동일 FD 실행을 필수 순서로 기록했다. 새 identity/context 계약·신뢰 pin 출처·해당 업데이트 interpreter/이전 Core 종료 규칙은 미채택이다. 독립 architect의 fs-verity 권고도 새 파일시스템 지원 제한과 송파 가용성이 미확인이라 임의 채택하지 않았다.
+
+WSL의 실제 커널에서 비실행 합성 memfd 시험4개가 통과했다. 봉인 뒤 동일 크기 쓰기·truncate·쓰기 mmap 거부, 기존 writable mapping의 봉인 거부, 복사 중 변경 사본의 해시 불일치 및 동일 바이트/별도 inode를 확인했다. 실행 이미지/IPC/stop은 시험하지 않았고 실제 제품 동일 inode 위험은 미해결이다. vm.memfd_noexec는 읽기 조회 결과0이며 sysctl/ACL/Keychain·권한을 변경하지 않았다. noexec=2 실행 거부 시험이나 mutable fallback 부재를 최종 제품에서 증명한 것으로 표시하지 않는다.
+
+최종 대상 검증은 같은 로컬 코드 커밋의 Windows 영향 검사·WSL 새38개(36실행, Windows 전용2제외)·문서·compile/diff 및 실제 로컬 Git 소스 ZIP 결속으로 별도 기록한다. 모든 제외는 해당 OS에서 실행 결과를 확인한다. 새 실제 Linux Cargo package/install/update/Core restart/scope recovery·네 플랫폼 필수 CI·실제 사람 보안 검토는 미완료다. 추적표는 소스 해시를 갱신하되 새로운 AC 통과를 조작하지 않는다.
+
+상태: **패키저 소스 결속 통합·합성/커널 기작 검증 / 신뢰 원점 및 새 실행 정체성 계약 결정 차단 / 실제 사람 보안 검토·최종 native gate 대기 / 미배포**. 필요한 사람 조작은 구체적 계약/원점 선택과 구현 후 고정 전체 SHA 보안 코드 검토이며, 현재 OS 확인·권한 변경·실제 계정 로그인은 요청/실행하지 않는다. 기존 계정·금고·키·메일·권한은 보존하고 이전 거부를 우회하지 않았다. 공개 c2e1aa4가 새 봉인 실행 수정을 포함한다고 주장하지 않는다.
