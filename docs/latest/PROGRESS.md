@@ -2740,3 +2740,35 @@ unchanged, explicitly requiring final code/payload/digest human review and nativ
 gates before execution/publication. The per-machine path is retained only in a
 private local preparation file, not published in source or artifacts. No Songpa
 command, refresh, grant, install, account/mail/key/vault/ACL change was performed.
+
+## 2026-11-07 Exact candidate freeze and canonical downloader ancestor repair
+
+3ed000263ea271ca01d8310e09babfd114474d3f native scope gate 42361754567
+passed package build, installed headless first-start/wrong-unlock/restart,
+two-real-R2-package offline activation and synthetic encrypted DB/vault preservation.
+Local same-source real-package tests also passed. The downloaded CI source ZIP's
+1057 files matched exact Git blob identities; manifest/package/source/lock/build/
+image hashes were checked. A private machine-bound E9 payload was assembled and
+parsed, not executed or published. Actual human review was not completed.
+
+An additional private probe used the SHA-pinned official beta29 Linux binary
+(6016c846eb0b547592726d931e21129fcf3b3e24014ee5a997033ff93f4cdd64),
+normal synthetic headless setup, its own normal old-Core shutdown, and the exact
+3ed CI candidate. Candidate offline activation, readiness, verified stop and
+byte-preserving synthetic DB/vault checks passed. A preceding local attempt
+failed during old initialization before candidate activation; its failure log is
+retained and no cause is claimed. This probe seeded no account/scope, executed
+no E9 payload and performed no public-origin fetch or real-provider operation.
+
+Independent exact-payload inspection then found a concrete D3 gap: the Python
+bootstrap checked the resolved curl file but not its resolved parent ancestors.
+The prepared 3ed payload is therefore blocked/superseded, despite its successful
+component gates. Added pre-spawn canonical ancestor validation with owner=0 and
+existing no-link/non-writable guards. Regression first failed at the forbidden
+spawn boundary, then passed after the fix. Windows targeted tests: 20 executed,
+13 passed/7 existing POSIX exclusions; native Linux: all 20 passed, zero exclusions.
+No assertion or security boundary weakened. Scope-gate path filters now include
+the bootstrap source/test so final assets and tests are rebuilt for this fix.
+The new exact commit/assets/payload need a fresh freeze, final platform results,
+independent finding closure and actual human review before publication/execution.
+No Songpa install, client refresh, grant or storage/ACL/mail changes were made.

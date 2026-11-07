@@ -126,6 +126,24 @@ class LinuxBootstrapV2Tests(unittest.TestCase):
         self.assertEqual(calls["args"][1], "--disable")
         self.assertNotIn("--location", calls["args"])
 
+    def test_SEC03_download_rejects_unsafe_canonical_target_ancestor_before_spawn(self):
+        url = "https://tz1012.github.io/mail-hantong/artifacts/linux-x86_64/0.1.0-test/" + "a" * 40 + "/linux-pinned-candidate.json"
+        original_guard = bootstrap._safe_ancestor
+        with tempfile.TemporaryDirectory(prefix="hantong-unsafe-curl-") as directory:
+            unsafe_parent = Path(directory)
+            os.chmod(unsafe_parent, 0o777)
+            def ancestor(path, label, **kwargs):
+                if path == unsafe_parent:
+                    original_guard(path, label, **kwargs)
+            # Model the file as root-owned; its real synthetic parent is unsafe.
+            with mock.patch.object(bootstrap, "_safe_regular"), \
+                    mock.patch.object(bootstrap.Path, "resolve", return_value=unsafe_parent / "curl"), \
+                    mock.patch.object(bootstrap, "_safe_ancestor", side_effect=ancestor), \
+                    mock.patch.object(bootstrap.subprocess, "Popen", side_effect=AssertionError("spawn crossed unsafe ancestor")) as spawn:
+                with self.assertRaisesRegex(bootstrap.BootstrapError, "curl_ownership"):
+                    bootstrap.fetch_fixed(url)
+                spawn.assert_not_called()
+
     def test_SEC03_download_timeout_is_finite_and_owned_child_is_killed(self):
         class Child:
             returncode = -9

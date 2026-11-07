@@ -305,7 +305,9 @@ def fetch_fixed(url: str, *, curl: Path = Path("/usr/bin/curl"), timeout: int = 
     if curl != Path("/usr/bin/curl"):
         raise _fail("curl_path")
     _safe_regular(curl, "curl", 16 * 1024 * 1024, owner=0, allow_symlink=True)
-    _safe_regular(curl.resolve(strict=True), "curl", 16 * 1024 * 1024, owner=0)
+    resolved_curl = curl.resolve(strict=True)
+    _safe_regular(resolved_curl, "curl", 16 * 1024 * 1024, owner=0)
+    _safe_ancestor(resolved_curl.parent, "curl", owner=0)
     _safe_ancestor(curl.parent, "curl", owner=0)
     args = [str(curl), "--disable", "--silent", "--show-error", "--proto", "=https",
             "--tlsv1.2", "--noproxy", "*", "--connect-timeout", "15", "--max-time", str(timeout),

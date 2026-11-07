@@ -17,6 +17,8 @@ on:
       - scripts/test_linux_real_activation.py
       - tests/Build/test_linux_real_activation_harness.py
       - scripts/linux_product_pty.py
+      - scripts/linux_bootstrap_v2.py
+      - tests/Build/test_linux_bootstrap_v2.py
       - scripts/test_unix_terminal.py
   workflow_dispatch:
     inputs:
