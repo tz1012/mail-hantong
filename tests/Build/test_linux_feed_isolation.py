@@ -83,6 +83,21 @@ shutil.copyfile(source, args[args.index("-o") + 1])
 
 @unittest.skipUnless(os.name == "nt", "Windows PowerShell fixture required")
 class WindowsPartialFeedTests(unittest.TestCase):
+    def test_SEC03_linux_namespaced_tag_still_breaks_legacy_atom_fallback(self):
+        spec = importlib.util.spec_from_file_location("rate_fixture", ROOT / "tests/Build/test_bootstrap_rate_limit.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        fixture = module.BootstrapRateLimitTests()
+        feed = ('<feed xmlns="http://www.w3.org/2005/Atom">'
+                '<entry><link rel="alternate" href="https://github.com/tz1012/mail-hantong/releases/tag/linux-v0.1.0-beta.30" /></entry>'
+                '<entry><link rel="alternate" href="https://github.com/tz1012/mail-hantong/releases/tag/v0.1.0-beta.6" /></entry></feed>')
+        for status in (403, 429):
+            with self.subTest(status=status):
+                result, marker = fixture.run_fixture(status, feed_override=feed)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(b"feed is invalid", result.stderr)
+                self.assertIsNone(marker)
+
     def test_INST01_normal_api_skips_new_release_without_windows_assets(self):
         spec = importlib.util.spec_from_file_location("selection_fixture", ROOT / "tests/Build/test_bootstrap_release_selection.py")
         module = importlib.util.module_from_spec(spec)

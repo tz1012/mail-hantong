@@ -2522,3 +2522,17 @@ WSL의 실제 커널에서 비실행 합성 memfd 시험4개가 통과했다. �
 최종 대상 검증은 같은 로컬 코드 커밋의 Windows 영향 검사·WSL 새38개(36실행, Windows 전용2제외)·문서·compile/diff 및 실제 로컬 Git 소스 ZIP 결속으로 별도 기록한다. 모든 제외는 해당 OS에서 실행 결과를 확인한다. 새 실제 Linux Cargo package/install/update/Core restart/scope recovery·네 플랫폼 필수 CI·실제 사람 보안 검토는 미완료다. 추적표는 소스 해시를 갱신하되 새로운 AC 통과를 조작하지 않는다.
 
 상태: **패키저 소스 결속 통합·합성/커널 기작 검증 / 신뢰 원점 및 새 실행 정체성 계약 결정 차단 / 실제 사람 보안 검토·최종 native gate 대기 / 미배포**. 필요한 사람 조작은 구체적 계약/원점 선택과 구현 후 고정 전체 SHA 보안 코드 검토이며, 현재 OS 확인·권한 변경·실제 계정 로그인은 요청/실행하지 않는다. 기존 계정·금고·키·메일·권한은 보존하고 이전 거부를 우회하지 않았다. 공개 c2e1aa4가 새 봉인 실행 수정을 포함한다고 주장하지 않는다.
+
+### 2026-11-07 송파 실제 세 계정 조회 목표와 원점 독립 준비 정정
+
+사용자는 원점을 “미정”으로 확정하고 원점·채널 생성/공개를 금지했다. 이어 최종 완료는 송파 Linux에서 **Gmail2개+Daum1개 각각 실제 목록·본문 조회 성공**임을 명시했다. 사용자 증거는 Gmail1 조회 성공, Gmail2/Daum CLI SCOPE_DENIED, Daum IMAP ready다. 새 배포·보안 수정·합성시험을 이 완료로 대신하지 않는다. 현재 송파 버전과 pending/staged 상태는 새 비밀 없는 확인 대기이며 실제 요청 ID·메일·금고는 접근하지 않았다.
+
+`LINUX-ORIGIN-FREE-INTEGRATION-DECISIONS-20261107.md`에 정체성/FD/신뢰 bootstrap/업데이터/이전 Core 전환 후보, 실제 연결 파일·함수와 단계별 완료 조건을 구체화했다. 독립 읽기 검토가 지적한 pin만으로 최초 실행을 인증한다는 암시와 기존 stop을 기본 안전 경로로 취급하는 문구를 수정했다. 최초 실행 가정과 봉인 이후 보호를 분리하고 loader/ptrace까지 자동 해결한다고 주장하지 않는다. 계약은 제안이며 제품 Rust/IPC/stop/설치 경로는 변경하지 않았다.
+
+`SONGPA-THREE-ACCOUNT-READ-PATH-20261107.md`는 기존 설치본 정상 복구, beta29 고정 자산, 기존 저장소 전체 릴리스, 부분 Linux 태그, 기존 공식 호스트의 feed-independent 고정 경로, 새 원점을 비교한다. 별도 원점은 목표의 필수 조건이 아니다. 다만 적용 가능한 기존 경로가 현재 입증됐다는 뜻도 아니다. GitHub 읽기 전용 열거에서 최고 공개 beta는29이고 네 플랫폼 자산이 있다. 실제 beta29 소스에서 만료 전 충돌 비교·status 미만료·scope Cancel 미지원·OAuth base의 terminal 활성화 채널 충돌을 확인했다. add6cbb 복구는 공개 beta29에 없으므로 재설치/5분 대기/후보 취소 명령을 beta29의 해결책으로 오인하지 않는다.
+
+새 격리 회귀 `test_SEC03_linux_namespaced_tag_still_breaks_legacy_atom_fallback`은 실제 Windows installer를 fake transport로 실행해 linux-v 태그 다음에 정상 예전 릴리스가 있어도403/429 Atom parser가 거부하고 설치하지 않음을 확인했다. explicit pin은 송파 선택만 고정하며 다른 기존 클라이언트의 피드 영향을 해결하지 않는다. 릴리스 재표기·날짜·자산 메타데이터 조작이나 예전 Mac 파일의 재포장은 하지 않는다.
+
+이번 신선한 영향 검증: Windows feed/selection/rate19개 중17실행 통과·Unix2제외, WSL feed5개 중2실행 통과·Windows3제외, 문서29개 전부 통과. Python compile·diff·traceability check 통과, canonical source hash `84911f5f803b0bb6476b6da8f1423ce12118cb5ef0c2b0526b325ca150ef01c0`. 로그는 target/songpa-route-{windows,wsl,docs}.log. 앞선075b0ca의57/38개 결과와 이번19/5개를 새 전체 검사로 합산하지 않는다. 새로운 runtime/native package/송파 실계정 시험은 미실행이며 Mac 호환 실패와 사람 보안 검토 조건도 유지한다.
+
+독립 AI 검토는 새 비교안에 중대한 사실 오류가 없고 원점 불필수라는 결론은 적용 가능한 기존 복구/정상 릴리스가 있는 경우의 조건부 결론임을 확인했다. 이는 사람 보안 검토가 아니다. 최단 순서는 현재 설치 버전·상태 판별→지원된다면 정상 scope 복구/명시적 확인→아니면 좁은 복구 수정과 필수 보안/제품 검증을 포함한 후보 선택→안전한 기존 배포 경로 또는 명시적으로 검토한 고정 경로→세 계정 실제 조회다. 날짜는 현재 근거가 없어 제시하지 않는다. 실제 데이터·자격증명 삭제/초기화, 자동 권한 부여, 계정 재설정, 발송·메일 변경, 원점 생성·공개 배포는 없었다.

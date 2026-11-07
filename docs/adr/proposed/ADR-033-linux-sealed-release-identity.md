@@ -12,6 +12,13 @@ all required gates pass. This is execution/publication authorization, not a huma
 code review finding, a waiver, or approval of an unspecified new identity protocol.
 The precise Linux origin is not yet selected. No origin is created here.
 
+The user subsequently answered “미정입니다. 원점·채널을 임의 생성하거나 공개하지
+마세요.” Origin-free design/preparation continues under the
+[decision packet](../../latest/LINUX-ORIGIN-FREE-INTEGRATION-DECISIONS-20261107.md).
+It separates first-instruction bootstrap trust from post-seal byte immutability;
+neither memfd re-exec nor a public sealed context authenticates an untrusted
+initial launcher or pre-start pin. No candidate decision is adopted by this note.
+
 ## Why this is a coordinated contract change
 
 `unix_release::verified_asset` derives the installed release from `current_exe`.

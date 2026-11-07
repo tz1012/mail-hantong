@@ -174,3 +174,10 @@ explicit scope consent must remain in the future Songpa validation. No account,
 key, mail, vault or profile has been changed or reset, and no old permission
 denial is bypassed. The exact future origin is pending the user's requested
 address decision; a proposed new origin must not enter the old shared Atom feed.
+
+The user has now explicitly answered that the origin is undecided and prohibited
+creating or publishing an origin/channel. Continue only origin-free preparation.
+The [decision packet](LINUX-ORIGIN-FREE-INTEGRATION-DECISIONS-20261107.md) separates
+immediate identity/bootstrap/updater decisions from the later address/authentication
+decision, maps the coordinated product boundaries and defines stage completion
+evidence. It gives no speculative deployment date and does not adopt a contract.
