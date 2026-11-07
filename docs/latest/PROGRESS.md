@@ -3085,3 +3085,27 @@ Existing deployment authorization remains valid subject to required gates.
 Mac ARM/Intel and Linux full checks for product40 passed; Windows full still
 running. Mac ARM released-binary Keychain gate failed; remaining compatibility
 workflows are not cancelled and failure details await available job logs.
+
+## 2026-11-08 Mac startup compatibility failure: finite diagnostics
+
+Independent read-only comparison confirms beta29's English no-account menu
+contains `2) Exit` and its handler accepts `2`; there is no evidenced menu-text
+mismatch. A 48-second failed gate is consistent with the 45-second CLI bound,
+but the actual wait point remains unconfirmed until the new fixed marker is
+observed. Do not call this a proved Keychain incompatibility or menu timeout.
+
+The cross-version harness discarded safe failure classification in its outer
+RuntimeError handler. Added CliStartupFailure with finite output-limit,
+menu-timeout, menu-process-exit, exit-timeout, exit-failed kinds and fixed
+old/candidate cli-* markers before rethrow. Raw terminal output is no longer
+included in startup exceptions. OS/runtime failures also emit fixed kinds only.
+The 45-second bound, 256KiB output cap, exact menu/zero-exit checks, observer
+image bindings, cleanup, Keychain checks and old/candidate read/update/restart
+success conditions are unchanged. No product Rust/credentials/ACL logic changed.
+
+New synthetic unit tests 7/7 passed. The full affected Mac Python harness unit
+set ran 138 tests, all passed. Expected negative-fixture macOS runner error
+messages are not actual Mac failures. py_compile, diff-check and source
+traceability check passed. Independent read-only review found no weakening or
+secret exposure; this is automated review, not future human approval. Native
+Mac rerun must still classify and resolve the failure before release.

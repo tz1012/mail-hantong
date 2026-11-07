@@ -18,7 +18,7 @@ import subprocess
 import tempfile
 import time
 
-from test_macos_installed_product import extract_archive, run_cli, stop_core
+from test_macos_installed_product import CliStartupFailure, extract_archive, run_cli, stop_core
 from run_macos_test import _baseline, _validate_environment
 from macos_compat_diagnostics import diagnose_process_tree
 
@@ -72,6 +72,27 @@ def install(package_root: Path, install_root: Path, bin_dir: Path, environment: 
     return cli
 
 
+
+def run_cli_with_diagnostics(cli: Path, core: Path, environment: dict[str, str], phase: str) -> None:
+    if phase not in {"old", "candidate"}:
+        fail("invalid CLI startup phase")
+    try:
+        run_cli(
+            cli,
+            environment,
+            observer=lambda pid: diagnose_process_tree(pid, {"cli": cli, "core": core}, phase=phase),
+        )
+    except CliStartupFailure as error:
+        marker(phase, f"cli-{error.kind}")
+        raise
+    except OSError:
+        marker(phase, "cli-os-error")
+        raise
+    except RuntimeError:
+        marker(phase, "cli-runtime-error")
+        raise
+    marker(phase, "cli-finished")
+
 def run_version(package: Path, root: Path, install_root: Path, bin_dir: Path, environment: dict[str, str], restart: bool, socket: Path) -> None:
     phase = "candidate" if restart else "old"
     stage = root / f"stage-{install_root.parent.name}"
@@ -96,13 +117,7 @@ def run_version(package: Path, root: Path, install_root: Path, bin_dir: Path, en
         for _ in range(2 if restart else 1):
             stopped = False
             marker(phase, f"start-{_ + 1}")
-            run_cli(
-                cli,
-                environment,
-                observer=lambda pid: diagnose_process_tree(
-                    pid, {"cli": cli, "core": core}, phase=phase
-                ),
-            )
+            run_cli_with_diagnostics(cli, core, environment, phase)
             marker(phase, f"status-{_ + 1}")
             subprocess.run([str(cli), "core", "status", "--json"], env=environment, stdin=subprocess.DEVNULL,
                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=15, check=True)

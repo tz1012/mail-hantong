@@ -12,7 +12,6 @@ import os
 from pathlib import Path
 import platform
 import pwd
-import re
 import shutil
 import subprocess
 import tarfile
@@ -24,6 +23,16 @@ from collections.abc import Callable
 def fail(message: str) -> None:
     raise RuntimeError(message)
 
+
+
+class CliStartupFailure(RuntimeError):
+    """Finite diagnostics; never carry captured terminal output."""
+
+    def __init__(self, kind: str):
+        if kind not in {"output-limit", "menu-timeout", "menu-process-exit", "exit-timeout", "exit-failed"}:
+            raise ValueError("unknown CLI startup classification")
+        self.kind = kind
+        super().__init__(f"installed CLI startup failed kind={kind}")
 
 def extract_archive(archive: Path, destination: Path) -> None:
     with tarfile.open(archive, "r:gz") as bundle:
@@ -61,7 +70,7 @@ def run_cli(executable: Path, environment: dict[str, str], observer: Callable[[i
                 chunk = os.read(master, 16 * 1024)
                 output.extend(chunk)
                 if len(output) > 256 * 1024:
-                    fail("startup output exceeded its bound")
+                    raise CliStartupFailure("output-limit")
                 if b"2) Exit" in output or b"2) exit" in output:
                     menu_ready = True
                     os.write(master, b"2\n")
@@ -71,17 +80,13 @@ def run_cli(executable: Path, environment: dict[str, str], observer: Callable[[i
             if ready:
                 output.extend(os.read(master, 16 * 1024))
                 if len(output) > 256 * 1024:
-                    fail("startup output exceeded its bound")
+                    raise CliStartupFailure("output-limit")
         if not menu_ready:
-            diagnostics = re.findall(
-                rb"hantong_(?:startup|storage) stage=[a-z_]+ outcome=failed code=[A-Z_]+|\b[A-Z]+(?:_[A-Z]+)+\b",
-                bytes(output),
-            )
-            fail(f"installed CLI did not present the English no-account menu; exit={process.returncode}; codes={diagnostics[-8:]}")
+            raise CliStartupFailure("menu-timeout" if process.poll() is None else "menu-process-exit")
         if process.poll() is None:
-            fail("installed CLI did not finish the no-account exit flow")
+            raise CliStartupFailure("exit-timeout")
         if process.returncode != 0:
-            fail("installed CLI no-account exit failed")
+            raise CliStartupFailure("exit-failed")
     finally:
         if process.poll() is None:
             process.terminate()
