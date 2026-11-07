@@ -435,6 +435,19 @@ pub(super) fn read_registration(
     connection: &rusqlite::Connection,
     id: &[u8; 16],
 ) -> rusqlite::Result<Option<RegistrationRecord>> {
+    read_registration_legacy(connection, id)?
+        .map(|record| {
+            crate::account_grants::project_registration(connection, record)
+                .map_err(|_| rusqlite::Error::InvalidQuery)
+        })
+        .transpose()
+}
+
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
+pub(super) fn read_registration_legacy(
+    connection: &rusqlite::Connection,
+    id: &[u8; 16],
+) -> rusqlite::Result<Option<RegistrationRecord>> {
     let record = read_registration_bare(connection, id)?;
     if let Some(value) = &record {
         crate::scope_refresh::validate_registration(connection, value)?;

@@ -1,7 +1,7 @@
 //! Fixed-path profile loading and binding to the existing local CNG identity.
 
 use crate::{
-    PendingClientAuthentication,
+    PendingAccountClientAuthentication, PendingClientAuthentication,
     authenticated_wire::{self, AuthenticatedClient},
     profile::{ParsedClientProfile, ProfileSelector},
 };
@@ -166,26 +166,62 @@ async fn authenticate_profile(
         .as_millis()
         .try_into()
         .map_err(|_| ErrorCode::AuthRequired)?;
-    let pending = match (selected, app_read) {
-        (ProfileSelector::Default, Some(tool)) => prepare_app_profile(&profile, tool, now),
-        (ProfileSelector::Default, None) => prepare_profile(&profile, now),
-        (ProfileSelector::Mcp, None) => {
-            require_selector(&profile, ProfileSelector::Mcp)?;
-            prepare_profile_with_scope(&profile, profile.scope().clone(), now)
-        }
-        (ProfileSelector::Mcp, Some(_)) => return Err(ErrorCode::ScopeDenied),
-        (ProfileSelector::Gui, None) => prepare_gui_profile(&profile, now),
-        (ProfileSelector::Gui, Some(_)) => return Err(ErrorCode::ScopeDenied),
-        (ProfileSelector::AiCodex, None) | (ProfileSelector::AiClaude, None) => {
-            require_selector(&profile, selected)?;
-            prepare_profile_with_scope(&profile, profile.scope().clone(), now)
-        }
-        (ProfileSelector::AiCodex, Some(_)) | (ProfileSelector::AiClaude, Some(_)) => {
-            return Err(ErrorCode::ScopeDenied);
+    if profile.scope().scope_model_version() == 2
+        && (selected != ProfileSelector::Default || app_read.is_some())
+    {
+        return Err(ErrorCode::CapabilityUnsupported);
+    }
+    let scope = if profile.scope().scope_model_version() == 2 {
+        RequestedScope::from_account_scope(
+            profile
+                .scope()
+                .account_scope()
+                .ok_or(ErrorCode::ScopeDenied)?
+                .clone(),
+        )?
+    } else {
+        match (selected, app_read) {
+            (ProfileSelector::Default, Some(tool)) => diagnostic_step(
+                AuthStage::ProofPrepare,
+                prepare_app_profile(&profile, tool, now),
+            )?
+            .requested_scope()
+            .clone(),
+            (ProfileSelector::Default, None) => {
+                diagnostic_step(AuthStage::ProofPrepare, prepare_profile(&profile, now))?
+                    .requested_scope()
+                    .clone()
+            }
+            (ProfileSelector::Mcp, None) => {
+                require_selector(&profile, ProfileSelector::Mcp)?;
+                diagnostic_step(
+                    AuthStage::ProofPrepare,
+                    prepare_profile_with_scope(&profile, profile.scope().clone(), now),
+                )?
+                .requested_scope()
+                .clone()
+            }
+            (ProfileSelector::Mcp, Some(_)) => return Err(ErrorCode::ScopeDenied),
+            (ProfileSelector::Gui, None) => {
+                diagnostic_step(AuthStage::ProofPrepare, prepare_gui_profile(&profile, now))?
+                    .requested_scope()
+                    .clone()
+            }
+            (ProfileSelector::Gui, Some(_)) => return Err(ErrorCode::ScopeDenied),
+            (ProfileSelector::AiCodex, None) | (ProfileSelector::AiClaude, None) => {
+                require_selector(&profile, selected)?;
+                diagnostic_step(
+                    AuthStage::ProofPrepare,
+                    prepare_profile_with_scope(&profile, profile.scope().clone(), now),
+                )?
+                .requested_scope()
+                .clone()
+            }
+            (ProfileSelector::AiCodex, Some(_)) | (ProfileSelector::AiClaude, Some(_)) => {
+                return Err(ErrorCode::ScopeDenied);
+            }
         }
     };
-    let pending = diagnostic_step(AuthStage::ProofPrepare, pending)?;
-    let scope = pending.requested_scope().clone();
     let id = match selected {
         ProfileSelector::Default => "default-profile-auth-1",
         ProfileSelector::Gui => "gui-profile-auth-1",
@@ -193,9 +229,21 @@ async fn authenticate_profile(
         ProfileSelector::AiCodex => "ai-codex-profile-auth-1",
         ProfileSelector::AiClaude => "ai-claude-profile-auth-1",
     };
+    let pending = if profile.scope().scope_model_version() == 2 {
+        authenticated_wire::PendingProfileAuthentication::Account(prepare_account_profile(
+            &profile, now,
+        )?)
+    } else {
+        let pending = match (selected, app_read) {
+            (ProfileSelector::Default, Some(tool)) => prepare_app_profile(&profile, tool, now),
+            (ProfileSelector::Default, None) => prepare_profile(&profile, now),
+            _ => unreachable!("legacy selector validated above"),
+        }?;
+        authenticated_wire::PendingProfileAuthentication::Legacy(pending)
+    };
     let client = diagnostic_step(
         AuthStage::Handshake,
-        authenticated_wire::authenticate(pending, id).await,
+        authenticated_wire::authenticate_selected(pending, id).await,
     )?;
     Ok(AuthenticatedDefaultProfile {
         client,
@@ -337,6 +385,42 @@ fn prepare_profile_with_scope(
         registration,
         profile.profile_epoch(),
         scope,
+        now,
+    )
+    .map_err(|_| ErrorCode::AuthRequired)
+}
+
+fn prepare_account_profile(
+    profile: &ParsedClientProfile,
+    now: i64,
+) -> Result<PendingAccountClientAuthentication, ErrorCode> {
+    if profile.profile() != ProfileSelector::Default || profile.scope().scope_model_version() != 2 {
+        return Err(ErrorCode::CapabilityUnsupported);
+    }
+    let account_scope = profile
+        .scope()
+        .account_scope()
+        .ok_or(ErrorCode::ScopeDenied)?;
+    let registration = *profile.registration_id();
+    if client_key_id_for_registration(registration).map_err(|_| ErrorCode::AuthRequired)?
+        != *profile.client_key_id()
+    {
+        return Err(ErrorCode::AuthRequired);
+    }
+    let key = ClientSigningKey::open_for_registration(registration)
+        .map_err(|_| ErrorCode::AuthRequired)?;
+    let public = key.public_key().map_err(|_| ErrorCode::AuthRequired)?;
+    if public != *profile.client_public_key() {
+        return Err(ErrorCode::AuthRequired);
+    }
+    validate_public_key(&public).map_err(|_| ErrorCode::AuthRequired)?;
+    validate_public_key(profile.server_public_key()).map_err(|_| ErrorCode::AuthRequired)?;
+    PendingAccountClientAuthentication::begin_existing(
+        key,
+        *profile.server_public_key(),
+        registration,
+        profile.profile_epoch(),
+        account_scope.clone(),
         now,
     )
     .map_err(|_| ErrorCode::AuthRequired)

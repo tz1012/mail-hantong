@@ -453,6 +453,7 @@ pub fn verify_default_readonly(account: &str) -> Result<bool, ErrorCode> {
     validate_google_account_id(account)?;
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     {
+        crate::accounts::list_default_accounts(false)?;
         let loaded = hantong_platform::load_default_client_profile()?;
         let profile = crate::profile::ParsedClientProfile::from_json(loaded.bytes())?;
         Ok(readonly_scope(profile.scope(), account))
@@ -483,6 +484,7 @@ pub fn verify_default_personal(
     }
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     {
+        crate::accounts::list_default_accounts(false)?;
         let loaded = hantong_platform::load_default_client_profile()?;
         let profile_data = crate::profile::ParsedClientProfile::from_json(loaded.bytes())?;
         Ok(personal_scope(profile_data.scope(), account, profile))
@@ -563,10 +565,10 @@ pub fn verify_default_manage_accounts(account: &str) -> Result<bool, ErrorCode> 
     hantong_contracts::scope_refresh::ManageAccounts::parse(&[account.to_owned()])?;
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     {
+        crate::accounts::list_default_accounts(false)?;
         let loaded = hantong_platform::load_default_client_profile()?;
         let profile = crate::profile::ParsedClientProfile::from_json(loaded.bytes())?;
-        let accounts = generic_account_union(profile.scope(), account)?;
-        Ok(manage_scope(profile.scope(), &accounts))
+        selected_manage_scope(profile.scope(), account)
     }
     #[cfg(all(not(windows), not(any(target_os = "linux", target_os = "macos"))))]
     {
@@ -580,8 +582,7 @@ pub fn verify_default_manage_accounts(account: &str) -> Result<bool, ErrorCode> 
         .map_err(|_| ErrorCode::CoreUnavailable)?
         .block_on(async {
             let connection = crate::authenticate_default().await?;
-            let accounts = generic_account_union(connection.scope(), account)?;
-            Ok(manage_scope(connection.scope(), &accounts))
+            selected_manage_scope(connection.scope(), account)
         })
 }
 /// Verifies the exact send toolset over the bounded current-account union.
@@ -627,6 +628,12 @@ fn personal_scope(
         GoogleLocalProfile::PersonalManage => default_cli_manage_tools(),
         GoogleLocalProfile::None => return false,
     };
+    if scope.scope_model_version() == 2 {
+        return tools
+            .iter()
+            .filter(|tool| tool.starts_with("mail."))
+            .all(|tool| selected_tool(scope, account, tool));
+    }
     scope.accounts() == [account] && scope.tools() == tools
 }
 #[cfg(any(windows, unix, test))]
@@ -634,6 +641,9 @@ fn account_union(
     scope: &hantong_contracts::auth::RequestedScope,
     selected: &str,
 ) -> Result<Vec<String>, ErrorCode> {
+    if scope.scope_model_version() != 1 {
+        return Err(ErrorCode::CapabilityUnsupported);
+    }
     validate_google_account_id(selected)?;
     let mut accounts = BTreeSet::new();
     for account in scope.accounts() {
@@ -651,6 +661,9 @@ fn generic_account_union(
     scope: &hantong_contracts::auth::RequestedScope,
     selected: &str,
 ) -> Result<Vec<String>, ErrorCode> {
+    if scope.scope_model_version() != 1 {
+        return Err(ErrorCode::CapabilityUnsupported);
+    }
     hantong_contracts::scope_refresh::ManageAccounts::parse(&[selected.to_owned()])?;
     let mut accounts = BTreeSet::new();
     accounts.extend(scope.accounts().iter().cloned());
@@ -662,6 +675,34 @@ fn generic_account_union(
         &accounts.into_iter().collect::<Vec<_>>(),
     )
     .map(|accounts| accounts.accounts())
+}
+#[cfg(any(windows, unix, test))]
+fn selected_tool(
+    scope: &hantong_contracts::auth::RequestedScope,
+    account: &str,
+    tool: &str,
+) -> bool {
+    if tool == "mail.accounts.list" {
+        scope.account_scope().map_or_else(
+            || scope.tools().iter().any(|t| t == tool),
+            |s| s.permits_principal_tool(tool),
+        ) && scope.accounts().iter().any(|a| a == account)
+    } else {
+        scope.permits_account(account, tool)
+    }
+}
+#[cfg(any(windows, unix, test))]
+fn selected_manage_scope(
+    scope: &hantong_contracts::auth::RequestedScope,
+    account: &str,
+) -> Result<bool, ErrorCode> {
+    if scope.scope_model_version() == 2 {
+        return Ok(hantong_contracts::auth::default_cli_manage_tools()
+            .iter()
+            .filter(|tool| tool.starts_with("mail."))
+            .all(|tool| selected_tool(scope, account, tool)));
+    }
+    Ok(manage_scope(scope, &generic_account_union(scope, account)?))
 }
 #[cfg(any(windows, unix, test))]
 fn manage_scope(scope: &hantong_contracts::auth::RequestedScope, accounts: &[String]) -> bool {
@@ -679,6 +720,11 @@ fn personal_send_eligible(
     scope: &hantong_contracts::auth::RequestedScope,
     selected: &str,
 ) -> Result<bool, ErrorCode> {
+    // The legacy Google-only fast path must not classify a matrix as a union.
+    // Model-2 sending uses the ordinary account-bound terminal review ledger.
+    if scope.scope_model_version() == 2 {
+        return Ok(false);
+    }
     if scope
         .accounts()
         .iter()
@@ -691,15 +737,52 @@ fn personal_send_eligible(
 }
 #[cfg(any(windows, unix, test))]
 fn readonly_scope(scope: &hantong_contracts::auth::RequestedScope, account: &str) -> bool {
-    scope.accounts().iter().any(|a| a == account)
-        && hantong_contracts::auth::default_cli_body_tools()
-            .iter()
-            .all(|t| scope.tools().contains(t))
+    hantong_contracts::auth::default_cli_body_tools()
+        .iter()
+        .filter(|tool| scope.scope_model_version() != 2 || tool.starts_with("mail."))
+        .all(|tool| selected_tool(scope, account, tool))
 }
 #[cfg(test)]
 mod onboarding_tests {
     use super::*;
     use hantong_contracts::auth::*;
+    #[test]
+    fn sec03_model2_full_mail_probe_is_selected_account_only_and_never_flattens() {
+        use hantong_contracts::account_scope::{AccountGrantV2, AccountScopeV2};
+        let a = format!("google_{}", "a".repeat(64));
+        let b = format!("google_{}", "b".repeat(64));
+        let cells = |tools: Vec<String>| {
+            tools
+                .into_iter()
+                .filter(|t| t != "mail.accounts.list" && !t.starts_with("app."))
+                .collect()
+        };
+        let scope = RequestedScope::from_account_scope(
+            AccountScopeV2::new(
+                vec!["mail.accounts.list".into()],
+                vec![
+                    AccountGrantV2::new(a.clone(), cells(default_cli_body_tools()), true).unwrap(),
+                    AccountGrantV2::new(b.clone(), cells(default_cli_manage_tools()), false)
+                        .unwrap(),
+                ],
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert!(readonly_scope(&scope, &a));
+        assert!(readonly_scope(&scope, &b));
+        assert!(!selected_manage_scope(&scope, &a).unwrap());
+        assert!(selected_manage_scope(&scope, &b).unwrap());
+        assert_eq!(personal_send_eligible(&scope, &b), Ok(false));
+        assert_eq!(
+            generic_account_union(&scope, &b),
+            Err(ErrorCode::CapabilityUnsupported)
+        );
+        assert_eq!(
+            account_union(&scope, &b),
+            Err(ErrorCode::CapabilityUnsupported)
+        );
+    }
     #[test]
     fn acc02_personal_ready_probe_requires_exact_selected_features_and_account() {
         use hantong_contracts::google_setup::GoogleLocalProfile::*;

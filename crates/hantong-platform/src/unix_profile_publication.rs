@@ -100,6 +100,61 @@ pub fn refresh_default_profile(
     )
 }
 
+/// Reads the exact old default profile retained for a request-bound refresh.
+/// The backup name and directory are fixed by the application paths.
+pub fn load_default_profile_refresh_backup(refresh_id: [u8; 32]) -> Result<Vec<u8>, ErrorCode> {
+    if refresh_id == [0; 32] {
+        return Err(ErrorCode::InvalidInput);
+    }
+    let directory = UnixDirectoryGuard::prepare(&crate::app_directories()?.profiles)?;
+    let lock = open_lock(&directory)?;
+    let bytes = load_default_profile_refresh_backup_at(&directory, refresh_id)?;
+    drop(lock);
+    Ok(bytes)
+}
+
+/// Removes only the request-bound default refresh backup after its bytes have
+/// been validated by Core. The active profile is never opened or modified.
+pub fn discard_default_profile_refresh_backup(
+    refresh_id: [u8; 32],
+    expected_old_bytes: &[u8],
+) -> Result<(), ErrorCode> {
+    if refresh_id == [0; 32] {
+        return Err(ErrorCode::InvalidInput);
+    }
+    validate_bytes(expected_old_bytes)?;
+    let directory = UnixDirectoryGuard::prepare(&crate::app_directories()?.profiles)?;
+    let lock = open_lock(&directory)?;
+    discard_default_profile_refresh_backup_at(&directory, refresh_id, expected_old_bytes)?;
+    drop(lock);
+    Ok(())
+}
+
+fn load_default_profile_refresh_backup_at(
+    directory: &UnixDirectoryGuard,
+    refresh_id: [u8; 32],
+) -> Result<Vec<u8>, ErrorCode> {
+    let backup = directory.open_existing_regular(&temp_name("profile-backup", refresh_id))?;
+    let bytes = read_all(&backup)?;
+    drop(backup);
+    Ok(bytes)
+}
+
+fn discard_default_profile_refresh_backup_at(
+    directory: &UnixDirectoryGuard,
+    refresh_id: [u8; 32],
+    expected_old_bytes: &[u8],
+) -> Result<(), ErrorCode> {
+    let name = temp_name("profile-backup", refresh_id);
+    let backup = directory.open_existing_regular(&name)?;
+    if read_all(&backup)? != expected_old_bytes {
+        return Err(ErrorCode::Conflict);
+    }
+    directory.unlink_owned(&name, &backup)?;
+    drop(backup);
+    Ok(())
+}
+
 pub fn refresh_mcp_profile(
     refresh_id: [u8; 32],
     old_bytes: &[u8],
@@ -413,6 +468,78 @@ mod tests {
         cleanup_profile_refresh_backup(&mut recovered).unwrap();
         drop(recovered);
         drop(publish_new_at(&profiles, ProfileFile::Default, b"new").unwrap());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn sec03_default_refresh_backup_read_and_discard_are_exact_and_bounded() {
+        let (root, profiles) = fixture();
+        let id = [21; 32];
+        drop(publish_new_at(&profiles, ProfileFile::Default, b"old").unwrap());
+        drop(refresh_at(&profiles, ProfileFile::Default, id, b"old", b"new").unwrap());
+
+        let directory = UnixDirectoryGuard::prepare(&profiles).unwrap();
+        let lock = open_lock(&directory).unwrap();
+        assert_eq!(
+            load_default_profile_refresh_backup_at(&directory, id).unwrap(),
+            b"old"
+        );
+        assert!(matches!(
+            discard_default_profile_refresh_backup_at(&directory, id, b"wrong"),
+            Err(ErrorCode::Conflict)
+        ));
+        assert_eq!(
+            load_default_profile_refresh_backup_at(&directory, id).unwrap(),
+            b"old"
+        );
+        discard_default_profile_refresh_backup_at(&directory, id, b"old").unwrap();
+        drop(lock);
+
+        let directory = UnixDirectoryGuard::prepare(&profiles).unwrap();
+        let lock = open_lock(&directory).unwrap();
+        assert!(matches!(
+            load_default_profile_refresh_backup_at(&directory, id),
+            Err(ErrorCode::NotFound)
+        ));
+        assert!(matches!(
+            discard_default_profile_refresh_backup_at(&directory, id, b"old"),
+            Err(ErrorCode::NotFound)
+        ));
+        drop(lock);
+        assert_eq!(
+            read_all(&directory.open_existing_regular("default.json").unwrap()).unwrap(),
+            b"new"
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn sec03_default_refresh_backup_rejects_replacement_bytes() {
+        let (root, profiles) = fixture();
+        let id = [22; 32];
+        drop(publish_new_at(&profiles, ProfileFile::Default, b"old").unwrap());
+        drop(refresh_at(&profiles, ProfileFile::Default, id, b"old", b"new").unwrap());
+        let backup = profiles.join(temp_name("profile-backup", id));
+        std::fs::write(&backup, b"replacement").unwrap();
+
+        let directory = UnixDirectoryGuard::prepare(&profiles).unwrap();
+        let lock = open_lock(&directory).unwrap();
+        // Loading returns actual protected bytes; Core validates their ledger
+        // binding. Deletion independently requires the exact expected bytes.
+        assert_eq!(
+            load_default_profile_refresh_backup_at(&directory, id).unwrap(),
+            b"replacement"
+        );
+        assert!(matches!(
+            discard_default_profile_refresh_backup_at(&directory, id, b"old"),
+            Err(ErrorCode::Conflict)
+        ));
+        drop(lock);
+        assert_eq!(std::fs::read(&backup).unwrap(), b"replacement");
+        assert_eq!(
+            read_all(&directory.open_existing_regular("default.json").unwrap()).unwrap(),
+            b"new"
+        );
         let _ = std::fs::remove_dir_all(root);
     }
 }

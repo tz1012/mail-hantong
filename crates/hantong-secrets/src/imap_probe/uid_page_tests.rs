@@ -86,6 +86,7 @@ async fn run_page_for(
         windows::run_uid_connected(
             Source {
                 store: &store,
+                held_credential: None,
                 account: "acct",
                 endpoint: &endpoint,
                 accesses: Some(&accesses),

@@ -223,15 +223,12 @@ fn current_grants(tx: &Connection, audit: &AuditRecord) -> Result<(), ErrorCode>
     if registration.profile_epoch != audit.profile_epoch() {
         return Err(ErrorCode::AuthRequired);
     }
-    if !registration
-        .scope
-        .tools()
-        .iter()
-        .any(|t| t == "mail.folders.refresh")
-        || !audit
-            .account_ids()
-            .iter()
-            .all(|a| registration.scope.accounts().contains(a))
+    if audit.account_ids().is_empty()
+        || !audit.account_ids().iter().all(|a| {
+            registration
+                .scope
+                .permits_account(a, "mail.folders.refresh")
+        })
     {
         return Err(ErrorCode::ScopeDenied);
     }

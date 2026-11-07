@@ -14,6 +14,7 @@ use hantong_application::{
 use hantong_contracts::{
     ErrorCode,
     audit::{AuditBegin, AuditTerminal},
+    auth::AppReadTool,
     folders::{FolderListRequest, FolderRefreshRequest, FolderRefreshStatusRequest},
     initial_sync::{InitialSyncPlanRequest, InitialSyncRequest},
     uid_page::{UidCursorSnapshot, UidPageRequest, UidPageStatusRequest},
@@ -186,6 +187,15 @@ impl ExecutionContext for UnixExecutionAdapter<'_> {
 
     fn check_scope(&mut self, request: &ToolRequest) -> Result<(), ErrorCode> {
         let (_, current) = self.current_registration()?;
+        let app_read = match request {
+            ToolRequest::DisplaySettingsGet { .. } => Some(AppReadTool::DisplaySettingsGet),
+            ToolRequest::DiagnosticsSnapshot { .. } => Some(AppReadTool::DiagnosticsSnapshot),
+            _ => None,
+        };
+        if let Some(tool) = app_read {
+            self.connection.check_app_read_scope(Some(&current), tool)?;
+            return Ok(());
+        }
         if request.account_ids().is_empty() {
             return self.connection.revalidate_registration(Some(&current));
         }

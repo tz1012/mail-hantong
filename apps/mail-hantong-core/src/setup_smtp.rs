@@ -8,7 +8,7 @@ use hantong_domain::mail_connection::{MailConnectionConfig, SmtpEndpointConfig};
 use hantong_secrets::{TerminalSecretBinding, TerminalSecretHandle, TerminalSecretTicket};
 use hantong_store::{
     Store,
-    mail_connection::{MailMutation, smtp_payload_hash},
+    mail_connection::{MailConnectionState, MailEndpointKind, MailMutation, smtp_payload_hash},
 };
 use std::{cell::RefCell, collections::BTreeMap, path::Path};
 pub(crate) type Sessions = RefCell<BTreeMap<[u8; 32], Session>>;
@@ -17,6 +17,7 @@ pub(crate) struct Session {
     input: SmtpSetupInput,
     endpoint: SmtpEndpointConfig,
     account_version: u64,
+    reprobe_existing: bool,
     #[cfg(windows)]
     created: i64,
     receipt: SmtpSetupReceipt,
@@ -46,6 +47,61 @@ fn now() -> Result<i64, ErrorCode> {
 fn secrets(root: &Path) -> Result<hantong_secrets::SecretStore, ErrorCode> {
     hantong_secrets::SecretStore::open(root).map_err(|_| ErrorCode::InternalError)
 }
+fn smtp_probe_error(error: hantong_secrets::MailProbeError) -> ErrorCode {
+    use hantong_secrets::MailProbeError as E;
+    match error {
+        E::Authentication | E::Credential(_) => ErrorCode::AuthRequired,
+        E::Tls => ErrorCode::Offline,
+        E::Connection | E::Timeout => ErrorCode::Offline,
+        E::InvalidAccount | E::MechanismUnsupported | E::Protocol | E::UnsupportedPlatform => {
+            ErrorCode::CapabilityUnsupported
+        }
+    }
+}
+fn current_smtp_matches(
+    store: &Store,
+    account: &str,
+    endpoint: &SmtpEndpointConfig,
+    account_version: u64,
+) -> Result<(), ErrorCode> {
+    if store.smtp_setup_account_version(account)? != account_version {
+        return Err(ErrorCode::Conflict);
+    }
+    let current = store
+        .load_mail_connection(account)?
+        .ok_or(ErrorCode::NotFound)?;
+    if current.smtp() != Some(endpoint) {
+        return Err(ErrorCode::Conflict);
+    }
+    Ok(())
+}
+async fn probe_and_record(
+    store: &Store,
+    root: &Path,
+    account: &str,
+    endpoint: &SmtpEndpointConfig,
+    account_version: u64,
+) -> Result<(), ErrorCode> {
+    let receipt = secrets(root)?
+        .probe_smtp(account, endpoint)
+        .await
+        .map_err(smtp_probe_error)?;
+    if receipt.settings_version() != endpoint.settings_version() {
+        return Err(ErrorCode::Conflict);
+    }
+    current_smtp_matches(store, account, endpoint, account_version)?;
+    let expected = store
+        .load_mail_observation(account, MailEndpointKind::Smtp)?
+        .map_or(0, |observation| observation.observation_version);
+    store.record_mail_observation(
+        account,
+        MailEndpointKind::Smtp,
+        endpoint.settings_version(),
+        expected,
+        MailConnectionState::Ready,
+    )?;
+    current_smtp_matches(store, account, endpoint, account_version)
+}
 fn endpoint(input: &SmtpSetupInput) -> Result<SmtpEndpointConfig, ErrorCode> {
     let mut endpoint = serde_json::json!({"settings_version":1,"host":input.host(),"port":input.port(),"tls":match input.tls(){ImapSetupTls::ImplicitTls=>"implicit_tls",ImapSetupTls::StarttlsRequired=>"starttls_required"},"login_name":input.login_name(),"authentication":"app_password"});
     if let Some(sender) = input.sender_address() {
@@ -64,7 +120,7 @@ fn endpoint(input: &SmtpSetupInput) -> Result<SmtpEndpointConfig, ErrorCode> {
 }
 pub(crate) fn request(
     store: &Store,
-    root: &Path,
+    _root: &Path,
     sessions: &Sessions,
     input: SmtpSetupInput,
 ) -> Result<SmtpSetupReceipt, ErrorCode> {
@@ -73,7 +129,7 @@ pub(crate) fn request(
     let config = store
         .load_mail_connection(input.account_id())?
         .ok_or(ErrorCode::NotFound)?;
-    let state = if let Some(existing) = config.smtp() {
+    let (state, reprobe_existing) = if let Some(existing) = config.smtp() {
         if existing.host() != endpoint.host()
             || existing.port() != endpoint.port()
             || existing.tls() != endpoint.tls()
@@ -83,12 +139,23 @@ pub(crate) fn request(
         {
             return Err(ErrorCode::Conflict);
         }
-        secrets(root)?
-            .verify_smtp_credential(input.account_id(), existing)
-            .map_err(|_| ErrorCode::AuthRequired)?;
-        SmtpSetupState::Ready
+        let observation =
+            store.load_mail_observation(input.account_id(), MailEndpointKind::Smtp)?;
+        let ready = observation.as_ref().is_some_and(|value| {
+            value.state == MailConnectionState::Ready
+                && value.observed_settings_version == existing.settings_version()
+                && value.observation_version > 0
+        });
+        (
+            if ready {
+                SmtpSetupState::Ready
+            } else {
+                SmtpSetupState::Pending
+            },
+            !ready,
+        )
     } else {
-        SmtpSetupState::Pending
+        (SmtpSetupState::Pending, false)
     };
     let created = now()?;
     let id = request_nonce()?;
@@ -124,12 +191,20 @@ pub(crate) fn request(
             input,
             endpoint,
             account_version: version,
+            reprobe_existing,
             #[cfg(windows)]
             created,
             receipt,
         },
     );
     Ok(receipt)
+}
+pub(crate) fn needs_reprobe(sessions: &Sessions, id: [u8; 32]) -> Result<bool, ErrorCode> {
+    Ok(sessions
+        .borrow()
+        .get(&id)
+        .ok_or(ErrorCode::NotFound)?
+        .reprobe_existing)
 }
 pub(crate) fn terminal_context(
     sessions: &Sessions,
@@ -171,6 +246,43 @@ pub(crate) fn validate_terminal_context(
     }
     validate(store, &snapshot)?;
     Ok(context)
+}
+
+/// App setup may reuse an unchanged stored credential only with a new live
+/// authentication probe; this metadata is not proof of readiness or consent.
+pub(crate) fn app_connect_context(
+    store: &Store,
+    sessions: &Sessions,
+    id: [u8; 32],
+) -> Result<(TerminalContext, bool), ErrorCode> {
+    let snapshot = sessions
+        .borrow()
+        .get(&id)
+        .cloned()
+        .ok_or(ErrorCode::NotFound)?;
+    if now()? >= snapshot.receipt.expires_at_utc_ms
+        || !matches!(
+            snapshot.receipt.state,
+            SmtpSetupState::Pending | SmtpSetupState::Ready
+        )
+    {
+        return Err(ErrorCode::Conflict);
+    }
+    let context = terminal_context(sessions, id)?;
+    let config = store
+        .load_mail_connection(&context.account_id)?
+        .ok_or(ErrorCode::NotFound)?;
+    if config.smtp().is_some() {
+        current_smtp_matches(
+            store,
+            &context.account_id,
+            &context.endpoint,
+            context.account_version,
+        )?;
+        Ok((context, false))
+    } else {
+        Ok((validate_terminal_context(store, sessions, id)?, true))
+    }
 }
 pub(crate) fn status(
     sessions: &Sessions,
@@ -230,7 +342,11 @@ pub(crate) async fn run(
         .get(&id)
         .cloned()
         .ok_or(ErrorCode::NotFound)?;
-    let result = finish(store, root, &snapshot).await;
+    let result = if snapshot.reprobe_existing {
+        reprobe_existing(store, root, sessions, id).await
+    } else {
+        finish(store, root, &snapshot).await
+    };
     let mut map = sessions.borrow_mut();
     let s = map.get_mut(&id).ok_or(ErrorCode::InternalError)?;
     s.receipt.state = match result {
@@ -242,6 +358,52 @@ pub(crate) async fn run(
     };
     s.receipt.error_code = result.err();
     Ok(())
+}
+pub(crate) async fn reprobe_existing(
+    store: &Store,
+    root: &Path,
+    sessions: &Sessions,
+    id: [u8; 32],
+) -> Result<(), ErrorCode> {
+    let snapshot = sessions
+        .borrow()
+        .get(&id)
+        .cloned()
+        .ok_or(ErrorCode::NotFound)?;
+    if !snapshot.reprobe_existing
+        || snapshot.receipt.state != SmtpSetupState::Pending
+        || now()? >= snapshot.receipt.expires_at_utc_ms
+    {
+        return Err(ErrorCode::Conflict);
+    }
+    current_smtp_matches(
+        store,
+        snapshot.input.account_id(),
+        &snapshot.endpoint,
+        snapshot.account_version,
+    )?;
+    let result = probe_and_record(
+        store,
+        root,
+        snapshot.input.account_id(),
+        &snapshot.endpoint,
+        snapshot.account_version,
+    )
+    .await;
+    let mut map = sessions.borrow_mut();
+    let session = map.get_mut(&id).ok_or(ErrorCode::InternalError)?;
+    match result {
+        Ok(()) => {
+            session.receipt.state = SmtpSetupState::Ready;
+            session.receipt.error_code = None;
+            Ok(())
+        }
+        Err(error) => {
+            session.receipt.state = SmtpSetupState::Failed;
+            session.receipt.error_code = Some(error);
+            Err(error)
+        }
+    }
 }
 #[cfg(windows)]
 async fn finish(store: &Store, root: &Path, s: &Session) -> Result<(), ErrorCode> {
@@ -292,6 +454,14 @@ async fn finish(store: &Store, root: &Path, s: &Session) -> Result<(), ErrorCode
         &mutation,
         s.account_version,
     )?;
+    probe_and_record(
+        store,
+        root,
+        s.input.account_id(),
+        &s.endpoint,
+        s.account_version,
+    )
+    .await?;
     Ok(())
 }
 
@@ -359,6 +529,14 @@ async fn terminal_submit_inner(
         &mutation,
         snapshot.account_version,
     )?;
+    probe_and_record(
+        store,
+        root,
+        snapshot.input.account_id(),
+        &snapshot.endpoint,
+        snapshot.account_version,
+    )
+    .await?;
     let mut map = sessions.borrow_mut();
     let session = map.get_mut(&id).ok_or(ErrorCode::InternalError)?;
     session.receipt.state = SmtpSetupState::Ready;
@@ -403,6 +581,7 @@ mod tests {
                 input,
                 endpoint,
                 account_version: 1,
+                reprobe_existing: false,
                 #[cfg(windows)]
                 created: now,
                 receipt,
@@ -457,5 +636,26 @@ mod tests {
         )
         .unwrap();
         assert_eq!(endpoint(&without_sender).unwrap().sender_address(), None);
+    }
+
+    #[test]
+    fn sec03_smtp_probe_errors_fail_closed_without_claiming_ready() {
+        use hantong_secrets::MailProbeError as E;
+        assert_eq!(smtp_probe_error(E::Authentication), ErrorCode::AuthRequired);
+        assert_eq!(
+            smtp_probe_error(E::Credential(hantong_secrets::SecretError::NotFound)),
+            ErrorCode::AuthRequired
+        );
+        assert_eq!(smtp_probe_error(E::Tls), ErrorCode::Offline);
+        assert_eq!(smtp_probe_error(E::Connection), ErrorCode::Offline);
+        assert_eq!(smtp_probe_error(E::Timeout), ErrorCode::Offline);
+        assert_eq!(
+            smtp_probe_error(E::Protocol),
+            ErrorCode::CapabilityUnsupported
+        );
+        assert_eq!(
+            smtp_probe_error(E::MechanismUnsupported),
+            ErrorCode::CapabilityUnsupported
+        );
     }
 }

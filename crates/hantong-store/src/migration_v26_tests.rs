@@ -88,7 +88,7 @@ fn acc02_v26_to_v27_preserves_every_table_row_and_adds_no_event_authority() {
         for (name, count) in &before {
             assert_eq!(*count, c.query_row(&format!("SELECT count(*) FROM \"{name}\""), [], |r| r.get::<_, i64>(0))?, "{name}");
         }
-        validate_schema(c, SCHEMA, CURRENT_SCHEMA_VERSION)?;
+        validate_schema(c, SCHEMA_V27, 27)?;
         assert!(c.prepare("PRAGMA foreign_key_check")?.query([])?.next()?.is_none());
         for name in ["mail_event_log", "mail_event_tracking", "mail_event_sources", "mail_event_cursors"] {
             assert_eq!(c.query_row(&format!("SELECT count(*) FROM {name}"), [], |r| r.get::<_, i64>(0))?, 0);

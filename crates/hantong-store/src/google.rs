@@ -467,9 +467,7 @@ account_id:account.into(),subject:r.get(0)?,client_id:r.get(1)?,credential_versi
         if r.profile_epoch != epoch {
             return Err(ErrorCode::AuthRequired);
         }
-        if !r.scope.accounts().iter().any(|a| a == account)
-            || !r.scope.tools().iter().any(|t| t == "mail.sync.page")
-        {
+        if !r.scope.permits_account(account, "mail.sync.page") {
             return Err(ErrorCode::ScopeDenied);
         }
         if r.client_kind == crate::ClientKind::Mcp {

@@ -1,11 +1,14 @@
 //! Connection-owned Unix auth-v2 server handshake.
 #![cfg(unix)]
 
+use crate::account_auth_wire;
 use crate::unix_auth::{
-    AuthenticatedUnixConnection, PendingUnixAuthentication, RegisteredUnixClient,
+    AuthenticatedUnixConnection, PendingUnixAccountAuthentication, PendingUnixAuthentication,
+    RegisteredUnixClient,
 };
 use crate::unix_auth_wire;
 use crate::{RpcRequest, decode_request};
+use hantong_contracts::account_auth::AccountAuthRevision;
 use hantong_contracts::{ErrorCode, platform::OpaqueSigner};
 use hantong_platform::unix_transport::UnixLocalConnection;
 use serde_json::{Value, json};
@@ -13,6 +16,96 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::io::{AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 const MAX_AUTH_FRAME: usize = 131_072;
+
+/// Additive model-2 Unix handshake. Legacy `authenticate_connected` remains
+/// unchanged and is selected only by trusted registration/profile state.
+pub async fn authenticate_account_connected<S, F>(
+    connection: UnixLocalConnection,
+    server_signer: &mut S,
+    server_instance: [u8; 32],
+    lookup: &mut F,
+) -> Result<AuthenticatedUnixConnection, ErrorCode>
+where
+    S: OpaqueSigner,
+    F: FnMut(&[u8; 16]) -> Result<Option<RegisteredUnixClient>, ErrorCode>,
+{
+    let mut connection = connection;
+    let first = tokio::time::timeout(Duration::from_secs(5), read_request(&mut connection))
+        .await
+        .map_err(|_| ErrorCode::AuthRequired)??;
+    let begin = account_auth_wire::parse_begin(&first)?;
+    authenticate_account_after_begin(
+        connection,
+        first,
+        begin,
+        server_signer,
+        server_instance,
+        lookup,
+    )
+    .await
+}
+
+pub async fn authenticate_account_after_begin<S, F>(
+    connection: UnixLocalConnection,
+    first: RpcRequest,
+    begin: account_auth_wire::BeginParameters,
+    server_signer: &mut S,
+    server_instance: [u8; 32],
+    lookup: &mut F,
+) -> Result<AuthenticatedUnixConnection, ErrorCode>
+where
+    S: OpaqueSigner,
+    F: FnMut(&[u8; 16]) -> Result<Option<RegisteredUnixClient>, ErrorCode>,
+{
+    if begin.revision != AccountAuthRevision::UnixV3 {
+        return Err(ErrorCode::VersionMismatch);
+    }
+    let registration = lookup(&begin.registration_id)?.ok_or(ErrorCode::ClientNotRegistered)?;
+    if registration.scope_model_version() != 2 {
+        return Err(ErrorCode::VersionMismatch);
+    }
+    if registration.id() != begin.registration_id || registration.epoch() != begin.profile_epoch {
+        return Err(ErrorCode::AuthRequired);
+    }
+    let (mut pending, challenge) = PendingUnixAccountAuthentication::begin_connected(
+        server_signer,
+        connection,
+        server_instance,
+        &registration,
+        begin.client_nonce,
+        begin.scope,
+        utc_now()?,
+        fresh_nonce()?,
+    )?;
+    let result = account_auth_wire::challenge_result(&challenge.transcript, &challenge.signature)?;
+    let overall = tokio::time::Instant::now() + Duration::from_secs(30);
+    tokio::time::timeout_at(
+        overall,
+        write_result(pending.transport()?, &first.id, result),
+    )
+    .await
+    .map_err(|_| ErrorCode::AuthRequired)??;
+    let finish = tokio::time::timeout_at(overall, read_request(pending.transport()?))
+        .await
+        .map_err(|_| ErrorCode::AuthRequired)??;
+    if finish.id != first.id {
+        return Err(ErrorCode::AuthRequired);
+    }
+    let signature = account_auth_wire::parse_finish(&finish)?;
+    let current = lookup(&begin.registration_id)?;
+    let mut authenticated = pending.finish(&signature, current.as_ref(), utc_now()?)?;
+    tokio::time::timeout_at(
+        overall,
+        write_result(
+            authenticated.transport()?,
+            &finish.id,
+            account_auth_wire::ready_result(AccountAuthRevision::UnixV3),
+        ),
+    )
+    .await
+    .map_err(|_| ErrorCode::AuthRequired)??;
+    Ok(authenticated)
+}
 
 pub async fn authenticate_connected<S, F>(
     connection: UnixLocalConnection,
@@ -44,6 +137,21 @@ where
     F: FnMut(&[u8; 16]) -> Result<Option<RegisteredUnixClient>, ErrorCode>,
 {
     let overall = tokio::time::Instant::now() + Duration::from_secs(30);
+    if let Ok(begin) = account_auth_wire::parse_begin(&first) {
+        let registration = lookup(&begin.registration_id)?.ok_or(ErrorCode::ClientNotRegistered)?;
+        if registration.scope_model_version() != 2 {
+            return Err(ErrorCode::VersionMismatch);
+        }
+        return authenticate_account_after_begin(
+            connection,
+            first,
+            begin,
+            server_signer,
+            server_instance,
+            lookup,
+        )
+        .await;
+    }
     let begin = unix_auth_wire::parse_begin(&first)?;
     let registration = lookup(&begin.registration_id)?.ok_or(ErrorCode::ClientNotRegistered)?;
     if registration.id() != begin.registration_id {

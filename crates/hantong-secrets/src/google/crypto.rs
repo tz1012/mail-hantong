@@ -2,7 +2,7 @@
 
 #[cfg(windows)]
 #[allow(unsafe_code)]
-pub(super) fn sha256(input: &[u8]) -> Result<[u8; 32], super::ErrorCode> {
+pub(crate) fn sha256(input: &[u8]) -> Result<[u8; 32], super::ErrorCode> {
     use windows_sys::Win32::Security::Cryptography::{BCRYPT_SHA256_ALG_HANDLE, BCryptHash};
     let length = u32::try_from(input.len()).map_err(|_| super::ErrorCode::InvalidInput)?;
     let mut digest = [0; 32];
@@ -24,7 +24,7 @@ pub(super) fn sha256(input: &[u8]) -> Result<[u8; 32], super::ErrorCode> {
 }
 
 #[cfg(unix)]
-pub(super) fn sha256(input: &[u8]) -> Result<[u8; 32], super::ErrorCode> {
+pub(crate) fn sha256(input: &[u8]) -> Result<[u8; 32], super::ErrorCode> {
     use ring::digest::{SHA256, digest};
     digest(&SHA256, input)
         .as_ref()

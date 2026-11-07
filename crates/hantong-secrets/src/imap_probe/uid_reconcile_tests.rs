@@ -46,6 +46,7 @@ async fn run_reconcile(
         windows::run_uid_reconcile_connected(
             Source {
                 store: &store,
+                held_credential: None,
                 account: "acct",
                 endpoint: &endpoint,
                 accesses: Some(&accesses),

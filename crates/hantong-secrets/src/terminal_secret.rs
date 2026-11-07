@@ -7,15 +7,19 @@
 #[cfg(windows)]
 use crate::windows_impl;
 use crate::{
-    SecretError, SecretHandle, SecretKind, SecretStore, SensitiveBuffer, validate_account,
-    validate_path,
+    ImapProbeReceipt, MailProbeError, SecretError, SecretHandle, SecretKind, SecretStore,
+    SensitiveBuffer, validate_account, validate_path,
 };
+use hantong_domain::mail_connection::ImapEndpointConfig;
 use std::{
     fmt, fs,
     io::{Cursor, Read},
     path::PathBuf,
     time::{SystemTime, UNIX_EPOCH},
 };
+
+#[cfg(test)]
+use tokio::io::{AsyncRead, AsyncWrite};
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use hantong_platform::unix_paths::UnixDirectoryGuard;
@@ -107,6 +111,7 @@ impl TerminalSecretBinding {
 
 /// The ticket is intentionally opaque.  Its binding is retained in-memory by
 /// the foreground Core and is checked again when the staged value is consumed.
+#[cfg_attr(test, derive(Clone))]
 pub struct TerminalSecretTicket {
     binding: TerminalSecretBinding,
     ticket_id: [u8; 32],
@@ -228,9 +233,47 @@ impl TerminalSecretTicket {
     }
 }
 
+#[cfg_attr(test, derive(Clone))]
 pub struct TerminalSecretHandle {
     ticket_id: [u8; 32],
     path: PathBuf,
+}
+
+/// Opaque witness that a one-shot protected input authenticated against the
+/// exact IMAP binding and completed a live probe. The credential never leaves
+/// Secrets and is not persisted by this operation.
+pub struct TerminalImapVerification {
+    ticket_id: [u8; 32],
+    request_id: [u8; 32],
+    payload_hash: [u8; 32],
+    account_id: String,
+    endpoint: ImapEndpointConfig,
+    expires_at_utc_ms: i64,
+    receipt: ImapProbeReceipt,
+}
+
+impl TerminalImapVerification {
+    pub fn ticket_id(&self) -> &[u8; 32] {
+        &self.ticket_id
+    }
+    pub fn request_id(&self) -> &[u8; 32] {
+        &self.request_id
+    }
+    pub fn payload_hash(&self) -> &[u8; 32] {
+        &self.payload_hash
+    }
+    pub fn account_id(&self) -> &str {
+        &self.account_id
+    }
+    pub fn endpoint(&self) -> &ImapEndpointConfig {
+        &self.endpoint
+    }
+    pub fn expires_at_utc_ms(&self) -> i64 {
+        self.expires_at_utc_ms
+    }
+    pub fn receipt(&self) -> &ImapProbeReceipt {
+        &self.receipt
+    }
 }
 
 impl fmt::Debug for TerminalSecretHandle {
@@ -263,6 +306,80 @@ impl SecretStore {
         })
     }
 
+    /// Consumes fresh protected input for a live IMAP probe without replacing
+    /// an existing stored credential. Plaintext and the held credential stay
+    /// inside Secrets; callers receive only an opaque verification witness.
+    pub async fn consume_terminal_imap_probe(
+        &self,
+        ticket: TerminalSecretTicket,
+        handle: TerminalSecretHandle,
+        expected: TerminalSecretBinding,
+        account: &str,
+        endpoint: &ImapEndpointConfig,
+    ) -> Result<TerminalImapVerification, MailProbeError> {
+        validate_terminal_imap_binding(&expected, account, endpoint)?;
+        let ticket_id = ticket.ticket_id;
+        let request_id = expected.request_id;
+        let payload_hash = expected.payload_hash;
+        let expires_at_utc_ms = expected.expires_at_utc_ms;
+        let held = self
+            .consume_terminal_bound(ticket, handle, expected, |bytes| {
+                crate::mail_credentials::BoundCredential::from_plain(account, endpoint, bytes)
+            })
+            .map_err(MailProbeError::Credential)?;
+        let receipt =
+            crate::imap_probe::windows::probe_with_credential(self, account, endpoint, held)
+                .await?;
+        Ok(TerminalImapVerification {
+            ticket_id,
+            request_id,
+            payload_hash,
+            account_id: account.to_owned(),
+            endpoint: endpoint.clone(),
+            expires_at_utc_ms,
+            receipt,
+        })
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn consume_terminal_imap_probe_with_stream<S>(
+        &self,
+        ticket: TerminalSecretTicket,
+        handle: TerminalSecretHandle,
+        expected: TerminalSecretBinding,
+        account: &str,
+        endpoint: &ImapEndpointConfig,
+        stream: S,
+        tls: std::sync::Arc<rustls::ClientConfig>,
+    ) -> Result<TerminalImapVerification, MailProbeError>
+    where
+        S: AsyncRead + AsyncWrite + Send + Unpin + 'static,
+    {
+        validate_terminal_imap_binding(&expected, account, endpoint)?;
+        let ticket_id = ticket.ticket_id;
+        let request_id = expected.request_id;
+        let payload_hash = expected.payload_hash;
+        let expires_at_utc_ms = expected.expires_at_utc_ms;
+        let held = self
+            .consume_terminal_bound(ticket, handle, expected, |bytes| {
+                crate::mail_credentials::BoundCredential::from_plain(account, endpoint, bytes)
+            })
+            .map_err(MailProbeError::Credential)?;
+        let receipt = crate::imap_probe::windows::probe_with_credential_stream(
+            self, account, endpoint, held, stream, tls,
+        )
+        .await?;
+        Ok(TerminalImapVerification {
+            ticket_id,
+            request_id,
+            payload_hash,
+            account_id: account.to_owned(),
+            endpoint: endpoint.clone(),
+            expires_at_utc_ms,
+            receipt,
+        })
+    }
+
     /// Consumes a staged terminal value and writes the endpoint-bound SMTP
     /// envelope entirely inside Secrets. Plaintext never crosses this API.
     pub fn consume_terminal_smtp_credential(
@@ -278,15 +395,15 @@ impl SecretStore {
         })
     }
 
-    fn consume_terminal_bound<F>(
+    fn consume_terminal_bound<T, F>(
         &self,
         ticket: TerminalSecretTicket,
         handle: TerminalSecretHandle,
         expected: TerminalSecretBinding,
         store: F,
-    ) -> Result<SecretHandle, SecretError>
+    ) -> Result<T, SecretError>
     where
-        F: FnOnce(&[u8]) -> Result<SecretHandle, SecretError>,
+        F: FnOnce(&[u8]) -> Result<T, SecretError>,
     {
         if ticket.is_expired() || !ticket.binding.matches(&expected) {
             return Err(SecretError::CredentialMismatch);
@@ -453,10 +570,20 @@ impl SecretStore {
         &self,
         ticket: &TerminalSecretTicket,
     ) -> Result<TerminalSecretHandle, SecretError> {
-        if ticket.is_expired() {
+        self.capture_terminal_secret_until(ticket, ticket.binding.expires_at_utc_ms)
+    }
+
+    #[cfg(windows)]
+    pub fn capture_terminal_secret_until(
+        &self,
+        ticket: &TerminalSecretTicket,
+        deadline_utc_ms: i64,
+    ) -> Result<TerminalSecretHandle, SecretError> {
+        if ticket.is_expired() || deadline_utc_ms <= now_utc_ms() {
             return Err(SecretError::InputExpired);
         }
-        let secret = read_masked_console_line()?;
+        let deadline = deadline_utc_ms.min(ticket.binding.expires_at_utc_ms);
+        let secret = read_masked_console_line_until(deadline)?;
         self.stage_terminal_secret_bytes(ticket, secret)
     }
 
@@ -465,12 +592,22 @@ impl SecretStore {
         &self,
         ticket: &TerminalSecretTicket,
     ) -> Result<TerminalSecretHandle, SecretError> {
+        self.capture_terminal_secret_until(ticket, ticket.binding.expires_at_utc_ms)
+    }
+
+    #[cfg(not(windows))]
+    pub fn capture_terminal_secret_until(
+        &self,
+        ticket: &TerminalSecretTicket,
+        deadline_utc_ms: i64,
+    ) -> Result<TerminalSecretHandle, SecretError> {
         #[cfg(any(target_os = "linux", target_os = "macos"))]
         {
-            if ticket.is_expired() {
+            let deadline = deadline_utc_ms.min(ticket.binding.expires_at_utc_ms);
+            if ticket.is_expired() || deadline <= now_utc_ms() {
                 return Err(SecretError::InputExpired);
             }
-            let secret = read_masked_terminal_line()?;
+            let secret = read_masked_terminal_line_until(deadline)?;
             self.stage_terminal_secret_bytes(ticket, secret)
         }
         #[cfg(not(any(target_os = "linux", target_os = "macos")))]
@@ -488,6 +625,15 @@ impl SecretStore {
         root: impl AsRef<std::path::Path>,
         ticket: &TerminalSecretTicket,
     ) -> Result<TerminalSecretHandle, SecretError> {
+        Self::capture_terminal_secret_at_until(root, ticket, ticket.binding.expires_at_utc_ms)
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    pub fn capture_terminal_secret_at_until(
+        root: impl AsRef<std::path::Path>,
+        ticket: &TerminalSecretTicket,
+        deadline_utc_ms: i64,
+    ) -> Result<TerminalSecretHandle, SecretError> {
         let root = root.as_ref();
         if let Err(error) = validate_path(root) {
             report_terminal_capture_failure(
@@ -496,9 +642,15 @@ impl SecretStore {
             );
             return Err(error);
         }
-        capture_terminal_secret_after_ticket(ticket, read_masked_terminal_line, |secret| {
-            Self::stage_terminal_secret_bytes_at(root, ticket, secret)
-        })
+        capture_terminal_secret_after_ticket(
+            ticket,
+            || {
+                read_masked_terminal_line_until(
+                    deadline_utc_ms.min(ticket.binding.expires_at_utc_ms),
+                )
+            },
+            |secret| Self::stage_terminal_secret_bytes_at(root, ticket, secret),
+        )
     }
 
     /// Removes one staged value after a cancelled or failed review. The
@@ -512,9 +664,22 @@ impl SecretStore {
     ) -> Result<(), SecretError> {
         let root = root.as_ref();
         validate_path(root)?;
-        if ticket.is_expired() || opaque_id == [0; 32] || opaque_id != ticket.ticket_id {
+        if ticket.is_expired() {
             return Err(SecretError::CredentialMismatch);
         }
+        Self::discard_terminal_secret_at(root, ticket, opaque_id)
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    fn discard_terminal_secret_at(
+        root: &std::path::Path,
+        ticket: &TerminalSecretTicket,
+        opaque_id: [u8; 32],
+    ) -> Result<(), SecretError> {
+        if opaque_id == [0; 32] || opaque_id != ticket.ticket_id {
+            return Err(SecretError::CredentialMismatch);
+        }
+        validate_path(root)?;
         let path = root.join(format!(
             "terminal-v1-{}.stage",
             hantong_contracts::wire_hex::encode(&opaque_id)
@@ -539,6 +704,70 @@ impl SecretStore {
                 &file,
             )
             .map_err(|_| SecretError::Protection)
+    }
+
+    /// Removes one staged value using only the live ticket and opaque id.
+    /// The path is derived from the ticket id and is checked as a regular file
+    /// before removal on every supported platform.
+    pub fn cancel_terminal_secret(
+        &self,
+        ticket: &TerminalSecretTicket,
+        opaque_id: [u8; 32],
+    ) -> Result<(), SecretError> {
+        if ticket.is_expired() || opaque_id == [0; 32] || opaque_id != ticket.ticket_id {
+            return Err(SecretError::CredentialMismatch);
+        }
+        let path = self.terminal_secret_path(&opaque_id);
+        validate_path(&self.root)?;
+        let metadata = fs::symlink_metadata(&path).map_err(|_| SecretError::NotFound)?;
+        if !metadata.is_file() || metadata.file_type().is_symlink() {
+            return Err(SecretError::CredentialMismatch);
+        }
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        {
+            Self::discard_terminal_secret_at(&self.root, ticket, opaque_id)
+        }
+        #[cfg(windows)]
+        {
+            fs::remove_file(&path).map_err(|_| SecretError::Protection)
+        }
+        #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
+        {
+            let _ = (ticket, path);
+            Err(SecretError::UnsupportedPlatform)
+        }
+    }
+
+    /// Deletes a staged value during expiry cleanup. Expiry is deliberately
+    /// allowed here, but the live ticket and exact ticket-derived id remain
+    /// mandatory; this cannot consume, probe, or grant anything.
+    pub fn discard_terminal_secret(
+        &self,
+        ticket: &TerminalSecretTicket,
+        opaque_id: [u8; 32],
+    ) -> Result<(), SecretError> {
+        if opaque_id == [0; 32] || opaque_id != ticket.ticket_id {
+            return Err(SecretError::CredentialMismatch);
+        }
+        let path = self.terminal_secret_path(&opaque_id);
+        validate_path(&self.root)?;
+        let metadata = fs::symlink_metadata(&path).map_err(|_| SecretError::NotFound)?;
+        if !metadata.is_file() || metadata.file_type().is_symlink() {
+            return Err(SecretError::CredentialMismatch);
+        }
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        {
+            Self::discard_terminal_secret_at(&self.root, ticket, opaque_id)
+        }
+        #[cfg(windows)]
+        {
+            fs::remove_file(&path).map_err(|_| SecretError::Protection)
+        }
+        #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
+        {
+            let _ = (ticket, path);
+            Err(SecretError::UnsupportedPlatform)
+        }
     }
 
     fn stage_terminal_secret_bytes(
@@ -668,19 +897,60 @@ impl SecretStore {
     }
 }
 
+fn validate_terminal_imap_binding(
+    expected: &TerminalSecretBinding,
+    account: &str,
+    endpoint: &ImapEndpointConfig,
+) -> Result<(), MailProbeError> {
+    let endpoint_bytes = serde_json::to_vec(endpoint)
+        .map_err(|_| MailProbeError::Credential(SecretError::CredentialMismatch))?;
+    let mut canonical = Vec::new();
+    for value in [
+        b"terminal-endpoint-v1".as_slice(),
+        expected.request_kind.as_slice(),
+        account.as_bytes(),
+        endpoint_bytes.as_slice(),
+    ] {
+        let length = u32::try_from(value.len())
+            .map_err(|_| MailProbeError::Credential(SecretError::CredentialMismatch))?;
+        canonical.extend_from_slice(&length.to_le_bytes());
+        canonical.extend_from_slice(value);
+    }
+    let account_hash = crate::google::crypto::sha256(account.as_bytes())
+        .map_err(|_| MailProbeError::Credential(SecretError::CredentialMismatch))?;
+    let endpoint_hash = crate::google::crypto::sha256(&canonical)
+        .map_err(|_| MailProbeError::Credential(SecretError::CredentialMismatch))?;
+    if expected.request_kind != *b"terminal-imap-v1"
+        || expected.account_hash != account_hash
+        || expected.endpoint_hash != endpoint_hash
+        || expected.expected_version != endpoint.settings_version()
+    {
+        return Err(MailProbeError::Credential(SecretError::CredentialMismatch));
+    }
+    Ok(())
+}
+
 #[cfg(windows)]
 #[allow(unsafe_code)]
-fn read_masked_console_line() -> Result<SensitiveBuffer, SecretError> {
+fn read_masked_console_line_until(deadline_utc_ms: i64) -> Result<SensitiveBuffer, SecretError> {
+    let deadline = std::time::Instant::now()
+        .checked_add(std::time::Duration::from_millis(
+            deadline_utc_ms.saturating_sub(now_utc_ms()).max(0) as u64,
+        ))
+        .ok_or(SecretError::InputExpired)?;
     use std::os::windows::io::RawHandle;
-    use windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE;
+    use windows_sys::Win32::Foundation::{INVALID_HANDLE_VALUE, WAIT_OBJECT_0, WAIT_TIMEOUT};
     use windows_sys::Win32::System::Console::{
-        ENABLE_ECHO_INPUT, ENABLE_PROCESSED_INPUT, GetConsoleMode, GetStdHandle, ReadConsoleW,
-        STD_INPUT_HANDLE, SetConsoleMode,
+        ENABLE_ECHO_INPUT, ENABLE_LINE_INPUT, ENABLE_PROCESSED_INPUT, FlushConsoleInputBuffer,
+        GetConsoleMode, GetStdHandle, INPUT_RECORD, KEY_EVENT, ReadConsoleInputW, STD_INPUT_HANDLE,
+        SetConsoleMode,
     };
+    use windows_sys::Win32::System::Threading::WaitForSingleObject;
 
     struct EchoGuard {
         handle: RawHandle,
         mode: u32,
+        complete: bool,
     }
     impl EchoGuard {
         fn new() -> Result<Self, SecretError> {
@@ -696,27 +966,37 @@ fn read_masked_console_line() -> Result<SensitiveBuffer, SecretError> {
             if unsafe { GetConsoleMode(handle, &mut mode) } == 0 {
                 return Err(SecretError::InvalidInputWindow);
             }
-            // Keep line and processed-input behavior, disabling only echo.
+            // Read individual records so partial input cannot block past expiry.
             // SAFETY: the same live console handle is used and the mode is a
             // value returned by GetConsoleMode.
             if unsafe {
-                SetConsoleMode(handle, mode & !(ENABLE_ECHO_INPUT | ENABLE_PROCESSED_INPUT))
+                SetConsoleMode(
+                    handle,
+                    mode & !(ENABLE_ECHO_INPUT | ENABLE_PROCESSED_INPUT | ENABLE_LINE_INPUT),
+                )
             } == 0
             {
                 return Err(SecretError::InvalidInputWindow);
             }
-            Ok(Self { handle, mode })
+            Ok(Self {
+                handle,
+                mode,
+                complete: false,
+            })
         }
     }
     impl Drop for EchoGuard {
         fn drop(&mut self) {
+            if !self.complete {
+                let _ = unsafe { FlushConsoleInputBuffer(self.handle) };
+            }
             // SAFETY: best-effort restoration of the mode captured from this
             // handle. Drop cannot report an error without hiding the original.
             let _ = unsafe { SetConsoleMode(self.handle, self.mode) };
         }
     }
 
-    let guard = EchoGuard::new()?;
+    let mut guard = EchoGuard::new()?;
     let mut wide = [0u16; MAX_TERMINAL_SECRET / 2];
     struct WideWipe(*mut u16, usize);
     impl Drop for WideWipe {
@@ -727,52 +1007,68 @@ fn read_masked_console_line() -> Result<SensitiveBuffer, SecretError> {
         }
     }
     let _wide_wipe = WideWipe(wide.as_mut_ptr(), wide.len());
-    let mut read = 0u32;
-    // SAFETY: wide is writable for exactly its declared capacity; ReadConsoleW
-    // is bounded by that capacity and the live guard handle.
-    if unsafe {
-        ReadConsoleW(
-            guard.handle,
-            wide.as_mut_ptr().cast(),
-            wide.len() as u32,
-            &mut read,
-            std::ptr::null_mut(),
-        )
-    } == 0
-        || read == 0
-    {
-        return Err(SecretError::InvalidCredential);
-    }
-    let has_line_end = wide[..read as usize]
-        .iter()
-        .any(|code| *code == '\r' as u16 || *code == '\n' as u16);
-    if !has_line_end && read as usize == wide.len() {
-        let mut drain = [0u16; 256];
-        loop {
-            let mut drained = 0u32;
-            let ok = unsafe {
-                ReadConsoleW(
-                    guard.handle,
-                    drain.as_mut_ptr().cast(),
-                    drain.len() as u32,
-                    &mut drained,
-                    std::ptr::null_mut(),
-                )
-            } != 0;
-            let ended = drain[..drained as usize]
-                .iter()
-                .any(|code| *code == '\r' as u16 || *code == '\n' as u16);
-            unsafe { wipe_wide(&mut drain) };
-            if !ok || drained == 0 {
-                return Err(SecretError::InvalidCredential);
+    let wait_for_input = || {
+        let remaining = deadline_utc_ms.saturating_sub(now_utc_ms()).min(
+            i64::try_from(
+                deadline
+                    .saturating_duration_since(std::time::Instant::now())
+                    .as_millis(),
+            )
+            .unwrap_or(i64::MAX),
+        );
+        if remaining <= 0 {
+            return Err(SecretError::InputExpired);
+        }
+        let timeout = remaining.min(u32::MAX as i64) as u32;
+        // SAFETY: the console handle is live for the guard lifetime.
+        let status = unsafe { WaitForSingleObject(guard.handle, timeout) };
+        match status {
+            WAIT_OBJECT_0 => Ok(()),
+            WAIT_TIMEOUT => Err(SecretError::InputExpired),
+            _ => Err(SecretError::Io),
+        }
+    };
+    let mut read = 0usize;
+    loop {
+        wait_for_input()?;
+        let mut record = unsafe { std::mem::zeroed::<INPUT_RECORD>() };
+        let mut count = 0;
+        if unsafe { ReadConsoleInputW(guard.handle, &mut record, 1, &mut count) } == 0 {
+            return Err(SecretError::Io);
+        }
+        if count != 1 || u32::from(record.EventType) != KEY_EVENT {
+            continue;
+        }
+        let key = unsafe { record.Event.KeyEvent };
+        if key.bKeyDown == 0 {
+            continue;
+        }
+        let value = unsafe { key.uChar.UnicodeChar };
+        if value == 3 || value == 27 {
+            return Err(SecretError::InvalidCredential);
+        }
+        if value == 13 {
+            break;
+        }
+        if value == 8 {
+            if read > 0 {
+                read -= 1;
+                wide[read] = 0;
             }
-            if ended {
-                return Err(SecretError::SecretTooLarge);
+            continue;
+        }
+        if value >= 32 {
+            for _ in 0..key.wRepeatCount {
+                if read == wide.len() {
+                    return Err(SecretError::SecretTooLarge);
+                }
+                wide[read] = value;
+                read += 1;
             }
         }
     }
-    let mut bytes = SensitiveBuffer(Vec::with_capacity(read as usize));
-    let units = wide[..read as usize]
+    let mut bytes = SensitiveBuffer(Vec::with_capacity(read));
+    let units = wide[..read]
         .iter()
         .copied()
         .take_while(|code| *code != '\r' as u16 && *code != '\n' as u16);
@@ -786,8 +1082,9 @@ fn read_masked_console_line() -> Result<SensitiveBuffer, SecretError> {
             return Err(SecretError::SecretTooLarge);
         }
     }
-    drop(guard);
     validate_terminal_secret(bytes.as_slice())?;
+    guard.complete = true;
+    drop(guard);
     Ok(bytes)
 }
 
@@ -945,6 +1242,7 @@ where
 /// Read one protected-input line without waiting for EOF. A terminal stays
 /// open after Enter, so the general bounded reader is unsuitable here.
 #[cfg(any(test, target_os = "linux", target_os = "macos"))]
+#[cfg(test)]
 fn read_line_limited<R: Read>(mut reader: R, limit: usize) -> Result<SensitiveBuffer, SecretError> {
     if limit > crate::MAX_SECRET {
         return Err(SecretError::SecretTooLarge);
@@ -1092,11 +1390,24 @@ fn sync_linux_directory(guard: &UnixDirectoryGuard) -> Result<(), SecretError> {
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 #[allow(unsafe_code)]
 pub(crate) fn read_masked_terminal_line() -> Result<SensitiveBuffer, SecretError> {
+    read_masked_terminal_line_until(now_utc_ms() + 5 * 60 * 1_000)
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[allow(unsafe_code)]
+fn read_masked_terminal_line_until(deadline_utc_ms: i64) -> Result<SensitiveBuffer, SecretError> {
+    let deadline = std::time::Instant::now()
+        .checked_add(std::time::Duration::from_millis(
+            deadline_utc_ms.saturating_sub(now_utc_ms()).max(0) as u64,
+        ))
+        .ok_or(SecretError::InputExpired)?;
     use std::os::fd::AsRawFd;
+    use std::os::unix::fs::OpenOptionsExt;
 
     let mut tty = std::fs::OpenOptions::new()
         .read(true)
         .write(true)
+        .custom_flags(libc::O_NONBLOCK)
         .open("/dev/tty")
         .map_err(|_| SecretError::InvalidInputWindow)?;
     let fd = tty.as_raw_fd();
@@ -1106,24 +1417,97 @@ pub(crate) fn read_masked_terminal_line() -> Result<SensitiveBuffer, SecretError
     }
     let original = unsafe { original.assume_init() };
     let mut masked = original;
-    masked.c_lflag &= !libc::ECHO;
+    masked.c_lflag &= !(libc::ECHO | libc::ICANON | libc::ISIG);
     if unsafe { libc::tcsetattr(fd, libc::TCSANOW, &masked) } != 0 {
         return Err(SecretError::InvalidInputWindow);
     }
     struct Restore {
         fd: libc::c_int,
         mode: libc::termios,
+        complete: bool,
     }
     impl Drop for Restore {
         fn drop(&mut self) {
+            if !self.complete {
+                let _ = unsafe { libc::tcflush(self.fd, libc::TCIFLUSH) };
+            }
             // SAFETY: fd and mode were obtained from the same live /dev/tty.
             let _ = unsafe { libc::tcsetattr(self.fd, libc::TCSANOW, &self.mode) };
         }
     }
-    let _restore = Restore { fd, mode: original };
-    let secret = read_line_limited(&mut tty, MAX_TERMINAL_SECRET)?;
-    validate_terminal_secret(secret.as_slice())?;
-    Ok(secret)
+    let mut restore = Restore {
+        fd,
+        mode: original,
+        complete: false,
+    };
+    let mut output = SensitiveBuffer(vec![0; MAX_TERMINAL_SECRET + 1]);
+    let mut used = 0;
+    loop {
+        let remaining = deadline_utc_ms.saturating_sub(now_utc_ms()).min(
+            i64::try_from(
+                deadline
+                    .saturating_duration_since(std::time::Instant::now())
+                    .as_millis(),
+            )
+            .unwrap_or(i64::MAX),
+        );
+        if remaining <= 0 {
+            return Err(SecretError::InputExpired);
+        }
+        let timeout_ms = remaining.min(i32::MAX as i64) as i32;
+        let mut pollfd = libc::pollfd {
+            fd,
+            events: libc::POLLIN,
+            revents: 0,
+        };
+        let ready = unsafe { libc::poll(&mut pollfd, 1, timeout_ms) };
+        if ready == 0 {
+            return Err(SecretError::InputExpired);
+        }
+        if ready < 0 {
+            if std::io::Error::last_os_error().kind() == std::io::ErrorKind::Interrupted {
+                continue;
+            }
+            return Err(SecretError::Io);
+        }
+        let mut byte = [0; 1];
+        match std::io::Read::read(&mut tty, &mut byte) {
+            Ok(0) => return Err(SecretError::InvalidCredential),
+            Ok(1) => {}
+            Ok(_) => return Err(SecretError::Io),
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => continue,
+            Err(_) => return Err(SecretError::Io),
+        }
+        if byte[0] == b'\n' {
+            output.0.truncate(used);
+            if output.0.last() == Some(&b'\r') {
+                output.0.pop();
+            }
+            validate_terminal_secret(output.as_slice())?;
+            restore.complete = true;
+            return Ok(output);
+        }
+        if matches!(byte[0], 3 | 4 | 26 | 27) {
+            return Err(SecretError::InvalidCredential);
+        }
+        if matches!(byte[0], 8 | 127) {
+            if used > 0 {
+                used -= 1;
+                while used > 0 && output.0[used] & 0xc0 == 0x80 {
+                    output.0[used] = 0;
+                    used -= 1;
+                }
+                output.0[used] = 0;
+            }
+            continue;
+        }
+        output.0[used] = byte[0];
+        used += 1;
+        if used == MAX_TERMINAL_SECRET + 1 {
+            return Err(SecretError::SecretTooLarge);
+        }
+    }
 }
 
 fn opaque_checksum(bytes: &[u8]) -> [u8; 8] {
@@ -1426,9 +1810,14 @@ mod tests {
                 .terminal_secret_handle_from_opaque(&ticket, handle.opaque_id())
                 .unwrap();
             assert_eq!(
-                store.consume_terminal_bound(copy(), wrong_handle, wrong, |_| {
-                    panic!("mismatched request must not publish a credential")
-                }),
+                store.consume_terminal_bound(
+                    copy(),
+                    wrong_handle,
+                    wrong,
+                    |_| -> Result<SecretHandle, SecretError> {
+                        panic!("mismatched request must not publish a credential")
+                    }
+                ),
                 Err(SecretError::CredentialMismatch)
             );
             assert_eq!(fs::read(&handle.path).unwrap(), ciphertext);
@@ -1449,12 +1838,60 @@ mod tests {
                 .unwrap();
             assert!(!path.exists());
             assert_eq!(
-                store.consume_terminal_bound(replay, replay_handle, expected, |_| {
-                    panic!("consumed stage must not publish twice")
-                }),
+                store.consume_terminal_bound(
+                    replay,
+                    replay_handle,
+                    expected,
+                    |_| -> Result<SecretHandle, SecretError> {
+                        panic!("consumed stage must not publish twice")
+                    }
+                ),
                 Err(SecretError::CredentialMismatch)
             );
         }
+        drop(store);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn sec08_expired_terminal_stage_can_only_be_discarded_by_exact_ticket() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = std::env::temp_dir().join(format!(
+            "hantong-expired-stage-{}-{}",
+            std::process::id(),
+            now_utc_ms()
+        ));
+        fs::create_dir(&root).unwrap();
+        fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
+        let root = root.canonicalize().unwrap();
+        let store = SecretStore {
+            root: root.clone(),
+            unix_root: UnixDirectoryGuard::open(&root, true).unwrap(),
+            unix_store: crate::unix_secret_store::UnixSecretStore::new(),
+        };
+        let binding = binding(now_utc_ms() + TICKET_TTL_MS);
+        let ticket = store.issue_terminal_secret_ticket(binding).unwrap();
+        let handle = store
+            .stage_terminal_secret(&ticket, Cursor::new(b"synthetic-expired-stage"))
+            .unwrap();
+        let expired = TerminalSecretTicket {
+            binding: TerminalSecretBinding {
+                expires_at_utc_ms: now_utc_ms() - 1,
+                ..ticket.binding
+            },
+            ticket_id: ticket.ticket_id,
+            nonce: ticket.nonce,
+        };
+        assert_eq!(
+            store.discard_terminal_secret(&expired, [99; 32]),
+            Err(SecretError::CredentialMismatch)
+        );
+        assert!(handle.path.exists());
+        store
+            .discard_terminal_secret(&expired, handle.opaque_id())
+            .unwrap();
+        assert!(!handle.path.exists());
         drop(store);
         fs::remove_dir_all(root).unwrap();
     }

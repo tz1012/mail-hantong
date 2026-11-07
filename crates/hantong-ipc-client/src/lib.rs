@@ -7,7 +7,7 @@ mod auth;
 #[cfg(windows)]
 mod auth_diagnostic;
 #[cfg(windows)]
-pub use auth::PendingClientAuthentication;
+pub use auth::{PendingAccountClientAuthentication, PendingClientAuthentication};
 #[cfg(windows)]
 pub mod authenticated_wire;
 #[cfg(windows)]
@@ -125,8 +125,9 @@ async fn unix_call(
         .map_err(|_| ErrorCode::CoreUnavailable)?
 }
 
-pub mod accounts;
+pub mod account_auth_wire;
 pub mod account_profile;
+pub mod accounts;
 pub mod auth_wire;
 pub mod diagnostic_snapshot;
 pub mod display_settings;

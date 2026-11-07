@@ -3,6 +3,9 @@
 
 use hantong_contracts::{
     ErrorCode,
+    account_auth::{AccountAuthRevision, AccountAuthTranscript},
+    account_auth_peer::{CanonicalPeer, encode as encode_peer},
+    account_scope::AccountScopeV2,
     auth::{AuthTranscript, RequestedScope, SignerRole},
 };
 use hantong_platform::{
@@ -28,6 +31,13 @@ impl RegisteredClient {
 
     pub fn profile_epoch(&self) -> u64 {
         self.epoch
+    }
+
+    pub fn scope_model_version(&self) -> u8 {
+        self.scope.scope_model_version()
+    }
+    pub fn account_scope(&self) -> Option<&AccountScopeV2> {
+        self.scope.account_scope()
     }
 
     pub fn from_registration_store(
@@ -56,6 +66,126 @@ pub struct ServerChallenge {
     pub signature: [u8; 64],
 }
 
+/// Typed model-2 challenge. It shares the legacy connection ownership and
+/// lifetime rules, but signs AccountAuthTranscript revision WindowsV2.
+pub struct AccountServerChallenge {
+    pub transcript: AccountAuthTranscript,
+    pub signature: [u8; 64],
+}
+
+pub struct PendingAccountAuthentication<'server> {
+    connection: LocalPipeConnection<'server>,
+    transcript: AccountAuthTranscript,
+    registration: RegisteredClient,
+    issued: Instant,
+}
+
+impl<'server> PendingAccountAuthentication<'server> {
+    pub fn begin(
+        connection: LocalPipeConnection<'server>,
+        server_key: &ServerSigningKey,
+        server_instance: [u8; 32],
+        registration: &RegisteredClient,
+        client_nonce: [u8; 32],
+        requested: AccountScopeV2,
+        now_utc_ms: i64,
+    ) -> Result<(Self, AccountServerChallenge), ErrorCode> {
+        if registration.scope_model_version() != 2 || !registration.active || now_utc_ms < 0 {
+            return Err(if !registration.active {
+                ErrorCode::ClientSuspended
+            } else {
+                ErrorCode::ScopeDenied
+            });
+        }
+        let registered_scope = registration.account_scope().ok_or(ErrorCode::ScopeDenied)?;
+        if registered_scope
+            .intersection(&requested)
+            .map_err(|_| ErrorCode::ScopeDenied)?
+            != requested
+        {
+            return Err(ErrorCode::ScopeDenied);
+        }
+        let server_peer = encode_peer(&CanonicalPeer::Windows(current_peer_context()?))?;
+        let client_peer = encode_peer(&CanonicalPeer::Windows(connection.peer_context()?))?;
+        let transcript = AccountAuthTranscript {
+            revision: AccountAuthRevision::WindowsV2,
+            registration_id: registration.id,
+            profile_epoch: registration.epoch,
+            issued_at_utc_ms: now_utc_ms,
+            expires_at_utc_ms: now_utc_ms
+                .checked_add(30_000)
+                .ok_or(ErrorCode::InvalidInput)?,
+            server_instance_id: server_instance,
+            server_nonce: random_nonce()?,
+            client_nonce,
+            server_key_hash: sha256(&server_key.public_key()?)?,
+            client_key_hash: sha256(&registration.public_key)?,
+            server_peer,
+            client_peer,
+            scope: requested,
+        };
+        let signature = server_key.sign(&transcript.encode(SignerRole::Server)?)?;
+        Ok((
+            Self {
+                connection,
+                transcript: transcript.clone(),
+                registration: registration.clone(),
+                issued: Instant::now(),
+            },
+            AccountServerChallenge {
+                transcript,
+                signature,
+            },
+        ))
+    }
+
+    pub fn transport(&mut self) -> &mut LocalPipeConnection<'server> {
+        &mut self.connection
+    }
+
+    pub fn finish(
+        self,
+        signature: &[u8],
+        current: Option<&RegisteredClient>,
+        now_utc_ms: i64,
+    ) -> Result<AuthenticatedConnection<'server>, ErrorCode> {
+        if now_utc_ms < self.transcript.issued_at_utc_ms
+            || now_utc_ms >= self.transcript.expires_at_utc_ms
+            || self.issued.elapsed() >= Duration::from_secs(30)
+        {
+            return Err(ErrorCode::AuthRequired);
+        }
+        let current = current.ok_or(ErrorCode::ClientNotRegistered)?;
+        check_registration(&self.registration, current)?;
+        let scope = current.account_scope().ok_or(ErrorCode::ScopeDenied)?;
+        if scope
+            .intersection(&self.transcript.scope)
+            .map_err(|_| ErrorCode::ScopeDenied)?
+            != self.transcript.scope
+        {
+            return Err(ErrorCode::ScopeDenied);
+        }
+        if !verify_signature(
+            &self.registration.public_key,
+            &self.transcript.encode(SignerRole::Client)?,
+            signature,
+        )? {
+            return Err(ErrorCode::AuthRequired);
+        }
+        Ok(AuthenticatedConnection {
+            connection: Some(self.connection),
+            registration: self.registration,
+            // RequestedScope carries the typed matrix losslessly. Keep the
+            // legacy field populated with that exact value so its existing
+            // revalidation path cannot intersect a model-2 scope with an
+            // empty model-1 scope.
+            granted: RequestedScope::from_account_scope(self.transcript.scope.clone())
+                .map_err(|_| ErrorCode::ScopeDenied)?,
+            granted_account: Some(self.transcript.scope),
+        })
+    }
+}
+
 /// This non-cloneable value owns the OS-validated connection. Finishing an
 /// attempt consumes it even when the signature or registration check fails.
 pub struct PendingAuthentication<'server> {
@@ -77,6 +207,9 @@ impl<'server> PendingAuthentication<'server> {
     ) -> Result<(Self, ServerChallenge), ErrorCode> {
         if !registration.active {
             return Err(ErrorCode::ClientSuspended);
+        }
+        if registration.scope_model_version() != 1 || requested.scope_model_version() != 1 {
+            return Err(ErrorCode::ScopeDenied);
         }
         if now_utc_ms < 0 {
             return Err(ErrorCode::InvalidInput);
@@ -150,6 +283,7 @@ impl<'server> PendingAuthentication<'server> {
             connection: Some(self.connection),
             registration: self.registration,
             granted,
+            granted_account: None,
         })
     }
 }
@@ -158,6 +292,7 @@ pub struct AuthenticatedConnection<'server> {
     connection: Option<LocalPipeConnection<'server>>,
     registration: RegisteredClient,
     granted: RequestedScope,
+    granted_account: Option<AccountScopeV2>,
 }
 impl<'server> AuthenticatedConnection<'server> {
     /// Returns the registration selected by the authenticated handshake. These
@@ -197,6 +332,21 @@ impl<'server> AuthenticatedConnection<'server> {
             self.connection.take();
             return Err(ErrorCode::ScopeDenied);
         }
+        if let Some(granted) = &self.granted_account {
+            if current.account_scope() != self.registration.account_scope() {
+                self.connection.take();
+                return Err(ErrorCode::ScopeDenied);
+            }
+            let typed_ok = current.account_scope().is_some_and(|scope| {
+                scope
+                    .intersection(granted)
+                    .is_ok_and(|intersection| intersection == *granted)
+            });
+            if !typed_ok {
+                self.connection.take();
+                return Err(ErrorCode::ScopeDenied);
+            }
+        }
         Ok(())
     }
 
@@ -210,9 +360,15 @@ impl<'server> AuthenticatedConnection<'server> {
     ) -> Result<(), ErrorCode> {
         self.revalidate_registration(current)?;
         let current = current.expect("validated registration");
-        if !self.granted.permits_account(account, tool)
-            || !current.scope.permits_account(account, tool)
-        {
+        let permitted = if let Some(granted) = &self.granted_account {
+            current.account_scope().is_some_and(|scope| {
+                granted.permits_account(account, tool) && scope.permits_account(account, tool)
+            })
+        } else {
+            self.granted.permits_account(account, tool)
+                && current.scope.permits_account(account, tool)
+        };
+        if !permitted {
             return Err(ErrorCode::ScopeDenied);
         }
         Ok(())
@@ -231,10 +387,19 @@ impl<'server> AuthenticatedConnection<'server> {
         }
         self.revalidate_registration(current)?;
         let current = current.expect("validated registration");
-        if accounts.iter().any(|account| {
-            !self.granted.permits_account(account, tool)
-                || !current.scope.permits_account(account, tool)
-        }) {
+        let allowed = if let Some(granted) = &self.granted_account {
+            current.account_scope().is_some_and(|scope| {
+                accounts.iter().all(|account| {
+                    granted.permits_account(account, tool) && scope.permits_account(account, tool)
+                })
+            })
+        } else {
+            accounts.iter().all(|account| {
+                self.granted.permits_account(account, tool)
+                    && current.scope.permits_account(account, tool)
+            })
+        };
+        if !allowed {
             return Err(ErrorCode::ScopeDenied);
         }
         Ok(())
@@ -248,9 +413,16 @@ impl<'server> AuthenticatedConnection<'server> {
     ) -> Result<(), ErrorCode> {
         self.revalidate_registration(current)?;
         let current = current.expect("validated registration");
-        if !self.granted.tools().iter().any(|v| v == tool.as_str())
-            || !current.scope.tools().iter().any(|v| v == tool.as_str())
-        {
+        let allowed = if let Some(granted) = &self.granted_account {
+            current.account_scope().is_some_and(|scope| {
+                granted.permits_principal_tool(tool.as_str())
+                    && scope.permits_principal_tool(tool.as_str())
+            })
+        } else {
+            self.granted.tools().iter().any(|v| v == tool.as_str())
+                && current.scope.tools().iter().any(|v| v == tool.as_str())
+        };
+        if !allowed {
             return Err(ErrorCode::ScopeDenied);
         }
         Ok(())
@@ -269,6 +441,9 @@ fn check_registration(
     }
     if current.epoch != original.epoch || current.public_key != original.public_key {
         return Err(ErrorCode::AuthRequired);
+    }
+    if current.scope_model_version() != original.scope_model_version() {
+        return Err(ErrorCode::VersionMismatch);
     }
     Ok(())
 }

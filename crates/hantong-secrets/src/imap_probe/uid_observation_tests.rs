@@ -55,6 +55,7 @@ async fn run_observation(
         windows::run_uid_observation_connected(
             Source {
                 store: &store,
+                held_credential: None,
                 account: "acct",
                 endpoint: &endpoint,
                 accesses: Some(&accesses),

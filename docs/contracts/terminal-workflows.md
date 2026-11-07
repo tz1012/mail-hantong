@@ -1,3 +1,5 @@
+> 2026-11-07 adopted implementation update: [account-qualified mail grants, model 2](account-mail-grants-v2.md) supersedes the read-only default and second terminal scope review **only for its exact bounded app connection decision**. The originating default CLI/TUI displays the selected account, local consumer and read/compose/send/single-message Trash features before fresh verified provider consent. It adds only that account's cells to that principal. Existing grants, MCP/AI identities and per-message send/Trash review remain unchanged. Unqualified/legacy refresh and recovery still use their existing explicit review. This is an implementation contract, not evidence that the new runtime or human security review is complete.
+
 # All-terminal application workflows
 
 2026-11-02 latest user instruction: ALL HanTong CLI/TUI operations finish in the

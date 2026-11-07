@@ -50,6 +50,14 @@ pub fn load_default_client_profile() -> Result<LoadedClientProfile, ErrorCode> {
     }
 }
 
+#[cfg(windows)]
+pub(crate) fn load_default_from_pinned(
+    file: &std::fs::File,
+    directories: &[std::fs::File],
+) -> Result<LoadedClientProfile, ErrorCode> {
+    windows::load_pinned_default(file, directories)
+}
+
 /// Reads only Known Folder/`mail-hantong/profiles/gui.json`, without a CLI fallback.
 pub fn load_gui_client_profile() -> Result<LoadedClientProfile, ErrorCode> {
     #[cfg(windows)]
@@ -156,7 +164,7 @@ mod windows {
     use std::ffi::c_void;
     use std::fs::{File, OpenOptions};
     use std::io::{ErrorKind, Read};
-    use std::os::windows::fs::{MetadataExt, OpenOptionsExt};
+    use std::os::windows::fs::{FileExt, MetadataExt, OpenOptionsExt};
     use std::os::windows::io::AsRawHandle;
     use std::path::{Component, Path, PathBuf, Prefix};
     use std::ptr;
@@ -172,8 +180,9 @@ mod windows {
     };
     use windows_sys::Win32::Storage::FileSystem::{
         FILE_ATTRIBUTE_REPARSE_POINT, FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT,
-        FILE_GENERIC_READ, FILE_READ_ATTRIBUTES, FILE_SHARE_READ, FILE_SHARE_WRITE, FILE_TRAVERSE,
-        READ_CONTROL,
+        FILE_GENERIC_READ, FILE_ID_INFO, FILE_INFO_BY_HANDLE_CLASS, FILE_READ_ATTRIBUTES,
+        FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, FILE_TRAVERSE, FileIdInfo,
+        GetFileInformationByHandleEx, GetFinalPathNameByHandleW, READ_CONTROL,
     };
     use windows_sys::Win32::System::SystemServices::ACCESS_ALLOWED_ACE_TYPE;
 
@@ -292,6 +301,151 @@ mod windows {
             _file: file,
             _directories: directories,
         })
+    }
+
+    pub(super) fn load_pinned_default(
+        file: &File,
+        directories: &[File],
+    ) -> Result<LoadedClientProfile, ErrorCode> {
+        let profiles = crate::app_directories()?.profiles;
+        load_pinned_default_at(file, directories, &profiles)
+    }
+
+    fn load_pinned_default_at(
+        file: &File,
+        directories: &[File],
+        profiles: &Path,
+    ) -> Result<LoadedClientProfile, ErrorCode> {
+        validate_path(profiles)?;
+        let identity = crate::current_peer_context()?;
+        let user = identity.user_sid();
+        let mut expected_dirs = Vec::new();
+        let mut current = PathBuf::new();
+        for component in profiles.components() {
+            current.push(component);
+            if !matches!(component, Component::Prefix(_)) {
+                expected_dirs.push(current.clone());
+            }
+        }
+        if directories.len() != expected_dirs.len()
+            || !same_path(
+                &final_path(file)?,
+                &std::fs::canonicalize(profiles.join("default.json"))
+                    .map_err(|_| ErrorCode::ScopeDenied)?,
+            )
+        {
+            return Err(ErrorCode::ScopeDenied);
+        }
+        let expected_file = OpenOptions::new()
+            .access_mode(FILE_READ_ATTRIBUTES | READ_CONTROL)
+            .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
+            .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
+            .open(profiles.join("default.json"))
+            .map_err(|_| ErrorCode::ScopeDenied)?;
+        if object_id(file)? != object_id(&expected_file)? {
+            return Err(ErrorCode::ScopeDenied);
+        }
+        let product = profiles.parent().ok_or(ErrorCode::ScopeDenied)?;
+        for (directory, expected) in directories.iter().zip(expected_dirs.iter()) {
+            check_type(directory, true)?;
+            if expected == product || expected == profiles {
+                check_security(directory, user, false)?;
+            }
+            if !same_path(
+                &final_path(directory)?,
+                &std::fs::canonicalize(expected).map_err(|_| ErrorCode::ScopeDenied)?,
+            ) {
+                return Err(ErrorCode::ScopeDenied);
+            }
+            let expected_directory = OpenOptions::new()
+                .access_mode(FILE_READ_ATTRIBUTES | READ_CONTROL)
+                .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
+                .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
+                .open(expected)
+                .map_err(|_| ErrorCode::ScopeDenied)?;
+            if object_id(directory)? != object_id(&expected_directory)? {
+                return Err(ErrorCode::ScopeDenied);
+            }
+        }
+        check_type(file, false)?;
+        check_security(file, user, true)?;
+        let mut bytes = Vec::new();
+        let mut chunk = [0u8; 4096];
+        let mut offset = 0u64;
+        loop {
+            let count = file
+                .seek_read(&mut chunk, offset)
+                .map_err(|_| ErrorCode::ScopeDenied)?;
+            if count == 0 {
+                break;
+            }
+            bytes.extend_from_slice(&chunk[..count]);
+            if bytes.len() > MAX_PROFILE_BYTES {
+                return Err(ErrorCode::InvalidInput);
+            }
+            offset = offset
+                .checked_add(count as u64)
+                .ok_or(ErrorCode::QuotaExceeded)?;
+        }
+        if bytes.is_empty() || bytes.len() > MAX_PROFILE_BYTES {
+            return Err(ErrorCode::InvalidInput);
+        }
+        let retained_file = file.try_clone().map_err(|_| ErrorCode::ScopeDenied)?;
+        let retained_dirs = directories
+            .iter()
+            .map(File::try_clone)
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|_| ErrorCode::ScopeDenied)?;
+        Ok(LoadedClientProfile {
+            bytes,
+            _file: retained_file,
+            _directories: retained_dirs,
+        })
+    }
+
+    fn final_path(file: &File) -> Result<PathBuf, ErrorCode> {
+        let mut buffer = vec![0u16; 32 * 1024];
+        let length = unsafe {
+            GetFinalPathNameByHandleW(
+                file.as_raw_handle(),
+                buffer.as_mut_ptr(),
+                u32::try_from(buffer.len()).map_err(|_| ErrorCode::QuotaExceeded)?,
+                0,
+            )
+        };
+        if length == 0 || length as usize >= buffer.len() {
+            return Err(ErrorCode::ScopeDenied);
+        }
+        Ok(PathBuf::from(
+            String::from_utf16(&buffer[..length as usize]).map_err(|_| ErrorCode::ScopeDenied)?,
+        ))
+    }
+
+    fn object_id(file: &File) -> Result<(u64, [u8; 16]), ErrorCode> {
+        let mut info = FILE_ID_INFO {
+            VolumeSerialNumber: 0,
+            FileId: windows_sys::Win32::Storage::FileSystem::FILE_ID_128 {
+                Identifier: [0; 16],
+            },
+        };
+        let ok = unsafe {
+            GetFileInformationByHandleEx(
+                file.as_raw_handle(),
+                FileIdInfo as FILE_INFO_BY_HANDLE_CLASS,
+                (&mut info as *mut FILE_ID_INFO).cast::<c_void>(),
+                std::mem::size_of::<FILE_ID_INFO>() as u32,
+            )
+        };
+        if ok == 0 {
+            return Err(ErrorCode::ScopeDenied);
+        }
+        Ok((info.VolumeSerialNumber, info.FileId.Identifier))
+    }
+
+    fn same_path(left: &Path, right: &Path) -> bool {
+        left.to_string_lossy()
+            .replace('/', "\\")
+            .eq_ignore_ascii_case(&right.to_string_lossy().replace('/', "\\"))
     }
 
     fn validate_path(path: &Path) -> Result<(), ErrorCode> {
@@ -488,7 +642,8 @@ mod windows {
             UNPROTECTED_DACL_SECURITY_INFORMATION,
         };
         use windows_sys::Win32::Storage::FileSystem::{
-            FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE,
+            DELETE, FILE_GENERIC_READ, FILE_GENERIC_WRITE, FILE_SHARE_DELETE, FILE_SHARE_READ,
+            FILE_SHARE_WRITE,
         };
 
         static NEXT: AtomicU64 = AtomicU64::new(0);
@@ -728,6 +883,50 @@ mod windows {
             assert!(fs::rename(&fixture.product, fixture.root.join("renamed")).is_err());
             drop(loaded);
             assert!(OpenOptions::new().write(true).open(&path).is_ok());
+        }
+
+        #[test]
+        fn sec03_pinned_publication_reader_ignores_existing_file_cursor() {
+            let fixture = Fixture::new();
+            let path = fixture.file(b"fixed");
+            let loaded = load(&fixture.profiles).unwrap();
+            let directories = loaded
+                ._directories
+                .iter()
+                .map(File::try_clone)
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap();
+            drop(loaded);
+            let writer = OpenOptions::new()
+                .access_mode(FILE_GENERIC_READ | FILE_GENERIC_WRITE | DELETE | READ_CONTROL)
+                .share_mode(FILE_SHARE_READ)
+                .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
+                .open(&path)
+                .unwrap();
+            let pinned = load_pinned_default_at(&writer, &directories, &fixture.profiles).unwrap();
+            assert_eq!(pinned.bytes(), b"fixed");
+            assert_eq!(fs::read(path).unwrap(), b"fixed");
+        }
+
+        #[test]
+        fn sec03_pinned_publication_rejects_wrong_file_object() {
+            let fixture = Fixture::new();
+            fixture.file(b"fixed");
+            let wrong_path = fixture.profiles.join("other.json");
+            fs::write(&wrong_path, b"wrong").unwrap();
+            secure(&wrong_path, false, true);
+            let loaded = load(&fixture.profiles).unwrap();
+            let wrong = OpenOptions::new()
+                .access_mode(FILE_READ_ATTRIBUTES | READ_CONTROL)
+                .share_mode(FILE_SHARE_READ)
+                .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
+                .open(&wrong_path)
+                .unwrap();
+            assert_eq!(
+                load_pinned_default_at(&wrong, &loaded._directories, &fixture.profiles)
+                    .unwrap_err(),
+                ErrorCode::ScopeDenied
+            );
         }
 
         #[test]

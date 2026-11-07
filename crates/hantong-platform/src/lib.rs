@@ -3,6 +3,8 @@
 #[cfg(not(windows))]
 use hantong_contracts::ErrorCode;
 
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
+pub mod account_publication;
 pub mod command_prompt;
 pub mod google_browser;
 #[cfg(target_os = "linux")]
@@ -23,6 +25,8 @@ mod profile_file;
 mod selection;
 #[cfg(any(windows, unix))]
 mod terminal;
+#[allow(unsafe_code)]
+pub mod terminal_prompt;
 pub mod ui_preferences;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod unix_crypto;

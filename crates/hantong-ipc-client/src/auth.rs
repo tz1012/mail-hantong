@@ -8,12 +8,166 @@
 use crate::auth_diagnostic::{Stage, require, step};
 use hantong_contracts::{
     ErrorCode,
+    account_auth::{AccountAuthRevision, AccountAuthTranscript},
+    account_auth_peer::{CanonicalPeer, encode as encode_peer},
+    account_scope::AccountScopeV2,
     auth::{AuthTranscript, PeerContext, RequestedScope, SignerRole},
 };
 use hantong_platform::{ClientSigningKey, sha256, validate_public_key, verify_signature};
 use std::time::{Duration, Instant};
 
 const AUTH_WINDOW_MS: i64 = 30_000;
+
+/// Client-side model-2 exchange. The typed account matrix is retained as an
+/// exact signed value; it is never converted to the legacy flat scope.
+pub struct PendingAccountClientAuthentication {
+    key: ClientSigningKey,
+    registration_id: [u8; 16],
+    profile_epoch: u64,
+    requested_scope: AccountScopeV2,
+    client_peer: Vec<u8>,
+    client_nonce: [u8; 32],
+    client_key_hash: [u8; 32],
+    pinned_server_key_hash: [u8; 32],
+    pinned_server_key: [u8; 72],
+    started_at_utc_ms: i64,
+    started: Instant,
+}
+
+impl std::fmt::Debug for PendingAccountClientAuthentication {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PendingAccountClientAuthentication")
+            .field("registration_id", &"<redacted>")
+            .field("profile_epoch", &self.profile_epoch)
+            .field("requested_scope", &"<redacted>")
+            .field("client_nonce", &"<redacted>")
+            .finish()
+    }
+}
+
+impl PendingAccountClientAuthentication {
+    pub fn begin(
+        key_name: &str,
+        pinned_server_key: [u8; 72],
+        registration_id: [u8; 16],
+        profile_epoch: u64,
+        requested_scope: AccountScopeV2,
+        started_at_utc_ms: i64,
+    ) -> Result<Self, ErrorCode> {
+        if profile_epoch == 0 || started_at_utc_ms < 0 {
+            return Err(ErrorCode::InvalidInput);
+        }
+        let key = ClientSigningKey::open(key_name).map_err(|_| ErrorCode::AuthRequired)?;
+        let public = key.public_key().map_err(|_| ErrorCode::AuthRequired)?;
+        validate_public_key(&pinned_server_key)?;
+        let client_peer = encode_peer(&CanonicalPeer::Windows(
+            hantong_platform::current_peer_context()?,
+        ))?;
+        Ok(Self {
+            key,
+            registration_id,
+            profile_epoch,
+            requested_scope,
+            client_peer,
+            client_nonce: hantong_platform::random_nonce()?,
+            client_key_hash: sha256(&public)?,
+            pinned_server_key_hash: sha256(&pinned_server_key)?,
+            pinned_server_key,
+            started_at_utc_ms,
+            started: Instant::now(),
+        })
+    }
+
+    pub(crate) fn begin_existing(
+        key: ClientSigningKey,
+        pinned_server_key: [u8; 72],
+        registration_id: [u8; 16],
+        profile_epoch: u64,
+        requested_scope: AccountScopeV2,
+        started_at_utc_ms: i64,
+    ) -> Result<Self, ErrorCode> {
+        if registration_id == [0; 16] || profile_epoch == 0 || started_at_utc_ms < 0 {
+            return Err(ErrorCode::InvalidInput);
+        }
+        let public = key.public_key().map_err(|_| ErrorCode::AuthRequired)?;
+        validate_public_key(&pinned_server_key)?;
+        let client_peer = encode_peer(&CanonicalPeer::Windows(
+            hantong_platform::current_peer_context()?,
+        ))?;
+        Ok(Self {
+            key,
+            registration_id,
+            profile_epoch,
+            requested_scope,
+            client_peer,
+            client_nonce: hantong_platform::random_nonce()?,
+            client_key_hash: sha256(&public)?,
+            pinned_server_key_hash: sha256(&pinned_server_key)?,
+            pinned_server_key,
+            started_at_utc_ms,
+            started: Instant::now(),
+        })
+    }
+
+    pub fn client_nonce(&self) -> [u8; 32] {
+        self.client_nonce
+    }
+
+    pub(crate) fn registration_id(&self) -> [u8; 16] {
+        self.registration_id
+    }
+
+    pub(crate) fn profile_epoch(&self) -> u64 {
+        self.profile_epoch
+    }
+
+    pub fn requested_scope(&self) -> &AccountScopeV2 {
+        &self.requested_scope
+    }
+
+    pub fn respond(
+        self,
+        challenge: AccountAuthTranscript,
+        server_signature: &[u8],
+        now_utc_ms: i64,
+    ) -> Result<[u8; 64], ErrorCode> {
+        if challenge.revision != AccountAuthRevision::WindowsV2
+            || now_utc_ms < 0
+            || self.started.elapsed() >= Duration::from_millis(AUTH_WINDOW_MS as u64)
+            || challenge.registration_id != self.registration_id
+            || challenge.profile_epoch != self.profile_epoch
+            || challenge.client_nonce != self.client_nonce
+            || challenge.scope != self.requested_scope
+            || challenge.client_peer != self.client_peer
+            || challenge.client_key_hash != self.client_key_hash
+            || challenge.server_key_hash != self.pinned_server_key_hash
+            || challenge.issued_at_utc_ms < self.started_at_utc_ms
+            || challenge.issued_at_utc_ms > now_utc_ms
+            || challenge.expires_at_utc_ms <= now_utc_ms
+            || challenge.expires_at_utc_ms < challenge.issued_at_utc_ms
+            || challenge
+                .issued_at_utc_ms
+                .checked_add(AUTH_WINDOW_MS)
+                .is_none_or(|max| challenge.expires_at_utc_ms > max)
+        {
+            return Err(ErrorCode::AuthRequired);
+        }
+        let server_bytes = challenge
+            .encode(SignerRole::Server)
+            .map_err(|_| ErrorCode::AuthRequired)?;
+        if !verify_signature(&self.pinned_server_key, &server_bytes, server_signature)
+            .map_err(|_| ErrorCode::AuthRequired)?
+        {
+            return Err(ErrorCode::AuthRequired);
+        }
+        let client_bytes = challenge
+            .encode(SignerRole::Client)
+            .map_err(|_| ErrorCode::AuthRequired)?;
+        self.key
+            .sign(&client_bytes)
+            .map_err(|_| ErrorCode::AuthRequired)
+    }
+}
 
 /// A connection-local client challenge state. It cannot be cloned or reused.
 pub struct PendingClientAuthentication {
@@ -52,7 +206,8 @@ impl PendingClientAuthentication {
         requested_scope: RequestedScope,
         started_at_utc_ms: i64,
     ) -> Result<Self, ErrorCode> {
-        if profile_epoch == 0 || started_at_utc_ms < 0 {
+        if profile_epoch == 0 || started_at_utc_ms < 0 || requested_scope.scope_model_version() != 1
+        {
             return Err(ErrorCode::InvalidInput);
         }
         let key = ClientSigningKey::open(key_name).map_err(|_| ErrorCode::AuthRequired)?;
@@ -77,7 +232,8 @@ impl PendingClientAuthentication {
         requested_scope: RequestedScope,
         started_at_utc_ms: i64,
     ) -> Result<Self, ErrorCode> {
-        if profile_epoch == 0 || started_at_utc_ms < 0 {
+        if profile_epoch == 0 || started_at_utc_ms < 0 || requested_scope.scope_model_version() != 1
+        {
             return Err(ErrorCode::InvalidInput);
         }
         let started = Instant::now();

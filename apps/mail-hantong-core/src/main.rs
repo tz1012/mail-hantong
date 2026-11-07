@@ -1,5 +1,18 @@
 #![forbid(unsafe_code)]
 
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
+mod account_connect;
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
+mod account_connect_existing;
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
+mod account_connect_frontend;
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
+mod account_connect_generic;
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
+mod account_connect_rpc;
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
+mod account_connect_service;
+
 use hantong_contracts::ErrorCode;
 use std::io::{self, Write};
 
@@ -71,7 +84,7 @@ mod unix_scope_refresh;
 mod unix_setup;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod unix_stop;
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 mod unix_terminal_review_frontend;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -155,6 +168,10 @@ fn start() -> Result<(), ErrorCode> {
     // shutdown. Any schema, key or persisted-config failure precedes readiness.
     let store = startup_step("storage", storage::initialize_storage(&directories))?;
     let server_identity = startup_step("identity", identity::initialize_server_identity(&store))?;
+    startup_step(
+        "account_grant_recovery",
+        account_connect::recover_startup(&store, server_identity.public_key()?),
+    )?;
     let server_instance = startup_step("instance", hantong_platform::random_nonce())?;
     let read_policy = std::rc::Rc::new(std::cell::RefCell::new(hantong_policy::ReadPolicy::new()));
     let runtime = startup_step(
@@ -199,6 +216,8 @@ fn start() -> Result<(), ErrorCode> {
             );
             let (google_handle, google_worker) =
                 google_worker::coordinator(&store, &directories.secrets)?;
+            let connect_public_key=server_identity.public_key()?;
+            let (connect_state,connect_worker)=account_connect_service::State::new();
             let server = hantong_ipc_server::authenticated_wire::serve_until_with_setup_context(
                 // All provider jobs have their own account-bound durable claims.
                 shutdown,
@@ -207,6 +226,9 @@ fn start() -> Result<(), ErrorCode> {
                 server_instance,
                 |id| execution_adapter::load_registration(&store, id),
                 |session, request| {
+                    if account_connect_rpc::is_method(&request.method) {
+                        return account_connect_rpc::windows(&connect_state,&store,&directories.secrets,connect_public_key,registration.smtp_sessions(),session,request);
+                    }
                     execution_adapter::execute_with_google(
                         &store,
                         &mut read_policy.borrow_mut(),
@@ -218,10 +240,21 @@ fn start() -> Result<(), ErrorCode> {
                         request,
                     )
                 },
-                |context, command| registration.setup_command_with_context(context, command),
+                |context, command| {
+                    let capture=registration.submitted_setup_capture(&command);
+                    let peer=account_connect::ObservedPeer::Windows(context.peer().clone());
+                    if let Some(result)=connect_state.existing_review(&store,&directories.secrets,connect_public_key,&peer,&command) { return result; }
+                    connect_state.check_setup_review_command(&store,&peer,&command,capture)?;
+                    if let Some((kind,id))=capture {connect_state.check_setup_capture(&store,kind,id,&peer)?;}
+                    let result=registration.setup_command_with_context(context, command)?;
+                    connect_state.bind_setup_review_receipt(&result)?;
+                    if let Some((kind,id))=capture {connect_state.record_setup_capture(&store,kind,id,&peer)?;}
+                    Ok(result)
+                },
             );
             tokio::select! {
                 biased;
+                result=connect_worker.run(&store,&directories.secrets,connect_public_key,registration.smtp_sessions())=>{result?;return Err(ErrorCode::InternalError);},
                 result=registration_worker.run()=>{result?;return Err(ErrorCode::InternalError);},
                 result=folder_worker.run()=>{result?;return Err(ErrorCode::InternalError);},
                 result=uid_worker.run()=>{result?;return Err(ErrorCode::InternalError);},
@@ -341,6 +374,13 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> i32 {
             Err(code) => emit_error(code, Lang::En),
         };
     }
+    #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
+    if args.first().and_then(|v| v.to_str()) == Some("account-connect") {
+        return match account_connect_frontend::run(&args) {
+            Ok(()) => 0,
+            Err(code) => emit_error(code, Lang::En),
+        };
+    }
     if args.first().and_then(|v| v.to_str()) == Some("terminal-review") {
         #[cfg(windows)]
         return match terminal_review_frontend::run(&args[1..], false) {
@@ -414,7 +454,7 @@ fn main() {
     #[cfg(all(target_os = "linux", not(test)))]
     if matches!(
         args.first().and_then(|a| a.to_str()),
-        Some("unix-relay" | "terminal-review" | "unix-stop")
+        Some("unix-relay" | "terminal-review" | "unix-stop" | "account-connect")
     ) && let Err(code) = hantong_platform::linux_sealed::forbid_helper_exec()
     {
         std::process::exit(emit_error(code, Lang::En));

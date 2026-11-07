@@ -3,7 +3,9 @@
 //! This is presentation only. Ticket creation, expiry, scope and the final
 //! Store transition remain Core-owned through the terminal-review wire.
 
-use hantong_contracts::{ErrorCode, terminal_review::*, wire_hex};
+#[cfg(unix)]
+use hantong_contracts::wire_hex;
+use hantong_contracts::{ErrorCode, terminal_review::*};
 use std::io::{self, IsTerminal, Write};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -91,6 +93,7 @@ fn capture_failure_with_cleanup(
     }
 }
 
+#[cfg(unix)]
 pub(crate) fn run(args: &[std::ffi::OsString]) -> Result<(), ErrorCode> {
     if !io::stdin().is_terminal() || !io::stdout().is_terminal() {
         return Err(ErrorCode::HumanStepRequired);
@@ -195,6 +198,108 @@ pub(crate) fn run(args: &[std::ffi::OsString]) -> Result<(), ErrorCode> {
     Ok(())
 }
 
+/// Runs a protected setup review while stdout is reserved for the private
+/// account-connect receipt pipe. All human-facing text is sent to stderr.
+pub(crate) fn review_in_account_connect(
+    request: TerminalReviewGet,
+    lang: crate::Lang,
+    deadline: std::time::Instant,
+) -> Result<TerminalReviewReceipt, ErrorCode> {
+    if !io::stdin().is_terminal() || !io::stderr().is_terminal() {
+        return Err(ErrorCode::HumanStepRequired);
+    }
+    let receipt = hantong_ipc_client::terminal_review::exchange(&TerminalReviewCommand::Get(
+        request.clone(),
+    ))?;
+    receipt.validate()?;
+    writeln!(
+        io::stderr(),
+        "{}: {}",
+        crate::resource(lang, "terminal_review_title"),
+        receipt.kind.as_str()
+    )
+    .map_err(|_| ErrorCode::CoreUnavailable)?;
+    for field in &receipt.fields {
+        writeln!(
+            io::stderr(),
+            "{}: {}",
+            terminal_safe(&field.label),
+            terminal_safe(&field.value)
+        )
+        .map_err(|_| ErrorCode::CoreUnavailable)?;
+    }
+    let ticket = receipt.ticket.ok_or(ErrorCode::ApprovalRequired)?;
+    write!(
+        io::stderr(),
+        "{}",
+        crate::resource(lang, "terminal_review_confirm")
+    )
+    .map_err(|_| ErrorCode::CoreUnavailable)?;
+    io::stderr()
+        .flush()
+        .map_err(|_| ErrorCode::CoreUnavailable)?;
+    let answer = match hantong_platform::terminal_prompt::read_line_until(8, deadline) {
+        Ok(answer) => answer,
+        Err(error) => {
+            let cleanup = hantong_ipc_client::terminal_review::exchange(
+                &TerminalReviewCommand::Cancel(TerminalReviewCancel::new(request.clone(), ticket)?),
+            );
+            if error != ErrorCode::ApprovalExpired {
+                cleanup?.validate()?;
+            }
+            return Err(error);
+        }
+    };
+    if answer.trim() != "1" {
+        let cancelled = hantong_ipc_client::terminal_review::exchange(
+            &TerminalReviewCommand::Cancel(TerminalReviewCancel::new(request, ticket)?),
+        )?;
+        cancelled.validate()?;
+        return Ok(cancelled);
+    }
+    let Some(opaque) = receipt.secret_ticket_opaque.as_deref() else {
+        let confirmed =
+            hantong_ipc_client::terminal_review::exchange(&TerminalReviewCommand::Confirm(
+                TerminalReviewConfirm::new(ticket, receipt.snapshot_hash)?,
+            ))?;
+        confirmed.validate()?;
+        return Ok(confirmed);
+    };
+    let secret_ticket = hantong_secrets::TerminalSecretTicket::from_opaque(opaque)
+        .map_err(|_| ErrorCode::CoreUnavailable)?;
+    let directories = hantong_platform::app_directories()?;
+    let handle =
+        capture_secret_until(&directories.secrets, &secret_ticket, deadline).map_err(|error| {
+            capture_failure_with_cleanup(error, || {
+                hantong_ipc_client::terminal_review::exchange(&TerminalReviewCommand::Cancel(
+                    TerminalReviewCancel::new(request.clone(), ticket)?,
+                ))
+                .and_then(|value| value.validate())
+            })
+        })?;
+    let submit = TerminalReviewSecretSubmit::new(
+        ticket,
+        receipt.snapshot_hash,
+        opaque.to_vec(),
+        handle.opaque_id(),
+    )?;
+    let submitted = match hantong_ipc_client::terminal_review::exchange(
+        &TerminalReviewCommand::SecretSubmit(submit),
+    ) {
+        Ok(value) => value,
+        Err(error) => {
+            let _ = cancel_secret(&directories.secrets, &secret_ticket, handle.opaque_id());
+            return Err(error);
+        }
+    };
+    submitted.validate()?;
+    if !matches!(submitted.state.as_str(), "ready" | "provisioning") {
+        let _ = cancel_secret(&directories.secrets, &secret_ticket, handle.opaque_id());
+        return Err(ErrorCode::CoreUnavailable);
+    }
+    Ok(submitted)
+}
+
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 fn capture_secret(
     root: &std::path::Path,
@@ -203,7 +308,31 @@ fn capture_secret(
     hantong_secrets::SecretStore::capture_terminal_secret_at(root, ticket)
 }
 
-#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+fn capture_secret_until(
+    root: &std::path::Path,
+    ticket: &hantong_secrets::TerminalSecretTicket,
+    deadline: std::time::Instant,
+) -> Result<hantong_secrets::TerminalSecretHandle, hantong_secrets::SecretError> {
+    use hantong_secrets::SecretError;
+    let remaining = deadline
+        .checked_duration_since(std::time::Instant::now())
+        .ok_or(SecretError::InputExpired)?;
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|_| SecretError::InputExpired)?;
+    let expires = i64::try_from(
+        now.as_millis()
+            .checked_add(remaining.as_millis())
+            .ok_or(SecretError::InputExpired)?,
+    )
+    .map_err(|_| SecretError::InputExpired)?;
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    return hantong_secrets::SecretStore::capture_terminal_secret_at_until(root, ticket, expires);
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    hantong_secrets::SecretStore::open(root)?.capture_terminal_secret_until(ticket, expires)
+}
+
+#[cfg(all(unix, not(any(target_os = "linux", target_os = "macos"))))]
 fn capture_secret(
     root: &std::path::Path,
     ticket: &hantong_secrets::TerminalSecretTicket,
@@ -224,13 +353,14 @@ fn cancel_secret(
 
 #[cfg(not(any(target_os = "linux", target_os = "macos")))]
 fn cancel_secret(
-    _root: &std::path::Path,
-    _ticket: &hantong_secrets::TerminalSecretTicket,
-    _opaque_id: [u8; 32],
+    root: &std::path::Path,
+    ticket: &hantong_secrets::TerminalSecretTicket,
+    opaque_id: [u8; 32],
 ) -> Result<(), hantong_secrets::SecretError> {
-    Ok(())
+    hantong_secrets::SecretStore::open(root)?.cancel_terminal_secret(ticket, opaque_id)
 }
 
+#[cfg(unix)]
 fn parse(args: &[std::ffi::OsString]) -> Result<TerminalReviewGet, ErrorCode> {
     if args.is_empty() || args.len() > 10 || !args.len().is_multiple_of(2) {
         return Err(ErrorCode::InvalidInput);

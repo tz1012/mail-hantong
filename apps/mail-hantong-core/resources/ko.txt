@@ -6,3 +6,9 @@ unsupported=이 플랫폼의 코어 전송 기능은 아직 지원하지 않습�
 unavailable=코어를 안전하게 시작하거나 계속 실행할 수 없습니다.
 terminal_review_title=터미널 확인
 terminal_review_confirm=진행 1 / 취소 0:
+account_connect_features=이 연결은 로컬 Default 사용 주체에 메일 읽기·작성·발송·단일 메일 휴지통 이동 기능을 제공합니다. 발송과 휴지통 이동은 각각 별도 확인이 필요합니다.
+smtp_host=SMTP 서버:
+smtp_port=SMTP 포트:
+smtp_tls=SMTP TLS (1=implicit_tls, 2=starttls_required):
+smtp_login=SMTP 로그인:
+smtp_sender=SMTP 발신 주소 (비워 두면 로그인 주소 사용):

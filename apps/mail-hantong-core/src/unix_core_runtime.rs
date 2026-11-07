@@ -25,6 +25,11 @@ pub(crate) async fn serve(
     server_instance: [u8; 32],
     secrets_root: &Path,
 ) -> Result<(), ErrorCode> {
+    let connect_public_key = server_signer
+        .public_key()
+        .map_err(|_| ErrorCode::InternalError)?;
+    crate::account_connect::recover_startup(&store, connect_public_key)?;
+    let (connect_state, connect_worker) = crate::account_connect_service::State::new();
     let shared_slot = Rc::new(Cell::new(None));
     let (folder_handle, folder_worker) =
         crate::folder_worker::coordinator_for_store(&store, secrets_root, shared_slot.clone());
@@ -50,6 +55,8 @@ pub(crate) async fn serve(
         &google_read_handle,
         secrets_root,
         &setup_state,
+        &connect_state,
+        connect_public_key,
         &policy,
         shutdown.clone(),
     );
@@ -66,6 +73,7 @@ pub(crate) async fn serve(
     tokio::pin!(google_read_future);
     tokio::select! {
         result = &mut server_future => result,
+        result = connect_worker.run(&store,secrets_root,connect_public_key,&setup_state.smtp) => result,
         result = &mut folder_future => result,
         result = &mut uid_future => result,
         result = &mut google_future => result,
@@ -85,6 +93,8 @@ async fn serve_connections(
     google_worker: &crate::google_worker::GoogleHandle<'_>,
     secrets_root: &Path,
     setup_state: &crate::unix_setup::State,
+    connect_state: &crate::account_connect_service::State,
+    connect_public_key: [u8; 72],
     policy: &std::cell::RefCell<ReadPolicy>,
     shutdown: Rc<Cell<bool>>,
 ) -> Result<(), ErrorCode> {
@@ -140,7 +150,7 @@ async fn serve_connections(
                             impl Drop for Slot<'_> { fn drop(&mut self) { self.0.set(self.0.get() - 1); } }
                             let _slot = Slot(brokers);
                             let id = first.id.clone();
-                            let response = match broker(store, secrets_root, setup_state, &connection, first).await {
+                            let response = match broker(store, secrets_root, setup_state, connect_state, &connection, first).await {
                                 Ok(response) => response,
                                 Err(code) => json!({"jsonrpc":"2.0","id":id,"error":{"code":code.as_str(),"message":code.as_str()}}),
                             };
@@ -151,7 +161,11 @@ async fn serve_connections(
                         let mut authenticated = hantong_ipc_server::unix_authenticated_wire::authenticate_after_begin(
                             connection, first, &mut signer, server_instance, &mut lookup,
                         ).await?;
-                        exchange_authenticated(store, &mut authenticated, |connection, request, _| {
+                        exchange_authenticated(store, &mut authenticated, |connection, request, length| {
+                            if crate::account_connect_rpc::is_method(&request.method) {
+                                if length>hantong_contracts::account_connect::MAX_FRAME_BYTES {return Err(ErrorCode::InvalidInput);}
+                                return crate::account_connect_rpc::unix(connect_state,store,secrets_root,connect_public_key,&setup_state.smtp,connection,&request);
+                            }
                             // Bootstrap and terminal review require the verified foreground Core helper.
                             if request.method.starts_with("setup.") || request.method.starts_with("registration.")
                                 || request.method.starts_with("terminal.review.") {
@@ -266,6 +280,7 @@ async fn broker(
     store: &Store,
     root: &Path,
     setup: &crate::unix_setup::State,
+    connect: &crate::account_connect_service::State,
     connection: &hantong_platform::unix_transport::UnixLocalConnection,
     outer: RpcRequest,
 ) -> Result<Value, ErrorCode> {
@@ -334,9 +349,30 @@ async fn broker(
         let Some(command) = command else {
             return Ok(rejected);
         };
-        let owner = crate::unix_setup::review_owner(setup, store, &command, owner)?;
         if !connection.peer_matches_current_image()? {
             return Err(ErrorCode::AuthRequired);
+        }
+        let observed_peer =
+            crate::account_connect::ObservedPeer::Unix(connection.peer_context().clone());
+        if let Some(result) = connect.existing_review(
+            store,
+            root,
+            signer.public_key().map_err(|_| ErrorCode::InternalError)?,
+            &observed_peer,
+            &command,
+        ) {
+            let mut result = Some(result);
+            return Ok(hantong_ipc_server::setup_dispatch::response(
+                &request,
+                request_bytes.len(),
+                &mut |_| result.take().ok_or(ErrorCode::InternalError)?,
+            ));
+        }
+        let owner = crate::unix_setup::review_owner(setup, store, &command, owner)?;
+        let capture = setup.submitted_setup_capture(&command);
+        connect.check_setup_review_command(store, &observed_peer, &command, capture)?;
+        if let Some((kind, id)) = capture {
+            connect.check_setup_capture(store, kind, id, &observed_peer)?;
         }
         let mut receipt = Some(
             crate::unix_setup::dispatch_async(
@@ -350,6 +386,14 @@ async fn broker(
             )
             .await,
         );
+        if receipt.as_ref().is_some_and(Result::is_ok)
+            && let Some((kind, id)) = capture
+        {
+            connect.record_setup_capture(store, kind, id, &observed_peer)?;
+        }
+        if let Some(Ok(result)) = receipt.as_ref() {
+            connect.bind_setup_review_receipt(result)?;
+        }
         return Ok(hantong_ipc_server::setup_dispatch::response(
             &request,
             request_bytes.len(),
@@ -415,27 +459,51 @@ async fn profiled_call(
     )
     .map_err(|_| ErrorCode::AuthRequired)?;
     let connection = hantong_platform::unix_transport::connect().await?;
-    let pending = hantong_ipc_client::unix_auth::PendingUnixAuthentication::begin_connected(
-        signer,
-        connection,
-        *profile.server_public_key(),
-        *profile.registration_id(),
-        profile.profile_epoch(),
-        profile.scope().clone(),
-        hantong_platform::random_nonce()?,
-        i64::try_from(
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map_err(|_| ErrorCode::InternalError)?
-                .as_millis(),
-        )
-        .map_err(|_| ErrorCode::InternalError)?,
-    )?;
-    let client = hantong_ipc_client::unix_authenticated_wire::authenticate_connected(
-        pending,
-        &request.request_id,
+    let now = i64::try_from(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|_| ErrorCode::InternalError)?
+            .as_millis(),
     )
-    .await?;
+    .map_err(|_| ErrorCode::InternalError)?;
+    let client = if profile.scope().scope_model_version() == 2 {
+        let scope = profile
+            .scope()
+            .account_scope()
+            .ok_or(ErrorCode::ScopeDenied)?;
+        let pending =
+            hantong_ipc_client::unix_auth::PendingUnixAccountAuthentication::begin_connected(
+                signer,
+                connection,
+                *profile.server_public_key(),
+                *profile.registration_id(),
+                profile.profile_epoch(),
+                scope.clone(),
+                hantong_platform::random_nonce()?,
+                now,
+            )?;
+        hantong_ipc_client::unix_authenticated_wire::authenticate_account_connected(
+            pending,
+            &request.request_id,
+        )
+        .await?
+    } else {
+        let pending = hantong_ipc_client::unix_auth::PendingUnixAuthentication::begin_connected(
+            signer,
+            connection,
+            *profile.server_public_key(),
+            *profile.registration_id(),
+            profile.profile_epoch(),
+            profile.scope().clone(),
+            hantong_platform::random_nonce()?,
+            now,
+        )?;
+        hantong_ipc_client::unix_authenticated_wire::authenticate_connected(
+            pending,
+            &request.request_id,
+        )
+        .await?
+    };
     client
         .exchange(&request.request_id, &request.method, &request.params)
         .await
@@ -554,6 +622,11 @@ fn authorize(
         return connection.revalidate_registration(current);
     }
     connection.revalidate_registration(current)?;
+    if crate::account_connect_rpc::is_method(&request.method) {
+        // Default kind/key/peer validation belongs to the Core app service;
+        // this is never a mail-tool scope or unauthenticated setup route.
+        return Ok(());
+    }
     let tool = hantong_application::ToolRequest::validate_method(&request.method, &request.params)?;
     if tool.request_id() != request.id {
         return Err(ErrorCode::InvalidInput);

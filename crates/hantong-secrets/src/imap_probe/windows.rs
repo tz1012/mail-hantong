@@ -39,6 +39,7 @@ pub(super) struct Source<'a> {
     pub(super) store: &'a SecretStore,
     pub(super) account: &'a str,
     pub(super) endpoint: &'a ImapEndpointConfig,
+    pub(super) held_credential: Option<crate::mail_credentials::BoundCredential>,
     #[cfg(test)]
     pub(super) accesses: Option<&'a std::sync::atomic::AtomicUsize>,
 }
@@ -48,9 +49,13 @@ impl Source<'_> {
         if let Some(counter) = self.accesses {
             counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         }
-        self.store
-            .unseal_imap_credential(self.account, self.endpoint)
-            .map_err(MailProbeError::Credential)
+        match self.held_credential.as_ref() {
+            Some(credential) => Ok(credential.clone()),
+            None => self
+                .store
+                .unseal_imap_credential(self.account, self.endpoint)
+                .map_err(MailProbeError::Credential),
+        }
     }
 }
 pub(super) async fn with_deadline<T>(
@@ -69,6 +74,52 @@ pub(super) async fn probe(
         ReadReceipt::Probe(receipt) => Ok(receipt),
         _ => Err(MailProbeError::Protocol),
     }
+}
+
+pub(crate) async fn probe_with_credential(
+    store: &SecretStore,
+    account: &str,
+    endpoint: &ImapEndpointConfig,
+    credential: crate::mail_credentials::BoundCredential,
+) -> Result<ImapProbeReceipt, MailProbeError> {
+    match connect_with_credential(
+        store,
+        account,
+        endpoint,
+        ReadOperation::Probe,
+        Some(&credential),
+    )
+    .await?
+    {
+        ReadReceipt::Probe(receipt) => Ok(receipt),
+        _ => Err(MailProbeError::Protocol),
+    }
+}
+
+#[cfg(test)]
+pub(crate) async fn probe_with_credential_stream<S>(
+    store: &SecretStore,
+    account: &str,
+    endpoint: &ImapEndpointConfig,
+    credential: crate::mail_credentials::BoundCredential,
+    stream: S,
+    tls: Arc<ClientConfig>,
+) -> Result<ImapProbeReceipt, MailProbeError>
+where
+    S: AsyncRead + AsyncWrite + Send + Unpin + 'static,
+{
+    run_connected(
+        Source {
+            store,
+            account,
+            endpoint,
+            held_credential: Some(credential),
+            accesses: None,
+        },
+        stream,
+        tls,
+    )
+    .await
 }
 pub(crate) async fn move_to_trash(
     store: &SecretStore,
@@ -131,6 +182,16 @@ async fn connect(
     endpoint: &ImapEndpointConfig,
     operation: ReadOperation<'_>,
 ) -> Result<ReadReceipt, MailProbeError> {
+    connect_with_credential(store, account, endpoint, operation, None).await
+}
+
+async fn connect_with_credential(
+    store: &SecretStore,
+    account: &str,
+    endpoint: &ImapEndpointConfig,
+    operation: ReadOperation<'_>,
+    held_credential: Option<&crate::mail_credentials::BoundCredential>,
+) -> Result<ReadReceipt, MailProbeError> {
     with_deadline(async {
         let tls = Arc::new(
             ClientConfig::builder()
@@ -159,6 +220,7 @@ async fn connect(
                 store,
                 account,
                 endpoint,
+                held_credential: held_credential.cloned(),
                 #[cfg(test)]
                 accesses: None,
             },
@@ -951,6 +1013,7 @@ where
             store,
             account,
             endpoint,
+            held_credential: None,
             accesses,
         },
         stream,

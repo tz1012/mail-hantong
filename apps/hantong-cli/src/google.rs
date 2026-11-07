@@ -665,31 +665,50 @@ fn cli04_google_queued_stage_does_not_repeat_the_opening_message() {
     assert_eq!(setup_stage_message("awaiting_review"), Some("review"));
 }
 
-pub(super) fn connect_guided(lang: Lang, profile: GoogleLocalProfile) -> Result<String, ErrorCode> {
-    let access_mode = profile.access_mode().ok_or(ErrorCode::InvalidInput)?;
+pub(super) fn connect_guided(
+    lang: Lang,
+    _profile: GoogleLocalProfile,
+) -> Result<String, ErrorCode> {
+    match hantong_platform::load_default_client_profile() {
+        Ok(loaded) => {
+            let profile =
+                hantong_ipc_client::profile::ParsedClientProfile::from_json(loaded.bytes())?;
+            if profile.profile() != hantong_ipc_client::profile::ProfileSelector::Default {
+                return Err(ErrorCode::ScopeDenied);
+            }
+            let receipt = super::core_start::account_connect(
+                hantong_contracts::account_connect::AccountConnectProvider::Google,
+                None,
+            )?;
+            return receipt.account_id.ok_or(ErrorCode::InternalError);
+        }
+        Err(ErrorCode::ClientNotRegistered) => {}
+        Err(code) => return Err(code),
+    }
+    // Only initial registration uses bootstrap. An existing Default consumer
+    // goes through the signed, process-bound app intent above, never a union.
     let input = GoogleSetupInput {
-        access_mode,
-        local_profile: profile,
+        access_mode: hantong_contracts::google_write::GoogleAccessMode::Modify,
+        local_profile: GoogleLocalProfile::PersonalManage,
         client_id: None,
         display_name: None,
         reauthorize_account: None,
         force_consent: false,
     };
-    let result = login_inner(
+    let value = login_inner(
         GoogleSetupCommand::Request(input),
         lang,
         false,
-        LoginFlow::Personal(profile),
-    );
-    if result == Err(ErrorCode::HumanStepRequired) {
-        println!("{}", resource(lang, "guided_missing_client"));
-    }
-    let value = result?;
+        LoginFlow::ConnectOnly(GoogleLocalProfile::PersonalManage),
+    )?;
     let account = value["account_id"]
         .as_str()
         .ok_or(ErrorCode::InternalError)?;
     GoogleReadAccount::parse(account)?;
-    Ok(account.into())
+    if !hantong_ipc_client::google_mail::verify_default_manage_accounts(account)? {
+        return Err(ErrorCode::ScopeDenied);
+    }
+    Ok(account.to_owned())
 }
 
 pub(super) fn continue_guided(account: &str, lang: Lang) -> Result<(), ErrorCode> {
@@ -707,26 +726,14 @@ pub(super) fn enable_send_guided(account: &str, lang: Lang) -> Result<(), ErrorC
         println!("{}", resource(lang, "guided_ready"));
         return Ok(());
     }
-    let input = GoogleSetupInput {
-        access_mode: hantong_contracts::google_write::GoogleAccessMode::Modify,
-        local_profile: GoogleLocalProfile::PersonalManage,
-        client_id: None,
-        display_name: None,
-        reauthorize_account: Some(account.account_id().to_owned()),
-        force_consent: true,
-    };
-    let value = login_inner(
-        GoogleSetupCommand::Request(input),
-        lang,
-        false,
-        LoginFlow::Personal(GoogleLocalProfile::PersonalManage),
+    let receipt = super::core_start::account_connect(
+        hantong_contracts::account_connect::AccountConnectProvider::Google,
+        Some(&account.account_id()),
     )?;
-    let connected = value["account_id"]
-        .as_str()
-        .ok_or(ErrorCode::InternalError)?;
-    if connected != account.account_id() {
+    if receipt.account_id.as_deref() != Some(account.account_id().as_str()) {
         return Err(ErrorCode::ScopeDenied);
     }
+    println!("{}", resource(lang, "guided_ready"));
     Ok(())
 }
 

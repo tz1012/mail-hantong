@@ -1,4 +1,5 @@
 //! Parsed public profile data, never evidence of trust or human authorization.
+use crate::account_profile::{AccountProfileSelector, ParsedAccountClientProfile};
 use hantong_contracts::{
     ErrorCode,
     auth::{
@@ -258,6 +259,31 @@ impl ParsedClientProfile {
             scope,
         })
     }
+    /// Constructs the model-2 account-qualified profile for the default CLI
+    /// selector. Other selectors remain unsupported until their runtime
+    /// authentication paths consume the typed matrix directly.
+    pub fn new_for_account_scope(
+        profile: ProfileSelector,
+        registration_id: [u8; 16],
+        client_key_id: [u8; 32],
+        client_public_key: [u8; 72],
+        server_public_key: [u8; 72],
+        profile_epoch: u64,
+        account_scope: hantong_contracts::account_scope::AccountScopeV2,
+    ) -> Result<Self, ErrorCode> {
+        if profile != ProfileSelector::Default {
+            return Err(ErrorCode::CapabilityUnsupported);
+        }
+        Self::new_for(
+            profile,
+            registration_id,
+            client_key_id,
+            client_public_key,
+            server_public_key,
+            profile_epoch,
+            RequestedScope::from_account_scope(account_scope)?,
+        )
+    }
     /// Parses bounded, untrusted bytes. CNG point validation and trusted file
     /// loading are separate requirements before attempting authentication.
     pub fn from_json(input: &[u8]) -> Result<Self, ErrorCode> {
@@ -269,6 +295,28 @@ impl ParsedClientProfile {
                 != Some(b'{')
         {
             return Err(ErrorCode::InvalidInput);
+        }
+        #[derive(Deserialize)]
+        struct SchemaProbe {
+            schema_version: u32,
+        }
+        let schema = serde_json::from_slice::<SchemaProbe>(input)
+            .map_err(|_| ErrorCode::InvalidInput)?
+            .schema_version;
+        if schema == 2 {
+            let typed = ParsedAccountClientProfile::from_json(input)?;
+            if typed.profile() != AccountProfileSelector::Default {
+                return Err(ErrorCode::CapabilityUnsupported);
+            }
+            return Self::new_for_account_scope(
+                ProfileSelector::Default,
+                *typed.registration_id(),
+                *typed.client_key_id(),
+                *typed.client_public_key(),
+                *typed.server_public_key(),
+                typed.profile_epoch(),
+                typed.scope().clone(),
+            );
         }
         let value: WireProfile =
             serde_json::from_slice(input).map_err(|_| ErrorCode::InvalidInput)?;
@@ -292,6 +340,18 @@ impl ParsedClientProfile {
     }
     /// Deterministic public-data encoding; publishing it is a separate operation.
     pub fn to_json(&self) -> Result<Vec<u8>, ErrorCode> {
+        if let Some(scope) = self.scope.account_scope() {
+            let typed = ParsedAccountClientProfile::new(
+                AccountProfileSelector::Default,
+                self.registration_id,
+                self.client_key_id,
+                self.client_public_key,
+                self.server_public_key,
+                self.profile_epoch,
+                scope.clone(),
+            )?;
+            return typed.to_json();
+        }
         let value = WireProfile {
             schema_version: 1,
             profile: self.profile.as_str().to_owned(),
@@ -332,7 +392,19 @@ impl ParsedClientProfile {
     pub fn scope(&self) -> &RequestedScope {
         &self.scope
     }
+    pub fn scope_model_version(&self) -> u8 {
+        self.scope.scope_model_version()
+    }
+    pub fn account_scope(&self) -> Option<&hantong_contracts::account_scope::AccountScopeV2> {
+        self.scope.account_scope()
+    }
     pub fn read_only(&self) -> bool {
+        if self.scope.scope_model_version() == 2 {
+            // Model 2 permissions are account-qualified; a global boolean
+            // cannot represent their authority without overblocking another
+            // account. Callers must use permits_account instead.
+            return false;
+        }
         !self.scope.tools().iter().any(|t| t == "mail.send.execute")
     }
     pub fn requests_per_minute(&self) -> u32 {
@@ -360,6 +432,7 @@ mod tests {
         assert!(!super::ProfileSelector::Default.permits_tools(&unknown));
     }
     use super::*;
+    use hantong_contracts::account_scope::{AccountGrantV2, AccountScopeV2};
     use hantong_contracts::wire_hex;
     use serde_json::{Value, json};
 
@@ -368,6 +441,22 @@ mod tests {
         let mut key = [fill; 72];
         key[..8].copy_from_slice(b"ECS1\x20\0\0\0");
         key
+    }
+    fn account_scope() -> AccountScopeV2 {
+        AccountScopeV2::new(
+            vec!["mail.accounts.list".into()],
+            vec![
+                AccountGrantV2::new("account_a".into(), vec!["mail.messages.get".into()], true)
+                    .unwrap(),
+                AccountGrantV2::new(
+                    "account_b".into(),
+                    vec!["mail.messages.get".into(), "mail.send.execute".into()],
+                    false,
+                )
+                .unwrap(),
+            ],
+        )
+        .unwrap()
     }
     fn value() -> Value {
         json!({
@@ -406,6 +495,95 @@ mod tests {
             );
             input["read_only"] = json!(!read_only);
             invalid(&input);
+        }
+    }
+
+    #[test]
+    fn acc02_model2_profile_dispatches_without_flattening_and_roundtrips() {
+        let profile = ParsedClientProfile::new_for_account_scope(
+            ProfileSelector::Default,
+            [1; 16],
+            [2; 32],
+            public_key(3),
+            public_key(4),
+            1,
+            account_scope(),
+        )
+        .unwrap();
+        assert_eq!(profile.scope().scope_model_version(), 2);
+        assert_eq!(profile.scope().tools(), &["mail.accounts.list".to_owned()]);
+        assert!(!profile.read_only());
+        assert!(
+            profile
+                .scope()
+                .permits_account("account_a", "mail.messages.get")
+        );
+        assert!(
+            !profile
+                .scope()
+                .permits_account("account_a", "mail.send.execute")
+        );
+        assert!(
+            profile
+                .scope()
+                .permits_account("account_b", "mail.send.execute")
+        );
+
+        let bytes = profile.to_json().unwrap();
+        let parsed = ParsedClientProfile::from_json(&bytes).unwrap();
+        assert_eq!(parsed, profile);
+        assert_eq!(parsed.to_json().unwrap(), bytes);
+    }
+
+    #[test]
+    fn acc02_model2_default_scope_keeps_read_only_per_account() {
+        let profile = ParsedClientProfile::new_for_account_scope(
+            ProfileSelector::Default,
+            [1; 16],
+            [2; 32],
+            public_key(3),
+            public_key(4),
+            1,
+            account_scope(),
+        )
+        .unwrap();
+        let scope = profile.account_scope().expect("typed scope");
+        assert!(scope.permits_account("account_a", "mail.messages.get"));
+        assert!(!scope.permits_account("account_a", "mail.send.execute"));
+        assert!(scope.permits_account("account_b", "mail.messages.get"));
+        assert!(scope.permits_account("account_b", "mail.send.execute"));
+        assert!(
+            scope
+                .grants()
+                .iter()
+                .find(|grant| grant.account_id() == "account_a")
+                .is_some_and(|grant| grant.read_only())
+        );
+        assert!(
+            scope
+                .grants()
+                .iter()
+                .find(|grant| grant.account_id() == "account_b")
+                .is_some_and(|grant| !grant.read_only())
+        );
+    }
+
+    #[test]
+    fn acc02_model2_non_default_selectors_are_explicitly_unsupported() {
+        let scope = account_scope();
+        for selector in [ProfileSelector::Gui, ProfileSelector::Mcp] {
+            assert_eq!(
+                ParsedClientProfile::new_for_account_scope(
+                    selector,
+                    [1; 16],
+                    [2; 32],
+                    public_key(3),
+                    public_key(4),
+                    1,
+                    scope.clone(),
+                ),
+                Err(ErrorCode::CapabilityUnsupported)
+            );
         }
     }
     #[test]

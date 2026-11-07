@@ -42,6 +42,7 @@ async fn run_recovery(
         windows::run_uid_recovery_connected(
             Source {
                 store: &store,
+                held_credential: None,
                 account: "acct",
                 endpoint: &endpoint,
                 accesses: Some(&accesses),

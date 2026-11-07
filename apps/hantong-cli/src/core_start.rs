@@ -33,6 +33,167 @@ pub(super) fn ensure_started() -> Result<(), ErrorCode> {
     }
 }
 
+/// The result pipe carries public completion metadata only. All interaction
+/// and protected input remain in the verified foreground Core consumer.
+pub(super) fn account_connect(
+    provider: hantong_contracts::account_connect::AccountConnectProvider,
+    account: Option<&str>,
+) -> Result<hantong_contracts::account_connect::AccountConnectReceipt, ErrorCode> {
+    account_connect_inner(provider, account, None)
+}
+
+pub(super) fn account_connect_imap(
+    request_id: [u8; 32],
+) -> Result<hantong_contracts::account_connect::AccountConnectReceipt, ErrorCode> {
+    account_connect_inner(
+        hantong_contracts::account_connect::AccountConnectProvider::ImapSmtp,
+        None,
+        Some(request_id),
+    )
+}
+
+fn account_connect_inner(
+    provider: hantong_contracts::account_connect::AccountConnectProvider,
+    account: Option<&str>,
+    imap_request: Option<[u8; 32]>,
+) -> Result<hantong_contracts::account_connect::AccountConnectReceipt, ErrorCode> {
+    use hantong_contracts::account_connect::{
+        self as wire, AccountConnectCommand, AccountConnectSelection,
+    };
+    use std::io::IsTerminal;
+    if !std::io::stdin().is_terminal() || !std::io::stdout().is_terminal() {
+        return Err(ErrorCode::HumanStepRequired);
+    }
+    let selection = imap_request.map_or_else(
+        || {
+            account.map_or(AccountConnectSelection::New, |id| {
+                AccountConnectSelection::Existing(id.to_owned())
+            })
+        },
+        AccountConnectSelection::ImapSetup,
+    );
+    wire::encode_request(
+        "connect-validation",
+        &AccountConnectCommand::Prepare {
+            provider,
+            selection,
+        },
+    )?;
+    let name = match provider {
+        wire::AccountConnectProvider::Google => "google",
+        wire::AccountConnectProvider::ImapSmtp => "imap-smtp",
+    };
+    #[cfg(windows)]
+    let mut command = {
+        let current = canonical_regular_file(
+            &std::env::current_exe().map_err(|_| ErrorCode::CoreUnavailable)?,
+        )?;
+        if current.file_name().and_then(|v| v.to_str()) != Some(CLI_NAME) {
+            return Err(ErrorCode::CoreUnavailable);
+        }
+        let bin = current.parent().ok_or(ErrorCode::CoreUnavailable)?;
+        validate_package(bin)?;
+        std::process::Command::new(bin.join(CORE_NAME))
+    };
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    let mut command = hantong_platform::unix_release::verified_core_command("hantong")?;
+    #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
+    {
+        let _ = name;
+        return Err(ErrorCode::CapabilityUnsupported);
+    }
+    #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
+    {
+        command.args(["account-connect", name]);
+        if let Some(account) = account {
+            command.args(["--account", account]);
+        }
+        if let Some(request) = imap_request {
+            command.args([
+                "--imap-request",
+                &hantong_contracts::wire_hex::encode(&request),
+            ]);
+        }
+        let child = command
+            .stdin(std::process::Stdio::inherit())
+            .stderr(std::process::Stdio::inherit())
+            .stdout(std::process::Stdio::piped())
+            .spawn()
+            .map_err(|_| ErrorCode::CoreUnavailable)?;
+        let bytes = account_connect_result(child)?;
+        validate_account_connect_result(&bytes, provider, account)
+    }
+}
+
+fn validate_account_connect_result(
+    bytes: &[u8],
+    provider: hantong_contracts::account_connect::AccountConnectProvider,
+    account: Option<&str>,
+) -> Result<hantong_contracts::account_connect::AccountConnectReceipt, ErrorCode> {
+    let receipt = hantong_contracts::account_connect::AccountConnectReceipt::from_json(bytes)?;
+    if receipt.provider != provider
+        || receipt.state != "ready"
+        || account.is_some_and(|id| receipt.account_id.as_deref() != Some(id))
+    {
+        return Err(ErrorCode::Conflict);
+    }
+    Ok(receipt)
+}
+
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
+fn account_connect_result(mut child: std::process::Child) -> Result<Vec<u8>, ErrorCode> {
+    use std::io::Read;
+    let Some(stdout) = child.stdout.take() else {
+        let _ = child.kill();
+        let _ = child.wait();
+        return Err(ErrorCode::CoreUnavailable);
+    };
+    let (send, receive) = std::sync::mpsc::sync_channel(1);
+    std::thread::spawn(move || {
+        let mut bytes = Vec::new();
+        let result = stdout.take(4097).read_to_end(&mut bytes).map(|_| bytes);
+        let _ = send.send(result);
+    });
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(310);
+    let mut result = None;
+    loop {
+        if result.is_none()
+            && let Ok(value) = receive.try_recv()
+        {
+            result = Some(value);
+        }
+        if result
+            .as_ref()
+            .is_some_and(|r| r.as_ref().is_ok_and(|bytes| bytes.len() > 4096))
+            || std::time::Instant::now() >= deadline
+        {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(ErrorCode::CoreUnavailable);
+        }
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                if !status.success() {
+                    return Err(ErrorCode::ALL
+                        .into_iter()
+                        .find(|code| Some(code.exit_code()) == status.code())
+                        .unwrap_or(ErrorCode::CoreUnavailable));
+                }
+                return result
+                    .or_else(|| receive.recv_timeout(std::time::Duration::from_secs(1)).ok())
+                    .ok_or(ErrorCode::CoreUnavailable)?
+                    .map_err(|_| ErrorCode::CoreUnavailable);
+            }
+            Ok(None) => std::thread::sleep(std::time::Duration::from_millis(25)),
+            Err(_) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(ErrorCode::CoreUnavailable);
+            }
+        }
+    }
+}
+
 /// Run the package-verified Core helper in this console. No native window and
 /// no credential plaintext pass through the CLI.
 pub(super) fn review(
@@ -592,6 +753,45 @@ fn hex_hash(path: &std::path::Path) -> Result<String, ErrorCode> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn sec03_account_connect_result_requires_exact_provider_account_and_ready() {
+        use hantong_contracts::account_connect::{
+            AccountConnectProvider as P, AccountConnectReceipt,
+        };
+        let mut r = AccountConnectReceipt {
+            intent_id: [1; 32],
+            expires_at_utc_ms: 10,
+            state: "ready".into(),
+            provider: P::Google,
+            account_id: Some("account_b".into()),
+            login_url: None,
+            error_code: None,
+        };
+        let bytes = r.to_json().unwrap();
+        assert!(
+            super::validate_account_connect_result(&bytes, P::Google, Some("account_b")).is_ok()
+        );
+        assert_eq!(
+            super::validate_account_connect_result(&bytes, P::Google, Some("account_a")),
+            Err(hantong_contracts::ErrorCode::Conflict)
+        );
+        assert_eq!(
+            super::validate_account_connect_result(&bytes, P::ImapSmtp, None),
+            Err(hantong_contracts::ErrorCode::Conflict)
+        );
+        r.state = "staged".into();
+        assert_eq!(
+            super::validate_account_connect_result(&r.to_json().unwrap(), P::Google, None),
+            Err(hantong_contracts::ErrorCode::Conflict)
+        );
+        let mut partial = bytes.clone();
+        partial.pop();
+        assert!(super::validate_account_connect_result(&partial, P::Google, None).is_err());
+        assert!(
+            super::validate_account_connect_result(&vec![b' '; 4097], P::Google, None).is_err()
+        );
+    }
+
     use super::*;
 
     #[test]

@@ -1,7 +1,7 @@
 //! Canonical, bounded signature input. These values are data, not proof of
 //! authentication or authorization; only the server's connection may own proof.
 
-use crate::ErrorCode;
+use crate::{ErrorCode, account_scope::AccountScopeV2};
 use std::fmt;
 
 const MAX_ITEMS: usize = 128;
@@ -108,6 +108,7 @@ fn valid_sid(value: &str) -> bool {
 pub struct RequestedScope {
     accounts: Vec<String>,
     tools: Vec<String>,
+    account_scope: Option<AccountScopeV2>,
 }
 impl RequestedScope {
     pub fn new(mut accounts: Vec<String>, mut tools: Vec<String>) -> Result<Self, ErrorCode> {
@@ -144,7 +145,26 @@ impl RequestedScope {
                 return Err(ErrorCode::InvalidInput);
             }
         }
-        Ok(Self { accounts, tools })
+        Ok(Self {
+            accounts,
+            tools,
+            account_scope: None,
+        })
+    }
+    /// Builds the model-2 representation without flattening account grants
+    /// into the legacy global tool list.
+    pub fn from_account_scope(scope: AccountScopeV2) -> Result<Self, ErrorCode> {
+        let accounts = scope
+            .grants()
+            .iter()
+            .map(|grant| grant.account_id().to_owned())
+            .collect();
+        let tools = scope.principal_tools().to_vec();
+        let legacy = Self::new(accounts, tools)?;
+        Ok(Self {
+            account_scope: Some(scope),
+            ..legacy
+        })
     }
     pub fn accounts(&self) -> &[String] {
         &self.accounts
@@ -152,7 +172,16 @@ impl RequestedScope {
     pub fn tools(&self) -> &[String] {
         &self.tools
     }
+    pub fn scope_model_version(&self) -> u8 {
+        if self.account_scope.is_some() { 2 } else { 1 }
+    }
+    pub fn account_scope(&self) -> Option<&AccountScopeV2> {
+        self.account_scope.as_ref()
+    }
     pub fn permits_account(&self, account: &str, tool: &str) -> bool {
+        if let Some(scope) = &self.account_scope {
+            return scope.permits_account(account, tool);
+        }
         if matches!(
             tool,
             crate::google_mutation::REQUEST_TOOL | crate::google_mutation::EXECUTE_TOOL
@@ -164,6 +193,27 @@ impl RequestedScope {
         self.accounts.iter().any(|v| v == account) && self.tools.iter().any(|v| v == tool)
     }
     pub fn intersection(&self, other: &Self) -> Self {
+        if self.account_scope.is_some() || other.account_scope.is_some() {
+            let left = self
+                .account_scope
+                .clone()
+                .or_else(|| AccountScopeV2::from_legacy(self, false).ok());
+            let right = other
+                .account_scope
+                .clone()
+                .or_else(|| AccountScopeV2::from_legacy(other, false).ok());
+            if let (Some(left), Some(right)) = (left, right)
+                && let Ok(scope) = left.intersection(&right)
+                && let Ok(value) = Self::from_account_scope(scope)
+            {
+                return value;
+            }
+            return Self::from_account_scope(
+                AccountScopeV2::new(Vec::new(), Vec::new())
+                    .expect("empty account scope is always valid"),
+            )
+            .expect("empty account scope conversion is always valid");
+        }
         Self {
             accounts: self
                 .accounts
@@ -183,6 +233,7 @@ impl RequestedScope {
                 })
                 .cloned()
                 .collect(),
+            account_scope: None,
         }
     }
 }
@@ -214,6 +265,9 @@ impl fmt::Debug for AuthTranscript {
 }
 impl AuthTranscript {
     pub fn encode(&self, role: SignerRole) -> Result<Vec<u8>, ErrorCode> {
+        if self.scope.scope_model_version() != 1 {
+            return Err(ErrorCode::InvalidInput);
+        }
         self.issued_at_utc_ms
             .checked_add(30_000)
             .ok_or(ErrorCode::InvalidInput)?;
@@ -382,6 +436,7 @@ fn push_string(out: &mut Vec<u8>, value: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::account_scope::{AccountGrantV2, AccountScopeV2};
 
     fn fixture() -> AuthTranscript {
         AuthTranscript {
@@ -564,6 +619,101 @@ mod tests {
             RequestedScope::new(vec!["account_a".into()], vec!["mail.messages.get".into()])
                 .unwrap();
         assert_eq!(full.intersection(&restricted), restricted);
+    }
+
+    #[test]
+    fn sec03_account_scope_intersection_is_pointwise_and_preserves_read_only() {
+        let left = AccountScopeV2::new(
+            vec!["mail.accounts.list".into()],
+            vec![
+                AccountGrantV2::new(
+                    "account_a".into(),
+                    vec!["mail.messages.get".into(), "mail.send.request".into()],
+                    false,
+                )
+                .unwrap(),
+                AccountGrantV2::new("account_b".into(), vec!["mail.messages.get".into()], false)
+                    .unwrap(),
+            ],
+        )
+        .unwrap();
+        let right = AccountScopeV2::new(
+            vec!["mail.accounts.list".into()],
+            vec![
+                AccountGrantV2::new("account_a".into(), vec!["mail.messages.get".into()], true)
+                    .unwrap(),
+                AccountGrantV2::new("account_c".into(), vec!["mail.messages.get".into()], false)
+                    .unwrap(),
+            ],
+        )
+        .unwrap();
+        let intersection =
+            RequestedScope::from_account_scope(left.intersection(&right).unwrap()).unwrap();
+
+        assert_eq!(intersection.scope_model_version(), 2);
+        assert!(intersection.permits_account("account_a", "mail.messages.get"));
+        assert!(!intersection.permits_account("account_a", "mail.send.request"));
+        assert!(!intersection.permits_account("account_b", "mail.messages.get"));
+        assert!(!intersection.permits_account("account_c", "mail.messages.get"));
+        assert!(
+            intersection
+                .account_scope()
+                .unwrap()
+                .grants()
+                .iter()
+                .find(|grant| grant.account_id() == "account_a")
+                .unwrap()
+                .read_only()
+        );
+        assert_eq!(intersection.tools(), &["mail.accounts.list".to_owned()]);
+    }
+
+    #[test]
+    fn sec03_legacy_v2_intersection_does_not_flatten_account_tools() {
+        let legacy = RequestedScope::new(
+            vec!["account_a".into(), "account_b".into()],
+            vec!["mail.messages.get".into(), "mail.send.request".into()],
+        )
+        .unwrap();
+        let qualified = AccountScopeV2::new(
+            Vec::new(),
+            vec![
+                AccountGrantV2::new("account_a".into(), vec!["mail.messages.get".into()], false)
+                    .unwrap(),
+                AccountGrantV2::new("account_b".into(), vec!["mail.send.request".into()], false)
+                    .unwrap(),
+            ],
+        )
+        .unwrap();
+        let intersection =
+            legacy.intersection(&RequestedScope::from_account_scope(qualified).unwrap());
+
+        assert_eq!(intersection.scope_model_version(), 2);
+        assert!(intersection.permits_account("account_a", "mail.messages.get"));
+        assert!(!intersection.permits_account("account_a", "mail.send.request"));
+        assert!(!intersection.permits_account("account_b", "mail.messages.get"));
+        assert!(intersection.permits_account("account_b", "mail.send.request"));
+    }
+
+    #[test]
+    fn sec03_legacy_auth_encoding_rejects_account_scope_v2() {
+        let scope = AccountScopeV2::new(
+            vec!["mail.accounts.list".into()],
+            vec![
+                AccountGrantV2::new("account_a".into(), vec!["mail.messages.get".into()], false)
+                    .unwrap(),
+            ],
+        )
+        .unwrap();
+        let transcript = AuthTranscript {
+            scope: RequestedScope::from_account_scope(scope).unwrap(),
+            ..fixture()
+        };
+        assert_eq!(transcript.scope.scope_model_version(), 2);
+        assert_eq!(
+            transcript.encode(SignerRole::Server),
+            Err(ErrorCode::InvalidInput)
+        );
     }
 
     #[test]

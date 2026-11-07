@@ -17,7 +17,7 @@ mod client_secret;
 #[cfg(any(windows, test, target_os = "linux", target_os = "macos"))]
 pub mod compose;
 #[cfg(any(windows, test, target_os = "linux", target_os = "macos"))]
-mod crypto;
+pub(crate) mod crypto;
 #[cfg(any(windows, test, target_os = "linux", target_os = "macos"))]
 mod diagnostics;
 #[cfg(any(windows, test, target_os = "linux", target_os = "macos"))]

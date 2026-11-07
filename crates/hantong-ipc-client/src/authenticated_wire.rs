@@ -3,16 +3,90 @@
 //! Connection-owned client authentication over bounded JSON-RPC frames.
 
 use crate::{
-    auth::PendingClientAuthentication,
+    auth::{PendingAccountClientAuthentication, PendingClientAuthentication},
     auth_diagnostic::{Stage, step},
     auth_wire,
 };
+use hantong_contracts::account_auth::AccountAuthRevision;
 use hantong_contracts::{ErrorCode, auth::AuthTranscript};
 use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 const MAX_AUTH_FRAME: usize = 131_072;
 const MAX_TOOL_FRAME: usize = 1_048_576;
+
+pub enum PendingProfileAuthentication {
+    Legacy(PendingClientAuthentication),
+    Account(PendingAccountClientAuthentication),
+}
+
+pub async fn authenticate_selected(
+    pending: PendingProfileAuthentication,
+    id: &str,
+) -> Result<AuthenticatedClient<impl AsyncRead + AsyncWrite + Unpin>, ErrorCode> {
+    let transport = hantong_platform::connect()
+        .await
+        .map_err(|_| ErrorCode::AuthRequired)?;
+    match pending {
+        PendingProfileAuthentication::Legacy(pending) => {
+            authenticate_connected(transport, pending, id).await
+        }
+        PendingProfileAuthentication::Account(pending) => {
+            authenticate_account_connected(transport, pending, id).await
+        }
+    }
+}
+
+pub async fn authenticate_account(
+    pending: PendingAccountClientAuthentication,
+    id: &str,
+) -> Result<AuthenticatedClient<impl AsyncRead + AsyncWrite + Unpin>, ErrorCode> {
+    let transport = step(
+        Stage::Connect,
+        hantong_platform::connect()
+            .await
+            .map_err(|_| ErrorCode::AuthRequired),
+    )?;
+    authenticate_account_connected(transport, pending, id).await
+}
+
+pub async fn authenticate_account_connected<S>(
+    transport: S,
+    pending: PendingAccountClientAuthentication,
+    id: &str,
+) -> Result<AuthenticatedClient<S>, ErrorCode>
+where
+    S: AsyncRead + AsyncWrite + Unpin,
+{
+    let begin = crate::account_auth_wire::begin_request(
+        id,
+        AccountAuthRevision::WindowsV2,
+        pending.registration_id(),
+        pending.profile_epoch(),
+        pending.client_nonce(),
+        pending.requested_scope(),
+    )?;
+    let (transport, pending, challenge, server_signature) = step(
+        Stage::BeginTimeout,
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            begin_account_challenge(transport, pending, id, begin),
+        )
+        .await
+        .map_err(|_| ErrorCode::AuthRequired),
+    )??;
+    let (transport, ready) = step(
+        Stage::FinishTimeout,
+        tokio::time::timeout(
+            Duration::from_secs(25),
+            finish_account(transport, pending, challenge, server_signature, id),
+        )
+        .await
+        .map_err(|_| ErrorCode::AuthRequired),
+    )??;
+    crate::account_auth_wire::parse_ready(&ready, id, AccountAuthRevision::WindowsV2)?;
+    Ok(AuthenticatedClient { transport })
+}
 
 pub struct AuthenticatedClient<S> {
     transport: S,
@@ -76,7 +150,12 @@ fn validate_exchange_field(value: &str, max: usize, method: bool) -> Result<(), 
             && !value.starts_with("mail.")
             && !matches!(
                 value,
-                "app.settings.display.get" | "app.diagnostics.snapshot"
+                "app.settings.display.get"
+                    | "app.diagnostics.snapshot"
+                    | hantong_contracts::account_connect::PREPARE_METHOD
+                    | hantong_contracts::account_connect::STATUS_METHOD
+                    | hantong_contracts::account_connect::COMPLETE_METHOD
+                    | hantong_contracts::account_connect::CANCEL_METHOD
             ))
     {
         return Err(ErrorCode::InvalidInput);
@@ -99,9 +178,24 @@ where
         "method": method,
         "params": params,
     });
+    if matches!(
+        method,
+        hantong_contracts::account_connect::PREPARE_METHOD
+            | hantong_contracts::account_connect::STATUS_METHOD
+            | hantong_contracts::account_connect::COMPLETE_METHOD
+            | hantong_contracts::account_connect::CANCEL_METHOD
+    ) {
+        hantong_contracts::account_connect::parse_request(
+            &serde_json::to_vec(&request).map_err(|_| ErrorCode::InvalidInput)?,
+        )?;
+    }
     let (request_limit, response_limit) = match method {
         "app.settings.display.get" => (4096, 4096),
         "app.diagnostics.snapshot" => (4096, 36864),
+        hantong_contracts::account_connect::PREPARE_METHOD
+        | hantong_contracts::account_connect::STATUS_METHOD
+        | hantong_contracts::account_connect::COMPLETE_METHOD
+        | hantong_contracts::account_connect::CANCEL_METHOD => (4096, 4096),
         _ => (MAX_TOOL_FRAME, MAX_TOOL_FRAME),
     };
     write_frame_with_limit(
@@ -177,6 +271,59 @@ where
     let (challenge, signature) =
         step(Stage::ChallengeParse, auth_wire::parse_challenge(&body, id))?;
     Ok((transport, pending, challenge, signature))
+}
+
+async fn begin_account_challenge<S>(
+    mut transport: S,
+    pending: PendingAccountClientAuthentication,
+    id: &str,
+    begin: serde_json::Value,
+) -> Result<
+    (
+        S,
+        PendingAccountClientAuthentication,
+        hantong_contracts::account_auth::AccountAuthTranscript,
+        [u8; 64],
+    ),
+    ErrorCode,
+>
+where
+    S: AsyncRead + AsyncWrite + Unpin,
+{
+    step(Stage::BeginWrite, write_frame(&mut transport, &begin).await)?;
+    let body = step(Stage::ChallengeRead, read_frame(&mut transport).await)?;
+    let (challenge, signature) = step(
+        Stage::ChallengeParse,
+        crate::account_auth_wire::parse_challenge(&body, id, AccountAuthRevision::WindowsV2),
+    )?;
+    Ok((transport, pending, challenge, signature))
+}
+
+async fn finish_account<S>(
+    mut transport: S,
+    pending: PendingAccountClientAuthentication,
+    challenge: hantong_contracts::account_auth::AccountAuthTranscript,
+    server_signature: [u8; 64],
+    id: &str,
+) -> Result<(S, Vec<u8>), ErrorCode>
+where
+    S: AsyncRead + AsyncWrite + Unpin,
+{
+    let now_utc_ms: i64 = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|_| ErrorCode::AuthRequired)?
+        .as_millis()
+        .try_into()
+        .map_err(|_| ErrorCode::AuthRequired)?;
+    let signature = pending.respond(challenge, &server_signature, now_utc_ms)?;
+    let finish = crate::account_auth_wire::finish_request(id, &signature)
+        .map_err(|_| ErrorCode::AuthRequired)?;
+    step(
+        Stage::FinishWrite,
+        write_frame(&mut transport, &finish).await,
+    )?;
+    let ready = step(Stage::ReadyRead, read_frame(&mut transport).await)?;
+    Ok((transport, ready))
 }
 
 async fn finish_ready<S>(

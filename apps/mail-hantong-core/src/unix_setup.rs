@@ -56,13 +56,28 @@ pub(crate) struct State {
     pub(crate) secret_reviews: RefCell<BTreeMap<[u8; 32], SecretReview>>,
     action_reviews: RefCell<BTreeMap<[u8; 32], ActionReview>>,
     action_jobs: RefCell<VecDeque<ActionReview>>,
+    smtp_jobs: RefCell<VecDeque<[u8; 32]>>,
     secret_jobs: RefCell<VecDeque<SecretJob>>,
     active_secret_job: Cell<Option<[u8; 32]>>,
+    active_smtp_job: Cell<Option<[u8; 32]>>,
     action_notify: Rc<tokio::sync::Notify>,
     pub(crate) policy: Rc<RefCell<hantong_policy::ReadPolicy>>,
 }
 
 impl State {
+    pub(crate) fn submitted_setup_capture(
+        &self,
+        command: &SetupCommand,
+    ) -> Option<(TerminalReviewKind, [u8; 32])> {
+        let SetupCommand::TerminalReview(TerminalReviewCommand::SecretSubmit(submit)) = command
+        else {
+            return None;
+        };
+        self.secret_reviews
+            .borrow()
+            .get(&submit.ticket)
+            .map(|entry| (entry.kind, entry.request_id))
+    }
     pub(crate) fn new(google: crate::unix_google::State) -> Self {
         Self {
             google,
@@ -71,8 +86,10 @@ impl State {
             secret_reviews: RefCell::new(BTreeMap::new()),
             action_reviews: RefCell::new(BTreeMap::new()),
             action_jobs: RefCell::new(VecDeque::new()),
+            smtp_jobs: RefCell::new(VecDeque::new()),
             secret_jobs: RefCell::new(VecDeque::new()),
             active_secret_job: Cell::new(None),
+            active_smtp_job: Cell::new(None),
             action_notify: Rc::new(tokio::sync::Notify::new()),
             policy: Rc::new(RefCell::new(hantong_policy::ReadPolicy::new())),
         }
@@ -105,6 +122,20 @@ impl State {
         self.active_secret_job.get().is_some()
             || !self.secret_jobs.borrow().is_empty()
             || !self.secret_reviews.borrow().is_empty()
+    }
+
+    fn enqueue_smtp_reprobe(&self, id: [u8; 32]) -> Result<(), ErrorCode> {
+        if self.active_smtp_job.get() == Some(id)
+            || self.smtp_jobs.borrow().iter().any(|queued| *queued == id)
+        {
+            return Ok(());
+        }
+        if self.active_smtp_job.get().is_some() || !self.smtp_jobs.borrow().is_empty() {
+            return Err(ErrorCode::RateLimited);
+        }
+        self.smtp_jobs.borrow_mut().push_back(id);
+        self.action_notify.notify_one();
+        Ok(())
     }
 
     fn check_secret_review_slot(&self, id: [u8; 32]) -> Result<(), ErrorCode> {
@@ -168,6 +199,18 @@ impl State {
         Some(result)
     }
 
+    async fn run_next_smtp_job(
+        &self,
+        store: &Store,
+        secrets_root: &Path,
+    ) -> Option<Result<(), ErrorCode>> {
+        let id = self.smtp_jobs.borrow_mut().pop_front()?;
+        self.active_smtp_job.set(Some(id));
+        let result = crate::setup_smtp::reprobe_existing(store, secrets_root, &self.smtp, id).await;
+        self.active_smtp_job.set(None);
+        Some(result)
+    }
+
     async fn run_next_secret_job(
         &self,
         store: &Store,
@@ -221,6 +264,7 @@ impl State {
                 .run_next_action_job(store, secrets_root)
                 .await
                 .is_none()
+                && self.run_next_smtp_job(store, secrets_root).await.is_none()
                 && self
                     .run_next_secret_job(store, secrets_root)
                     .await
@@ -231,13 +275,32 @@ impl State {
         }
     }
 
-    fn prune_expired_reviews(&self, now: i64) {
+    fn prune_expired_reviews(&self, now: i64, root: &Path) -> Result<(), ErrorCode> {
         self.action_reviews
             .borrow_mut()
             .retain(|_, review| review.expires_at_utc_ms > now);
-        self.secret_reviews
-            .borrow_mut()
-            .retain(|_, review| review.ticket.binding().expires_at_utc_ms() > now);
+        let expired = self
+            .secret_reviews
+            .borrow()
+            .iter()
+            .filter(|(_, r)| r.ticket.binding().expires_at_utc_ms() <= now)
+            .map(|(id, _)| *id)
+            .collect::<Vec<_>>();
+        if !expired.is_empty() {
+            let secrets =
+                hantong_secrets::SecretStore::open(root).map_err(|_| ErrorCode::InternalError)?;
+            let mut reviews = self.secret_reviews.borrow_mut();
+            for id in expired {
+                let review = reviews.get(&id).ok_or(ErrorCode::InternalError)?;
+                match secrets.discard_terminal_secret(&review.ticket, review.ticket.opaque_id()) {
+                    Ok(()) | Err(hantong_secrets::SecretError::NotFound) => {
+                        reviews.remove(&id);
+                    }
+                    Err(_) => return Err(ErrorCode::InternalError),
+                }
+            }
+        }
+        Ok(())
     }
 }
 
@@ -381,8 +444,13 @@ pub(crate) fn dispatch(
         },
         SetupCommand::Smtp(command) => match command {
             SmtpSetupCommand::Request(input) => {
-                crate::setup_smtp::request(store, secrets_root, &state.smtp, input)
-                    .map(SetupReceipt::Smtp)
+                let receipt = crate::setup_smtp::request(store, secrets_root, &state.smtp, input)?;
+                if receipt.state == hantong_contracts::smtp_setup::SmtpSetupState::Pending
+                    && crate::setup_smtp::needs_reprobe(&state.smtp, receipt.request_id)?
+                {
+                    state.enqueue_smtp_reprobe(receipt.request_id)?;
+                }
+                Ok(SetupReceipt::Smtp(receipt))
             }
             SmtpSetupCommand::Status(id) => {
                 crate::setup_smtp::status(&state.smtp, id, true).map(SetupReceipt::Smtp)
@@ -901,7 +969,7 @@ pub(crate) async fn dispatch_async(
     peer: hantong_contracts::unix_auth::UnixPeerContextV2,
     command: SetupCommand,
 ) -> Result<SetupReceipt, ErrorCode> {
-    state.prune_expired_reviews(now_ms()?);
+    state.prune_expired_reviews(now_ms()?, secrets_root)?;
     match command {
         SetupCommand::Google(hantong_contracts::google_setup::GoogleSetupCommand::Request(
             input,
@@ -1296,6 +1364,42 @@ fn now_ms() -> Result<i64, ErrorCode> {
 mod secret_submit_tests {
     use super::*;
     use hantong_contracts::terminal_review::TerminalReviewSecretSubmit;
+
+    #[test]
+    fn sec08_expired_review_retains_cleanup_selector_until_exact_discard() {
+        let root = crate::account_connect_generic::tests::Fixture::new();
+        let (state, _, _) = fixture();
+        let secrets = hantong_secrets::SecretStore::open(&root.root).unwrap();
+        let handle = {
+            let reviews = state.secret_reviews.borrow();
+            secrets
+                .stage_terminal_secret(
+                    &reviews[&[2; 32]].ticket,
+                    std::io::Cursor::new(b"synthetic-only"),
+                )
+                .unwrap()
+        };
+        let path = root.root.join(format!(
+            "terminal-v1-{}.stage",
+            hantong_contracts::wire_hex::encode(&handle.opaque_id())
+        ));
+        assert!(path.exists());
+        assert_eq!(
+            state.prune_expired_reviews(i64::MAX, Path::new("relative")),
+            Err(ErrorCode::InternalError)
+        );
+        assert_eq!(state.secret_reviews.borrow().len(), 1);
+        assert!(path.exists());
+        state.prune_expired_reviews(i64::MAX, &root.root).unwrap();
+        assert!(state.secret_reviews.borrow().is_empty());
+        assert!(!path.exists());
+        assert!(
+            root.store
+                .list_staged_full_mail_decisions()
+                .unwrap()
+                .is_empty()
+        );
+    }
 
     fn fixture() -> (
         State,

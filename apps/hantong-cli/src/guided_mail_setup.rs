@@ -178,6 +178,27 @@ pub(super) fn run(lang: Lang, io: &mut dyn Io) -> Result<String, ErrorCode> {
         endpoint(io, lang, "imap_host", "imap_port", "imap_tls", "imap_login")?;
     let display_name = format!("{login} @ {host}").chars().take(128).collect();
     let input = ImapSetupInput::new(Some(display_name), None, host, port, tls, login)?;
+    // Existing Default consumers bind this exact pending request before either
+    // protected capture; the helper continues both IMAP and SMTP in one process.
+    match hantong_platform::load_default_client_profile() {
+        Ok(_) => {
+            let receipt =
+                hantong_ipc_client::imap_setup::exchange(ImapSetupCommand::Request(input))?;
+            let connected = match receipt.state() {
+                ImapSetupState::Pending => {
+                    super::core_start::account_connect_imap(*receipt.request_id())?
+                }
+                ImapSetupState::Ready => super::core_start::account_connect(
+                    hantong_contracts::account_connect::AccountConnectProvider::ImapSmtp,
+                    Some(receipt.account_id().ok_or(ErrorCode::Conflict)?),
+                )?,
+                _ => return Err(imap_setup_error(receipt.state())),
+            };
+            return connected.account_id.ok_or(ErrorCode::CoreUnavailable);
+        }
+        Err(ErrorCode::ClientNotRegistered) => {}
+        Err(error) => return Err(error),
+    }
     let receipt = super::terminal_workflows::imap(ImapSetupCommand::Request(input), lang)?;
     let receipt = resume_interrupted_imap(&receipt, lang, io, |request_id, lang| {
         super::terminal_workflows::imap(ImapSetupCommand::Resume(request_id), lang)

@@ -1,8 +1,9 @@
 //! Connection-owned Unix auth-v2 handshake and protected exchange.
 #![cfg(unix)]
 
-use crate::unix_auth::PendingUnixAuthentication;
+use crate::unix_auth::{PendingUnixAccountAuthentication, PendingUnixAuthentication};
 use crate::unix_auth_wire;
+use hantong_contracts::account_auth::AccountAuthRevision;
 use hantong_contracts::{ErrorCode, platform::OpaqueSigner};
 use hantong_platform::unix_transport::UnixLocalConnection;
 use serde_json::Value;
@@ -11,6 +12,43 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 const MAX_AUTH_FRAME: usize = 131_072;
 const MAX_TOOL_FRAME: usize = 1_048_576;
+
+pub async fn authenticate_account_connected<S: OpaqueSigner>(
+    mut pending: PendingUnixAccountAuthentication<S>,
+    id: &str,
+) -> Result<AuthenticatedUnixClient, ErrorCode> {
+    let overall = tokio::time::Instant::now() + Duration::from_secs(30);
+    let begin = crate::account_auth_wire::begin_request(
+        id,
+        AccountAuthRevision::UnixV3,
+        pending.registration_id(),
+        pending.profile_epoch(),
+        pending.client_nonce(),
+        pending.requested_scope(),
+    )?;
+    tokio::time::timeout_at(
+        overall,
+        write_json(pending.transport()?, &begin, MAX_AUTH_FRAME),
+    )
+    .await
+    .map_err(|_| ErrorCode::AuthRequired)??;
+    let body = tokio::time::timeout_at(overall, read_frame(pending.transport()?, MAX_AUTH_FRAME))
+        .await
+        .map_err(|_| ErrorCode::AuthRequired)??;
+    let (challenge, server_signature) =
+        crate::account_auth_wire::parse_challenge(&body, id, AccountAuthRevision::UnixV3)?;
+    let (mut transport, signature) =
+        pending.respond_connected(challenge, &server_signature, utc_now()?)?;
+    let finish = crate::account_auth_wire::finish_request(id, &signature)?;
+    tokio::time::timeout_at(overall, write_json(&mut transport, &finish, MAX_AUTH_FRAME))
+        .await
+        .map_err(|_| ErrorCode::AuthRequired)??;
+    let body = tokio::time::timeout_at(overall, read_frame(&mut transport, MAX_AUTH_FRAME))
+        .await
+        .map_err(|_| ErrorCode::AuthRequired)??;
+    crate::account_auth_wire::parse_ready(&body, id, AccountAuthRevision::UnixV3)?;
+    Ok(AuthenticatedUnixClient { transport })
+}
 
 pub struct AuthenticatedUnixClient {
     transport: UnixLocalConnection,
@@ -24,39 +62,9 @@ impl AuthenticatedUnixClient {
         method: &str,
         params: &Value,
     ) -> Result<Vec<u8>, ErrorCode> {
-        let special = matches!(
-            method,
-            "app.settings.display.get" | "app.diagnostics.snapshot"
-        );
-        if id.is_empty()
-            || id.len() > 64
-            || method.is_empty()
-            || method.len() > 128
-            || !id.bytes().all(|byte| {
-                byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b':' | b'-')
-            })
-            || !method.bytes().all(|byte| {
-                byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b':' | b'-')
-            })
-            || (!method.starts_with("mail.") && !special)
-            || !params.is_object()
-        {
-            return Err(ErrorCode::InvalidInput);
-        }
-        let request = serde_json::json!({
-            "jsonrpc": "2.0",
-            "id": id,
-            "method": method,
-            "params": params,
-        });
+        let (request, request_limit, response_limit) =
+            validate_exchange_request(id, method, params)?;
         let mut transport = self.transport;
-        let (request_limit, response_limit) = if method == "app.settings.display.get" {
-            (4_096, 4_096)
-        } else if method == "app.diagnostics.snapshot" {
-            (4_096, 36_864)
-        } else {
-            (MAX_TOOL_FRAME, MAX_TOOL_FRAME)
-        };
         let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
         exchange_over(
             &mut transport,
@@ -67,6 +75,59 @@ impl AuthenticatedUnixClient {
         )
         .await
     }
+}
+
+fn validate_exchange_request(
+    id: &str,
+    method: &str,
+    params: &Value,
+) -> Result<(Value, usize, usize), ErrorCode> {
+    let account_connect = matches!(
+        method,
+        hantong_contracts::account_connect::PREPARE_METHOD
+            | hantong_contracts::account_connect::STATUS_METHOD
+            | hantong_contracts::account_connect::COMPLETE_METHOD
+            | hantong_contracts::account_connect::CANCEL_METHOD
+            | hantong_contracts::account_connect::BIND_SMTP_METHOD
+    );
+    let special = matches!(
+        method,
+        "app.settings.display.get" | "app.diagnostics.snapshot"
+    );
+    if id.is_empty()
+        || id.len() > 64
+        || method.is_empty()
+        || method.len() > 128
+        || !id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b':' | b'-'))
+        || !method
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b':' | b'-'))
+        || (!method.starts_with("mail.") && !special && !account_connect)
+        || !params.is_object()
+    {
+        return Err(ErrorCode::InvalidInput);
+    }
+    let request = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "method": method,
+        "params": params,
+    });
+    if account_connect {
+        hantong_contracts::account_connect::parse_request(
+            &serde_json::to_vec(&request).map_err(|_| ErrorCode::InvalidInput)?,
+        )?;
+    }
+    let limits = if account_connect || method == "app.settings.display.get" {
+        (4_096, 4_096)
+    } else if method == "app.diagnostics.snapshot" {
+        (4_096, 36_864)
+    } else {
+        (MAX_TOOL_FRAME, MAX_TOOL_FRAME)
+    };
+    Ok((request, limits.0, limits.1))
 }
 
 async fn exchange_over<T: AsyncRead + AsyncWrite + Unpin>(
@@ -283,5 +344,54 @@ mod tests {
             Err(ErrorCode::CoreUnavailable)
         );
         assert!(stalled.receipt_attempted);
+    }
+
+    #[tokio::test]
+    async fn unix_v2_account_connect_methods_are_exact_and_bounded() {
+        let (mut client, mut peer) = duplex(4096);
+        let task = tokio::spawn(async move {
+            let length = peer.read_u32_le().await.unwrap() as usize;
+            assert!(length <= 4096);
+            let mut body = vec![0; length];
+            peer.read_exact(&mut body).await.unwrap();
+            let parsed = hantong_contracts::account_connect::parse_request(&body).unwrap();
+            assert_eq!(
+                parsed.1,
+                hantong_contracts::account_connect::AccountConnectCommand::Status([7; 32])
+            );
+            let response = br#"{"jsonrpc":"2.0","id":"r","result":{}}"#;
+            peer.write_u32_le(response.len() as u32).await.unwrap();
+            peer.write_all(response).await.unwrap();
+            assert_eq!(peer.read_u8().await.unwrap(), 0x06);
+        });
+        let (request, request_limit, response_limit) = validate_exchange_request(
+            "r",
+            hantong_contracts::account_connect::STATUS_METHOD,
+            &serde_json::json!({
+                "protocol_version": 1,
+                "intent_id": "0707070707070707070707070707070707070707070707070707070707070707",
+            }),
+        )
+        .unwrap();
+        let response = exchange_over(
+            &mut client,
+            &request,
+            request_limit,
+            response_limit,
+            tokio::time::Instant::now() + Duration::from_secs(1),
+        )
+        .await
+        .unwrap();
+        assert!(!response.is_empty());
+        task.await.unwrap();
+
+        assert_eq!(
+            validate_exchange_request(
+                "r",
+                "app.accounts.connect.status.extra",
+                &serde_json::json!({}),
+            ),
+            Err(ErrorCode::InvalidInput)
+        );
     }
 }

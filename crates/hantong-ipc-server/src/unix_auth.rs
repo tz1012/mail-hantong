@@ -2,6 +2,9 @@
 
 #![cfg(unix)]
 
+use hantong_contracts::account_auth::{AccountAuthRevision, AccountAuthTranscript};
+use hantong_contracts::account_auth_peer::{CanonicalPeer, encode as encode_peer};
+use hantong_contracts::account_scope::AccountScopeV2;
 use hantong_contracts::auth::{RequestedScope, SignerRole};
 use hantong_contracts::unix_auth::{UnixAuthTranscriptV2, UnixPeerContextV2};
 use hantong_contracts::{ErrorCode, platform::OpaqueSigner};
@@ -29,6 +32,14 @@ impl RegisteredUnixClient {
         self.epoch
     }
 
+    pub(crate) fn scope_model_version(&self) -> u8 {
+        self.scope.scope_model_version()
+    }
+
+    pub(crate) fn account_scope(&self) -> Option<&AccountScopeV2> {
+        self.scope.account_scope()
+    }
+
     pub fn from_registration_store(
         id: [u8; 16],
         epoch: u64,
@@ -53,6 +64,163 @@ impl RegisteredUnixClient {
 pub struct UnixServerChallenge {
     pub transcript: UnixAuthTranscriptV2,
     pub signature: [u8; 64],
+}
+
+pub struct UnixAccountServerChallenge {
+    pub transcript: AccountAuthTranscript,
+    pub signature: [u8; 64],
+}
+
+pub struct PendingUnixAccountAuthentication {
+    transcript: AccountAuthTranscript,
+    registration: RegisteredUnixClient,
+    issued: Instant,
+    connection: Option<UnixLocalConnection>,
+}
+
+impl PendingUnixAccountAuthentication {
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn begin(
+        server_signer: &mut impl OpaqueSigner,
+        server_instance_id: [u8; 32],
+        registration: &RegisteredUnixClient,
+        server_context: UnixPeerContextV2,
+        client_context: UnixPeerContextV2,
+        client_nonce: [u8; 32],
+        requested_scope: AccountScopeV2,
+        now_utc_ms: i64,
+        server_nonce: [u8; 32],
+    ) -> Result<(Self, UnixAccountServerChallenge), ErrorCode> {
+        if registration.scope_model_version() != 2 || !registration.active {
+            return Err(if !registration.active {
+                ErrorCode::ClientSuspended
+            } else {
+                ErrorCode::ScopeDenied
+            });
+        }
+        if now_utc_ms < 0
+            || server_instance_id == [0; 32]
+            || server_nonce == [0; 32]
+            || client_nonce == [0; 32]
+            || server_context.platform != client_context.platform
+            || server_context.effective_uid != client_context.effective_uid
+        {
+            return Err(ErrorCode::InvalidInput);
+        }
+        let registered_scope = registration.account_scope().ok_or(ErrorCode::ScopeDenied)?;
+        if registered_scope
+            .intersection(&requested_scope)
+            .map_err(|_| ErrorCode::ScopeDenied)?
+            != requested_scope
+        {
+            return Err(ErrorCode::ScopeDenied);
+        }
+        let public = server_signer
+            .public_key()
+            .map_err(|_| ErrorCode::AuthRequired)?;
+        let transcript = AccountAuthTranscript {
+            revision: AccountAuthRevision::UnixV3,
+            registration_id: registration.id,
+            profile_epoch: registration.epoch,
+            issued_at_utc_ms: now_utc_ms,
+            expires_at_utc_ms: now_utc_ms
+                .checked_add(AUTH_WINDOW_MS)
+                .ok_or(ErrorCode::InvalidInput)?,
+            server_instance_id,
+            server_nonce,
+            client_nonce,
+            server_key_hash: sha256(&public)?,
+            client_key_hash: sha256(&registration.public_key)?,
+            server_peer: encode_peer(&CanonicalPeer::Unix(server_context))?,
+            client_peer: encode_peer(&CanonicalPeer::Unix(client_context))?,
+            scope: requested_scope,
+        };
+        let signature = server_signer
+            .sign(&transcript.encode(SignerRole::Server)?)
+            .map_err(|_| ErrorCode::AuthRequired)?;
+        Ok((
+            Self {
+                transcript: transcript.clone(),
+                registration: registration.clone(),
+                issued: Instant::now(),
+                connection: None,
+            },
+            UnixAccountServerChallenge {
+                transcript,
+                signature,
+            },
+        ))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn begin_connected(
+        server_signer: &mut impl OpaqueSigner,
+        connection: UnixLocalConnection,
+        server_instance_id: [u8; 32],
+        registration: &RegisteredUnixClient,
+        client_nonce: [u8; 32],
+        requested_scope: AccountScopeV2,
+        now_utc_ms: i64,
+        server_nonce: [u8; 32],
+    ) -> Result<(Self, UnixAccountServerChallenge), ErrorCode> {
+        let client_context = connection.peer_context().clone();
+        let server_context = hantong_platform::unix_peer::current_peer_context()?;
+        let (mut pending, challenge) = Self::begin(
+            server_signer,
+            server_instance_id,
+            registration,
+            server_context,
+            client_context,
+            client_nonce,
+            requested_scope,
+            now_utc_ms,
+            server_nonce,
+        )?;
+        pending.connection = Some(connection);
+        Ok((pending, challenge))
+    }
+
+    pub fn transport(&mut self) -> Result<&mut UnixLocalConnection, ErrorCode> {
+        self.connection.as_mut().ok_or(ErrorCode::AuthRequired)
+    }
+
+    pub fn finish(
+        self,
+        signature: &[u8; 64],
+        current: Option<&RegisteredUnixClient>,
+        now_utc_ms: i64,
+    ) -> Result<AuthenticatedUnixConnection, ErrorCode> {
+        if now_utc_ms < self.transcript.issued_at_utc_ms
+            || now_utc_ms >= self.transcript.expires_at_utc_ms
+            || self.issued.elapsed() >= Duration::from_millis(AUTH_WINDOW_MS as u64)
+        {
+            return Err(ErrorCode::AuthRequired);
+        }
+        let current = current.ok_or(ErrorCode::ClientNotRegistered)?;
+        check_registration(&self.registration, current)?;
+        let current_scope = current.account_scope().ok_or(ErrorCode::ScopeDenied)?;
+        if current_scope
+            .intersection(&self.transcript.scope)
+            .map_err(|_| ErrorCode::ScopeDenied)?
+            != self.transcript.scope
+        {
+            return Err(ErrorCode::ScopeDenied);
+        }
+        let bytes = self
+            .transcript
+            .encode(SignerRole::Client)
+            .map_err(|_| ErrorCode::AuthRequired)?;
+        if !verify_signature(&self.registration.public_key, &bytes, signature)? {
+            return Err(ErrorCode::AuthRequired);
+        }
+        Ok(AuthenticatedUnixConnection {
+            registration: self.registration,
+            granted: RequestedScope::from_account_scope(self.transcript.scope.clone())
+                .map_err(|_| ErrorCode::ScopeDenied)?,
+            granted_account: Some(self.transcript.scope),
+            connection: self.connection,
+        })
+    }
 }
 
 pub struct PendingUnixAuthentication {
@@ -88,6 +256,9 @@ impl PendingUnixAuthentication {
             } else {
                 ErrorCode::InvalidInput
             });
+        }
+        if registration.scope_model_version() != 1 || requested_scope.scope_model_version() != 1 {
+            return Err(ErrorCode::ScopeDenied);
         }
         let public = server_signer
             .public_key()
@@ -199,6 +370,7 @@ impl PendingUnixAuthentication {
         Ok(AuthenticatedUnixConnection {
             registration: self.registration,
             granted,
+            granted_account: None,
             connection: self.connection,
         })
     }
@@ -207,6 +379,7 @@ impl PendingUnixAuthentication {
 pub struct AuthenticatedUnixConnection {
     registration: RegisteredUnixClient,
     granted: RequestedScope,
+    granted_account: Option<AccountScopeV2>,
     connection: Option<UnixLocalConnection>,
 }
 impl AuthenticatedUnixConnection {
@@ -241,6 +414,21 @@ impl AuthenticatedUnixConnection {
             self.connection.take();
             return Err(ErrorCode::ScopeDenied);
         }
+        if let Some(granted) = &self.granted_account {
+            if current.account_scope() != self.registration.account_scope() {
+                self.connection.take();
+                return Err(ErrorCode::ScopeDenied);
+            }
+            let typed_ok = current.account_scope().is_some_and(|scope| {
+                scope
+                    .intersection(granted)
+                    .is_ok_and(|intersection| intersection == *granted)
+            });
+            if !typed_ok {
+                self.connection.take();
+                return Err(ErrorCode::ScopeDenied);
+            }
+        }
         Ok(())
     }
 
@@ -252,9 +440,47 @@ impl AuthenticatedUnixConnection {
     ) -> Result<(), ErrorCode> {
         self.revalidate_registration(current)?;
         let current = current.expect("validated registration");
-        if self.granted.permits_account(account, tool)
-            && current.scope.permits_account(account, tool)
-        {
+        let allowed = if let Some(granted) = &self.granted_account {
+            current.account_scope().is_some_and(|scope| {
+                granted.permits_account(account, tool) && scope.permits_account(account, tool)
+            })
+        } else {
+            self.granted.permits_account(account, tool)
+                && current.scope.permits_account(account, tool)
+        };
+        if allowed {
+            Ok(())
+        } else {
+            Err(ErrorCode::ScopeDenied)
+        }
+    }
+
+    /// Checks one accountless app-read tool against the trusted principal
+    /// scope. Empty account lists never imply access to these tools.
+    pub fn check_app_read_scope(
+        &mut self,
+        current: Option<&RegisteredUnixClient>,
+        tool: hantong_contracts::auth::AppReadTool,
+    ) -> Result<(), ErrorCode> {
+        self.revalidate_registration(current)?;
+        let current = current.expect("validated registration");
+        let allowed = if let Some(granted) = &self.granted_account {
+            current.account_scope().is_some_and(|scope| {
+                granted.permits_principal_tool(tool.as_str())
+                    && scope.permits_principal_tool(tool.as_str())
+            })
+        } else {
+            self.granted
+                .tools()
+                .iter()
+                .any(|value| value == tool.as_str())
+                && current
+                    .scope
+                    .tools()
+                    .iter()
+                    .any(|value| value == tool.as_str())
+        };
+        if allowed {
             Ok(())
         } else {
             Err(ErrorCode::ScopeDenied)
@@ -274,6 +500,9 @@ fn check_registration(
     }
     if current.epoch != original.epoch || current.public_key != original.public_key {
         return Err(ErrorCode::AuthRequired);
+    }
+    if current.scope_model_version() != original.scope_model_version() {
+        return Err(ErrorCode::VersionMismatch);
     }
     Ok(())
 }
@@ -439,4 +668,9 @@ mod tests {
             Err(ErrorCode::AuthRequired)
         ));
     }
+}
+
+#[cfg(all(test, unix))]
+mod model2_tests {
+    include!("unix_model2_auth_tests.rs");
 }

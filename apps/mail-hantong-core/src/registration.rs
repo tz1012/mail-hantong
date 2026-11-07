@@ -53,6 +53,32 @@ impl RegistrationWorker<'_> {
         self.state.scheduled.get().is_some()
     }
 }
+
+impl RegistrationHandle<'_> {
+    pub(crate) fn smtp_sessions(&self) -> &crate::setup_smtp::Sessions {
+        &self.state.smtp_sessions
+    }
+
+    pub(crate) fn submitted_setup_capture(
+        &self,
+        command: &SetupCommand,
+    ) -> Option<(
+        hantong_contracts::terminal_review::TerminalReviewKind,
+        [u8; 32],
+    )> {
+        let SetupCommand::TerminalReview(
+            hantong_contracts::terminal_review::TerminalReviewCommand::SecretSubmit(submit),
+        ) = command
+        else {
+            return None;
+        };
+        self.state
+            .terminal_reviews
+            .borrow()
+            .get(&submit.ticket)
+            .map(|entry| (entry.kind, entry.request_id))
+    }
+}
 impl Drop for RegistrationWorker<'_> {
     fn drop(&mut self) {
         self.state.scheduled.set(None);
@@ -1785,7 +1811,14 @@ impl RegistrationHandle<'_> {
                             &self.state.smtp_sessions,
                             input,
                         )?;
-                        let _ = SmtpSetupState::Pending;
+                        if r.state == SmtpSetupState::Pending
+                            && crate::setup_smtp::needs_reprobe(
+                                &self.state.smtp_sessions,
+                                r.request_id,
+                            )?
+                        {
+                            enqueue(&self.state.scheduled, &self.sender, Job::Smtp(r.request_id))?;
+                        }
                         Ok(SetupReceipt::Smtp(r))
                     }
                 }

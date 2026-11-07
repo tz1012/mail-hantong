@@ -275,15 +275,11 @@ pub(crate) fn current_grants(c: &Connection, audit: &AuditRecord) -> Result<(), 
     if registration.profile_epoch != audit.profile_epoch() {
         return Err(ErrorCode::AuthRequired);
     }
-    if !registration
-        .scope
-        .tools()
-        .iter()
-        .any(|t| t == "mail.sync.page")
+    if audit.account_ids().is_empty()
         || !audit
             .account_ids()
             .iter()
-            .all(|a| registration.scope.accounts().contains(a))
+            .all(|a| registration.scope.permits_account(a, "mail.sync.page"))
     {
         return Err(ErrorCode::ScopeDenied);
     }

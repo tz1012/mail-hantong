@@ -296,6 +296,69 @@ pub(super) fn refresh(
     )
 }
 
+pub(super) fn verify_default_publication(
+    publication: &Publication,
+) -> Result<hantong_platform::account_publication::VerifiedAccountProfilePublication, ErrorCode> {
+    // SAFETY: private Publication constructors own the same non-share-write/
+    // non-share-delete leaf and namespace-pinned ancestors. Core retains this
+    // Publication through activation; the proof retains exact handle clones.
+    // The platform also rejects any non-Default file by exact fixed-path ID.
+    unsafe {
+        hantong_platform::account_publication::VerifiedAccountProfilePublication::from_pinned_default_handles(
+        &publication._file,
+        &publication._directories,
+    )
+    }
+}
+
+/// Loads the request-bound old default profile without accepting a caller path.
+pub(super) fn load_default_refresh_backup(refresh_id: [u8; 32]) -> Result<Vec<u8>, ErrorCode> {
+    if refresh_id == [0; 32] {
+        return Err(ErrorCode::InvalidInput);
+    }
+    let profiles = hantong_platform::app_directories()?.profiles;
+    validate_path(&profiles)?;
+    let identity = hantong_platform::current_peer_context()?;
+    let user = identity.user_sid();
+    let security = creation_security(user)?;
+    let _directories = open_profile_directories(&profiles, user, &security)?;
+    let backup_path = profiles.join(format!(
+        "default.refresh-{}.bak",
+        hantong_contracts::wire_hex::encode(&refresh_id)
+    ));
+    let backup = open_refresh_file(&backup_path, user)?.ok_or(ErrorCode::NotFound)?;
+    read_profile(&backup)
+}
+
+/// Deletes only the request-bound old default profile after exact byte
+/// validation through its pinned handle.
+pub(super) fn discard_default_refresh_backup(
+    refresh_id: [u8; 32],
+    expected_old_bytes: &[u8],
+) -> Result<(), ErrorCode> {
+    if refresh_id == [0; 32]
+        || expected_old_bytes.is_empty()
+        || expected_old_bytes.len() > MAX_PROFILE_BYTES
+    {
+        return Err(ErrorCode::InvalidInput);
+    }
+    let profiles = hantong_platform::app_directories()?.profiles;
+    validate_path(&profiles)?;
+    let identity = hantong_platform::current_peer_context()?;
+    let user = identity.user_sid();
+    let security = creation_security(user)?;
+    let _directories = open_profile_directories(&profiles, user, &security)?;
+    let backup_path = profiles.join(format!(
+        "default.refresh-{}.bak",
+        hantong_contracts::wire_hex::encode(&refresh_id)
+    ));
+    let backup = open_refresh_file(&backup_path, user)?.ok_or(ErrorCode::NotFound)?;
+    if read_profile(&backup)? != expected_old_bytes {
+        return Err(ErrorCode::Conflict);
+    }
+    delete_owned_backup(&backup)
+}
+
 fn refresh_at(
     profiles: &Path,
     refresh_id: [u8; 32],
@@ -459,6 +522,10 @@ pub(super) fn cleanup_backup(publication: &mut Publication) -> Result<(), ErrorC
     let Some(file) = publication.backup.take() else {
         return Ok(());
     };
+    delete_owned_backup(&file)
+}
+
+fn delete_owned_backup(file: &File) -> Result<(), ErrorCode> {
     let disposition = FILE_DISPOSITION_INFO { DeleteFile: true };
     let success = unsafe {
         SetFileInformationByHandle(
@@ -468,7 +535,6 @@ pub(super) fn cleanup_backup(publication: &mut Publication) -> Result<(), ErrorC
             std::mem::size_of::<FILE_DISPOSITION_INFO>() as u32,
         )
     };
-    drop(file);
     if success == 0 {
         Err(ErrorCode::ScopeDenied)
     } else {

@@ -2772,3 +2772,206 @@ the bootstrap source/test so final assets and tests are rebuilt for this fix.
 The new exact commit/assets/payload need a fresh freeze, final platform results,
 independent finding closure and actual human review before publication/execution.
 No Songpa install, client refresh, grant or storage/ACL/mail changes were made.
+
+
+## 2026-11-07 account-qualified FullMail implementation (in progress)
+
+Actual implementation instruction: "변경 진행해", following the request that
+Gmail and generic IMAP/SMTP offer read, compose/send and single-message Trash.
+Recorded in ACCOUNT-MAIL-GRANTS-ADOPTION-20261107.md and the model-2 contract.
+Work is isolated on feature/account-mail-grants-20261107 from
+c22e1bf1507430fd88e3fa1625d96ed09b2e3c40; the previous release candidate,
+review assets and private E9 payload have not been modified or executed.
+
+Added a canonical bounded per-account matrix, schema-2 public profile,
+revision-separated signed transcript/peer codecs and typed handshake branches.
+Legacy authentication bytes remain frozen and reject model-2 registrations.
+The default consumer is the initial model-2 rollout; other principal profiles
+remain rejected until their issuer/runtime/consent are implemented together.
+The existing two accountless AppReadTool capabilities remain explicitly global
+and are translated only if present in the legacy grant; mail mutations cannot
+be principal tools. This is a representation repair preserving existing rights.
+
+Store work adds schema-v28 additive tables and explicit decision transitions.
+Independent review found unsafe split transitions, inert peer binding and stale
+activation hazards in the initial implementation. Removed split consume/stage,
+added exact peer/authority binding, Immediate transactions, current baseline
+CAS, canonical target recomputation, immutable legacy metadata/key/source
+binding and protected publication hash. Review findings are not yet all closed;
+these APIs are not a completed production account-connection path.
+Added IMAP+SMTP/catalog/unique-Trash/MOVE readiness evaluation; capability
+metadata never grants access or replaces per-message approval.
+
+Evidence so far (intermediate sources, not final release qualification):
+- contracts library: 103 passed, before the subsequent canonical-peer/domain
+  and explicit-global-read changes; a fresh final run is still required.
+- native Windows Store check passed; vendored OpenSSL built using the verified
+  workspace native tools. This was not a Windows full product test.
+- native Linux account-grant tests: 8 passed, including real synthetic encrypted
+  Store setup, no-effect pending, cancel/reuse, expiry, stale baseline, and A
+  read-only/B full-mail isolation. Additional tests/repairs followed and need
+  rerunning; earlier failed attempts were investigated rather than hidden.
+- Windows IPC build exposed typed-wire compile errors, now assigned for repair.
+No live account, credential, ACL, mailbox, grant, update or deployment changed.
+Remaining: full authenticated app-intent/session wiring, protected staged
+publication/recovery, all CLI/TUI account-qualified read/send/Trash consumers,
+generic setup completion, native end-to-end attack/regression tests and actual
+human security review of the final complete diff. Feature completion/release
+and Songpa's three actual account reads are not claimed.
+
+### 2026-11-08 integration continuation — not release-ready
+
+Added trusted registration projection: original model-1 metadata/history stays
+unchanged, every active model-2 account delta is regenerated and validated in
+sequence, and staged publication projects provisioning rather than target rights.
+Cancellation remains bound and single-use even after unrelated suspension;
+expiry precedes new decisions, completed duplicates return status, and a legacy
+scope request appearing after intent creation blocks staging. Protected profile
+publication now supplies a fixed-path, guarded typed capability instead of an
+arbitrary nonzero digest. Google sync, folder refresh and UID-page rechecks use
+account-qualified permission checks rather than a global tool union.
+
+Fresh intermediate evidence:
+- Windows encrypted Store account-grant filter: 17 passed, including native
+  v27 startup migration preserving the existing registration and granting nothing.
+- Linux Store filter: earlier 16 passed; the subsequent 17-test run had 16 passed
+  and a synthetic fixture ApprovalExpired failure before the intended assertion.
+  Added fixed timestamp-delta diagnostics; expiry checks were not relaxed.
+- Contracts library: 110 passed before the new app-connect RPC codec was added.
+- Unix IPC client: 163 passed, and the real isolated Unix socket model-2 test
+  passed once through the same after-begin dispatch used by production Core.
+- Subsequent combined contracts/client validation exposed two new duplex-test
+  transport type errors; repair and rerun are pending, not counted as passing.
+- Linux Core account-connect intent/publication filter: 6 passed before adding
+  the new foreground consumer/service/runtime dispatch.
+
+The adopted app service now has exact bounded prepare/status/complete/cancel
+codecs. Integration is being connected through a dedicated foreground Core
+consumer using a signed Default identity and exact observed peer; ordinary Unix
+relay stays unable to invoke this family. Browser launch belongs to the daemon,
+preserving the foreground helper's Linux no-exec restriction. The CLI's private
+bounded result pipe carries only a ready receipt. Existing provider scopes,
+AI/MCP/GUI identities, per-message review and uncertain-outcome rules remain.
+
+Integration review found cancellation resurrection/fatal worker errors, missing
+client-secret binding, repeated operation IDs, post-activation status binding and
+incomplete foreground state handling in the initial service/consumer drafts.
+These are being repaired; their presence blocks completion and release. Generic
+IMAP/SMTP app-intent completion is still unimplemented and must not be presented
+as FullMail support merely because readiness metadata exists. New whole-diff
+independent review, native final-source product validation and actual human
+security review remain outstanding. No live account, vault, permissions, mail,
+installation, public asset or frozen c22 review payload was changed.
+
+### 2026-11-08 generic FullMail continuation — implementation and targeted validation
+
+The earlier generic-unimplemented note is superseded by the current working-tree
+integration, not by a release claim. New pending IMAP setup binds the signed
+Default app intent before capture, then binds exact SMTP setup before capture.
+An unchanged SMTP endpoint may reuse its stored credential only with fresh
+authentication. Existing ready IMAP uses a separate protected review and an
+opaque Secrets witness; captured input authenticates without replacing the
+working stored IMAP credential. Missing SMTP is being connected through the
+same bounded setup continuation rather than reported as complete.
+
+Generic/readiness network awaits now return move-only verified metadata without
+writing the catalog/observations. The worker rechecks cancellation and expiry
+before synchronous staging/publication. Late worker failure preserves terminal
+cancel/expiry/staged outcomes. Publication failures emit only a fixed stage and
+stable error code; the typed staged recovery receipt remains contract-compatible.
+Setup review tickets are additionally bound to the originating app intent so a
+cancelled/pruned continuation cannot fall through to legacy setup. A daemon timer
+expires abandoned sessions independently of a subsequent status request.
+
+Fresh intermediate evidence (before the subsequent lifecycle/SMTP additions):
+- Linux Core + CLI all-target check passed (`account-existing-core-check.log`).
+- Linux Core account-connect filter: 25 passed, 0 failed, 0 ignored
+  (`account-connect-core-tests.log`). This is not final-source/full-product proof.
+- Linux public metadata input deadline/EOF/size-bound test: 1 passed
+  (`account-terminal-prompt-tests.log`).
+- Native Windows v27-to-v28 migration preservation test: 1 passed. The test
+  include had previously been missing; earlier zero-test runs do not count.
+- A Windows platform prompt type mismatch was found and repaired. The ongoing
+  correctly configured native build still needs a fresh successful result.
+
+Remaining before completion: rerun current-source Core/CLI/Secrets/Store and
+platform regressions; prove fresh-input success, mismatch/replay/cancel/expiry
+cleanup and unchanged stored credentials with synthetic IMAP; complete persisted
+readiness and review final lifecycle boundaries; native product integration and
+whole-diff independent review. Actual human security review remains required for
+auth, Store transitions, Secrets, platform input/publication and contracts.
+No real account, vault, stored credential, ACL, mail, install, public asset or
+frozen c22 packet was touched. No live mail use or release readiness is claimed.
+
+## 2026-11-08 account-qualified connection recovery and final local review
+
+Continued the approved account-mail-grants-v2 implementation in the dedicated
+account-mail-grants worktree. Selected-account full-mail grants do not expand
+other accounts or GUI/MCP/AI identities. Send and Trash still require their
+message-specific review/claim paths.
+
+Repaired current-target publication recovery to validate the exact old backup
+and reacquire the native publication guard before Store activation. Committed
+cleanup failure is deferred housekeeping, not a false staged/failed grant.
+Startup cleanup revalidates complete committed history and exact backup bytes.
+The capture expiry sweep retains deletion selectors on failure and retries
+without terminating Core. Canonical Default checks now use the exact Store
+resolver rather than a matching display label.
+
+Independent review found Windows sharing conflicts and staged authentication
+deadlock. Core now releases the old reader before native refresh and reads
+Windows publication evidence from the held object. Fixed-path leaf and ancestor
+volume/file IDs, type and ACL are checked; content uses offset reads. The raw
+cross-crate constructor is unsafe with a precise security-capability contract;
+its sole caller is the private native publication wrapper. A repository guard
+rejects additional source uses. The ordinary loader's sharing remains unchanged.
+
+The daemon records exact staged decision/account tuples before publishing and
+retries only those decisions. It verifies committed history and current target
+before Ready; committed-but-superseded decisions terminate with Conflict rather
+than staying staged or regranting. Completion is sent once. Uncertain completion
+falls back to bounded Status-only polling; authentication remains denied while
+Provisioning. No provider proof, capture or Complete is replayed.
+
+Fresh local evidence (component/synthetic evidence, not a full release gate):
+
+| Check | Result |
+| --- | --- |
+| Windows Core account-connect tests | 36 passed |
+| Linux Core account-connect tests | 37 passed, including isolated native old-profile and target-before-activation publication cases |
+| Store account-grants tests | 19 passed on each of Windows and Linux; includes native v27-to-v28 startup preservation |
+| Store full-mail filter | Windows 7 passed; Linux 5 passed (different platform test membership) |
+| Windows pinned publication object/cursor tests | 2 passed |
+| Windows native publication suite | 31 passed |
+| Linux native publication suite | 5 passed |
+| Linux expired review exact-discard test | 1 passed |
+| Secrets terminal/probe filter | Windows 11 passed; Linux 17 passed |
+| Linux IPC client / server | 166 / 69 passed, including actual Unix socket model-2 authentication |
+| Linux contracts / CLI private receipt | 116 / 1 passed |
+| Core + CLI all-target Clippy, warnings denied | Windows and Linux passed |
+| Docs tests / architecture / format / raw-factory boundary | 29 passed / valid / passed / 1 passed |
+| Build/installer Python tests | 344 run, 33 environment/platform skips, no failures; negative Mac-runner messages are refusal tests, not native Mac execution |
+
+Earlier fixture failures were not discarded. A subsequent WSL run recorded its
+clock moving backwards by about 15 seconds, invalidating synthetic registration
+timestamps. The account-grants fixture now uses a cfg(test)-only thread-local
+RAII clock instead of rewriting request timestamps. Nested restoration and
+thread isolation are tested. Every product build retains the original UTC and
+expiry checks; no system clock, account or permission was changed. Dedicated
+expiry, cancellation, suspension, replay and no-grant tests still execute.
+
+Whole-diff code and architecture reviews remain separate from actual human
+security review. The Windows unsafe publication share-mode/lifetime obligation
+requires that review. Handoff scope and required record are documented in
+`ACCOUNT-MAIL-GRANTS-REVIEW-20261108.md`. A native installed-product publication
+flow, interactive input/provider flows, Mac Intel/ARM gates and final same-commit
+package/install/update gates are not established by these local tests. No
+check-all/full-platform/release completion, Songpa three-account success or
+actual human review is claimed. Official release remains withheld.
+
+Final independent automated delta review: code reviewer COMMENT (no remaining
+CRITICAL/HIGH; the staged-after-commit issue was repaired and tested), architect
+WATCH (no BLOCK or proven bypass). The remaining WATCH is the native Windows
+capability's exclusive-handle lifetime obligation and outstanding human/native
+product gates. This is not human security approval or release approval.
+Windows Store all-target Clippy also passed with warnings denied.

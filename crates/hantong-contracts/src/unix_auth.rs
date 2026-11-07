@@ -120,6 +120,9 @@ impl core::fmt::Debug for UnixAuthTranscriptV2 {
 
 impl UnixAuthTranscriptV2 {
     pub fn encode(&self, role: crate::auth::SignerRole) -> Result<Vec<u8>, ErrorCode> {
+        if self.scope.scope_model_version() != 1 {
+            return Err(ErrorCode::InvalidInput);
+        }
         if self.profile_epoch == 0
             || self.issued_at_utc_ms < 0
             || self.expires_at_utc_ms < 0
@@ -283,6 +286,7 @@ impl<'a> Cursor<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::account_scope::{AccountGrantV2, AccountScopeV2};
 
     fn fixture() -> UnixAuthTranscriptV2 {
         UnixAuthTranscriptV2 {
@@ -382,6 +386,27 @@ mod tests {
             mixed_platform
                 .encode(crate::auth::SignerRole::Server)
                 .is_err()
+        );
+    }
+
+    #[test]
+    fn sec03_unix_v2_legacy_encoding_rejects_account_scope_v2() {
+        let scope = AccountScopeV2::new(
+            vec!["mail.accounts.list".into()],
+            vec![
+                AccountGrantV2::new("account_a".into(), vec!["mail.messages.get".into()], false)
+                    .unwrap(),
+            ],
+        )
+        .unwrap();
+        let transcript = UnixAuthTranscriptV2 {
+            scope: RequestedScope::from_account_scope(scope).unwrap(),
+            ..fixture()
+        };
+        assert_eq!(transcript.scope.scope_model_version(), 2);
+        assert_eq!(
+            transcript.encode(crate::auth::SignerRole::Server),
+            Err(crate::ErrorCode::InvalidInput)
         );
     }
 }

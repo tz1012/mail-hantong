@@ -3,6 +3,9 @@
 
 #![cfg(unix)]
 
+use hantong_contracts::account_auth::{AccountAuthRevision, AccountAuthTranscript};
+use hantong_contracts::account_auth_peer::{CanonicalPeer, encode as encode_peer};
+use hantong_contracts::account_scope::AccountScopeV2;
 use hantong_contracts::auth::{RequestedScope, SignerRole};
 use hantong_contracts::unix_auth::{UnixAuthTranscriptV2, UnixPeerContextV2};
 use hantong_contracts::{ErrorCode, platform::OpaqueSigner};
@@ -11,6 +14,168 @@ use hantong_platform::{sha256, verify_signature};
 use std::time::{Duration, Instant};
 
 const AUTH_WINDOW_MS: i64 = 30_000;
+
+pub struct PendingUnixAccountAuthentication<S> {
+    signer: S,
+    registration_id: [u8; 16],
+    profile_epoch: u64,
+    requested_scope: AccountScopeV2,
+    client_peer: Vec<u8>,
+    client_nonce: [u8; 32],
+    client_key_hash: [u8; 32],
+    pinned_server_key: [u8; 72],
+    pinned_server_key_hash: [u8; 32],
+    started_at_utc_ms: i64,
+    started: Instant,
+    connection: Option<UnixLocalConnection>,
+}
+
+impl<S: OpaqueSigner> std::fmt::Debug for PendingUnixAccountAuthentication<S> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("PendingUnixAccountAuthentication { <redacted> }")
+    }
+}
+
+impl<S: OpaqueSigner> PendingUnixAccountAuthentication<S> {
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn begin(
+        signer: S,
+        pinned_server_key: [u8; 72],
+        registration_id: [u8; 16],
+        profile_epoch: u64,
+        requested_scope: AccountScopeV2,
+        client_context: UnixPeerContextV2,
+        server_context: UnixPeerContextV2,
+        client_nonce: [u8; 32],
+        started_at_utc_ms: i64,
+    ) -> Result<Self, ErrorCode> {
+        if registration_id == [0; 16]
+            || profile_epoch == 0
+            || client_nonce == [0; 32]
+            || started_at_utc_ms < 0
+            || client_context.platform != server_context.platform
+            || client_context.effective_uid != server_context.effective_uid
+        {
+            return Err(ErrorCode::InvalidInput);
+        }
+        let public = signer.public_key().map_err(|_| ErrorCode::AuthRequired)?;
+        hantong_platform::validate_public_key(&pinned_server_key)?;
+        Ok(Self {
+            signer,
+            registration_id,
+            profile_epoch,
+            requested_scope,
+            client_peer: encode_peer(&CanonicalPeer::Unix(client_context.clone()))?,
+            client_nonce,
+            client_key_hash: sha256(&public)?,
+            pinned_server_key_hash: sha256(&pinned_server_key)?,
+            pinned_server_key,
+            started_at_utc_ms,
+            started: Instant::now(),
+            connection: None,
+        })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn begin_connected(
+        signer: S,
+        connection: UnixLocalConnection,
+        pinned_server_key: [u8; 72],
+        registration_id: [u8; 16],
+        profile_epoch: u64,
+        requested_scope: AccountScopeV2,
+        client_nonce: [u8; 32],
+        started_at_utc_ms: i64,
+    ) -> Result<Self, ErrorCode> {
+        let server_context = connection.peer_context().clone();
+        let client_context = hantong_platform::unix_peer::current_peer_context()?;
+        let mut pending = Self::begin(
+            signer,
+            pinned_server_key,
+            registration_id,
+            profile_epoch,
+            requested_scope,
+            client_context,
+            server_context,
+            client_nonce,
+            started_at_utc_ms,
+        )?;
+        pending.connection = Some(connection);
+        Ok(pending)
+    }
+
+    pub fn client_nonce(&self) -> [u8; 32] {
+        self.client_nonce
+    }
+
+    pub(crate) fn registration_id(&self) -> [u8; 16] {
+        self.registration_id
+    }
+
+    pub(crate) fn profile_epoch(&self) -> u64 {
+        self.profile_epoch
+    }
+
+    pub fn transport(&mut self) -> Result<&mut UnixLocalConnection, ErrorCode> {
+        self.connection.as_mut().ok_or(ErrorCode::AuthRequired)
+    }
+
+    pub fn requested_scope(&self) -> &AccountScopeV2 {
+        &self.requested_scope
+    }
+
+    fn respond_inner(
+        &mut self,
+        challenge: AccountAuthTranscript,
+        server_signature: &[u8; 64],
+        now_utc_ms: i64,
+    ) -> Result<[u8; 64], ErrorCode> {
+        if challenge.revision != AccountAuthRevision::UnixV3
+            || now_utc_ms < self.started_at_utc_ms
+            || now_utc_ms - self.started_at_utc_ms >= AUTH_WINDOW_MS
+            || self.started.elapsed() >= Duration::from_millis(AUTH_WINDOW_MS as u64)
+            || challenge.registration_id != self.registration_id
+            || challenge.profile_epoch != self.profile_epoch
+            || challenge.client_nonce != self.client_nonce
+            || challenge.scope != self.requested_scope
+            || challenge.client_peer != self.client_peer
+            || challenge.client_key_hash != self.client_key_hash
+            || challenge.server_key_hash != self.pinned_server_key_hash
+            || challenge.issued_at_utc_ms < self.started_at_utc_ms
+            || challenge.issued_at_utc_ms > now_utc_ms
+            || challenge.expires_at_utc_ms <= now_utc_ms
+            || challenge
+                .expires_at_utc_ms
+                .checked_sub(challenge.issued_at_utc_ms)
+                .is_none_or(|lifetime| lifetime > AUTH_WINDOW_MS)
+        {
+            return Err(ErrorCode::AuthRequired);
+        }
+        let server_bytes = challenge
+            .encode(SignerRole::Server)
+            .map_err(|_| ErrorCode::AuthRequired)?;
+        if !verify_signature(&self.pinned_server_key, &server_bytes, server_signature)? {
+            return Err(ErrorCode::AuthRequired);
+        }
+        let client_bytes = challenge
+            .encode(SignerRole::Client)
+            .map_err(|_| ErrorCode::AuthRequired)?;
+        self.signer
+            .sign(&client_bytes)
+            .map_err(|_| ErrorCode::AuthRequired)
+    }
+
+    pub fn respond_connected(
+        mut self,
+        challenge: AccountAuthTranscript,
+        server_signature: &[u8; 64],
+        now_utc_ms: i64,
+    ) -> Result<(UnixLocalConnection, [u8; 64]), ErrorCode> {
+        let connection = self.connection.take().ok_or(ErrorCode::InvalidInput)?;
+        let signature = self.respond_inner(challenge, server_signature, now_utc_ms)?;
+        Ok((connection, signature))
+    }
+}
 
 pub struct PendingUnixAuthentication<S> {
     signer: S,
@@ -51,6 +216,7 @@ impl<S: OpaqueSigner> PendingUnixAuthentication<S> {
             || profile_epoch == 0
             || client_nonce == [0; 32]
             || started_at_utc_ms < 0
+            || requested_scope.scope_model_version() != 1
             || client_context.platform != server_context.platform
             || client_context.effective_uid != server_context.effective_uid
         {

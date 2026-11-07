@@ -3,6 +3,7 @@
 //! Bounded IPC framing and minimal unauthenticated readiness responses.
 //! Mail actions remain unavailable until registration/authentication exists.
 
+pub mod account_auth_wire;
 #[cfg(windows)]
 pub mod auth;
 pub mod auth_wire;

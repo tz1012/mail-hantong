@@ -2,6 +2,7 @@ use super::{
     windows::{ImapTrashOutcome, Source, run_connected},
     *,
 };
+use crate::{SecretError, TerminalSecretBinding};
 use hantong_domain::mail_connection::MailConnectionConfig;
 use rustls::{
     ClientConfig, RootCertStore, ServerConfig,
@@ -256,6 +257,208 @@ async fn run_trash_script(
     }
     assert_eq!(accesses.load(Ordering::SeqCst), 1);
     (result, log.lock().unwrap().clone())
+}
+
+#[tokio::test]
+async fn sec08_held_fresh_imap_credential_probes_without_replacing_stored_value() {
+    let (_cleanup, store) = fixture();
+    let config = endpoint(true, "localhost", "app_password", 7);
+    store
+        .store_imap_credential("acct", &config, &b"stored-value"[..])
+        .unwrap();
+    let fresh =
+        crate::mail_credentials::BoundCredential::from_plain("acct", &config, b"secret").unwrap();
+    let (left, right) = tokio::io::duplex(8192);
+    let log = Arc::new(Mutex::new(Vec::new()));
+    let task = tokio::spawn(server(right, true, Mode::Good, log));
+    let result = timeout(
+        Duration::from_secs(3),
+        run_connected(
+            Source {
+                store: &store,
+                account: "acct",
+                endpoint: &config,
+                held_credential: Some(fresh),
+                accesses: None,
+            },
+            left,
+            configs(true).0,
+        ),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!(result.settings_version(), 7);
+    let stored = store.unseal_imap_credential("acct", &config).unwrap();
+    assert_eq!(stored.text().unwrap(), "stored-value");
+    task.await.unwrap().unwrap();
+}
+
+fn terminal_imap_binding(endpoint: &ImapEndpointConfig) -> TerminalSecretBinding {
+    let request_kind = *b"terminal-imap-v1";
+    let endpoint_bytes = serde_json::to_vec(endpoint).unwrap();
+    let mut canonical = Vec::new();
+    for value in [
+        b"terminal-endpoint-v1".as_slice(),
+        request_kind.as_slice(),
+        b"acct".as_slice(),
+        endpoint_bytes.as_slice(),
+    ] {
+        canonical.extend_from_slice(&(value.len() as u32).to_le_bytes());
+        canonical.extend_from_slice(value);
+    }
+    TerminalSecretBinding::new(
+        request_kind,
+        [21; 32],
+        [22; 32],
+        crate::google::crypto::sha256(b"acct").unwrap(),
+        crate::google::crypto::sha256(&canonical).unwrap(),
+        endpoint.settings_version(),
+        [25; 32],
+        [26; 32],
+        [27; 32],
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as i64
+            + 60_000,
+    )
+    .unwrap()
+}
+
+#[tokio::test]
+async fn sec08_terminal_imap_probe_consumes_fresh_input_without_replacing_stored_value() {
+    let (_cleanup, store) = fixture();
+    let config = endpoint(true, "localhost", "app_password", 7);
+    store
+        .store_imap_credential("acct", &config, &b"stored-value"[..])
+        .unwrap();
+    let binding = terminal_imap_binding(&config);
+    let ticket = store.issue_terminal_secret_ticket(binding).unwrap();
+    let handle = store
+        .stage_terminal_secret(&ticket, &b"secret"[..])
+        .unwrap();
+    let (left, right) = tokio::io::duplex(8192);
+    let log = Arc::new(Mutex::new(Vec::new()));
+    let task = tokio::spawn(server(right, true, Mode::Good, log));
+    let witness = timeout(
+        Duration::from_secs(3),
+        store.consume_terminal_imap_probe_with_stream(
+            ticket.clone(),
+            handle.clone(),
+            binding,
+            "acct",
+            &config,
+            left,
+            configs(true).0,
+        ),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!(witness.request_id(), &[21; 32]);
+    assert_eq!(witness.account_id(), "acct");
+    assert_eq!(witness.receipt().settings_version(), 7);
+    assert_eq!(
+        store
+            .unseal_imap_credential("acct", &config)
+            .unwrap()
+            .text()
+            .unwrap(),
+        "stored-value"
+    );
+    task.await.unwrap().unwrap();
+}
+
+#[tokio::test]
+async fn sec08_terminal_imap_probe_rejects_mismatch_and_replay() {
+    let (_cleanup, store) = fixture();
+    let config = endpoint(true, "localhost", "app_password", 7);
+    let binding = terminal_imap_binding(&config);
+    let ticket = store.issue_terminal_secret_ticket(binding).unwrap();
+    let handle = store
+        .stage_terminal_secret(&ticket, &b"secret"[..])
+        .unwrap();
+    let changed = endpoint(false, "localhost", "app_password", 8);
+    let changed_binding = terminal_imap_binding(&changed);
+    let (left, _right) = tokio::io::duplex(8192);
+    let mismatch = store
+        .consume_terminal_imap_probe_with_stream(
+            ticket.clone(),
+            handle.clone(),
+            changed_binding,
+            "acct",
+            &changed,
+            left,
+            configs(true).0,
+        )
+        .await;
+    assert!(matches!(
+        mismatch,
+        Err(MailProbeError::Credential(SecretError::CredentialMismatch))
+    ));
+
+    let (left, right) = tokio::io::duplex(8192);
+    let log = Arc::new(Mutex::new(Vec::new()));
+    let task = tokio::spawn(server(right, true, Mode::Good, log));
+    store
+        .consume_terminal_imap_probe_with_stream(
+            ticket.clone(),
+            handle.clone(),
+            binding,
+            "acct",
+            &config,
+            left,
+            configs(true).0,
+        )
+        .await
+        .unwrap();
+    task.await.unwrap().unwrap();
+    let (left, _right) = tokio::io::duplex(8192);
+    let replay = store
+        .consume_terminal_imap_probe_with_stream(
+            ticket,
+            handle,
+            binding,
+            "acct",
+            &config,
+            left,
+            configs(true).0,
+        )
+        .await;
+    assert!(matches!(
+        replay,
+        Err(MailProbeError::Credential(SecretError::CredentialMismatch))
+    ));
+}
+
+#[test]
+fn sec08_terminal_imap_probe_cancel_is_one_shot_and_preserves_stored_value() {
+    let (_cleanup, store) = fixture();
+    let config = endpoint(true, "localhost", "app_password", 7);
+    store
+        .store_imap_credential("acct", &config, &b"stored-value"[..])
+        .unwrap();
+    let binding = terminal_imap_binding(&config);
+    let ticket = store.issue_terminal_secret_ticket(binding).unwrap();
+    let handle = store
+        .stage_terminal_secret(&ticket, &b"secret"[..])
+        .unwrap();
+    store
+        .cancel_terminal_secret(&ticket, handle.opaque_id())
+        .unwrap();
+    assert!(matches!(
+        store.cancel_terminal_secret(&ticket, handle.opaque_id()),
+        Err(SecretError::NotFound)
+    ));
+    assert_eq!(
+        store
+            .unseal_imap_credential("acct", &config)
+            .unwrap()
+            .text()
+            .unwrap(),
+        "stored-value"
+    );
 }
 
 fn trash_script(uidvalidity: u32, move_reply: &[u8]) -> Script {
@@ -621,6 +824,7 @@ async fn run(
         run_connected(
             Source {
                 store: &store,
+                held_credential: None,
                 account: "acct",
                 endpoint: &config,
                 accesses: Some(&accesses),

@@ -31,6 +31,7 @@ async fn discover(
         windows::run_discovery_connected(
             Source {
                 store: &store,
+                held_credential: None,
                 account: "acct",
                 endpoint: &endpoint,
                 accesses: Some(&accesses),

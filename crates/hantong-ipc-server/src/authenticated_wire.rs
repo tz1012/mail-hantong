@@ -3,10 +3,14 @@
 use crate::setup_dispatch::{SetupCommand, SetupReceipt, SetupRequestContext};
 use crate::{
     RpcRequest,
-    auth::{AuthenticatedConnection, PendingAuthentication, RegisteredClient},
+    auth::{
+        AccountServerChallenge, AuthenticatedConnection, PendingAccountAuthentication,
+        PendingAuthentication, RegisteredClient,
+    },
     auth_wire, decode_request,
 };
 use hantong_contracts::ErrorCode;
+use hantong_contracts::account_auth::AccountAuthRevision;
 use hantong_contracts::registration::{RegistrationCommand, RegistrationReceipt};
 use hantong_platform::{LocalPipeConnection, ServerSigningKey};
 use serde_json::{Value, json};
@@ -14,6 +18,60 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 const MAX_AUTH_FRAME: usize = 131_072;
+
+/// Additive model-2 Windows handshake. Selection is made by the trusted
+/// registration/profile caller; legacy `authenticate` remains unchanged.
+pub async fn authenticate_account<'server, F>(
+    connection: LocalPipeConnection<'server>,
+    server_key: &ServerSigningKey,
+    instance: [u8; 32],
+    lookup: &mut F,
+) -> Result<AuthenticatedConnection<'server>, ErrorCode>
+where
+    F: FnMut(&[u8; 16]) -> Result<Option<RegisteredClient>, ErrorCode>,
+{
+    let mut connection = connection;
+    let first = tokio::time::timeout(Duration::from_secs(5), read_request(&mut connection))
+        .await
+        .map_err(|_| ErrorCode::AuthRequired)??;
+    let begin = crate::account_auth_wire::parse_begin(&first)?;
+    if begin.revision != AccountAuthRevision::WindowsV2 {
+        return Err(ErrorCode::VersionMismatch);
+    }
+    let registration = lookup(&begin.registration_id)?.ok_or(ErrorCode::ClientNotRegistered)?;
+    if registration.registration_id() != &begin.registration_id
+        || registration.profile_epoch() != begin.profile_epoch
+    {
+        return Err(ErrorCode::AuthRequired);
+    }
+    let (mut pending, challenge): (_, AccountServerChallenge) =
+        PendingAccountAuthentication::begin(
+            connection,
+            server_key,
+            instance,
+            &registration,
+            begin.client_nonce,
+            begin.scope,
+            utc_now()?,
+        )?;
+    let result =
+        crate::account_auth_wire::challenge_result(&challenge.transcript, &challenge.signature)?;
+    write_result(pending.transport(), &first.id, result).await?;
+    let finish = read_request(pending.transport()).await?;
+    if finish.id != first.id {
+        return Err(ErrorCode::AuthRequired);
+    }
+    let signature = crate::account_auth_wire::parse_finish(&finish)?;
+    let current = lookup(&begin.registration_id)?;
+    let mut authenticated = pending.finish(&signature, current.as_ref(), utc_now()?)?;
+    write_result(
+        authenticated.transport()?,
+        &finish.id,
+        crate::account_auth_wire::ready_result(AccountAuthRevision::WindowsV2),
+    )
+    .await?;
+    Ok(authenticated)
+}
 
 /// Authenticates one actual OS-validated connection using fresh registration
 /// snapshots from the core-owned store. Errors consume the connection and are
@@ -148,6 +206,24 @@ async fn authenticate_after_begin<'server, F>(
 where
     F: FnMut(&[u8; 16]) -> Result<Option<RegisteredClient>, ErrorCode>,
 {
+    if let Ok(account_begin) = crate::account_auth_wire::parse_begin(&first) {
+        let trusted =
+            lookup(&account_begin.registration_id)?.ok_or(ErrorCode::ClientNotRegistered)?;
+        if trusted.scope_model_version() != 2 {
+            return Err(ErrorCode::VersionMismatch);
+        }
+        return authenticate_account_after_begin(
+            connection,
+            first,
+            account_begin,
+            server_key,
+            instance,
+            lookup,
+            begin_deadline,
+            finish_deadline,
+        )
+        .await;
+    }
     let begin = auth_step(AuthStage::BeginParse, auth_wire::parse_begin(&first))?;
     let registration = auth_step(
         AuthStage::RegistrationLookup,
@@ -209,6 +285,75 @@ where
             authenticated.transport()?,
             &finish.id,
             auth_wire::ready_result(),
+        )
+        .await?;
+        Ok(authenticated)
+    })
+    .await
+    .map_err(|_| ErrorCode::AuthRequired)?
+}
+
+#[allow(clippy::too_many_arguments)] // Mirrors the bounded legacy handshake inputs.
+async fn authenticate_account_after_begin<'server, F>(
+    connection: LocalPipeConnection<'server>,
+    first: RpcRequest,
+    begin: crate::account_auth_wire::BeginParameters,
+    server_key: &ServerSigningKey,
+    instance: [u8; 32],
+    lookup: &mut F,
+    begin_deadline: tokio::time::Instant,
+    finish_deadline: Duration,
+) -> Result<AuthenticatedConnection<'server>, ErrorCode>
+where
+    F: FnMut(&[u8; 16]) -> Result<Option<RegisteredClient>, ErrorCode>,
+{
+    if begin.revision != AccountAuthRevision::WindowsV2 {
+        return Err(ErrorCode::VersionMismatch);
+    }
+    let registration = lookup(&begin.registration_id)?.ok_or(ErrorCode::ClientNotRegistered)?;
+    if registration.scope_model_version() != 2
+        || registration.registration_id() != &begin.registration_id
+        || registration.profile_epoch() != begin.profile_epoch
+    {
+        return Err(ErrorCode::AuthRequired);
+    }
+    let (mut pending, challenge) = PendingAccountAuthentication::begin(
+        connection,
+        server_key,
+        instance,
+        &registration,
+        begin.client_nonce,
+        begin.scope,
+        utc_now()?,
+    )?;
+    if tokio::time::Instant::now() >= begin_deadline {
+        return Err(ErrorCode::AuthRequired);
+    }
+    tokio::time::timeout_at(
+        begin_deadline,
+        write_result(
+            pending.transport(),
+            &first.id,
+            crate::account_auth_wire::challenge_result(
+                &challenge.transcript,
+                &challenge.signature,
+            )?,
+        ),
+    )
+    .await
+    .map_err(|_| ErrorCode::AuthRequired)??;
+    tokio::time::timeout(finish_deadline, async move {
+        let finish = read_request(pending.transport()).await?;
+        if finish.id != first.id {
+            return Err(ErrorCode::AuthRequired);
+        }
+        let signature = crate::account_auth_wire::parse_finish(&finish)?;
+        let current = lookup(&begin.registration_id)?;
+        let mut authenticated = pending.finish(&signature, current.as_ref(), utc_now()?)?;
+        write_result(
+            authenticated.transport()?,
+            &finish.id,
+            crate::account_auth_wire::ready_result(AccountAuthRevision::WindowsV2),
         )
         .await?;
         Ok(authenticated)
@@ -551,10 +696,45 @@ where
     let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
     tokio::time::timeout_at(deadline, async {
         let (request, length) = read_bounded_request_with_length(authenticated.transport()?, crate::MAX_FRAME_SIZE).await?;
-        if !request.method.starts_with("mail.") && !matches!(request.method.as_str(), "app.settings.display.get" | "app.diagnostics.snapshot") { return Err(ErrorCode::InvalidInput); }
+        if !request.method.starts_with("mail.")
+            && !matches!(
+                request.method.as_str(),
+                "app.settings.display.get"
+                    | "app.diagnostics.snapshot"
+                    | hantong_contracts::account_connect::PREPARE_METHOD
+                    | hantong_contracts::account_connect::STATUS_METHOD
+                    | hantong_contracts::account_connect::COMPLETE_METHOD
+                    | hantong_contracts::account_connect::CANCEL_METHOD
+                    | hantong_contracts::account_connect::BIND_SMTP_METHOD
+            )
+        {
+            return Err(ErrorCode::InvalidInput);
+        }
+        if matches!(
+            request.method.as_str(),
+            hantong_contracts::account_connect::PREPARE_METHOD
+                | hantong_contracts::account_connect::STATUS_METHOD
+                | hantong_contracts::account_connect::COMPLETE_METHOD
+                | hantong_contracts::account_connect::CANCEL_METHOD
+                | hantong_contracts::account_connect::BIND_SMTP_METHOD
+        ) {
+            let frame = serde_json::to_vec(&json!({
+                "jsonrpc": "2.0",
+                "id": &request.id,
+                "method": &request.method,
+                "params": &request.params,
+            }))
+            .map_err(|_| ErrorCode::InvalidInput)?;
+            hantong_contracts::account_connect::parse_request(&frame)?;
+        }
         let (request_limit,response_limit)=match request.method.as_str() {
             "app.settings.display.get" => (4096,4096),
             "app.diagnostics.snapshot" => (4096,36864),
+            hantong_contracts::account_connect::PREPARE_METHOD
+            | hantong_contracts::account_connect::STATUS_METHOD
+            | hantong_contracts::account_connect::COMPLETE_METHOD
+            | hantong_contracts::account_connect::CANCEL_METHOD => (4096,4096),
+            hantong_contracts::account_connect::BIND_SMTP_METHOD => (4096,4096),
             "mail.sync.page" => (8192,8192),
             _ => (crate::MAX_FRAME_SIZE,crate::MAX_FRAME_SIZE),
         };

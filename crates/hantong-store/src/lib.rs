@@ -9,12 +9,15 @@
 use hantong_contracts::ErrorCode;
 use std::fmt;
 
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
+pub mod account_grants;
 pub mod account_provisioning;
 mod accounts;
 mod audit;
 mod config;
 pub mod diagnostic_aggregate;
 pub mod folder_refresh;
+pub mod full_mail;
 pub mod google;
 pub mod google_mutation;
 pub mod imap_catalog;
@@ -55,7 +58,7 @@ pub use registrations::{
 pub use server_identity::ServerIdentity;
 
 #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
-const CURRENT_SCHEMA_VERSION: u32 = 27;
+const CURRENT_SCHEMA_VERSION: u32 = 28;
 #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 const DATABASE_FORMAT: &str = "mail-hantong";
 #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
@@ -125,6 +128,11 @@ const MIGRATION_V26_TO_V27: &str =
     include_str!("../../../docs/contracts/migrations/026-to-027.sql");
 #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 const SCHEMA_V27: &str = include_str!("../../../docs/contracts/migrations/schema-v27.sql");
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
+const MIGRATION_V27_TO_V28: &str =
+    include_str!("../../../docs/contracts/migrations/027-to-028.sql");
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
+const SCHEMA_V28: &str = include_str!("../../../docs/contracts/migrations/schema-v28.sql");
 #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 const SCHEMA_V19: &str = include_str!("../../../docs/contracts/migrations/schema-v19.sql");
 #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
@@ -388,6 +396,7 @@ impl Store {
                 (24, _) => Ok(SchemaState::Version24),
                 (25, _) => Ok(SchemaState::Version25),
                 (26, _) => Ok(SchemaState::Version26),
+                (27, _) => Ok(SchemaState::Version27),
                 (CURRENT_SCHEMA_VERSION, _) => Ok(SchemaState::Current),
                 _ => Ok(SchemaState::Unsupported),
             }
@@ -813,7 +822,11 @@ impl Store {
             }
             SchemaState::Version26 => {
                 self.with_connection(|c| validate_schema(c, SCHEMA_V26, 26))?;
-                self.migrate_v26_to_v27()
+                self.migrate_v26_to_v28()
+            }
+            SchemaState::Version27 => {
+                self.with_connection(|c| validate_schema(c, SCHEMA_V27, 27))?;
+                self.migrate_v27_to_v28()
             }
             SchemaState::Current => self.with_connection(|connection| {
                 validate_schema(connection, SCHEMA, CURRENT_SCHEMA_VERSION)
@@ -965,9 +978,22 @@ impl Store {
     }
 
     #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
+    fn migrate_v26_to_v28(&self) -> Result<(), ErrorCode> {
+        self.migrate_v26_to_v27()?;
+        self.migrate_v27_to_v28()
+    }
+
+    #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
+    fn migrate_v27_to_v28(&self) -> Result<(), ErrorCode> {
+        self.migrate_with_backup(27, 28, SCHEMA_V28, |c| {
+            c.execute_batch(MIGRATION_V27_TO_V28)
+        })
+    }
+
+    #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
     fn migrate_v25_to_v27(&self) -> Result<(), ErrorCode> {
         self.migrate_v25_to_v26()?;
-        self.migrate_v26_to_v27()
+        self.migrate_v26_to_v28()
     }
 
     #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
@@ -1110,6 +1136,7 @@ enum SchemaState {
     Version24,
     Version25,
     Version26,
+    Version27,
     Newer,
     Unsupported,
     Corrupt,
@@ -1331,12 +1358,47 @@ fn validate_setting(key: &str, value_json: &str) -> Result<(), ErrorCode> {
 
 #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 fn utc_millis() -> rusqlite::Result<i64> {
+    #[cfg(test)]
+    if let Some(now) = TEST_UTC_CLOCK.with(std::cell::Cell::get) {
+        return Ok(now);
+    }
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .ok()
         .and_then(|duration| i64::try_from(duration.as_millis()).ok())
         .filter(|millis| *millis > 0)
         .ok_or(rusqlite::Error::InvalidQuery)
+}
+
+// Synthetic transaction fixtures must not depend on a VM host clock rollback.
+// This override is thread-local, scoped, and absent from every product build.
+#[cfg(test)]
+thread_local! {
+    static TEST_UTC_CLOCK: std::cell::Cell<Option<i64>> = const { std::cell::Cell::new(None) };
+}
+
+#[cfg(test)]
+struct TestUtcClock {
+    previous: Option<i64>,
+    _thread: std::marker::PhantomData<std::rc::Rc<()>>,
+}
+
+#[cfg(test)]
+impl TestUtcClock {
+    fn freeze(now: i64) -> Self {
+        assert!(now > 0);
+        Self {
+            previous: TEST_UTC_CLOCK.with(|clock| clock.replace(Some(now))),
+            _thread: std::marker::PhantomData,
+        }
+    }
+}
+
+#[cfg(test)]
+impl Drop for TestUtcClock {
+    fn drop(&mut self) {
+        TEST_UTC_CLOCK.with(|clock| clock.set(self.previous));
+    }
 }
 
 #[cfg(all(test, windows))]
@@ -1349,6 +1411,7 @@ mod tests {
     include!("migration_v22_tests.rs");
     include!("migration_v24_tests.rs");
     include!("migration_v26_tests.rs");
+    include!("migration_v28_tests.rs");
     use super::*;
     include!("migration_v15_tests.rs");
     include!("migration_v16_tests.rs");
@@ -3481,7 +3544,7 @@ mod unix_schema_tests {
         transaction.execute_batch(MIGRATION_V26_TO_V27).unwrap();
         transaction.execute("UPDATE app_metadata SET schema_version=27,updated_at_utc_ms=2 WHERE singleton=1 AND schema_version=26", []).unwrap();
         transaction.pragma_update(None, "user_version", 27).unwrap();
-        validate_schema(&transaction, SCHEMA, 27).unwrap();
+        validate_schema(&transaction, SCHEMA_V27, 27).unwrap();
         transaction.commit().unwrap();
         assert_eq!(
             connection

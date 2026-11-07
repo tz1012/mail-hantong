@@ -6,3 +6,9 @@ unsupported=Core transport is not available on this platform yet.
 unavailable=The core could not start or continue safely.
 terminal_review_title=Terminal review
 terminal_review_confirm=Confirm? [1/0]:
+account_connect_features=This connection gives the local Default consumer read, compose, send, and single-message Trash access. Each send or Trash action still requires its own confirmation.
+smtp_host=SMTP server:
+smtp_port=SMTP port:
+smtp_tls=SMTP TLS (1=implicit_tls, 2=starttls_required):
+smtp_login=SMTP login:
+smtp_sender=SMTP From address (blank uses the login):

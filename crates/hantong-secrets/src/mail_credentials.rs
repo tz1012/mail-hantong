@@ -9,7 +9,37 @@ pub(super) struct BoundCredential {
     envelope: SensitiveBuffer,
     offset: usize,
 }
+impl Clone for BoundCredential {
+    fn clone(&self) -> Self {
+        Self {
+            envelope: SensitiveBuffer(self.envelope.as_slice().to_vec()),
+            offset: self.offset,
+        }
+    }
+}
 impl BoundCredential {
+    pub(super) fn from_plain(
+        account: &str,
+        endpoint: &ImapEndpointConfig,
+        bytes: &[u8],
+    ) -> Result<Self, SecretError> {
+        let binding = Binding::from(endpoint);
+        let prefix = binding.prefix(account)?;
+        if !binding.valid_credential(bytes) {
+            return Err(SecretError::InvalidCredential);
+        }
+        let mut envelope = SensitiveBuffer(Vec::with_capacity(prefix.len() + 4 + bytes.len()));
+        envelope.0.extend_from_slice(&prefix);
+        envelope
+            .0
+            .extend_from_slice(&(bytes.len() as u32).to_be_bytes());
+        envelope.0.extend_from_slice(bytes);
+        Ok(Self {
+            envelope,
+            offset: prefix.len() + 4,
+        })
+    }
+
     pub(super) fn text(&self) -> Result<&str, SecretError> {
         std::str::from_utf8(&self.envelope.as_slice()[self.offset..])
             .map_err(|_| SecretError::CredentialMismatch)

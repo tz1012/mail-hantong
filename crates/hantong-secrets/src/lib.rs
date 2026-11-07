@@ -39,7 +39,9 @@ pub use protected_input::{
 };
 pub use smtp_probe::{MailProbeError, SmtpProbeReceipt};
 pub use smtp_send::{SmtpSendEnvelope, SmtpSendError, SmtpSendResult};
-pub use terminal_secret::{TerminalSecretBinding, TerminalSecretHandle, TerminalSecretTicket};
+pub use terminal_secret::{
+    TerminalImapVerification, TerminalSecretBinding, TerminalSecretHandle, TerminalSecretTicket,
+};
 
 const MAX_SECRET: usize = 65_536;
 #[cfg(windows)]

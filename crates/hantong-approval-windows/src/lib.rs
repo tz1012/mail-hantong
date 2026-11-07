@@ -148,6 +148,47 @@ pub fn refresh_default_profile(
     }
 }
 
+/// Verifies a refreshed default profile through the native publication's
+/// already-pinned handles. Content is read from the held object; separate
+/// metadata-only handles verify its identity at the fixed Default path.
+#[cfg(windows)]
+pub fn verify_published_default_profile(
+    publication: &PublishedProfile,
+) -> Result<hantong_platform::account_publication::VerifiedAccountProfilePublication, ErrorCode> {
+    profile_publication::verify_default_publication(&publication._inner)
+}
+
+/// Loads the exact old default profile retained for a request-bound refresh.
+/// The native implementation accepts only the fixed application profile path.
+pub fn load_default_profile_refresh_backup(refresh_id: [u8; 32]) -> Result<Vec<u8>, ErrorCode> {
+    #[cfg(windows)]
+    {
+        profile_publication::load_default_refresh_backup(refresh_id)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = refresh_id;
+        Err(ErrorCode::CapabilityUnsupported)
+    }
+}
+
+/// Removes the exact old default profile backup after validating its bytes.
+/// This operation never writes or replaces the active profile.
+pub fn discard_default_profile_refresh_backup(
+    refresh_id: [u8; 32],
+    expected_old_bytes: &[u8],
+) -> Result<(), ErrorCode> {
+    #[cfg(windows)]
+    {
+        profile_publication::discard_default_refresh_backup(refresh_id, expected_old_bytes)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (refresh_id, expected_old_bytes);
+        Err(ErrorCode::CapabilityUnsupported)
+    }
+}
+
 /// Protected compare-and-replace for an explicitly native-reviewed MCP identity replacement.
 pub fn refresh_mcp_profile(
     request_id: [u8; 32],
