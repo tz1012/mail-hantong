@@ -18,7 +18,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-#[cfg(test)]
+#[cfg(all(test, any(windows, target_os = "linux")))]
 use tokio::io::{AsyncRead, AsyncWrite};
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -341,7 +341,7 @@ impl SecretStore {
         })
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, any(windows, target_os = "linux")))]
     pub(crate) async fn consume_terminal_imap_probe_with_stream<S>(
         &self,
         ticket: TerminalSecretTicket,

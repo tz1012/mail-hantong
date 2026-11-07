@@ -96,7 +96,7 @@ pub(crate) async fn probe_with_credential(
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, any(windows, target_os = "linux")))]
 pub(crate) async fn probe_with_credential_stream<S>(
     store: &SecretStore,
     account: &str,

@@ -3053,3 +3053,21 @@ no Core/store/PATH/channel access). ZIP SHA256
 `9d241d25f63d64a8f1d6b1115d4eac0b978e6b8a7e68157b97670cfbbdb32d41`.
 This package is again superseded by the Mac cfg correction and is not released.
 Final native gates must be attached to the commit including that correction.
+
+Third candidate c50c0c04 native Mac test compilation exposed another precise
+cfg mismatch: newly added cfg(test) protected-probe stream helpers called
+run_connected, whose existing fixture and function are Windows/Linux-only.
+The two new helpers and their tokio trait import now match that existing test
+platform condition. No previously runnable Mac test was removed or skipped;
+production probes on all three OSes and the shared Mac terminal input remain
+unchanged. This does not establish Mac IMAP protocol-fixture coverage: the
+pre-existing fixture still lacks a Mac isolated credential-store implementation.
+
+The c50 Windows package built, and isolated beta29→c50 candidate installation,
+272 file hashes per release, version check and old-version/sentinel preservation
+passed without starting Core or opening user storage. Source hash
+fc3aa8da8d85504d4a2668b9c390593108af235c8790f82219b1177f8f229b10;
+ZIP SHA256 0fce217cf60d881cc36eac0f0184cc4b04f006ad4f6cfe20ddbf3d5c443c27ed.
+It is not the final package after the new test cfg/source metadata correction.
+The ongoing native failures and missing human/full-mail product review gates
+continue to prohibit official release; no release or feed was changed.
