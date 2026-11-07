@@ -7,8 +7,10 @@ and opening actual mail in Songpa Linux HanTong**. A deployment, scope grant or
 synthetic provider test is not completion. User evidence: Gmail 1 actual read
 succeeded; Gmail 2 and Daum receive CLI SCOPE_DENIED; Daum IMAP setup is ready.
 Do not recreate its app password or repeat setup based on a scope denial alone.
-Current installed version and current pending/staged state remain unknown until
-updated non-secret user evidence arrives. Request IDs stay local.
+The user has now confirmed installed `hantong 0.1.0-beta.29` and the last directly
+executed refresh returned CONFLICT. It has not been repeated; no permission changed.
+Only pending/staged/expired state is unknown. Request IDs stay local. Do not keep
+asking for a state that beta.29 cannot enumerate without an ID.
 
 No send, draft creation, Trash, account reset, vault/key/permission change or
 automatic scope grant is part of the read-verification objective. A normal scope
@@ -30,6 +32,21 @@ The scope recovery fix `add6cbbf7d7a9073b290a42aef51d8353f74db95`
 is a descendant and is documented as unreleased. No publication was performed.
 
 ## Existing beta.29 recovery: exact source limits
+
+There is **no public beta.29 ID-less scope-state command**. The exact existing
+syntax is `hantong clients refresh-status REFRESH_ID`; omitting the ID does not
+query anything. `clients verify`, `core status` and `diagnostics snapshot` do not
+enumerate scope requests. Do not substitute repeated refresh, a direct DB query,
+new diagnostic grant or the candidate's cancellation behavior for observation.
+
+Unknown local request ID does not require a new discovery API to fix the expired
+pending case: the existing candidate request handler loads the pending row itself
+and expires it through Store CAS before comparing the new target. On a repaired
+version, startup recovery handles already-staged rows separately. Live differing
+pending intent still requires explicit cancellation with a locally known ID or its
+normal expiry; it is never overwritten or approved. These are candidate behavior,
+not instructions to retry beta.29. A fresh scope request/confirmation is justified
+only after a verified eligible update, not as repetition of the known old failure.
 
 Evidence from the actual beta.29 tag, not current candidate documentation:
 
@@ -59,7 +76,7 @@ repeated refresh/review/timeout attempts cannot be promised to complete the goal
 
 | Route | Minimum change/test/decision | Assessment |
 | --- | --- | --- |
-| Existing installed normal recovery | Confirm version and state only. On a repaired version: normal expiry or explicit bound Cancel for live pending; preserve staged recovery; fresh exact preview and human confirmation. Then read each account. No new package/origin. | Shortest if already supported; applicability unknown. Beta.29 has the concrete limits above. |
+| Existing installed normal recovery | On a repaired version: normal expiry or explicit bound Cancel for live pending; preserve staged recovery; fresh exact preview and human confirmation, then read each account. | Songpa is now confirmed beta.29; do not promise this repaired behavior or repeat its known failed request. An eligible update is needed for the repair. |
 | Existing beta.29 pinned official asset | Exact existing Linux URL/checksum/manifest, normal preservation/restart and supported recovery. No new publication or feed change. | Assets exist, but this source lacks the scope fix. Reinstalling the same version is not an evidenced repair; do not reset data or recommend it as the solution. |
 | New full release in existing official repository | Fix and validate all published platforms at one final commit, including unresolved Mac compatibility; normal artifact/source/manifest/checksum and security review gates. | Reuses current origin/contract, but Mac failures currently block a truthful full release. Do not reuse old Mac binaries under new version metadata. |
 | New Linux-only release in existing shared feed, even if Songpa pins it | Must prove every affected old API/Atom selector remains safe, not just the Songpa client. | Unsafe today: a v-prefixed partial tag breaks Mac selection/Windows fallback. A non-v Linux tag also makes current Windows Atom parsing fail. Explicit pin or GitHub latest flag does not repair old clients. |
@@ -74,9 +91,9 @@ an old release also needs a reviewed provenance/selection contract; do not do it
 
 ## Shortest conditional path
 
-1. Obtain current installed version, most recent refresh code and known request
-   state only. No request ID, account address, mail body or secret needs to leave
-   Songpa. This distinguishes existing recovery from a required code update.
+1. Version/code are now known: beta.29/CONFLICT. State is not safely enumerable
+   without the local ID, so do not block local repair validation on discovering it
+   or request production storage inspection. No repeated old refresh is needed.
 2. If repaired code is installed, use its normal recovery and explicit preview;
    never cancel a staged decision or automatically expand grants. If it is
    beta.29 with the demonstrated blockers, prioritize the narrow scope repair
@@ -97,9 +114,39 @@ an old release also needs a reviewed provenance/selection contract; do not do it
    Keep mail content local; account labels and IDs need not be reported. Only
    three actual successes satisfy completion; setup ready or scope ready does not.
 
-No supported date estimate is available until installed state is known and the
-needed recovery/update route is selected and validated. A source defect diagnosis
+No supported date estimate is available until the needed recovery/update route
+and its security conditions are selected and validated. A source defect diagnosis
 is not a time estimate. Report state transitions and evidence, not a guessed date.
+
+The version evidence now rules out claiming that the repaired path is already
+installed. The pending/staged uncertainty must be handled by the fixed lifecycle,
+not made into a new prerequisite for offline implementation/test progress.
+
+## Minimum code and review scope
+
+The repair already exists at `add6cbbf7d7a9073b290a42aef51d8353f74db95`:
+`unix_scope_refresh.rs` (closed diagnostics, expiry ordering, exact reuse/status),
+`unix_setup.rs` (bound single-use scope cancellation), `unix_registration.rs`
+(terminal decision over supported original registration provenance; OAuth remains
+OAuth-only), Store `scope_refresh/storage.rs` (supported terminal provenance).
+Existing tests cover unchanged grants, expiry/replay rejection, staged recovery
+and synthetic vault preservation. No new public status/discovery method, credential
+format, schema migration or account setup is required for those repair behaviors.
+
+Those four production files have no diff between the recorded human-review target
+`6322b9a1a5f27f7e0ef32a65554ef20a79db0be6` and `30102cfd75db0e0f0f85806b278cd83ebe55e5c8`.
+The actual user's “검토 완료했어” confirmation is already recorded in
+`HUMAN-SECURITY-REVIEW-CONFIRMATION-20261106.md`; do not claim no human confirmation
+exists or demand another identical review of unchanged files. That confirmation
+did not close the explicitly outstanding execution TOCTOU and Mac compatibility
+conditions, and does not review future execution/transport changes. New changed
+boundaries still need their exact final-range review and tests.
+
+A concrete existing-host, shared-feed-independent option is now specified in
+[the static delivery proposal](../contracts/proposals/linux-static-pinned-delivery-20261107.md).
+Its Pages namespace is proposed only; it has not been created, adopted or published.
+Same-inode execution and actual native product gates remain unmet; the proposal
+does not turn the existing candidate into a deployable fix.
 
 ## Validation of the feed alternative
 
